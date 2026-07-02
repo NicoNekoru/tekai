@@ -93,7 +93,18 @@ The crate is now wired into the main CLI as:
 
 ```sh
 cargo run -- build path/to/main.tex --engine texpilot-pdftex
+cargo run -- build path/to/main.tex --engine texpilot-pdftex-certified
 ```
+
+`texpilot-pdftex` is the fast native path. It is allowed to be approximate while
+the replacement engine is still growing, and its compatibility is measured by
+rendered-PDF parity gates.
+
+`texpilot-pdftex-certified` is the deterministic fidelity path. It runs the
+native backend for diagnostics and trace coverage, then writes the final PDF via
+pdfTeX itself and appends `certification_policy\tpdftex-final-oracle` to the
+native trace. That mode is perfect-fidelity by construction: the delivered
+`*.pdf` is the pdfTeX artifact, not an uncertified native approximation.
 
 The native backend currently handles a deliberately pragmatic final-build
 subset:
@@ -226,6 +237,10 @@ tree and writes final PDFs as one native pass without invoking external
 `pdflatex`, BibTeX, or draft-prepass convergence. This is a fast functional
 renderer moving toward near-identical PDF output: rich layout constructs are
 currently represented approximately.
+
+When exact final-output fidelity is required before native parity is complete,
+use `--engine texpilot-pdftex-certified`. That mode intentionally pays for a
+pdfTeX final pass and treats native output as diagnostic evidence only.
 
 The main CLI uses the PDF-only artifact policy for supported native documents:
 it writes the PDF plus `*.texpilot-pdftex.trace` and skips `.aux`, `.fls`,

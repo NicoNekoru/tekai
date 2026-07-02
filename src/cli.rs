@@ -227,6 +227,7 @@ pub enum EngineArg {
     LuaLatex,
     Tectonic,
     TexpilotPdftex,
+    TexpilotPdftexCertified,
 }
 
 impl From<EngineArg> for Engine {
@@ -237,6 +238,7 @@ impl From<EngineArg> for Engine {
             EngineArg::LuaLatex => Engine::LuaLatex,
             EngineArg::Tectonic => Engine::Tectonic,
             EngineArg::TexpilotPdftex => Engine::TexpilotPdftex,
+            EngineArg::TexpilotPdftexCertified => Engine::TexpilotPdftexCertified,
         }
     }
 }
@@ -346,6 +348,26 @@ mod tests {
         };
 
         assert!(matches!(args.flags.engine, EngineArg::TexpilotPdftex));
+    }
+
+    #[test]
+    fn build_accepts_certified_texpilot_pdftex_engine() {
+        let cli = Cli::try_parse_from([
+            "texpilot",
+            "build",
+            "main.tex",
+            "--engine",
+            "texpilot-pdftex-certified",
+        ])
+        .expect("build --engine texpilot-pdftex-certified should parse");
+        let Command::Build(args) = cli.command else {
+            panic!("expected build command");
+        };
+
+        assert!(matches!(
+            args.flags.engine,
+            EngineArg::TexpilotPdftexCertified
+        ));
     }
 }
 

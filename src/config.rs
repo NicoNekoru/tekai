@@ -247,8 +247,13 @@ fn parse_engine(value: &str) -> Result<Engine> {
         "lualatex" | "lua-latex" => Ok(Engine::LuaLatex),
         "tectonic" => Ok(Engine::Tectonic),
         "texpilot-pdftex" | "texpilot_pdftex" => Ok(Engine::TexpilotPdftex),
+        "texpilot-pdftex-certified" | "texpilot_pdftex_certified" | "texpilot-pdftex-oracle" => {
+            Ok(Engine::TexpilotPdftexCertified)
+        }
         _ => {
-            anyhow::bail!("expected one of pdflatex, xelatex, lualatex, tectonic, texpilot-pdftex")
+            anyhow::bail!(
+                "expected one of pdflatex, xelatex, lualatex, tectonic, texpilot-pdftex, texpilot-pdftex-certified"
+            )
         }
     }
 }
@@ -423,6 +428,21 @@ mod tests {
         let config = apply_build_config(raw.build).expect("build config should apply");
 
         assert_eq!(config.engine, Some(Engine::TexpilotPdftex));
+    }
+
+    #[test]
+    fn apply_build_config_parses_certified_texpilot_pdftex_engine() {
+        let raw: RawConfig = toml::from_str(
+            r#"
+            [build]
+            engine = "texpilot-pdftex-certified"
+            "#,
+        )
+        .expect("raw config should parse");
+
+        let config = apply_build_config(raw.build).expect("build config should apply");
+
+        assert_eq!(config.engine, Some(Engine::TexpilotPdftexCertified));
     }
 
     #[test]

@@ -290,6 +290,44 @@ fn texpilot_pdftex_native_backend_builds_minimal_document() {
 }
 
 #[test]
+fn texpilot_pdftex_certified_backend_uses_pdflatex_final_artifact() {
+    if !command_available("pdflatex") {
+        eprintln!("skipping certified texpilot-pdftex test; pdflatex is not available");
+        return;
+    }
+
+    let root = unique_temp_dir("texpilot-pdftex-certified");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    let main = root.join("main.tex");
+    let out_dir = root.join("out");
+    fs::write(&main, NATIVE_DOC).expect("failed to write TeX source");
+
+    let mut options = options(&main, &out_dir);
+    options.engine = Engine::TexpilotPdftexCertified;
+    let report = build(&options).expect("certified texpilot-pdftex build failed");
+
+    assert!(!report.skipped, "{report:#?}");
+    assert!(report.tex_runs >= 1, "{report:#?}");
+    assert!(report.pdf_tex_runs >= 1, "{report:#?}");
+    assert!(out_dir.join("main.pdf").exists());
+    assert!(out_dir.join("main.aux").exists());
+    assert!(out_dir.join("main.fls").exists());
+    let trace = fs::read_to_string(out_dir.join("main.texpilot-pdftex.trace"))
+        .expect("trace should be readable");
+    assert!(trace.contains("texpilot-pdftex-native"), "{trace}");
+    assert!(
+        trace.contains("certification_policy\tpdftex-final-oracle"),
+        "{trace}"
+    );
+    assert!(
+        trace.contains("certification_final_pdf\tpdflatex"),
+        "{trace}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn texpilot_pdftex_native_backend_handles_pdftex_primitive_registers() {
     let root = unique_temp_dir("texpilot-pdftex-native-pdf-primitives");
     fs::create_dir_all(&root).expect("failed to create temp directory");
