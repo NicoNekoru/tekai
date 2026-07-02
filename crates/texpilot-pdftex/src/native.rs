@@ -14050,6 +14050,41 @@ struct WrappedTextLine {
 const PROSE_WRAP_AVERAGE_EM: f32 = 0.405;
 const LINE_BREAK_LOOKAHEAD_WORDS: usize = 96;
 const LINE_BREAK_OVERFULL_TOLERANCE_EM: f32 = 0.08;
+const LINE_BREAK_ADJACENT_FITNESS_DEMERITS: f32 = 10_000.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineFitness {
+    Tight,
+    Decent,
+    Loose,
+    VeryLoose,
+}
+
+impl LineFitness {
+    const ALL: [Self; 4] = [Self::Tight, Self::Decent, Self::Loose, Self::VeryLoose];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Tight => 0,
+            Self::Decent => 1,
+            Self::Loose => 2,
+            Self::VeryLoose => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LineBreakScore {
+    demerits: f32,
+    fitness: LineFitness,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LineBreakState {
+    cost: f32,
+    previous_break: usize,
+    previous_fitness: Option<LineFitness>,
+}
 
 fn wrap_prose_text_lines(
     text: &str,
@@ -14133,10 +14168,20 @@ fn balanced_line_breaks(
     if word_count == 0 {
         return Vec::new();
     }
-    let mut costs = vec![f32::INFINITY; word_count + 1];
-    let mut next_breaks = vec![word_count; word_count];
-    costs[word_count] = 0.0;
-    for start in (0..word_count).rev() {
+    let mut states: Vec<[Option<LineBreakState>; 4]> = vec![[None; 4]; word_count + 1];
+    for start in 0..word_count {
+        let mut previous_states = Vec::new();
+        if start == 0 {
+            previous_states.push((0.0, None));
+        }
+        for fitness in LineFitness::ALL {
+            if let Some(state) = states[start][fitness.index()] {
+                previous_states.push((state.cost, Some(fitness)));
+            }
+        }
+        if previous_states.is_empty() {
+            continue;
+        }
         let mut line_width_pt = 0.0_f32;
         let max_end = (start + LINE_BREAK_LOOKAHEAD_WORDS).min(word_count);
         for end in start..max_end {
@@ -14149,63 +14194,143 @@ fn balanced_line_breaks(
             if words_in_line > 1 && overfull_pt > font_size * LINE_BREAK_OVERFULL_TOLERANCE_EM {
                 break;
             }
-            let candidate_cost = line_break_cost(
+            let score = line_break_score(
                 line_width_pt,
                 target_width_pt,
                 space_width_pt,
                 words_in_line,
                 end + 1 == word_count,
-            ) + costs[end + 1];
-            if candidate_cost < costs[start] {
-                costs[start] = candidate_cost;
-                next_breaks[start] = end + 1;
+            );
+            for (previous_cost, previous_fitness) in &previous_states {
+                let candidate_cost = previous_cost
+                    + score.demerits
+                    + adjacent_fitness_demerits(*previous_fitness, score.fitness);
+                let state_slot = &mut states[end + 1][score.fitness.index()];
+                if state_slot.is_none_or(|state| candidate_cost < state.cost) {
+                    *state_slot = Some(LineBreakState {
+                        cost: candidate_cost,
+                        previous_break: start,
+                        previous_fitness: *previous_fitness,
+                    });
+                }
             }
         }
-        if !costs[start].is_finite() {
-            next_breaks[start] = (start + 1).min(word_count);
-            costs[start] = costs[next_breaks[start]] + 1_000_000.0;
+    }
+    let Some((mut cursor, mut fitness, _)) = LineFitness::ALL
+        .into_iter()
+        .filter_map(|fitness| {
+            states[word_count][fitness.index()].map(|state| (word_count, fitness, state))
+        })
+        .min_by(|(_, _, left), (_, _, right)| left.cost.total_cmp(&right.cost))
+    else {
+        return greedy_line_breaks(word_widths, space_width_pt, font_size, target_width_pt);
+    };
+    let mut breaks = Vec::new();
+    while cursor > 0 {
+        let Some(state) = states[cursor][fitness.index()] else {
+            break;
+        };
+        breaks.push(cursor);
+        cursor = state.previous_break;
+        if let Some(previous_fitness) = state.previous_fitness {
+            fitness = previous_fitness;
+        } else {
+            break;
         }
     }
-    let mut breaks = Vec::new();
+    breaks.reverse();
+    breaks
+}
+
+fn greedy_line_breaks(
+    word_widths: &[f32],
+    space_width_pt: f32,
+    font_size: f32,
+    target_width_pt: f32,
+) -> Vec<usize> {
+    let word_count = word_widths.len();
     let mut cursor = 0_usize;
+    let mut breaks = Vec::new();
     while cursor < word_count {
-        let next = next_breaks[cursor].max(cursor + 1).min(word_count);
-        breaks.push(next);
+        let mut line_width_pt = 0.0_f32;
+        let mut next = cursor + 1;
+        for (offset, width) in word_widths[cursor..].iter().enumerate() {
+            let candidate_width = if offset == 0 {
+                *width
+            } else {
+                line_width_pt + space_width_pt + width
+            };
+            if offset > 0
+                && candidate_width - target_width_pt > font_size * LINE_BREAK_OVERFULL_TOLERANCE_EM
+            {
+                break;
+            }
+            line_width_pt = candidate_width;
+            next = cursor + offset + 1;
+        }
+        breaks.push(next.min(word_widths.len()));
         cursor = next;
     }
     breaks
 }
 
-fn line_break_cost(
+fn line_break_score(
     line_width_pt: f32,
     target_width_pt: f32,
     space_width_pt: f32,
     words_in_line: usize,
     is_last_line: bool,
-) -> f32 {
+) -> LineBreakScore {
     let slack_pt = target_width_pt - line_width_pt;
     if is_last_line {
         let orphan_penalty = if words_in_line == 1 { 2_500.0 } else { 0.0 };
-        return orphan_penalty + slack_pt.min(0.0).abs().powi(2) * 1_000.0;
+        return LineBreakScore {
+            demerits: orphan_penalty + slack_pt.min(0.0).abs().powi(2) * 1_000.0,
+            fitness: LineFitness::Decent,
+        };
     }
     if words_in_line <= 1 {
-        return 500_000.0 + slack_pt.min(0.0).abs().powi(2) * 1_000.0;
+        return LineBreakScore {
+            demerits: 500_000.0 + slack_pt.min(0.0).abs().powi(2) * 1_000.0,
+            fitness: LineFitness::VeryLoose,
+        };
     }
     let spaces = (words_in_line - 1) as f32;
-    let badness = if slack_pt >= 0.0 {
+    let (badness, ratio) = if slack_pt >= 0.0 {
         let stretch_pt = (spaces * space_width_pt * 1.5).max(0.01);
         let ratio = slack_pt / stretch_pt;
-        (100.0 * ratio.powi(3)).min(10_000.0)
+        ((100.0 * ratio.powi(3)).min(10_000.0), ratio)
     } else {
         let shrink_pt = (spaces * space_width_pt / 3.0).max(0.01);
-        let ratio = -slack_pt / shrink_pt;
-        if ratio <= 1.0 {
-            100.0 * ratio.powi(3)
+        let ratio = slack_pt / shrink_pt;
+        if ratio >= -1.0 {
+            (100.0 * (-ratio).powi(3), ratio)
         } else {
-            10_000.0 + (ratio - 1.0) * 5_000.0
+            (10_000.0 + (-ratio - 1.0) * 5_000.0, ratio)
         }
     };
-    (badness + 10.0).powi(2) + 250.0
+    LineBreakScore {
+        demerits: (badness + 10.0).powi(2) + 250.0,
+        fitness: line_fitness(ratio),
+    }
+}
+
+fn line_fitness(ratio: f32) -> LineFitness {
+    if ratio < -0.5 {
+        LineFitness::Tight
+    } else if ratio <= 0.5 {
+        LineFitness::Decent
+    } else if ratio <= 1.0 {
+        LineFitness::Loose
+    } else {
+        LineFitness::VeryLoose
+    }
+}
+
+fn adjacent_fitness_demerits(previous: Option<LineFitness>, current: LineFitness) -> f32 {
+    previous
+        .filter(|previous| previous.index().abs_diff(current.index()) > 1)
+        .map_or(0.0, |_| LINE_BREAK_ADJACENT_FITNESS_DEMERITS)
 }
 
 fn join_words(words: &[&str]) -> String {
@@ -17335,6 +17460,32 @@ mod tests {
             layout.line_break_metric_for_font(PdfTextFont::Text),
             PdfFontMetric::TimesRoman
         );
+    }
+
+    #[test]
+    fn line_break_score_classifies_tex_fitness_buckets() {
+        let tight = line_break_score(106.0, 100.0, 10.0, 4, false);
+        let decent = line_break_score(100.0, 100.0, 10.0, 4, false);
+        let loose = line_break_score(70.0, 100.0, 10.0, 4, false);
+        let very_loose = line_break_score(50.0, 100.0, 10.0, 4, false);
+
+        assert_eq!(tight.fitness, LineFitness::Tight);
+        assert_eq!(decent.fitness, LineFitness::Decent);
+        assert_eq!(loose.fitness, LineFitness::Loose);
+        assert_eq!(very_loose.fitness, LineFitness::VeryLoose);
+    }
+
+    #[test]
+    fn adjacent_line_fitness_penalizes_incompatible_breaks() {
+        assert_eq!(
+            adjacent_fitness_demerits(Some(LineFitness::Tight), LineFitness::VeryLoose),
+            LINE_BREAK_ADJACENT_FITNESS_DEMERITS
+        );
+        assert_eq!(
+            adjacent_fitness_demerits(Some(LineFitness::Loose), LineFitness::VeryLoose),
+            0.0
+        );
+        assert_eq!(adjacent_fitness_demerits(None, LineFitness::Tight), 0.0);
     }
 
     #[test]
