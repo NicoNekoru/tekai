@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
-use std::io::Write as _;
+use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -1683,11 +1683,9 @@ fn preamble_format_mode_key(
 }
 
 fn read_preamble_format_state_if_exists(path: &Path) -> Result<Option<PreambleFormatState>> {
-    if !path.exists() {
+    let Some(source) = read_optional_text_file(path, "preamble format state")? else {
         return Ok(None);
-    }
-    let source = fs::read_to_string(path)
-        .with_context(|| format!("failed to read preamble format state {}", path.display()))?;
+    };
     let state: PreambleFormatState = toml::from_str(&source)
         .with_context(|| format!("failed to parse preamble format state {}", path.display()))?;
     Ok(Some(state))
@@ -2191,7 +2189,7 @@ fn collect_source_seed_dependency_paths(
         );
     for dependency in active_include_dependencies(&analysis, context.includeonly)
         .into_iter()
-        .chain(analysis.input_dependencies)
+        .chain(analysis.input_dependencies.iter().cloned())
     {
         if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, &dependency)? {
             let dependency_graphic_path_count = state.graphic_paths.len();
@@ -2503,8 +2501,8 @@ fn source_preflight_scan_from_source(
         }
     }
 
-    for input in analysis.input_dependencies {
-        if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, &input)? {
+    for input in &analysis.input_dependencies {
+        if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, input)? {
             source_preflight_scan_from_source(context, &path, visited, scan)?;
         }
     }
@@ -2554,8 +2552,8 @@ fn source_features_from_source(
         }
     }
 
-    for input in analysis.input_dependencies {
-        if let Some(path) = resolve_local_tex_source_dependency(doc_dir, &input)? {
+    for input in &analysis.input_dependencies {
+        if let Some(path) = resolve_local_tex_source_dependency(doc_dir, input)? {
             features.merge(source_features_from_source(
                 doc_dir,
                 &path,
@@ -2606,7 +2604,7 @@ fn has_backref_signal(line: &str) -> bool {
 }
 
 fn has_multipass_signal(line: &str) -> bool {
-    [
+    const MULTIPASS_COMMANDS: &[&str] = &[
         "addbibresource",
         "autocite",
         "autoref",
@@ -2639,17 +2637,23 @@ fn has_multipass_signal(line: &str) -> bool {
         "supercite",
         "tableofcontents",
         "textcite",
-    ]
-    .into_iter()
-    .any(|command| tex_command_present(line, command))
+    ];
+    MULTIPASS_COMMANDS
+        .iter()
+        .copied()
+        .any(|command| tex_command_present(line, command))
 }
 
 fn tex_command_present(line: &str, command: &str) -> bool {
-    let command = format!(r"\{command}");
     let mut cursor = 0;
-    while let Some(offset) = line[cursor..].find(&command) {
+    while let Some(offset) = line[cursor..].find('\\') {
         let command_start = cursor + offset;
-        let after_command = command_start + command.len();
+        let name_start = command_start + '\\'.len_utf8();
+        if !line[name_start..].starts_with(command) {
+            cursor = name_start;
+            continue;
+        }
+        let after_command = name_start + command.len();
         if line[after_command..]
             .chars()
             .next()
@@ -6184,8 +6188,8 @@ struct SourceConversionContext<'a> {
 
 #[derive(Debug, Default)]
 struct TexSourceReadCache {
-    sources: Mutex<HashMap<PathBuf, String>>,
-    analyses: Mutex<HashMap<PathBuf, TexSourceAnalysis>>,
+    sources: Mutex<HashMap<PathBuf, Arc<String>>>,
+    analyses: Mutex<HashMap<PathBuf, Arc<TexSourceAnalysis>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -6218,42 +6222,45 @@ fn canonical_tex_source_path(source_path: &Path) -> Result<PathBuf> {
     })
 }
 
-fn read_cached_tex_source(source_cache: &TexSourceReadCache, source_path: &Path) -> Result<String> {
+fn read_cached_tex_source(
+    source_cache: &TexSourceReadCache,
+    source_path: &Path,
+) -> Result<Arc<String>> {
     if let Some(source) = source_cache
         .sources
         .lock()
         .expect("TeX source read cache mutex poisoned")
         .get(source_path)
-        .cloned()
     {
-        return Ok(source);
+        return Ok(Arc::clone(source));
     }
 
-    let source = fs::read_to_string(source_path)
-        .with_context(|| format!("failed to read TeX source {}", source_path.display()))?;
+    let source = Arc::new(
+        fs::read_to_string(source_path)
+            .with_context(|| format!("failed to read TeX source {}", source_path.display()))?,
+    );
     let mut sources = source_cache
         .sources
         .lock()
         .expect("TeX source read cache mutex poisoned");
     if let Some(cached) = sources.get(source_path) {
-        return Ok(cached.clone());
+        return Ok(Arc::clone(cached));
     }
-    sources.insert(source_path.to_path_buf(), source.clone());
+    sources.insert(source_path.to_path_buf(), Arc::clone(&source));
     Ok(source)
 }
 
 fn read_cached_tex_source_analysis(
     source_cache: &TexSourceReadCache,
     source_path: &Path,
-) -> Result<TexSourceAnalysis> {
+) -> Result<Arc<TexSourceAnalysis>> {
     if let Some(analysis) = source_cache
         .analyses
         .lock()
         .expect("TeX source analysis cache mutex poisoned")
         .get(source_path)
-        .cloned()
     {
-        return Ok(analysis);
+        return Ok(Arc::clone(analysis));
     }
 
     let source = read_cached_tex_source(source_cache, source_path)?;
@@ -6261,7 +6268,7 @@ fn read_cached_tex_source_analysis(
     let includegraphics_payloads = includegraphics_payloads_stripped(&stripped_source);
     let animategraphics_refs = animategraphics_refs_stripped(&stripped_source);
     let includesvg_refs = includesvg_refs_stripped(&stripped_source);
-    let analysis = TexSourceAnalysis {
+    let analysis = Arc::new(TexSourceAnalysis {
         include_dependencies: tex_include_source_dependencies_stripped(&stripped_source),
         input_dependencies: tex_input_like_source_dependencies_stripped(&stripped_source),
         package_payloads: source_package_payloads_stripped(&stripped_source),
@@ -6282,16 +6289,16 @@ fn read_cached_tex_source_analysis(
         graphicspath_entries: graphicspath_entries_stripped(&stripped_source),
         svgpath_entries: svgpath_entries_stripped(&stripped_source),
         svg_setup_refs: svg_setup_refs_stripped(&stripped_source),
-    };
+    });
 
     let mut analyses = source_cache
         .analyses
         .lock()
         .expect("TeX source analysis cache mutex poisoned");
     if let Some(cached) = analyses.get(source_path) {
-        return Ok(cached.clone());
+        return Ok(Arc::clone(cached));
     }
-    analyses.insert(source_path.to_path_buf(), analysis.clone());
+    analyses.insert(source_path.to_path_buf(), Arc::clone(&analysis));
     Ok(analysis)
 }
 
@@ -6357,7 +6364,7 @@ fn collect_eps_conversion_jobs_from_source(
 
     for dependency in active_include_dependencies(&analysis, context.includeonly)
         .into_iter()
-        .chain(analysis.input_dependencies)
+        .chain(analysis.input_dependencies.iter().cloned())
     {
         if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, &dependency)? {
             let dependency_graphic_path_count = graphic_paths.len();
@@ -6461,7 +6468,7 @@ fn collect_svg_conversion_jobs_from_source(
 
     for dependency in active_include_dependencies(&analysis, context.includeonly)
         .into_iter()
-        .chain(analysis.input_dependencies)
+        .chain(analysis.input_dependencies.iter().cloned())
     {
         if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, &dependency)? {
             let dependency_svg_path_count = svg_paths.len();
@@ -8654,15 +8661,12 @@ fn external_tool_cache_is_fresh_for_outputs(
     signature: &str,
     output_paths: &[PathBuf],
 ) -> Result<bool> {
-    if !state_path.exists() || output_paths.iter().any(|path| !path.exists()) {
+    if output_paths.iter().any(|path| !path.exists()) {
         return Ok(false);
     }
-    let source = fs::read_to_string(state_path).with_context(|| {
-        format!(
-            "failed to read external tool state {}",
-            state_path.display()
-        )
-    })?;
+    let Some(source) = read_optional_text_file(state_path, "external tool state")? else {
+        return Ok(false);
+    };
     let state: ExternalToolState = toml::from_str(&source).with_context(|| {
         format!(
             "failed to parse external tool state {}",
@@ -9772,14 +9776,22 @@ fn environment_signature(vars: &[&str]) -> String {
 }
 
 fn read_build_state_if_exists(state_path: &Path) -> Result<Option<BuildState>> {
-    if !state_path.exists() {
+    let Some(source) = read_optional_text_file(state_path, "build state")? else {
         return Ok(None);
-    }
-    let source = fs::read_to_string(state_path)
-        .with_context(|| format!("failed to read build state {}", state_path.display()))?;
+    };
     let state: BuildState = toml::from_str(&source)
         .with_context(|| format!("failed to parse build state {}", state_path.display()))?;
     Ok(Some(state))
+}
+
+fn read_optional_text_file(path: &Path, description: &str) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(source) => Ok(Some(source)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to read {description} {}", path.display()))
+        }
+    }
 }
 
 fn build_state_is_compatible(state: &BuildState, mode_key: &str, pdf_path: &Path) -> bool {
@@ -9928,11 +9940,9 @@ fn write_build_state_from_fingerprints(
 }
 
 fn previous_bib_input_map(state_path: &Path) -> Result<HashMap<String, FileFingerprint>> {
-    if !state_path.exists() {
+    let Some(source) = read_optional_text_file(state_path, "bibliography state")? else {
         return Ok(HashMap::new());
-    }
-    let source = fs::read_to_string(state_path)
-        .with_context(|| format!("failed to read bibliography state {}", state_path.display()))?;
+    };
     let state: BibState = toml::from_str(&source).with_context(|| {
         format!(
             "failed to parse bibliography state {}",
@@ -9947,11 +9957,9 @@ fn previous_bib_input_map(state_path: &Path) -> Result<HashMap<String, FileFinge
 }
 
 fn previous_index_input_map(state_path: &Path) -> Result<HashMap<String, FileFingerprint>> {
-    if !state_path.exists() {
+    let Some(source) = read_optional_text_file(state_path, "index state")? else {
         return Ok(HashMap::new());
-    }
-    let source = fs::read_to_string(state_path)
-        .with_context(|| format!("failed to read index state {}", state_path.display()))?;
+    };
     let state: IndexState = toml::from_str(&source)
         .with_context(|| format!("failed to parse index state {}", state_path.display()))?;
     if state.version == INDEX_STATE_VERSION {
@@ -9962,15 +9970,9 @@ fn previous_index_input_map(state_path: &Path) -> Result<HashMap<String, FileFin
 }
 
 fn previous_external_tool_input_map(state_path: &Path) -> Result<HashMap<String, FileFingerprint>> {
-    if !state_path.exists() {
+    let Some(source) = read_optional_text_file(state_path, "external tool state")? else {
         return Ok(HashMap::new());
-    }
-    let source = fs::read_to_string(state_path).with_context(|| {
-        format!(
-            "failed to read external tool state {}",
-            state_path.display()
-        )
-    })?;
+    };
     let state: ExternalToolState = toml::from_str(&source).with_context(|| {
         format!(
             "failed to parse external tool state {}",
@@ -10377,22 +10379,75 @@ where
     paths.sort();
     paths.dedup();
 
-    let mut fingerprints = Vec::new();
-    for path in paths {
-        if !path.is_file() {
-            continue;
+    let mut fingerprints = if paths.len() >= 16 {
+        parallel_output_file_snapshot(&paths)?
+    } else {
+        let mut fingerprints = Vec::new();
+        for path in paths {
+            if let Some(fingerprint) = generated_output_fingerprint(&path)? {
+                fingerprints.push(fingerprint);
+            }
         }
-        let bytes = fs::read(&path)
-            .with_context(|| format!("failed to read generated output {}", path.display()))?;
-        fingerprints.push(GeneratedOutputFingerprint {
-            path: canonical_or_original(&path).display().to_string(),
-            len: bytes.len() as u64,
-            hash: content_hash(&bytes),
-        });
-    }
+        fingerprints
+    };
     fingerprints.sort_by(|left, right| left.path.cmp(&right.path));
     fingerprints.dedup_by(|left, right| left.path == right.path);
     Ok(fingerprints)
+}
+
+fn parallel_output_file_snapshot(paths: &[PathBuf]) -> Result<Vec<GeneratedOutputFingerprint>> {
+    let worker_count = thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(1)
+        .min(paths.len());
+    if worker_count <= 1 {
+        let mut fingerprints = Vec::new();
+        for path in paths {
+            if let Some(fingerprint) = generated_output_fingerprint(path)? {
+                fingerprints.push(fingerprint);
+            }
+        }
+        return Ok(fingerprints);
+    }
+
+    let chunk_size = paths.len().div_ceil(worker_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for chunk in paths.chunks(chunk_size) {
+            handles.push(scope.spawn(move || {
+                let mut fingerprints = Vec::new();
+                for path in chunk {
+                    if let Some(fingerprint) = generated_output_fingerprint(path)? {
+                        fingerprints.push(fingerprint);
+                    }
+                }
+                Ok::<_, anyhow::Error>(fingerprints)
+            }));
+        }
+
+        let mut fingerprints = Vec::new();
+        for handle in handles {
+            fingerprints.extend(
+                handle
+                    .join()
+                    .map_err(|_| anyhow!("generated-output snapshot worker panicked"))??,
+            );
+        }
+        Ok(fingerprints)
+    })
+}
+
+fn generated_output_fingerprint(path: &Path) -> Result<Option<GeneratedOutputFingerprint>> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let bytes = fs::read(path)
+        .with_context(|| format!("failed to read generated output {}", path.display()))?;
+    Ok(Some(GeneratedOutputFingerprint {
+        path: canonical_or_original(path).display().to_string(),
+        len: bytes.len() as u64,
+        hash: content_hash(&bytes),
+    }))
 }
 
 fn generated_output_snapshot(
@@ -10690,11 +10745,20 @@ fn fingerprint_effective_tex_path_reusing(
         return Ok(None);
     };
     let path = canonical.display().to_string();
+    let hash_prefix = mode.hash_prefix();
+    if let Some(fingerprint) =
+        previous
+            .and_then(|previous| previous.get(&path))
+            .filter(|fingerprint| {
+                fingerprint.modified_ns == modified_ns && fingerprint.hash.starts_with(hash_prefix)
+            })
+    {
+        return Ok(Some(fingerprint.clone()));
+    }
     let bytes = fs::read(&canonical)
         .with_context(|| format!("failed to read TeX source {}", canonical.display()))?;
     let effective = effective_tex_bytes(&bytes, mode);
     let len = effective.len() as u64;
-    let hash_prefix = mode.hash_prefix();
     let hash = previous
         .and_then(|previous| previous.get(&path))
         .filter(|fingerprint| {
@@ -10757,14 +10821,14 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
         let Some((_, modified_ns)) = file_metadata_fingerprint(path)? else {
             return Ok(false);
         };
+        if modified_ns == input.modified_ns {
+            return Ok(true);
+        }
         let bytes =
             fs::read(path).with_context(|| format!("failed to read input {}", path.display()))?;
         let effective = effective_tex_bytes(&bytes, mode);
         if effective.len() as u64 != input.len {
             return Ok(false);
-        }
-        if modified_ns == input.modified_ns {
-            return Ok(true);
         }
         return Ok(format!("{:016x}", content_hash(&effective)) == expected_hash);
     }
@@ -13144,6 +13208,47 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn effective_tex_fingerprint_reuses_previous_metadata_without_reading() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = unique_temp_dir("texpilot-effective-fingerprint-reuse");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let input = root.join("main.tex");
+        fs::write(
+            &input,
+            "\\documentclass{article}\n\\begin{document}A\\end{document}\n",
+        )
+        .expect("failed to write input");
+
+        let initial = fingerprint_effective_tex_path_reusing(&input, None, EffectiveTexMode::Root)
+            .expect("failed to fingerprint TeX input")
+            .expect("fingerprint should exist");
+        let mut previous = HashMap::new();
+        previous.insert(initial.path.clone(), initial.clone());
+
+        let original_permissions = fs::metadata(&input)
+            .expect("failed to inspect input")
+            .permissions();
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o000))
+            .expect("failed to make input unreadable");
+
+        let reused =
+            fingerprint_effective_tex_path_reusing(&input, Some(&previous), EffectiveTexMode::Root)
+                .expect("unchanged effective fingerprint should not read file")
+                .expect("fingerprint should exist");
+        assert_eq!(reused, initial);
+        assert!(
+            input_fingerprint_is_fresh(&initial)
+                .expect("unchanged effective freshness should not read file"),
+            "{initial:#?}"
+        );
+
+        fs::set_permissions(&input, original_permissions).expect("failed to restore permissions");
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn input_freshness_cache_reuses_previous_check_result() {
         let root = unique_temp_dir("texpilot-input-freshness-cache");
@@ -13671,6 +13776,32 @@ mod tests {
         assert!(paths.iter().any(|path| path.ends_with("chapter.aux")));
         assert!(!paths.iter().any(|path| path.ends_with("main.log")));
         assert!(!paths.iter().any(|path| path.ends_with("main.pdf")));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn output_file_snapshot_batches_large_path_sets() {
+        let root = unique_temp_dir("texpilot-output-snapshot-batch");
+        fs::create_dir_all(&root).expect("failed to create temp output dir");
+        let mut paths = Vec::new();
+        for index in 0..24 {
+            let path = root.join(format!("generated-{index}.aux"));
+            fs::write(&path, format!("generated {index}\n"))
+                .expect("failed to write generated output");
+            paths.push(path);
+        }
+        paths.push(root.join("missing.aux"));
+        paths.push(paths[3].clone());
+
+        let snapshot = output_file_snapshot(paths).expect("output snapshot failed");
+        assert_eq!(snapshot.len(), 24, "{snapshot:#?}");
+        let mut seen = HashSet::new();
+        for fingerprint in snapshot {
+            assert!(fingerprint.path.ends_with(".aux"), "{fingerprint:#?}");
+            assert!(fingerprint.len > 0, "{fingerprint:#?}");
+            assert!(seen.insert(fingerprint.path), "duplicate snapshot entry");
+        }
 
         let _ = fs::remove_dir_all(root);
     }
