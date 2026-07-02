@@ -1,0 +1,56 @@
+% icmlcustomheader.sty
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{icmlcustomheader}
+
+\RequirePackage{fancyhdr}
+\RequirePackage{hyperref}
+\RequirePackage{etoolbox}
+
+% Adjust header height for two-line header
+\setlength{\headheight}{28pt}
+\setlength{\headsep}{12pt}
+
+% Store the title
+\newcommand{\@runningtitle}{}
+\renewcommand{\icmlrunningtitle}[1]{\gdef\@runningtitle{#1}}
+
+% Counter for current section
+\newcounter{currentsection}
+\setcounter{currentsection}{0}
+
+% Command to set section header line
+\newcommand{\sectionheaderline}[1]{\gdef\@sectionline{#1}}
+\newcommand{\@sectionline}{}
+
+% Helper for clickable sections with bold highlighting
+\newcommand{\seclink}[3]{%
+  \ifnum#2=\value{currentsection}
+    \textbf{\hyperref[#1]{Sec #2: #3}}%
+  \else
+    \hyperref[#1]{Sec #2: #3}%
+  \fi
+}
+
+% Auto-increment current section when \section is called
+\pretocmd{\section}{\stepcounter{currentsection}}{}{}
+
+% Custom page style
+\fancypagestyle{icmlcustom}{%
+  \fancyhf{}
+  \fancyhead[C]{%
+    \begin{tabular}{@{}c@{}}
+      \small\textbf{\@runningtitle}\\
+      \small\@sectionline
+    \end{tabular}
+  }
+  \fancyfoot[C]{\thepage}
+  \renewcommand{\headrulewidth}{0.4pt}
+  \renewcommand{\footrulewidth}{0pt}
+}
+
+\AtBeginDocument{%
+  \thispagestyle{empty}
+  \pagestyle{icmlcustom}
+}
+
+\endinput

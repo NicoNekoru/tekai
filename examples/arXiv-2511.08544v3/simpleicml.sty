@@ -1,0 +1,244 @@
+% simpleicml.sty -- Hardened AI research paper style for Overleaf
+
+\NeedsTeXFormat{LaTeX2e}
+
+\ProvidesPackage{simpleicml}[2025/10/24 Hardened AI research paper style]
+
+\RequirePackage{kvoptions}
+\RequirePackage{etoolbox}
+
+\SetupKeyvalOptions{
+  family=simpleicml,
+  prefix=simpleicml@
+}
+
+\DeclareStringOption[0072B2]{accent}     % HTML hex, no #
+\DeclareStringOption[palatino]{font}     % palatino|times (pdfLaTeX)
+\DeclareStringOption[sans]{headings}     % sans|serif
+
+\ProcessKeyvalOptions*
+
+\RequirePackage{iftex}
+
+% Layout (load geometry first)
+\RequirePackage{geometry}
+\geometry{
+  letterpaper,
+  left=0.65in,
+  right=0.65in,
+  top=0.90in,
+  bottom=0.85in
+}
+
+\linespread{1.05}
+\setlength{\parindent}{1.2em}
+\setlength{\parskip}{0pt plus 1pt}
+\setlength{\columnsep}{18pt}
+
+% Guard common clashes before math fonts
+\makeatletter
+\@ifundefined{Bbbk}{}{%
+  \let\Bbbk\@undefined
+}
+\@ifundefined{openbox}{}{%
+  \let\openbox\@undefined
+}
+\makeatother
+
+% Fonts & math
+\ifPDFTeX
+  \ifstrequal{\simpleicml@font}{times}{
+    \RequirePackage{newtxtext,newtxmath}
+  }{
+    \RequirePackage{newpxtext,newpxmath}
+  }
+  % Safe sans to avoid \qhv@scale clashes
+  \renewcommand{\sfdefault}{lmss}
+  \renewcommand{\familydefault}{\rmdefault}
+\else
+  \RequirePackage{fontspec}
+  \RequirePackage{unicode-math}
+  \setmainfont{Source Serif 4}[
+    Ligatures=TeX,
+    Extension=.otf,
+    UprightFont = *-Regular,
+    BoldFont = *-Semibold,
+    ItalicFont = *-Italic,
+    BoldItalicFont = *-SemiboldItalic
+  ]
+  \setsansfont{Source Sans 3}[Scale=0.95,Ligatures=TeX]
+  \setmonofont{JetBrains Mono}[Scale=MatchLowercase]
+  \setmathfont{STIX Two Math}
+  \renewcommand{\familydefault}{\rmdefault}
+\fi
+
+% Undefine qhv@scale before loading microtype to avoid clash
+\makeatletter
+\@ifundefined{qhv@scale}{}{%
+  \let\qhv@scale\@undefined
+}
+\makeatother
+
+% Load microtype AFTER fonts to avoid \qhv@scale redefinition
+\RequirePackage{microtype}
+\ifPDFTeX
+  \microtypesetup{protrusion=true,expansion=true}
+\else
+  % Safer defaults for XeLaTeX/LuaLaTeX
+  \microtypesetup{protrusion=true,expansion=false}
+\fi
+
+% Colors
+\RequirePackage{xcolor}
+    \definecolor{myrefcolor}{rgb}{0.8,0.2,0.2} % Custom red for refs
+    \definecolor{mycitecolor}{rgb}{0.2,0.6,0.2} % Custom green for cites
+\makeatletter
+\edef\temp@icmlcolor{\simpleicml@accent}
+\expandafter\definecolor\expandafter{ICMLAccent}{HTML}{\temp@icmlcolor}
+\makeatother
+
+\definecolor{HeadDark}{HTML}{222222}
+\definecolor{CapGray}{gray}{0.2}
+
+% Headings
+\RequirePackage{titlesec}
+
+\makeatletter
+\newcommand{\simpleicml@headingfont}{}
+\ifstrequal{\simpleicml@headings}{serif}{
+  \renewcommand{\simpleicml@headingfont}{\normalfont\bfseries\color{HeadDark}}
+}{
+  \renewcommand{\simpleicml@headingfont}{\sffamily\bfseries\color{HeadDark}}
+}
+
+\titleformat{\section}
+  {\simpleicml@headingfont\Large\raggedright}{\thesection}{1em}{}
+\titleformat{\subsection}
+  {\simpleicml@headingfont\large\raggedright}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}
+  {\simpleicml@headingfont\normalsize\raggedright}{\thesubsubsection}{1em}{}
+
+\titlespacing*{\section}{0pt}{0.7ex}{0.5ex}
+\titlespacing*{\subsection}{0pt}{0.7ex}{0.5ex}
+\makeatother
+
+% Captions
+\RequirePackage{caption}
+\captionsetup{
+  labelfont={bf,color=CapGray},
+  textfont=footnotesize,
+  labelsep=period,
+  belowskip=0.5em,
+  aboveskip=0.5em
+}
+\captionsetup[lstlisting]{font=footnotesize}
+
+% Hyperref
+\RequirePackage{hyperref}
+\hypersetup{
+  linkbordercolor=myrefcolor,
+  citebordercolor=mycitecolor,
+}
+    
+\makeatletter
+\newcommand{\icmlpdfinfo}[1]{\hypersetup{#1}}
+\makeatother
+
+% Header/footer with running title (SAFE headrule: no @-internals)
+\RequirePackage{fancyhdr}
+\setlength{\headheight}{13pt}
+\setlength{\headsep}{4pt}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.3pt}
+
+% Draw a colored rule using public lengths only
+\renewcommand{\headrule}{\color{ICMLAccent}\rule{\headwidth}{\headrulewidth}}
+
+\makeatletter
+\newcommand{\icmlrunningtitle}[1]{\def\@icmlrunningtitle{#1}}
+\newcommand{\@icmlrunningtitle}{}
+\newcommand{\theicmltitle}{%
+  \ifx\@icmlrunningtitle\empty
+    \@icmltitle
+  \else
+    \@icmlrunningtitle
+  \fi
+}
+\makeatother
+
+\fancyhead[C]{\scriptsize \theicmltitle}
+\fancyfoot[C]{\thepage}
+
+\setcounter{secnumdepth}{3}
+
+% Tables
+\RequirePackage{booktabs}
+\RequirePackage{siunitx}
+\sisetup{
+  detect-all,
+  output-decimal-marker = {.},
+  table-number-alignment = center,
+  table-figures-integer = 2,
+  table-figures-decimal = 3,
+  table-figures-exponent = 1
+}
+
+\newenvironment{compacttable}
+  {\begingroup\setlength{\tabcolsep}{4pt}}
+  {\endgroup}
+
+% Title/Author/Etc + maketitle
+\makeatletter
+
+% Define commands to store title info
+\def\@icmltitle{}
+\def\@icmlauthors{}
+\def\@icmlaffiliations{}
+\def\@icmlabstract{}
+
+\newcommand{\icmltitle}[1]{\gdef\@icmltitle{#1}}
+\newcommand{\icmlauthors}[1]{\gdef\@icmlauthors{#1}}
+\newcommand{\icmlaffiliations}[1]{\gdef\@icmlaffiliations{#1}}
+\newcommand{\icmlabstract}[1]{\gdef\@icmlabstract{#1}}
+% Global savebox for title
+\newsavebox{\@icmltitlebox}
+
+\newcommand{\icmlmaketitle}{%
+  % Build title in a global box FIRST
+  \global\setbox\@icmltitlebox=\vbox{%
+    \begin{center}%
+      {\LARGE\bfseries \@icmltitle \par}%
+      \vspace{0.6em}%
+      {\large \@icmlauthors \par}%
+      \vspace{0.3em}%
+      {\normalsize
+        \begin{minipage}{0.96\textwidth}\centering
+          \@icmlaffiliations\par
+        \end{minipage}%
+      }\par
+      \vspace{0.6em}
+      \noindent
+      {\setlength{\fboxsep}{10pt}%
+          \colorbox{ICMLAccent!10}{%
+            \begin{minipage}{0.95\textwidth}%
+              \@icmlabstract
+            \end{minipage}%
+          }%
+      }\par
+    \end{center}%
+  }%
+  % Now use the box in twocolumn
+  \thispagestyle{empty}%
+  \twocolumn[\unvbox\@icmltitlebox]
+}
+
+\makeatother
+
+% Penalties
+\clubpenalty=1000
+\widowpenalty=1000
+\displaywidowpenalty=1000
+\interfootnotelinepenalty=10000
+
+\endinput

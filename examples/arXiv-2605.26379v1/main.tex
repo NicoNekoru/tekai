@@ -1,0 +1,650 @@
+\documentclass{article}
+\PassOptionsToPackage{numbers}{natbib}
+% \usepackage[main]{neurips_2026}
+\usepackage[preprint]{neurips_2026}
+
+\makeatletter
+\renewcommand{\@noticestring}{%
+  Code, Lean proofs, and demo: \url{https://github.com/klindtlab/lejepa-identifiability}.%
+}
+\makeatother
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{graphicx}
+\usepackage{placeins}
+\usepackage{xcolor}
+
+% Define the custom colors (Note: remove the '#' when using the HTML model)
+\definecolor{goalred}{HTML}{DD2222}
+\definecolor{startgreen}{HTML}{22CC22}
+
+% Create the shorthand commands
+\newcommand{\red}[1]{\textcolor{goalred}{#1}}
+\newcommand{\green}[1]{\textcolor{startgreen}{#1}}
+
+% \usepackage{hyperref}
+\usepackage[pagebackref=true]{hyperref} 
+\renewcommand*{\backref}[1]{} % Clear the default format
+\renewcommand*{\backrefalt}[4]{%
+  \ifcase #1 % Case for 0 citations
+    (Not cited.)%
+  \or % Case for 1 citation
+    (Cited on page #4.)%
+  \else % Case for 2+ citations
+    (Cited on pages #4.)%
+  \fi%
+}
+
+
+\usepackage{booktabs} 
+\usepackage{enumitem}
+\usepackage{wrapfig}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{remark}{Remark}
+
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,decorations.pathmorphing,calc,backgrounds,fit,shapes,decorations.markings}
+
+\usepackage[breakable, skins, theorems]{tcolorbox}
+
+
+
+% ============================================================
+% TCOLORBOX SETUP
+% ============================================================
+
+% Single counter shared across all box types (Theorem, Corollary).
+% number within= prevents inheriting section-prefix.
+\definecolor{maincolor}{RGB}{0,113,178}
+\definecolor{mainbg}{RGB}{232,243,252}
+
+\newcounter{thmcounter}
+\renewcommand{\thethmcounter}{\arabic{thmcounter}}
+
+% \thmlabel{key} attaches a label that resolves to the thmcounter value.
+% Use INSIDE the box body, not on the \begin line.
+\makeatletter
+\newcommand{\thmlabel}[1]{\protected@edef\@currentlabel{\thethmcounter}\label{#1}}
+\makeatother
+
+% Shared visual style for all boxes
+\tcbset{
+    boxstyle/.style={
+        enhanced, breakable,
+        colback=mainbg, colframe=maincolor, coltitle=white,
+        boxrule=0.8pt, arc=2pt,
+        fonttitle=\bfseries,
+        before upper={\setlength{\parskip}{4pt}},
+        top=4pt, bottom=4pt, left=6pt, right=6pt,
+    }
+}
+
+\newtcolorbox[use counter=thmcounter, number within=]{theorembox}[1][]{%
+    boxstyle,
+    title={Theorem~\arabic{thmcounter}\ifx\\#1\\\else\ (#1)\fi},
+}
+
+\newtcolorbox[use counter=thmcounter, number within=]{corollarybox}[1][]{%
+    boxstyle,
+    title={Corollary~\arabic{thmcounter}\ifx\\#1\\\else\ (#1)\fi},
+}
+
+\newtcolorbox{theoremrestate}[1][]{%
+    boxstyle,
+    title={#1},
+}
+
+\newtcolorbox{assumptionbox}[1][]{%
+    boxstyle,
+    title={Assumptions\ifx\\#1\\\else\ (#1)\fi},
+}
+
+\newtcolorbox{mainresultbox}[1][]{%
+    boxstyle, boxrule=1.2pt,
+    title={Main Result\ifx\\#1\\\else\ (#1)\fi},
+}
+
+
+
+
+\title{When Does LeJEPA Learn a World Model?}
+
+\author{%
+  David Klindt \\
+  Cold Spring Harbor Laboratory\\
+  \texttt{klindt@cshl.edu}
+  \And
+  Yann LeCun \\
+  New York University\\
+  \texttt{yann.lecun@nyu.edu}
+  \And
+  Randall Balestriero\\
+  Brown University\\
+  \texttt{randall\_balestriero@brown.edu}
+}
+
+\begin{document}
+
+\maketitle
+
+
+
+\vspace{-10pt}
+\begin{abstract}
+\vspace{-10pt}
+A representation that scrambles the true degrees of freedom of the world cannot support reliable planning or compositional generalization. We prove that LeJEPA (alignment plus Gaussian regularization) linearly recovers the world's latent variables from nonlinear observations, a property known as \textit{linear identifiability}, in a broad class of worlds where latents evolve under stationary, additive-noise transitions. Our main result is that among all such worlds, the Gaussian is the \textit{unique} latent distribution for which this guarantee holds. The forward direction rests on a spectral decomposition in which each degree of nonlinearity is strictly penalized by alignment, making the linear map the optimum; the converse rules out every non-Gaussian alternative. We further prove an \textit{approximate identifiability} result where the guarantee degrades gracefully, and show that linear, orthogonal identifiability enables \textit{optimal latent-space planning}. We validate the theory with experiments ranging from 2D examples to 1024-dimensional latents, including distributional ablations and pixel-based robotic control. Our theory turns an empirically successful recipe into a mathematical guarantee, providing the foundation for building World Models that provably recover the structure of the world.
+\end{abstract}
+
+
+
+
+% ============================================================
+% SECTION 1: INTRODUCTION
+% ============================================================
+\vspace{-15pt}
+\section{Introduction}
+\vspace{-10pt}
+The promise of self-supervised learning (SSL) is that we can learn useful representations of the world without labeled data, just by observing and predicting. Joint-Embedding Predictive Architectures \citep[JEPAs,][]{lecun2022} pursue this vision by training a representation to produce similar embeddings for related views of the same input, while a regularizer prevents the representation from collapsing to a trivial constant \citep{balestriero2025lejepa, bardes2022}. The resulting representations have proven remarkably effective across image~\citep{assran2023ijepa}, video~\citep{bardes2024vjepa, assran2025vjepa2}, and latent-space planning~\citep{sobal2025pldm, zhou2025dinowm, maes2026leworldmodel}. However, a deeper question remains:
+\emph{When is a learned representation a World Model, i.e., a faithful map of the world's latent structure?}
+
+% ============================================================
+% SECTION 0: Teaser Figure
+% ============================================================
+\begin{figure}[h!]
+    % \vspace{-3pt}
+    \centering
+    \vspace{-5pt}
+    \includegraphics[width=0.99\textwidth]{figures/fig_lejepa_demo.jpg}
+    \vspace{-15pt}
+    \caption{
+        \textbf{LeJEPA learns the World Model.}
+        \textbf{(left)} The world has independent Gaussian \textit{latent variables}.
+        \textbf{(center)} An unknown nonlinear process scrambles them into the \textit{data} we observe.
+        \textbf{(right)} LeJEPA \citep{balestriero2025lejepa} recovers the latent variables up to rotation. We prove this is the \textit{unique} optimum.
+    }
+    \label{fig:teaser}
+    \vspace{-10pt}
+\end{figure}
+
+
+Our answer: \textit{When it linearly recovers the world's latent variables} (Fig.~\ref{fig:teaser}). A representation that entangles unrelated latent variables, scrambling an object's position with its color, or mixing velocity with texture, may score well on narrow tasks but will fail when the world changes \citep{scholkopf2021toward}. What we need is \emph{linear identifiability}, i.e., a mathematical guarantee that the learned representation recovers the underlying latent variables, up to simple symmetries \citep{hyvarinen2024identifiability}. Practitioners already test for this routinely. Every time a representation is evaluated via \textit{linear probing} \citep{alain2016understanding}, the implicit question is whether the model has learned a \textit{linear representation} of the latent variables \citep{rumelhart_model_1973, hinton1986learning, smolensky_tensor_1990, arora_linear_2018, park_linear_2024, klindt2025superposition}.
+Without this, linear probes cannot recover latent variables exactly. Linear identifiability is thus a \textit{necessary}, albeit not \textit{sufficient} \citep{pacela2026stopprobingstartcoding}, condition for faithful linear probing.
+
+Yet no identifiability results exist for JEPAs. This has remained out of reach because prior methods rely on implicit collapse prevention \citep{chen2021exploring, grill2020, caron2021emerging} with unspecified embedding distributions.
+A recent shift changes the picture: LeJEPA \citep{balestriero2025lejepa} prevents collapse by explicitly regularizing the embedding distribution toward an isotropic Gaussian via Sketched Isotropic Gaussian Regularization (SIGReg). 
+Along with an alignment loss this enables stable end-to-end training from raw pixels \citep{maes2026leworldmodel}, but whether the resulting representation actually recovers the world's latent variables still remains open.
+
+\paragraph{Contributions.}
+We close this gap with the first identifiability result for JEPAs (Fig.~\ref{fig:overview}).
+We consider a broad class of worlds with Gaussian latent variables and positive pairs from a stationary process with independent, additive-noise transitions, which are maximum-entropy choices \citep{jaynes1957information}. We prove that LeJEPA learns a linearly identifiable representation \textit{if and only if} the latent variables are \textit{Gaussian}. The forward direction rests on a spectral decomposition penalizing every degree of nonlinearity; the converse rules out every non-Gaussian alternative. We further prove that identifiability degrades gracefully when the objectives are only \textit{approximately} satisfied, and that linear identifiability suffices for \textit{optimal latent-space planning}. We validate empirically across 2D mixings, 1024-dim latents, distributional ablations, pixel-based robotic control, and the approximate bound (Sec.~\ref{sec:experiments}).
+
+
+
+
+\section{Related Work}
+\label{sec:related}
+
+
+\paragraph{Representation Learning.}
+JEPAs \citep{lecun2022, assran2023ijepa, bardes2024vjepa, assran2025vjepa2} predict in representation space rather than pixel space, avoiding capacity wasted on irrelevant detail. More generally, SSL pulls positive views of the same content together while preventing collapse. Contrastive methods \citep{chen2020simple, he2020momentum} use negatives explicitly \citep[InfoNCE,][]{oord2018representation}; non-contrastive methods substitute stop-gradient teachers \citep{grill2020, chen2021exploring}, covariance regularization \citep[VICReg,][]{bardes2022, zbontar2021}, or self-distillation with feature clustering \citep{caron2021emerging, simeoni2025dinov3}. LeJEPA \citep{balestriero2025lejepa} adds an explicit Gaussianity regularizer (SIGReg); LeWorldModel \citep{maes2026leworldmodel} scales the recipe to action-conditioned control. InfoNCE, VICReg, and LeJEPA span a hierarchy of Gaussianity constraints, from implicit \citep{wang2020understanding, li2023rethinking, eftekhari2025importance, betser2026infonce} through second-moment to full; we test all three (Tab.~\ref{tab:scaling-comparison}, App.~\ref{app:gennorm}).
+
+\paragraph{World Models.} The internal-model concept spans cognitive science, control theory, and modern ML. Cognitive scientists framed mental simulation as the substrate of reasoning, perception, and motor control \citep{craik1943,tolman1948,johnson_laird_1983,wolpert1995internal,gregory1980perceptions}, with free-energy \citep{friston2010free} and probabilistic-program \citep{lake2015human} formalizations of the brain as a generative model. Cybernetics extended this to engineered systems \citep{conant1970good,francis1976}, while classical control developed dynamics on a given state space \citep{bellman1957,kalman1960}. Neural world models progressed from recurrent controller-model pairs \citep{nguyen1990neural,schmidhuber1990making,sutton1990dyna} through latent dynamics from pixels \citep{watter2015embed,oh2015action,finn2016unsupervised,ha2018world,hafner2019planet}, value-equivalent prediction \citep{schrittwieser2020mastering}, generative \citep{hafner2025dreamerv3} and joint-embedding predictive \citep{lecun2022,maes2026leworldmodel} architectures, to large generative video simulators \citep{brooks2024sora,bruce2024genie}. The JEPA argument is that pixel-perfect prediction wastes capacity \citep{lecun2022}. We address the encoder side of this picture; classical control applies in the learned coordinates (Thm.~\ref{thm:planning}).
+
+
+\paragraph{Identifiability.} Nonlinear ICA is unidentifiable without additional structure \citep{hyvarinen1999,locatello2019}. Identifiability becomes possible when the world supplies it: non-stationarity \citep{hyvarinen2016}, temporal dependence \citep{hyvarinen2017,klindt2021}, auxiliary variables \citep{khemakhem2020,hyvarinen_nonlinear_2019}, contrastive learning \citep{zimmermann2021}, augmentation \citep{vonkugelgen2021}, mechanism sparsity \citep{lachapelle2022}, interventions \citep{ahuja2023,buchholz2024}, or supervision \citep{reizinger2024cross,roeder2021linear}. These results typically constrain the representation to a smooth diffeomorphism; our Hermite approach works for arbitrary measurable maps. Most closely related is slow feature analysis (SFA) \citep{wiskott2002}, which JEPA objectives empirically recover \citep{sobal2022slow}; App.~\ref{app:prior-work} contrasts in depth with SFA theory \citep{sprekeler2014}. %, permutation-identifiable extraction (with error accumulation and poor scaling) against our simultaneous, orthogonally-identifiable one. 
+Similar spectral analysis in representation space has previously characterized other SSL objectives \citep{balestriero2022contrastivenoncontrastiveselfsupervisedlearning}, and our Thm.~\ref{thm:approx} connects to recent quantitative stability work \citep{buchholz2025robustness,nielsen2025does}. The common lesson is that identifiability is always a joint statement about the \textit{World} (`data generating process') and the \textit{Learner} (`learning objective', LeJEPA).
+
+
+
+
+\begin{figure}[t]
+    \centering
+    \input{figures/dgp.tex}
+    \vspace{10pt}
+    \caption{
+        \textbf{LeJEPA Theory Illustration.} 
+        \textbf{(left)} The world has clean latent structure (Gaussian, disentangled) with correlated positive pairs. 
+        \textbf{(center)} An unknown nonlinear process produces the observations we actually see, scrambling the latent structure. 
+        \textbf{(right)} LeJEPA trains a representation with two objectives: pull positive pairs together (\textit{attract}) and keep the embedding distribution Gaussian (SIGReg) to prevent collapse. We prove that the learned representation must be a rotation of the true latents, i.e., the representation is forced to learn the correct World Model (Thm.~\ref{thm:main}).
+    }
+    \label{fig:overview}
+    % \vspace{-10pt}
+\end{figure}
+
+
+% ============================================================
+% SECTION 2: THE WORLD MODEL AND THE Learning Objective
+% ============================================================
+\section{The World and the Learner}\label{sec:setup}
+
+What does it mean to \textit{Learn the World Model?}
+Suppose the world has latent variables $z \in \mathbb{R}^n$, for instance, position, velocity, color or lighting.
+These degrees of freedom are called \emph{latent variables} / \textit{sources} in the ICA literature, or \emph{factors of variation} \citep{bengio2013representation} in representation learning.
+We never observe $z$ directly.
+Instead, an unknown process $g$ generates the data we see: $x = g(z)$.\footnote{More philosophically, we only ever observe the \textit{shadows} \((x)\) of \textit{reality} \((z)\), \textit{projected} \((g)\) onto the walls of \textit{Plato}'s cave.}
+Think of $g$ as rendering a 3D scene into an image, or mapping physical states to sensor readings.
+The process $g$ can be highly nonlinear, it scrambles the clean latent structure into complicated, entangled observations.
+We train a representation $f$ that maps observations back to representations: $y = f(x)$.
+The ideal outcome is that $f$ undoes $g$: the composed map $h = f \circ g$ should recover the original latent variables $z$.
+Of course, perfect recovery is too much to hope for, there are symmetries that cannot be resolved like the rotation invariance of a Gaussian.
+We will show that $h$ must be a \emph{linear function} of the true latents: $h(z) = Qz$.
+This is a necessary condition for linear probes to work.
+
+
+
+\subsection{The World}\label{sec:world-model}
+The world specifies a joint distribution $p(z, z')$ over positive pairs $(g(z), g(z'))$.
+In SSL, these are two views of the same underlying content, e.g., two frames of a video, two augmentations of an image, two nearby time steps of a trajectory. A broad class of worlds is defined by three assumptions:
+
+\begin{assumptionbox}[World]\label{assumptions}
+\begin{enumerate}[label=(\roman*), leftmargin=32pt, itemsep=2pt]
+    \item \textbf{Independence.}
+    $p(z_i) \perp p(z_j)$ and transitions $p(z'_i \mid z_i) \perp p(z'_j \mid z_j)$ for all $i \neq j$.
+
+    \item \textbf{Stationarity.}
+    Both views share the same marginal: $p(z) = p(z')$.
+
+    \item \textbf{Additive noise.} $z'_i = m_i(z_i) + \eta_i$ with $\eta_i$ independent of $z_i$.
+\end{enumerate}
+\end{assumptionbox}
+
+Independent latent variables are the standard assumption shared by ICA and disentangled representation learning \citep{hyvarinen2024identifiability, bengio2013representation}.
+Stationarity means the generative process does not change between views.
+Additive noise is the simplest perturbation model: random fluctuations are added on top of a deterministic signal, as in sensor noise, Brownian motion, or data augmentation by jitter.
+Together, these assumptions define a general class of World Models.
+Our \textit{forward} result (Sec.~\ref{sec:thm}) will specialize this class by choosing a specific latent variable distribution (Gaussian).
+Our \textit{converse} result (Sec.~\ref{sec:converse}) shows that this the \textit{unique} choice yielding linear identifiability in this class of worlds.
+
+
+\subsubsection{The Gaussian World}\label{sec:gaussian-wm}
+
+We now make a specific distributional choice within the framework above.
+We assume \textit{Gaussian latents}, i.e., $z \sim \mathcal{N}(0, I_n)$.
+This is the maximum-entropy distribution for a given mean and covariance \citep{jaynes1957information}; it assumes as little structure as possible.
+Moreover, task-relevant latents are typically aggregates of many micro-variables, which, by the central limit theorem, tend toward Gaussianity.
+Gaussian latents and Assumptions (\ref{sec:world-model}) entail \textit{Gaussian transitions}:
+Stationarity requires $z' \sim \mathcal{N}(0, I_n)$, and the only additive-noise perturbation of a Gaussian that preserves the distribution is the Ornstein--Uhlenbeck (OU) transition \citep{uhlenbeck1930, doob1942}:
+\begin{equation}\label{eq:dgp}
+    z' = \rho\, z + \sqrt{1-\rho^2}\;\eta, \qquad \eta \sim \mathcal{N}(0, I_n),\quad \eta \perp z,
+\end{equation}
+where $\rho \in (0,1)$ controls the correlation between views.
+One can verify: $\mathbb{E}[z'] = 0$, $\mathrm{Var}(z') = \rho^2 I_n + (1-\rho^2)I_n = I_n$, and $\mathrm{Cov}(z,z') = \rho I_n$.
+The Gaussian is the \textit{unique} distribution for which a channel of this form preserves the marginal, a consequence of the Gaussian being a fixed point of convolution up to rescaling.
+The independence assumption is satisfied because the components of $z$ are independent and the noise $\eta$ has diagonal covariance, so each $(z_i, z'_i)$ evolves independently.
+
+
+\subsection{The Learner: LeJEPA}\label{sec:objective}
+
+The representation is characterized by the composed map $h = f \circ g : \mathbb{R}^n \to \mathbb{R}^n$ with $g$ the unknown generative function of the world and $f$ our learned representation.
+The two components of LeJEPA \citep{balestriero2025lejepa} training are an invariance loss pulling positive pairs together and a regularizer that shapes the embedding distribution to prevent collapse, i.e., $h$ (specifically, $f$ in $h=f \circ g$) is trained to
+\begin{equation}
+    \min_h \mathcal{L}(h) = \underbrace{\mathbb{E}\!\left[\|h(z') - h(z)\|^2\right]}_{\textbf{Alignment}} \qquad \text{s.t.} \qquad \underbrace{h(z) \sim \mathcal{N}(0, I_n)}_{\textbf{Gaussianity}}
+\end{equation}
+We model the situation where SIGReg has succeeded, i.e., $h(z)$ matches the target Gaussian; in practice this holds approximately (Sec.~\ref{sec:approx}).
+We require nothing else about $h$ except measurability so expectations are defined.
+The result thus applies to any neural network, with output dimension taken to equal the latent dimension $n$ throughout (mismatched regimes $m \neq n$ are discussed in Sec.~\ref{sec:limitations}).
+In addition, \textit{whitening} (i.e., $\mathrm{Cov}(h(z)) = I_n$) fixes $\mathbb{E}[\|h(z)\|^2] = \mathbb{E}[\|h(z')\|^2] = n$, so
+\begin{equation}\label{eq:loss-expand}
+    \mathcal{L}(h) = 2n - 2\sum_{i=1}^n \mathbb{E}\!\left[h_i(z')\, h_i(z)\right].
+\end{equation}
+Thus, \emph{minimizing distance is equivalent to maximizing correlation} between the two views. The question becomes: among all measure-preserving maps $h$ with $h(z) \sim \mathcal{N}(0, I_n)$, which achieves the highest correlation between positive pairs $h(z), h(z')$?
+
+
+% % ============================================================
+% % SPECTRAL THEORY
+% % ============================================================
+\section{Spectral Analysis of the World}\label{sec:spectral}
+
+Before proving anything, let us build intuition for the mathematical tools behind our main results. 
+
+\paragraph{Transition Operator.}
+The world defines a transition from $z$ to $z'$ (\ref{assumptions}).
+This transition induces an operator on functions: given any scalar function $h_i(z)$, define the \textit{transition operator} $T$ by $(Th_i)(z) = \mathbb{E}[h_i(z') \mid z]$, the expected value of $h_i$ at the next view, given the current state.
+This is a linear operator with a spectral decomposition: a set of eigenfunctions $\varphi_k$ satisfying $T\varphi_k = \lambda_k \varphi_k$, with eigenvalues $1 = \lambda_0 > \lambda_1 \geq \lambda_2 \geq \cdots \geq 0$.
+The eigenfunctions with the largest eigenvalues are most correlated across positive pairs, i.e., the most predictable features of the latent variables.
+This spectral perspective is the common thread behind both our forward and converse results.
+
+\paragraph{Gaussian World: Hermite Polynomials.}
+For Gaussian worlds (Sec.~\ref{sec:gaussian-wm}), the eigenfunctions are known in closed form: they are the Hermite polynomials $\{\mathrm{He}_k\}_{k \geq 0}$, the natural orthogonal basis for functions of Gaussian variables, analogous to Fourier modes for periodic functions.
+The eigenvalue of a degree-$d$ Hermite polynomial is exactly $\rho^d$, a consequence of Mehler's formula \citep{mehler1866}.
+This means any function $h_i(z)$ with zero mean and unit variance can be decomposed into a linear part (degree~1), a quadratic part (degree~2), a cubic part (degree~3), and so on, with variance fractions $w_1, w_2, w_3, \ldots$ summing to~1.
+The correlation across positive pairs decomposes:
+\begin{equation}\label{eq:corr-decomp}
+    \mathbb{E}\!\left[h_i(z')\, h_i(z)\right] = w_1 \cdot \rho + w_2 \cdot \rho^2 + w_3 \cdot \rho^3 + \cdots \;\leq\; \rho,
+\end{equation}
+with equality if and only if $w_1 = 1$, i.e., $h_i$ is linear.
+In words: \textit{any nonlinear distortion of the representation strictly reduces the correlation between positive pairs}.
+This is the key intuition.
+
+
+\paragraph{General Case: Sturm-Liouville Theory.}
+For a general latent variable distribution (not necessarily Gaussian) evolving under constant diffusion, the eigenfunctions of the transition operator are characterized by a classical Sturm--Liouville (SL) equation \citep{sprekeler2014}.
+The first non-constant eigenfunction $\varphi_1$ is always monotonic, providing identifiability up to a monotonic transformation.
+But \textit{linear} identifiability requires $\varphi_1$ to be affine, which places a strong constraint on the latent variable distribution.
+This is the engine behind our converse result (Sec.~\ref{sec:converse}): we show that only the Gaussian satisfies this constraint.
+Full details in App.~\ref{app:hermite-details} (Gauss/Hermite) and App.~\ref{app:prior-work} (SL connection).
+
+
+
+
+% ============================================================
+% SECTION 4: MAIN RESULTS
+% ============================================================
+
+
+\section{Theory}\label{sec:main}
+We state four results that together characterize when LeJEPA learns the World Model.
+Thm.~\ref{thm:main} shows that a Gaussian world is \textit{linearly identifiable} with LeJEPA.
+Thm.~\ref{thm:converse} establishes that, within the class of worlds defined in Sec.~\ref{sec:world-model}, the Gaussian is the \textit{unique} distribution with this property.
+Thm.~\ref{thm:approx} bounds the recovery error when objectives are not fully satisfied.
+Thm.~\ref{thm:planning} shows that linear identifiability enables \textit{optimal planning} in latent space.
+All proofs have been verified in Lean~4 theorem prover modulo standard background lemmas axiomatized from the literature (App.~\ref{app:lean}).
+
+
+\subsection{Forward Direction: LeJEPA Learns the World Model}\label{sec:thm}
+
+\begin{theorembox}[LeJEPA Linear Identifiability]
+\thmlabel{thm:main}
+Consider the Gaussian world (Sec.~\ref{sec:gaussian-wm}). Let $h: \mathbb{R}^n \to \mathbb{R}^n$ be any measurable map with $h(z) \sim \mathcal{N}(0, I_n)$. Then $\mathcal{L}(h) \geq 2(1-\rho)\,n$, with equality if and only if $h(z) = Qz$ for some orthogonal $Q \in O(n)$. At any such optimum, $h(z') \mid h(z) \sim \mathcal{N}(\rho\, h(z), (1-\rho^2)\,I_n)$.
+\end{theorembox}
+
+\paragraph{Proof Sketch.}
+Minimizing $\mathcal{L}$ is equivalent to maximizing $\sum_i \mathbb{E}[h_i(z') h_i(z)]$~\eqref{eq:loss-expand}.
+The spectral bound~\eqref{eq:corr-decomp} gives $\mathbb{E}[h_i(z')h_i(z)] \leq \rho$ for each component, with equality if and only if $h_i$ is linear.
+At equality, $h(z) = Qz$ for a matrix $Q$ with unit-norm rows; Gaussianity forces $QQ^\top = I_n$, so $Q$ is orthogonal.
+The transition then follows by direct substitution: $h(z') = \rho\,h(z) + \sqrt{1-\rho^2}\,Q\eta$, and since $Q$ is orthogonal, $Q\eta \sim \mathcal{N}(0, I_n)$ independently of $h(z)$.
+(Proof in App.~\ref{app:proof-forward}.)
+
+\paragraph{Interpretation.}
+The representation has no choice but to learn the full World Model.
+Any representation satisfying the two LeJEPA objectives must recover a rotation/reflection of the true latent variables \textit{and} the true transition dynamics.
+The only remaining ambiguity is a global rotation, which is inherent to the isotropic Gaussian.
+We provide an alternative proof via Dirichlet energy and the Mazur--Ulam theorem in App.~\ref{app:dirichlet}, operating in a more theoretical ($\rho \to 1$) regime.
+
+
+
+
+
+\subsection{Converse Direction: The Gaussian is Unique}\label{sec:converse}
+Thm.~\ref{thm:main} uses only that $h(z)$ has whitened covariance ($\mathrm{Cov}(h(z)) = I_n$, entailed by SIGReg, Fig.~\ref{fig:scatter}). Does the specific choice of Gaussian matter, or would any white distribution work?
+The optimal representation extracts the \textit{slowest} features of the latent process \citep{sobal2022slow}. Under additive noise, Sturm--Liouville theory orders these as increasingly oscillatory eigenfunctions \citep{sprekeler2014}; the first is always monotonic, giving identifiability up to a monotonic transformation for \emph{any} latent distribution. \emph{Linear} identifiability demands this eigenfunction be affine, and only the Gaussian satisfies this.
+
+
+\begin{theorembox}[Gaussian Uniqueness]
+\thmlabel{thm:converse}
+Consider any world satisfying Assumptions~\ref{assumptions}. Suppose every minimizer of \eqref{eq:loss-expand} with $\mathrm{Cov}(h(z)) = I_n$ is linear, $h(z) = Qz$. Then $z$ is Gaussian.
+\end{theorembox}
+
+\paragraph{Proof Sketch.} 
+Demanding an affine eigenfunction forces the \emph{score function} $(\log p)'$ of the latent distribution to be linear.
+If $\varphi(z_i) = a z_i + b$ is an eigenfunction, then $\varphi'$ is constant, and the eigenvalue equation collapses to a linear ODE for $(\log p)'$ in $z_i$.
+Solving it yields $\log p(z_i) \propto -(z_i - \mu)^2$ (the sign fixed by normalizability), which is Gaussian.
+The argument is per-component; independence of the latent variables lifts the conclusion to the joint distribution.
+(Proof in App.~\ref{app:converse-proof}.)
+
+
+
+\subsection{Approximate Identifiability}\label{sec:approx}
+
+The preceding results assume exact optimality.
+In practice, both objectives are only approximately satisfied: alignment reaches a value near but not equal to its minimum, and the regularizer enforces approximate whitening.
+Identifiability degrades gracefully in both quantities:
+
+\begin{theorembox}[Approximate Identifiability]
+\thmlabel{thm:approx}
+Consider the Gaussian world (\ref{sec:gaussian-wm}). Let $h: \mathbb{R}^n \to \mathbb{R}^n$ be measurable with $\mathbb{E}[h(z)] = 0$, satisfying:
+\textit{Approximate alignment:} $\mathcal{L}(h) \leq 2(1-\rho)\,\mathrm{tr}(\mathrm{Cov}(h(z))) + \delta$;
+\textit{Approximate whitening:} $\|\mathrm{Cov}(h(z)) - I_n\|_F \leq \varepsilon$.
+Define $D = \delta/(2\rho(1-\rho))$. Then there exists $Q \in O(n)$ such that
+\begin{equation}\label{eq:stability}
+    \mathbb{E}\!\left[\|h(z) - Qz\|^2\right] \;\leq\; D \;+\; (\varepsilon + D)^2
+\end{equation}
+\end{theorembox}
+
+\paragraph{Interpretation.}
+The bound has two pieces: a nonlinearity term $D$ measuring how far $h$ is from linear, and a distortion term $(\varepsilon + D)^2$ measuring how far the linear part is from orthogonal. Both vanish in the exact case ($\delta = \varepsilon = 0$), recovering Thm.~\ref{thm:main}. In practice the first dominates, so recovery error scales as $\delta / 2\rho(1-\rho)$: alignment is hard, whitening essentially free. (Proof in App.~\ref{app:stability}.)
+
+
+
+
+\subsection{Optimal Latent Planning}\label{sec:planning-equivalence}
+
+Theorems~\ref{thm:main}--\ref{thm:approx} characterize what the encoder recovers. We now make explicit what orthogonal identifiability buys for a key motivation of World Models: planning actions in latent space.
+
+\begin{theorembox}[Optimal Latent Planning]
+\thmlabel{thm:planning}
+Let $h(z) = Qz$ with $Q \in O(n)$, write $\hat z := h(z)$, and consider any finite-horizon optimal control problem whose stage and terminal costs $\ell, \ell_T$ are $O(n)$-invariant in the state argument:
+\begin{equation}\label{eq:orth-inv-app}
+    \ell(Rz, a) = \ell(z, a), \qquad \ell_T(Rz) = \ell_T(z), \qquad \forall\, R \in O(n).
+\end{equation}
+Let $\hat p(\cdot \mid \hat z_t, a_t)$ denote the pushforward of $p$ under $h$, and let $\hat V^*, \hat a^*_{1:T}$ denote the value function and optimal plan of the $\hat z$-space problem defined by replacing $p$ with $\hat p$ and leaving costs unchanged. Then $\hat V^*\!\big(h(z_0)\big) = V^*(z_0)$ and $\hat a^*_{1:T}\!\big(h(z_0)\big) = a^*_{1:T}(z_0)$.
+\end{theorembox}
+
+\paragraph{Interpretation.}
+Linear identifiability turns the learned representation into a useful World Model for planning: trajectories planned in the learned latent are mathematically identical to trajectories planned in the true world, with the same actions and the same value.
+(Proof in App.~\ref{app:planning}.)
+
+
+
+% ============================================================
+% SECTION 6: EXPERIMENTS
+% ============================================================
+\section{Experiments}\label{sec:experiments}
+
+We validate each result: linear identifiability on Gaussian latent variables (Sec.~\ref{sec:exp-gaussian}, Thm.~\ref{thm:main}); 
+converse on a latent-distribution sweep and RL-policy~\citep{maes2026leworldmodel} latents (Sec.~\ref{sec:exp-nongauss}, Thm.~\ref{thm:converse});
+approximate bound across all runs (Sec.~\ref{sec:exp-bound}, Thm.~\ref{thm:approx}); and near-optimal latent planning~\citep{tassa2018dmcontrol} (Sec.~\ref{sec:planning-exp}, Thm.~\ref{thm:planning}).
+
+
+%;---------------------------------------------------------
+\subsection{Forward: Linear Identifiability from Gaussian Latent Variables}
+\label{sec:exp-gaussian}
+
+We first verify Thm.~\ref{thm:main} in a controlled 2D setting.
+We sample latents $z \sim \mathcal{N}(0, I_2)$ and apply four nonlinear mixing functions (Figures~\ref{fig:teaser}, \ref{fig:demo}):
+a norm-dependent rotation $g(z) = R(\pi\|z\|_2)\,z$ producing a spiral \citep[c.f.][]{buchholz2025robustness},
+a sinusoidal shear $g(z_1, z_2) = (z_1 + \sin(1.5\,z_2),\; z_2)$,
+a parabolic shear $g(z_1, z_2) = (z_1,\; z_2 + z_1^2)$,
+and a RealNVP-style coupling layer \citep{dinh2016density}.
+All four are diffeomorphisms.
+In addition, the spiral is measure-preserving, demonstrating that Gaussianity of the observations alone does not suffice for identifiability; alignment is essential.
+We train a 4-layer MLP with the LeJEPA loss $\mathcal{L} = \lambda\,\mathcal{L}_{\mathrm{SIG}} + (1-\lambda)\,\mathcal{L}_{\mathrm{inv}}$, where positive pairs are generated via the OU transition in~\eqref{eq:dgp}.
+Fig.~\ref{fig:demo} shows that the learned representation inverts each nonlinear mixing up to rotation, consistent with Thm.~\ref{thm:main}.
+A grid search over $\lambda$ and $\rho$ (App.~\ref{app:grid}) shows: too much Gaussianity ($\lambda = 0.5$) collapses the representation, while the best recovery occurs at low $\lambda$ and high $\rho$.
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/fig_2d_other_mixing.pdf}
+    % \vspace{-20pt}
+    \caption{
+        \textbf{2D Simulations.}
+        Points colored by the polar angle and radius of the ground-truth latent variables $z \sim \mathcal{N}(0, I_2)$ (like Fig.~\ref{fig:teaser}).
+        Observations (\textbf{a-c} left) $x = g(z)$ after nonlinear mixing: parabolic shear, sinusoidal shear, RealNVP coupling layer \citep{dinh2016density}.
+        Learned embeddings (\textbf{a-c} right): LeJEPA recovers the isotropic Gaussian structure up to rotation, consistent with Thm.~\ref{thm:main}.}
+    \label{fig:demo}
+    % \vspace{-10pt}
+\end{figure}
+
+
+% ── Main text: three-way comparison ──
+\begin{table}[b]
+\centering
+\caption{\textbf{Scaling Comparison Across Regularizers} (mean $\pm$ std, 5 seeds). Three Gaussianity-enforcing objectives on a shared RealNVP mixing and matched encoder. SIGReg and VICReg maintain $R^2 > 0.999$ up to $N{=}1024$; InfoNCE matches at low $N$ but degrades at scale under fixed kernel width $\sigma{=}1$. Per-method details in Tabs.~\ref{tab:scaling-sigreg}--\ref{tab:scaling-infonce}.}
+\label{tab:scaling-comparison}
+\begin{tabular}{r c ccc}
+% \toprule
+  & \textbf{Mixing} & \multicolumn{3}{c}{\textbf{Linear identifiability} $R^2(h \to z)$} \\
+\cmidrule(lr){3-5}
+$N$ & $R^2(x \to z)$ & SIGReg & VICReg & InfoNCE \\
+ & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std\,$\times 10^{-7}$} & {\scriptsize $\pm$std\,$\times 10^{-7}$} & {\scriptsize $\pm$std\,$\times 10^{-3}$} \\
+\midrule
+  2 & 0.781\tiny{$\pm$2.1} & 0.999998\tiny{$\pm$3.4} & 0.999996\tiny{$\pm$8.4} & 0.950961\tiny{$\pm$1.6} \\
+  4 & 0.727\tiny{$\pm$24} & 0.999996\tiny{$\pm$12} & 0.999987\tiny{$\pm$54} & 0.910871\tiny{$\pm$8.2} \\
+  8 & 0.728\tiny{$\pm$10} & 0.999993\tiny{$\pm$9.0} & 0.999988\tiny{$\pm$4.8} & 0.886818\tiny{$\pm$42} \\
+  16 & 0.734\tiny{$\pm$6.3} & 0.999988\tiny{$\pm$4.9} & 0.999987\tiny{$\pm$4.6} & 0.999880\tiny{$\pm$0.01} \\
+  32 & 0.737\tiny{$\pm$2.3} & 0.999981\tiny{$\pm$7.2} & 0.999981\tiny{$\pm$9.4} & 0.907809\tiny{$\pm$26} \\
+  64 & 0.737\tiny{$\pm$1.5} & 0.999966\tiny{$\pm$7.4} & 0.999968\tiny{$\pm$8.1} & 0.648496\tiny{$\pm$3.1} \\
+  128 & 0.739\tiny{$\pm$0.61} & 0.999938\tiny{$\pm$3.2} & 0.999942\tiny{$\pm$7.2} & 0.566955\tiny{$\pm$6.6} \\
+  256 & 0.742\tiny{$\pm$0.49} & 0.999884\tiny{$\pm$7.9} & 0.999889\tiny{$\pm$7.2} & 0.696587\tiny{$\pm$0.49} \\
+  512 & 0.749\tiny{$\pm$0.30} & 0.999775\tiny{$\pm$6.7} & 0.999785\tiny{$\pm$6.9} & 0.704393\tiny{$\pm$0.26} \\
+  1024 & 0.763\tiny{$\pm$0.17} & 0.999561\tiny{$\pm$12} & 0.999582\tiny{$\pm$11} & 0.720241\tiny{$\pm$0.20} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Scaling to High Dimensions.}
+We next sweep the latent dimension $N \in \{2^1,\ldots,2^{10}\}$ (beyond, e.g., DINOv3's $768$ embedding dimensions), using a RealNVP mixing and matched encoder~\citep{dinh2016density} so that any failure is attributable to optimization rather than encoder expressivity.
+We test all three Gaussianity-enforcing classes on the same setup: SIGReg \citep{balestriero2025lejepa}, VICReg \citep{bardes2022}, and InfoNCE \citep{oord2018representation}. Table~\ref{tab:scaling-comparison}: batch-statistic estimators (SIGReg, VICReg) maintain $R^2 > 0.999$ up to $N = 1024$; InfoNCE degrades at scale under fixed kernel width.
+Thm.~\ref{thm:main} is thus empirically supported across mixing functions, dimensions, and hyperparameters when the Gaussian-latent assumptions hold; the practical gap between methods appears only off the theoretical ideal.
+
+
+%;---------------------------------------------------------
+\subsection{Converse: Non-Gaussian Latent Variables Break Linear Identifiability}
+\label{sec:exp-nongauss}
+
+
+\begin{table}[b]
+\centering
+\caption{\textbf{Linear Identifiability on RL Trajectories.} (mean $\pm$ std, 3 seeds).
+\textbf{(left)} Gaussian OU pairs recover true latents with $R^2$ rising monotonically.
+\textbf{(right)} RL-policy trajectories~\citep{maes2026leworldmodel} show reduced identifiability because of anisotropy ($\rho_0 \neq \rho_1$) and non-Gaussian transitions (Figs.~\ref{fig:traj_distributions},\ref{fig:rho_vs_sigreg}).
+}
+\label{tab:reacher}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{r cc | r cc ccc}
+ \multicolumn{3}{c}{\textbf{OU (Gaussian)}} & \multicolumn{6}{c}{\textbf{Trajectory (non-Gaussian)}} \\
+\cmidrule(lr){1-3} \cmidrule(lr){4-9}
+$\rho$ & $R^2(z \to h)$ & $R^2(h \to z)$ & $\delta$ & $\rho_0$ & $\rho_1$ & $R^2(z \to h)$ & $R^2(h \to z_0)$ & $R^2(h \to z_1)$ \\
+\midrule
+  0.30 & 0.67\tiny{$\pm$2e-02} & 0.67\tiny{$\pm$2e-02} & 1 & 1.000 & 0.999 & -0.39\tiny{$\pm$1e-01} & 0.71\tiny{$\pm$3e-02} & -0.03\tiny{$\pm$4e-02} \\
+  0.50 & 0.86\tiny{$\pm$1e-02} & 0.86\tiny{$\pm$1e-02} & 2 & 0.999 & 0.996 & -0.47\tiny{$\pm$5e-02} & 0.73\tiny{$\pm$4e-03} & 0.01\tiny{$\pm$2e-03} \\
+  0.70 & 0.93\tiny{$\pm$7e-03} & 0.93\tiny{$\pm$7e-03} & 4 & 0.997 & 0.991 & -0.05\tiny{$\pm$3e-01} & 0.51\tiny{$\pm$1e-01} & 0.43\tiny{$\pm$9e-02} \\
+  0.80 & 0.94\tiny{$\pm$3e-04} & 0.94\tiny{$\pm$3e-04} & 8 & 0.992 & 0.982 & 0.50\tiny{$\pm$2e-02} & 0.80\tiny{$\pm$2e-03} & 0.78\tiny{$\pm$6e-03} \\
+  0.90 & 0.95\tiny{$\pm$7e-04} & 0.95\tiny{$\pm$7e-04} & 16 & 0.981 & 0.963 & 0.44\tiny{$\pm$4e-02} & 0.63\tiny{$\pm$2e-02} & 0.87\tiny{$\pm$2e-02} \\
+  0.95 & 0.95\tiny{$\pm$2e-04} & 0.95\tiny{$\pm$2e-04} & 32 & 0.959 & 0.928 & 0.45\tiny{$\pm$6e-02} & 0.62\tiny{$\pm$2e-02} & 0.81\tiny{$\pm$1e-02} \\
+  0.99 & 0.95\tiny{$\pm$4e-04} & 0.95\tiny{$\pm$4e-04} & 64 & 0.915 & 0.863 & 0.44\tiny{$\pm$4e-02} & 0.55\tiny{$\pm$3e-02} & 0.77\tiny{$\pm$2e-02} \\
+\bottomrule
+\end{tabular}}
+% \vspace{-10pt}
+\end{table}
+
+Next, we validate Thm.~\ref{thm:converse}'s predictions that non-Gaussian latents break linear identifiability. 
+
+\paragraph{Latent-Distribution Sweep.}
+We sweep the latent variable through the generalized normal family with shape parameter $\alpha$ ($\alpha \to 0$ heavy-tailed, $\alpha=1$ Laplace, $\alpha=2$ Gaussian, $\alpha \to \infty$ uniform).
+Linear recovery peaks sharply at $\alpha=2$ across all three objectives (Fig.~\ref{fig:bound_unique_plan}b, App.~\ref{app:gennorm}), illustrating Thm.~\ref{thm:converse}; SIGReg and InfoNCE retain a wider plateau than VICReg for heavy-tailed latents.
+
+\paragraph{Pixel-Based RL Trajectories.}
+The DMC Reacher \citep{tassa2018dmcontrol} has two joints, giving a 2D latent state $z = (\theta_0, \theta_1)$ (Fig.~\ref{fig:reacher_annotated}).
+We train a CNN encoder with LeJEPA (App.~\ref{app:reacher}) under two conditions sharing the same rendering pipeline but different distributions:
+\textit{(i) OU:} Gaussian samples $z \sim \mathcal{N}(0, I_2)$ as before~\eqref{eq:dgp};
+\textit{(ii) Trajectory:} joint-angle pairs $(z_t, z_{t+\delta})$ with $\delta$ frames separation from $10$k RL episodes~\citep{maes2026leworldmodel}.
+Table~\ref{tab:reacher} (left) shows that OU pairs attain $R^2 = 0.95$ at $\rho = 0.99$, with the two joint dimensions linearly recovered.
+In contrast, real trajectories break the Gaussian assumption (App.~\ref{app:reacher}, Figs.~\ref{fig:traj_distributions},\ref{fig:rho_vs_sigreg}).
+Table~\ref{tab:reacher} (right) shows per-dimension $R^2$ is anisotropic, and total $R^2$ never exceeds $0.5$, consistent with Thm.~\ref{thm:converse}.
+The trajectory condition violates several theory assumptions at once (non-Gaussian marginals, anisotropic $\rho_0 \neq \rho_1$, joint-limit wrapping).
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.99\linewidth]{figures/fig_bound_unique_plan.pdf}
+    \caption{
+    \textbf{Experimental Results.}
+    \textbf{a)} \textit{Bound Verification.} SIGReg runs across grid, 2D, scaling, and gennorm $\alpha{=}2$ lie below the diagonal, confirming Thm.~\ref{thm:approx}. Two near-zero outliers reflect finite-sample noise.
+    \textbf{b)} \textit{Gaussian Optimality.} Linear recovery, \(R^2(h \to z\)), peaks at Gaussian, illustrating Thm.~\ref{thm:converse}. SIGReg's Gaussianization of $h$ is more robust to non-Gaussian latent variable distributions than whitening.
+    \textbf{(c)} Control cost over $K = 30$ random start-goal pairs (path length $\geq 1$, ideal $1$). The Gaussian encoder is statistically indistinguishable from the oracle; the Trajectory encoder is biased upward.
+    \textbf{(d)} Control cost decreases with linear identifiability $R^2$, supporting Thm.~\ref{thm:planning}.
+    }
+    \label{fig:bound_unique_plan}
+\end{figure}
+
+
+
+%;---------------------------------------------------------
+\subsection{Approximation Bound and Loss Predict Identifiability}
+\label{sec:exp-bound}
+
+Thm.~\ref{thm:approx} bounds the recovery error by the whitening error $\varepsilon = \|\mathrm{Cov}(h(z)) - I\|_F$ and the alignment gap $\delta = \mathcal{L}(h) - 2(1-\rho)\,\mathrm{tr}(\mathrm{Cov}(h(z)))$.
+For each run we compute $\varepsilon$, $\delta$, the bound $D + (\varepsilon + D)^2$, and the actual recovery error $\min_{Q \in O(n)} \mathbb{E}[\|h(z) - Qz\|^2]$ (Fig.~\ref{fig:bound_unique_plan}a).
+The bound holds across grid search, 2D mixings, scaling, and the latent-distribution sweep, supporting Thm.~\ref{thm:approx} empirically.
+As a practical corollary, training loss is a reliable proxy for identifiability (App.~\ref{app:loss}).
+
+%;---------------------------------------------------------
+\subsection{Linear Identifiability Enables Latent-Space Planning}
+\label{sec:planning-exp}
+
+
+Thm.~\ref{thm:planning} predicts that any planner using a rotation-invariant cost attains identical performance in the learned and true latent. We test a natural instance: goal-reaching, where the straight line $\hat z_0 \to \hat z^*$ is the cost-minimizing trajectory. For an encoder satisfying $h(z) \approx Qz$, this latent straight line decodes to a near-straight path in the true latent; without, the same plan induces a curved path (Fig.~\ref{fig:planning_scatter}).
+Figs.~\ref{fig:bound_unique_plan}c,d;~\ref{fig:planning} confirm both. The Gaussian encoder's straight-latent plans decode to oracle-quality joint-space trajectories (left, middle), while the Trajectory encoder inflates control cost. Across all models, control cost tracks linear identifiability $R^2$ monotonically (right).
+\textit{Thus, linear identifiability is the structural property that turns a faithful World Model into a useful planner.}
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\linewidth]{figures/planning_demo.pdf}
+    \vspace{-5pt}
+    \caption{
+        \textbf{Linear Identifiability Enables Latent-Space Planning.}
+        Interpolation in each encoder's latent space between fixed \green{start} and \red{goal} frames, decoded by nearest-neighbor retrieval (Fig.~\ref{fig:planning_scatter}).
+        \textbf{top)} Oracle (joint-space straight line) \citep{tassa2018dmcontrol}.
+        \textbf{middle)} Gaussian encoder (Sec.~\ref{sec:gaussian-wm}: OU, $\rho = 0.99$) tracks the oracle (overlaid) closely. 
+        \textbf{bottom)} RL trajectory \citep{maes2026leworldmodel} encoder (stride $\delta = 8$) deviates.
+    }
+    \label{fig:planning}
+    % \vspace{-5pt}
+\end{figure}
+
+
+% ============================================================
+% SECTION 7: LIMITATIONS
+% ============================================================
+
+\section{Limitations}\label{sec:limitations}
+
+\paragraph{Are the latents Gaussian?}
+The Gaussian is the maximum-entropy distribution for a given mean and covariance \citep{jaynes1957information}, making it the least-assumption prior. Whether real-world latents are Gaussian is unknowable from observations alone, but the same applies to the non-Gaussianity assumptions of classical ICA \citep{comon1994} (maybe a structuralist perspective \citep{joshi2026causality} is more agnostic). There is a scale-of-description argument in favor: individual micro-variables may be non-Gaussian, but task-relevant latent variables are often aggregates that tend toward Gaussianity by the central limit theorem.
+\paragraph{What if the dimension is wrong?} 
+Our theorem assumes the encoder output dimension matches the true latent dimension ($m = n$). When $m < n$, the Gaussianity constraint does not determine which subspace is selected or whether the system resorts to \textit{superposition} \citep{smolensky_tensor_1990, elhage_toy_2022, klindt2025superposition}; when $m > n$, extra dimensions must collapse or encode redundancy. Understanding this interaction is an important open problem with direct consequences for JEPA design \citep{klindt2025superposition}.
+\paragraph{Finite samples and optimization.} 
+Our result is a population-level statement about the global optimum. Thm.~\ref{thm:approx} shows the guarantee degrades continuously with respect to alignment gap and covariance deviation, but does not address how these scale with sample size \citep{lyu2022finite} or training dynamics \citep{simon2023stepwise}. The few bound violations we observe empirically (Fig.~\ref{fig:bound_unique_plan}a) are consistent with finite-sample estimation noise in $\varepsilon$ and $\delta$.
+ 
+ 
+% ============================================================
+% SECTION 8: DISCUSSION
+% ============================================================
+
+\section{Discussion}\label{sec:discussion}
+
+\paragraph{Outlook.}
+Linear identifiability addresses the \emph{state} side of a World Model; the action-conditioned transition $\hat p(\hat z' \mid \hat z, a)$ must still be learned. Lifting identifiability to that setting connects naturally to interventional causal representation learning, where actions act as interventions on the latent variables \citep{ahuja2023, buchholz2024}, and onward to causal graphs \citep{nam2026causal}. Our assumptions may not hold exactly in practice, but Thm.~\ref{thm:approx} shows the guarantee degrades gracefully.
+
+\paragraph{Practical Implications.}
+Two implications, one for data and one for objective. \textit{Data:} the Reacher result shows that the same physical system supports identifiability when sampled isotropically (OU) but not under a goal-directed policy, whose marginals collapse onto a low-entropy region of latent space (Tab.~\ref{tab:reacher}); for self-supervised pretraining, exploration approximating an isotropic random walk keeps the data in the regime our theory covers. \textit{Objective:} SIGReg, VICReg, and InfoNCE all yield linear identifiability when their assumptions hold, and our experiments suggest they fail in different ways: pair-based estimators are sensitive to kernel choice at scale (Tab.~\ref{tab:scaling-comparison}), moment-based estimators to non-Gaussian latents (App.~\ref{app:gennorm}). Which estimator is preferable in practice, and how the choice interacts with batch size, architecture, and data regime, is left to future work.
+
+\paragraph{A Theoretical Foundation for World Models.}
+Our theory inverts the classical ICA narrative: in \emph{linear} ICA the Gaussian is the one distribution where source separation fails \citep{comon1994}; in our nonlinear setting it is exactly what enables it. The payoff is structural: linear identifiability turns a learned representation into a usable \emph{state} for a control system, so any orthogonally-invariant cost transfers from the true world to the learned latent without modification, and simple planning (Thm.~\ref{thm:planning}) and linear probing come for free. \textit{This is what it means to provably learn a World Model.}
+
+
+\section*{Acknowledgments}
+We thank Aapo Hyv\"arinen, Patrik Reizinger, Attila Juhos, Heejeong (Hazel) Nam and Christian Intern\`o for their feedback and inputs.
+DK acknowledges the CSHL GPU cluster with assistance from the US National Institutes of Health Grant S10OD028632-01.
+
+
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+
+
+\newpage
+\appendix
+\input{appendix}
+
+
+\end{document}

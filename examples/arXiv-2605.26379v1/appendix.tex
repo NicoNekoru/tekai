@@ -1,0 +1,1417 @@
+% ============================================================
+% APPENDIX: Overview and full derivations
+% ============================================================
+% This file is \input{} from the main document after \appendix
+ 
+\section*{Appendix Overview}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lll}
+\toprule
+& \textbf{Contents} & \textbf{Page} \\
+\midrule
+Appendix A & Proof of Thm.~\ref{thm:main} (linear identifiability), incl.\ Hermite background & \pageref{app:proof-forward} \\
+Appendix B & Proof of Thm.~\ref{thm:converse} (Gaussian uniqueness) & \pageref{app:converse-proof} \\
+Appendix C & Proof of Thm.~\ref{thm:approx} (approximate identifiability) & \pageref{app:stability} \\
+Appendix D & Proof and discussion of Thm.~\ref{thm:planning} (optimal latent planning) & \pageref{app:planning} \\
+Appendix E & Alternative proof via Dirichlet energy & \pageref{app:dirichlet} \\
+Appendix F & Prior work: connection to Slow Feature Analysis & \pageref{app:prior-work} \\
+Appendix G & Lean~4 formal verification & \pageref{app:lean} \\
+Appendix H & Experimental details and additional results & \pageref{app:experiment} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+ 
+{
+% \small
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{cl}
+\toprule
+\textbf{Symbol} & \textbf{Description} \\
+\midrule
+\multicolumn{2}{l}{\textit{World Model}} \\
+$z, z' \in \mathbb{R}^n$ & True latent variables and positive pair (second view) \\
+$n$ & Latent dimension (and encoder output dimension) \\
+$\rho \in (0,1)$ & Autocorrelation of the Ornstein--Uhlenbeck transition \\
+$\eta \sim \mathcal{N}(0, I_n)$ & Independent transition noise \\
+$K > 0$ & Diffusion coefficient (Sturm--Liouville setting) \\
+\midrule
+\multicolumn{2}{l}{\textit{Maps}} \\
+$g$ & Unknown nonlinear mixing (generative) function; $x = g(z)$ \\
+$f$ & Learned encoder; $y = f(x)$ \\
+$h = f \circ g$ & Composed map from latent space to representation space \\
+$J_h(z)$ & Jacobian matrix of $h$ at $z$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Linear algebra}} \\
+$O(n)$ & Orthogonal group (matrices with $QQ^\top = I_n$) \\
+$Q \in O(n)$ & Orthogonal recovery matrix (exact identifiability) \\
+\midrule
+\multicolumn{2}{l}{\textit{Losses and objectives}} \\
+$\mathcal{L}(h)$ & Alignment loss: $\mathbb{E}[\|h(z') - h(z)\|^2]$ \\
+$\mathcal{L}_{\mathrm{inv}}$ & Empirical invariance (alignment) loss \\
+$\mathcal{L}_{\mathrm{SIG}}$ & SIGReg Gaussianity regularizer \\
+$\lambda$ & Regularization weight balancing $\mathcal{L}_{\mathrm{SIG}}$ and $\mathcal{L}_{\mathrm{inv}}$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Hermite polynomials and spectral decomposition}} \\
+$\mathrm{He}_k(x)$ & Probabilist's Hermite polynomial of degree $k$ \\
+$\hat{h}_k(x)$ & Normalized Hermite polynomial: $\mathrm{He}_k(x)/\sqrt{k!}$ \\
+$\alpha \in \mathbb{N}^n$ & Multi-index $(\alpha_1, \ldots, \alpha_n)$; $|\alpha| = \alpha_1 + \cdots + \alpha_n$ is the total degree \\
+$H_\alpha(z)$ & Multivariate Hermite basis function: $\prod_j \hat{h}_{\alpha_j}(z_j)$ \\
+$c_\alpha^{(i)}$ & Hermite coefficient of $h_i$ at multi-index $\alpha$ \\
+$w_d^{(i)}$ & Variance fraction of $h_i$ at degree $d$: $\sum_{|\alpha|=d} (c_\alpha^{(i)})^2$ \\
+$T$ & Transition operator: $(T\varphi)(z) = \mathbb{E}[\varphi(z') \mid z]$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Approximate identifiability}} \\
+$\delta \geq 0$ & Alignment gap (excess loss above the linear optimum) \\
+$\varepsilon \geq 0$ & Covariance deviation: $\|\mathrm{Cov}(h(z)) - I_n\|_F$ \\
+$D$ & Normalized alignment gap: $\delta / (2\rho(1-\rho))$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Sturm--Liouville theory (Appendices~B, E)}} \\
+$\mathcal{D}$ & Sturm--Liouville differential operator / process generator \\
+\bottomrule
+\end{tabular}
+\end{center}
+}
+
+
+
+
+
+
+
+\section{Proof of Theorem~\ref{thm:main} (Forward Direction)}\label{app:proof-forward}
+
+\begin{theoremrestate}[Theorem~\ref{thm:main} (LeJEPA Linear Identifiability)]
+Consider the Gaussian world (Sec.~\ref{sec:gaussian-wm}). Let $h: \mathbb{R}^n \to \mathbb{R}^n$ be any measurable map with $h(z) \sim \mathcal{N}(0, I_n)$. Then $\mathcal{L}(h) \geq 2(1-\rho)\,n$, with equality if and only if $h(z) = Qz$ for some orthogonal $Q \in O(n)$. At any such optimum, $h(z') \mid h(z) \sim \mathcal{N}(\rho\, h(z), (1-\rho^2)\,I_n)$.
+\end{theoremrestate}
+
+
+\subsection{Intuition: Why Should This Force Linearity?}
+
+Before the formal proof, let us build intuition for why linearity is forced.
+A linear orthogonal map $h(z) = Qz$ clearly preserves the Gaussian and achieves correlation $\rho$ per component, giving $\mathcal{L} = 2(1-\rho)n$.
+\textit{Could a nonlinear map do better?}
+
+Here is a suggestive information-theoretic argument.
+The variables $z$ and $z'$ are jointly Gaussian with correlation $\rho$, so $I(z; z') = -\frac{n}{2}\ln(1-\rho^2)$.
+For Gaussians, mutual information depends only on the correlation.
+If a nonlinear $h$ achieved higher correlation while keeping Gaussian marginals, and if the joint $(h(z), h(z'))$ were also Gaussian, then $I(h(z); h(z')) > I(z; z')$, violating the data processing inequality.
+So nonlinear maps cannot beat linear ones.
+
+This argument has the right conclusion but two gaps: (1)~a nonlinear $h$ can produce a non-Gaussian \textit{joint} even when both marginals are Gaussian, so the mutual information formula does not apply; (2)~even if nonlinear maps cannot beat linear ones, perhaps they can \textit{tie}.
+To close both gaps, we need to understand precisely how nonlinearity interacts with the transition between positive pairs.
+The right tool turns out to be the Hermite polynomials, the natural orthogonal basis for functions of Gaussian variables.
+Just as Fourier analysis decomposes a signal into frequencies, the Hermite expansion decomposes any function into a linear part, a quadratic part, a cubic part, and so on.
+The key payoff is that the transition between positive pairs acts on each degree separately, and attenuates higher degrees more.
+This lets us compute the correlation of any function in closed form, closing both gaps simultaneously.
+
+
+\subsection{Hermite Polynomial Background}\label{app:hermite-details}
+
+The proof rests on the Hermite polynomials, the natural orthogonal basis for functions of Gaussian random variables.
+This subsection collects the definitions and properties used throughout the paper.
+
+\paragraph{Definitions and orthogonality.}
+The probabilist's Hermite polynomials $\mathrm{He}_k(x)$ are defined by the Rodrigues formula:
+\begin{equation}
+    \mathrm{He}_k(x) = (-1)^k\, e^{x^2/2}\, \frac{d^k}{dx^k}\, e^{-x^2/2}, \qquad k = 0, 1, 2, \ldots
+\end{equation}
+The first several are:
+\begin{equation}
+    \mathrm{He}_0(x) = 1, \quad \mathrm{He}_1(x) = x, \quad \mathrm{He}_2(x) = x^2 - 1, \quad \mathrm{He}_3(x) = x^3 - 3x
+    % , \quad \mathrm{He}_4(x) = x^4 - 6x^2 + 3.
+\end{equation}
+Each $\mathrm{He}_k$ is a degree-$k$ polynomial.
+Note that $\mathrm{He}_2(x) = x^2 - 1$ includes a correction term that makes it orthogonal to the constant and linear terms under the Gaussian measure.
+More generally, these polynomials satisfy the orthogonality relation under the standard Gaussian measure $\gamma$ with density $p(x) = (2\pi)^{-1/2}e^{-x^2/2}$:
+\begin{equation}
+    \mathbb{E}_{x \sim \gamma}\!\left[\mathrm{He}_j(x)\,\mathrm{He}_k(x)\right] = k!\,\delta_{jk}.
+\end{equation}
+Normalizing by $\hat{h}_k(x) := \mathrm{He}_k(x)/\sqrt{k!}$ gives an orthonormal basis of $L^2(\mathbb{R}, \gamma)$: $\mathbb{E}[\hat{h}_j(x)\,\hat{h}_k(x)] = \delta_{jk}$.
+The completeness of this basis means that any $f \in L^2(\mathbb{R}, \gamma)$ can be uniquely expanded as $f(x) = \sum_{k=0}^\infty a_k \hat{h}_k(x)$ with $\sum_k a_k^2 = \mathbb{E}[f(x)^2] < \infty$ (Parseval's identity).
+
+\paragraph{Multivariate extension.}
+For $z = (z_1, \ldots, z_n) \in \mathbb{R}^n$ with independent standard Gaussian components, the multivariate Hermite basis is constructed as tensor products.
+For a multi-index $\alpha = (\alpha_1, \ldots, \alpha_n) \in \mathbb{N}^n$ with total degree $|\alpha| = \alpha_1 + \cdots + \alpha_n$, define:
+\begin{equation}
+    H_\alpha(z) = \prod_{j=1}^n \hat{h}_{\alpha_j}(z_j).
+\end{equation}
+The family $\{H_\alpha\}_{\alpha \in \mathbb{N}^n}$ is an orthonormal basis of $L^2(\mathbb{R}^n, \gamma_n)$, where $\gamma_n$ is the standard Gaussian measure on $\mathbb{R}^n$.
+The degree $|\alpha|$ captures the ``order of nonlinearity'':
+\begin{itemize}
+    \item Degree 0: $H_0(z) = 1$. The constant function.
+    \item Degree 1: $H_{e_j}(z) = z_j$ for $j = 1, \ldots, n$. The $n$ linear coordinate functions.
+    \item Degree 2: terms like $z_iz_j$ (for $i \neq j$) and $(z_j^2 - 1)/\sqrt{2}$. Quadratic nonlinearities.
+    \item Degree $d$: captures $d$-th order nonlinear structure. %There are $\binom{n+d-1}{d}$ basis functions at degree $d$.
+\end{itemize}
+
+\paragraph{Hermite expansion of measure-preserving maps.}
+Any component $h_i: \mathbb{R}^n \to \mathbb{R}$ of a map satisfying $h(z) \sim \mathcal{N}(0, I_n)$ has $\mathbb{E}[h_i(z)] = 0$ and $\mathbb{E}[h_i(z)^2] = 1$.
+By completeness, it expands as:
+\begin{equation}\label{eq:app-hermite-expand}
+    h_i(z) = \sum_{|\alpha| \geq 1} c_\alpha^{(i)}\, H_\alpha(z), \qquad \sum_{|\alpha| \geq 1} (c_\alpha^{(i)})^2 = 1.
+\end{equation}
+The constant term ($|\alpha| = 0$) vanishes because $\mathbb{E}[h_i] = 0$.
+The normalization $\sum (c_\alpha^{(i)})^2 = 1$ follows from Parseval's identity and $\mathbb{E}[h_i^2] = 1$.
+Grouping by total degree defines the \emph{variance at degree $d$}:
+\begin{equation}
+    w_d^{(i)} = \sum_{|\alpha|=d} (c_\alpha^{(i)})^2, \qquad \sum_{d \geq 1} w_d^{(i)} = 1.
+\end{equation}
+If $h_i$ is a linear function of $z$, then $w_1^{(i)} = 1$ and $w_d^{(i)} = 0$ for all $d \geq 2$.
+If $h_i$ has any nonlinear component, then $w_d^{(i)} > 0$ for some $d \geq 2$.
+
+
+
+\subsection{Proof}
+
+% For background on Hermite polynomials and their properties under the Gaussian measure, see Appendix~\ref{app:hermite-details}.
+
+\paragraph{Setup and notation.}
+Since $z \sim \mathcal{N}(0, I_n)$, the multivariate Hermite polynomials $\{H_\alpha\}_{\alpha \in \mathbb{N}^n}$ form an orthonormal basis of $L^2(\mathbb{R}^n, \gamma_n)$ (Appendix~\ref{app:hermite-details}).
+Each component $h_i$ has $\mathbb{E}[h_i(z)] = 0$ and $\mathbb{E}[h_i(z)^2] = 1$ by the Gaussianity constraint, and admits the expansion
+\begin{equation}\label{eq:app-hermite-expand-pf}
+    h_i(z) = \sum_{|\alpha| \geq 1} c_\alpha^{(i)}\, H_\alpha(z), \qquad \sum_{|\alpha| \geq 1} (c_\alpha^{(i)})^2 = 1.
+\end{equation}
+Grouping by total degree $d = |\alpha|$, let $w_d^{(i)} = \sum_{|\alpha|=d} (c_\alpha^{(i)})^2$ be the fraction of variance at degree $d$.
+Then $w_1^{(i)} + w_2^{(i)} + w_3^{(i)} + \cdots = 1$.
+If $h_i$ is linear, then $w_1^{(i)} = 1$; any nonlinearity spills variance into $d \geq 2$.
+By equation~\eqref{eq:loss-expand}, minimizing $\mathcal{L}$ is equivalent to maximizing $\sum_i \mathbb{E}[h_i(z') h_i(z)]$.
+The proof establishes that each term satisfies $\mathbb{E}[h_i(z') h_i(z)] \leq \rho$, with equality if and only if $h_i$ is linear.
+The argument has three main steps.
+First, we need to know what the transition $z \to z'$ does to each Hermite component individually.
+Second, we need the cross-correlation structure between all components across the two views: does the degree-2 part of $h_i(z')$ correlate with the degree-1 part of $h_i(z)$?
+Third, we combine these to bound the total correlation any function can achieve.
+
+
+\paragraph{Step 1: The transition attenuates each Hermite degree by $\rho^d$.}
+We show that $\mathbb{E}_\eta[\mathrm{He}_k(z')] = \rho^k\,\mathrm{He}_k(z)$ for $z' = \rho z + \sqrt{1-\rho^2}\,\eta$ with $\eta \sim \mathcal{N}(0,1)$ independent of $z \sim \mathcal{N}(0,1)$.
+
+We use the exponential generating function for the Hermite polynomials:
+\begin{equation}\label{eq:app-genfun-pf}
+    \sum_{k=0}^\infty \frac{t^k}{k!}\,\mathrm{He}_k(x) = \exp\!\left(tx - \frac{t^2}{2}\right).
+\end{equation}
+This identity encodes all Hermite polynomials into a single exponential, allowing us to compute the effect of noise on all degrees simultaneously.
+
+Evaluate~\eqref{eq:app-genfun-pf} at $x = z' = \rho z + \sqrt{1-\rho^2}\,\eta$:
+\begin{equation}
+    \sum_{k=0}^\infty \frac{t^k}{k!}\,\mathrm{He}_k(z') = \exp\!\left(t(\rho z + \sqrt{1-\rho^2}\,\eta) - \frac{t^2}{2}\right).
+\end{equation}
+Since $\eta$ is independent of $z$, the right side factors:
+\begin{equation}
+    \exp\!\left(t\rho z - \frac{t^2}{2}\right) \cdot \exp\!\left(t\sqrt{1-\rho^2}\,\eta\right).
+\end{equation}
+The first factor depends only on $z$ and comes out of $\mathbb{E}_\eta$.
+For the second factor, we use the Gaussian moment generating function: if $\eta \sim \mathcal{N}(0,1)$, then $\mathbb{E}[e^{s\eta}] = e^{s^2/2}$ for any $s$.
+Setting $s = t\sqrt{1-\rho^2}$:
+\begin{equation}
+    \mathbb{E}_\eta\!\left[\exp\!\left(t\sqrt{1-\rho^2}\,\eta\right)\right] = \exp\!\left(\frac{t^2(1-\rho^2)}{2}\right).
+\end{equation}
+Multiplying the two pieces, the exponents combine:
+\begin{equation}
+    t\rho z - \frac{t^2}{2} + \frac{t^2(1-\rho^2)}{2} = t\rho z - \frac{t^2}{2} + \frac{t^2}{2} - \frac{t^2\rho^2}{2} = t\rho z - \frac{(t\rho)^2}{2}.
+\end{equation}
+So we obtain:
+\begin{equation}\label{eq:app-after-noise-pf}
+    \sum_{k=0}^\infty \frac{t^k}{k!}\,\mathbb{E}_\eta\!\left[\mathrm{He}_k(z')\right] = \exp\!\left((\rho t) z - \frac{(\rho t)^2}{2}\right).
+\end{equation}
+The right side of~\eqref{eq:app-after-noise-pf} has exactly the form of the generating function~\eqref{eq:app-genfun-pf} with $t$ replaced by $\rho t$:
+\begin{equation}
+    \exp\!\left((\rho t) z - \frac{(\rho t)^2}{2}\right) = \sum_{k=0}^\infty \frac{(\rho t)^k}{k!}\,\mathrm{He}_k(z) = \sum_{k=0}^\infty \frac{t^k}{k!}\,\rho^k\,\mathrm{He}_k(z).
+\end{equation}
+Matching coefficients of $t^k/k!$:
+\begin{equation}\label{eq:contraction-result}
+    \mathbb{E}_\eta\!\left[\mathrm{He}_k(z')\right] = \rho^k\,\mathrm{He}_k(z).
+\end{equation}
+Since $0 < \rho < 1$, we have $\rho^2 < \rho$, $\rho^3 < \rho^2$, and so on.
+\textit{The linear component ($k=1$) survives the transition best; every higher-degree component is strictly more attenuated.}
+
+This contraction is specific to Gaussians.
+The proof succeeds because the Gaussian MGF ($e^{s^2/2}$) partially cancels the $e^{-t^2/2}$ in the Hermite generating function, leaving $e^{-t^2\rho^2/2}$, which is the generating function again with $t \to \rho t$.
+This replacement is where the $\rho^k$ contraction originates.
+For non-Gaussian distributions, the transition operator still has a spectral decomposition with ordered eigenvalues (see Appendix~\ref{app:prior-work}), but the eigenfunctions are no longer Hermite polynomials and the eigenvalues no longer decay geometrically. In particular, the first eigenfunction is monotonic but generally nonlinear, which is why monotonic (not linear) identifiability holds in the general case.
+
+
+
+\paragraph{Step 2: Different Hermite components do not interact across views.}
+Step~1 tells us what happens to each Hermite component in isolation.
+But to compute the correlation $\mathbb{E}[h_i(z') h_i(z)]$ for an arbitrary function $h_i$, we also need to know whether different components interact across views: does the degree-2 part of $h_i(z')$ correlate with the degree-1 part of $h_i(z)$?
+
+The answer is no.
+We show that $\mathbb{E}[H_\alpha(z')\, H_\beta(z)] = \rho^{|\alpha|}\,\delta_{\alpha\beta}$ (Mehler's formula).
+The $\delta_{\alpha\beta}$ means that cross-terms vanish: the degree-1 part of $h(z')$ only correlates with the degree-1 part of $h(z)$, the degree-2 part only with degree-2, and so on.
+Each degree-$d$ component contributes correlation $\rho^d$.
+The Hermite basis \textit{diagonalizes} the transition.
+
+In the univariate case, using the law of iterated expectations:
+\begin{equation}
+    \mathbb{E}\!\left[\hat{h}_k(z')\,\hat{h}_j(z)\right] = \mathbb{E}_z\!\left[\mathbb{E}_\eta\!\left[\hat{h}_k(z')\right]\,\hat{h}_j(z)\right].
+\end{equation}
+By the contraction property~\eqref{eq:contraction-result}, $\mathbb{E}_\eta[\hat{h}_k(z')] = \rho^k\,\hat{h}_k(z)$.
+Substituting:
+\begin{equation}
+    \mathbb{E}\!\left[\hat{h}_k(z')\,\hat{h}_j(z)\right] = \rho^k\,\mathbb{E}_z\!\left[\hat{h}_k(z)\,\hat{h}_j(z)\right] = \rho^k\,\delta_{jk},
+\end{equation}
+where the last step uses orthonormality of the $\hat{h}_k$ under $\gamma$.
+
+In the multivariate case, since $z$ has independent components and the noise in the Ornstein--Uhlenbeck channel acts independently on each coordinate, the multivariate Hermite products factorize:
+\begin{equation}\label{eq:mehler-result}
+    \mathbb{E}\!\left[H_\alpha(z')\, H_\beta(z)\right] = \prod_{j=1}^n \mathbb{E}\!\left[\hat{h}_{\alpha_j}(z_j')\,\hat{h}_{\beta_j}(z_j)\right] = \prod_{j=1}^n \rho^{\alpha_j}\,\delta_{\alpha_j \beta_j} = \rho^{|\alpha|}\,\delta_{\alpha\beta}.
+\end{equation}
+
+
+\paragraph{Step 3: Nonlinearity strictly reduces correlation.}
+Now we can compute the total correlation of \textit{any} function through the transition.
+Since the Hermite basis diagonalizes the problem, the answer is simply a weighted sum over degrees, and because $\rho^d$ decreases with $d$, putting variance on higher degrees always costs correlation.
+
+Expanding $h_i$ in the Hermite basis~\eqref{eq:app-hermite-expand-pf} and applying Mehler's formula~\eqref{eq:mehler-result}:
+\begin{equation}
+    \mathbb{E}\!\left[h_i(z')\, h_i(z)\right] = \sum_{|\alpha| \geq 1} \sum_{|\beta| \geq 1} c_\alpha^{(i)} c_\beta^{(i)} \,\mathbb{E}\!\left[H_\alpha(z')\, H_\beta(z)\right] = \sum_{|\alpha| \geq 1} (c_\alpha^{(i)})^2\,\rho^{|\alpha|}.
+\end{equation}
+Note that all cross-terms vanish ($\delta_{\alpha\beta} = 0$ for $\alpha \neq \beta$), and each surviving term contributes its squared coefficient times $\rho^{|\alpha|}$.
+
+Grouping by degree $d = |\alpha|$ with $w_d = \sum_{|\alpha|=d} (c_\alpha^{(i)})^2$:
+\begin{equation}
+    \mathbb{E}\!\left[h_i(z')\, h_i(z)\right] = w_1 \cdot \rho + w_2 \cdot \rho^2 + w_3 \cdot \rho^3 + \cdots
+\end{equation}
+with $w_d \geq 0$ and $w_1 + w_2 + w_3 + \cdots = 1$.
+This is a weighted average of $\rho, \rho^2, \rho^3, \ldots$ with weights summing to 1.
+Since $0 < \rho < 1$, each $\rho^d \leq \rho$ with strict inequality for $d \geq 2$:
+\begin{equation}
+    w_1 \cdot \rho + w_2 \cdot \rho^2 + w_3 \cdot \rho^3 + \cdots \leq w_1 \cdot \rho + w_2 \cdot \rho + w_3 \cdot \rho + \cdots = \rho \cdot (w_1 + w_2 + \cdots) = \rho.
+\end{equation}
+
+Equality requires $w_d \cdot \rho^d = w_d \cdot \rho$ for every $d$, which means $w_d = 0$ for all $d \geq 2$ (since $\rho^d < \rho$ for $d \geq 2$).
+So all the variance is at degree 1: $w_1 = 1$.
+The degree-1 Hermite basis consists of the coordinate functions $\{z_1, \ldots, z_n\}$, so:
+\begin{equation}
+    h_i(z) = \sum_{j=1}^n c_{e_j}^{(i)}\, z_j = \langle q_i, z\rangle
+\end{equation}
+for some vector $q_i$ with $\|q_i\|^2 = w_1 = 1$.
+That is, $h_i$ must be a linear function.
+
+\textit{No nonlinear map can match the correlation of a linear map.}
+This closes both gaps from the information-theoretic argument.
+That argument failed because it assumed the joint distribution of $(h(z), h(z'))$ is Gaussian, which need not hold for nonlinear $h$.
+The Hermite analysis avoids this entirely: Mehler's formula computes $\mathbb{E}[h_i(z') h_i(z)]$ exactly for any $h_i \in L^2(\gamma_n)$, using only the joint Gaussianity of $(z, z')$, not of $(h_i(z), h_i(z'))$.
+The prior argument also left open the possibility that a nonlinear map could match the correlation of a linear one.
+The strict inequality above rules this out: any nonlinearity ($w_d > 0$ for some $d \geq 2$) strictly reduces correlation.
+
+
+\paragraph{Step 4: Assembly.}
+Summing the correlation bound over all $n$ components:
+\begin{equation}
+    \sum_{i=1}^n \mathbb{E}[h_i(z') h_i(z)] \leq \rho n,
+\end{equation}
+which by~\eqref{eq:loss-expand} gives $\mathcal{L}(h) \geq 2(1-\rho)n$.
+
+At equality, every $h_i$ is linear: $h_i(z) = \langle q_i, z\rangle$ with $\|q_i\| = 1$.
+So $h(z) = Qz$ for some matrix $Q$ with unit-norm rows.
+The Gaussianity constraint requires $\mathrm{Cov}(h(z)) = Q Q^\top = I_n$, so $Q$ is orthogonal.
+Conversely, any orthogonal $Q$ achieves $\sum_i \mathbb{E}[\langle Q_i, z'\rangle \langle Q_i, z\rangle] = \rho n$, giving equality.
+
+
+\paragraph{Step 5: Recovery of the transition.}
+At the optimum, $h(z') = Qz' = \rho\,Qz + \sqrt{1-\rho^2}\,Q\eta = \rho\,h(z) + \sqrt{1-\rho^2}\,Q\eta$.
+Since $Q$ is orthogonal and $\eta \sim \mathcal{N}(0, I_n)$, we have $Q\eta \sim \mathcal{N}(0, I_n)$ independently of $h(z)$.
+Therefore $h(z') \mid h(z) \sim \mathcal{N}(\rho\,h(z), (1-\rho^2)I_n)$, which is the same conditional as $z' \mid z$.
+The encoder recovers both the latent variables and the transition dynamics, up to a global rotation. \qed
+
+\newpage
+\section{Proof of Theorem~\ref{thm:converse} (Gaussian Uniqueness)}\label{app:converse-proof}
+
+\begin{theoremrestate}[Theorem~\ref{thm:converse} (Gaussian Uniqueness)]
+Consider any world satisfying Assumptions~\ref{assumptions}. Suppose every minimizer of \eqref{eq:loss-expand} with $\mathrm{Cov}(h(z)) = I_n$ is linear, $h(z) = Qz$. Then $z$ is Gaussian.
+\end{theoremrestate}
+
+Since the latent variables are independent, the transition operator separates, and it suffices to prove the result for a single component $z_i$ whose stationary distribution has full support on $\mathbb{R}$.
+
+\subsection{Background}
+
+The forward result (Thm.~\ref{thm:main}) shows that the optimal encoder extracts the first few eigenfunctions of the transition operator $T$ (Section~\ref{sec:spectral}): these are the functions of the latent variables with the highest temporal autocorrelation.
+If the first (slowest) non-constant eigenfunction is linear, the encoder recovers the latent variable itself; if it is nonlinear, the encoder recovers a nonlinear transformation of the latent variable, and linear identifiability fails.
+The question is therefore: for which latent variable distributions is the first eigenfunction linear?
+
+The proof uses the Sturm--Liouville characterization of these eigenfunctions \citep{sprekeler2014}. Assumption (iii) ($\eta_i$ independent of $z_i$) implies the noise variance does not depend on the state; in continuous time, this is the constant-diffusion regime in which Sturm--Liouville machinery applies. The transition operator $T$ has an infinitesimal generator $\mathcal{D}$ that shares the same eigenfunctions; $\mathcal{D}$ is a second-order differential operator whose structure makes the eigenvalue problem tractable (see Appendix~\ref{app:prior-work} for the full connection to Slow Feature Analysis).
+For a scalar latent variable evolving under constant diffusion $K > 0$ with stationary density $p(z_i) > 0$, the generator, written in self-adjoint form, acts on test functions $\varphi$ as
+\begin{equation}\label{eq:sfa-operator}
+    \mathcal{D}\varphi = \frac{1}{p(z_i)}\frac{d}{dz_i}
+    \Big[K\,p(z_i)\,\varphi'(z_i)\Big].
+\end{equation}
+The eigenfunctions $\varphi_k$ are properties of the latent process, not of the encoder $h$; the encoder inherits its structure from them.
+
+When the score function diverges ($(\log p)'(z_i) \to \mp\infty$ as $z_i \to \pm\infty$), the operator has a purely discrete spectrum $0 < \lambda_1 < \lambda_2 < \cdots$ with eigenfunctions $\varphi_1, \varphi_2, \ldots$ forming a complete orthogonal basis of $L^2(\mathbb{R}, p\,dz)$.
+The eigenvalues are ordered by increasing ``speed'': $\varphi_1$ is the slowest non-constant feature, $\varphi_2$ the next slowest, and so on.
+By classical Sturm--Liouville oscillation theory, $\varphi_k$ has exactly $k-1$ interior zeros.
+In particular, $\varphi_1$ is always monotonic, so one always gets identifiability up to a monotonic transformation.
+Linear identifiability requires $\varphi_1$ to be affine, and since an affine function is monotonic (zero interior zeros), only $\varphi_1$ can be affine: no higher eigenfunction can be.
+(For heavy-tailed densities such as Laplace, $\mathcal{D}$ develops continuous spectrum and the discrete picture does not apply; this does not affect our result, since assuming an affine eigenfunction exists forces $p$ to be Gaussian, which has discrete spectrum.)
+For the full connection between the Sturm--Liouville framework and Slow Feature Analysis, see Appendix~\ref{app:prior-work}.
+
+\subsection{Proof}
+
+The key observation is that the operator $\mathcal{D}$ encodes the score function $(\log p)'$ of the latent variable distribution.
+Demanding that the first eigenfunction is affine forces the score to be linear in $z_i$, and a linear score uniquely characterizes the Gaussian.
+
+Suppose $\varphi(z_i) = a z_i + b$ is an eigenfunction of $\mathcal{D}$ with eigenvalue $\lambda > 0$.
+Since $\varphi' = a$ is constant, the operator simplifies:
+\begin{equation}
+    \mathcal{D}[a z_i + b] = a\,K(\log p)'(z_i).
+\end{equation}
+The eigenfunction equation $\mathcal{D}\varphi = -\lambda\varphi$ requires $a\,K(\log p)'(z_i) = -\lambda(a z_i + b)$, giving
+\begin{equation}
+    K(\log p)'(z_i) = -\lambda z_i - \lambda b/a.
+\end{equation}
+Integrating both sides:
+\begin{equation}
+    \log p(z_i) = -\frac{\lambda}{2K}
+    \left(z_i + \frac{b}{a}\right)^2 + C,
+\end{equation}
+which is a Gaussian density with mean $-b/a$.
+No other density satisfies this equation.
+Under the zero-mean convention $b = 0$, and $a$ is fixed by unit-variance normalization. \qed
+
+
+
+
+
+\section{Proof of Theorem~\ref{thm:approx} (Approximate Identifiability)}\label{app:stability}
+
+\begin{theoremrestate}[Theorem~\ref{thm:approx} (Approximate Identifiability)]
+Consider the Gaussian world (\ref{sec:gaussian-wm}). Let $h: \mathbb{R}^n \to \mathbb{R}^n$ be measurable with $\mathbb{E}[h(z)] = 0$, satisfying:
+\textit{Approximate alignment:} $\mathcal{L}(h) \leq 2(1-\rho)\,\mathrm{tr}(\mathrm{Cov}(h(z))) + \delta$;
+\textit{Approximate whitening:} $\|\mathrm{Cov}(h(z)) - I_n\|_F \leq \varepsilon$.
+Define $D = \delta/(2\rho(1-\rho))$. Then there exists $Q \in O(n)$ such that
+\begin{equation}\label{eq:stability}
+    \mathbb{E}\!\left[\|h(z) - Qz\|^2\right] \;\leq\; D \;+\; (\varepsilon + D)^2
+\end{equation}
+\end{theoremrestate}
+
+We prove the stability bound in three steps: (1) the alignment gap controls
+nonlinear energy, (2) the whitening constraint forces the linear part
+near orthogonality, and (3) orthogonality of Hermite degrees gives a
+clean Pythagorean decomposition.
+
+\paragraph{Setup and notation.}
+Since $z \sim \mathcal{N}(0, I_n)$, each zero-mean component $h_i$ of the encoder admits a Hermite expansion (Appendix~\ref{app:hermite-details}):
+\begin{equation}
+    h_i(z) \;=\; \sum_{|\alpha| \geq 1} c_\alpha^{(i)}\, H_\alpha(z),
+\end{equation}
+where the constant term vanishes by the zero-mean assumption.
+We split this into a linear part and a nonlinear residual.
+
+The linear part is $Mz$, where $M \in \mathbb{R}^{n \times n}$ is the matrix of correlations between encoder outputs and latent variables:
+\begin{equation}
+    M_{ij} \;=\; \mathbb{E}\bigl[h_i(z)\, z_j\bigr].
+\end{equation}
+This extracts exactly the degree-1 Hermite coefficients, since all higher-degree terms are orthogonal to the coordinate functions $z_j$ under the Gaussian measure.
+
+The nonlinear residual $\nu(z) = h(z) - Mz$ contains everything at Hermite degree $\geq 2$.
+By construction, $\mathbb{E}[\nu(z)\, z^\top] = 0$: the residual is uncorrelated with the latent variables.
+We define the total nonlinear energy as
+\begin{equation}
+    W_{\mathrm{nl}} \;=\; \mathbb{E}\bigl[\|\nu(z)\|^2\bigr].
+\end{equation}
+
+Since the linear and nonlinear parts live on orthogonal Hermite subspaces, the total variance decomposes without cross terms:
+\begin{equation}\label{eq:parseval-split}
+    \mathrm{tr}\bigl(\mathrm{Cov}(h(z))\bigr)
+    \;=\; \|M\|_F^2 \;+\; W_{\mathrm{nl}}.
+\end{equation}
+This Pythagorean decomposition is the key identity underlying Step~3 below.
+
+
+
+\subsection{Step 1: Alignment gap controls nonlinear energy}
+
+Recall that the alignment loss decomposes as
+\begin{equation}
+    \mathcal{L}(h) \;=\; 2n \;-\; 2\sum_{i=1}^n
+    \mathbb{E}\!\left[h_i(z')\, h_i(z)\right],
+\end{equation}
+where $(z, z')$ is a pair from the OU process with autocorrelation $\rho$.
+Mehler's formula (equation~\eqref{eq:mehler-result} in Appendix~\ref{app:proof-forward}) states that Hermite polynomials
+diagonalize the OU conditional expectation:
+\begin{equation}
+    \mathbb{E}\bigl[H_\alpha(z')\,\big|\,z\bigr]
+    \;=\; \rho^{|\alpha|}\, H_\alpha(z),
+\end{equation}
+so each Hermite degree $|\alpha|$ is an eigenspace with eigenvalue
+$\rho^{|\alpha|}$. Substituting the Hermite expansion of $h$ into the
+cross-correlation $\mathbb{E}[h_i(z')\,h_i(z)]$ and applying this
+eigenstructure yields an exact decomposition over degrees:
+\begin{equation}\label{eq:loss-hermite}
+    \mathcal{L}(h) \;=\; 2\sum_{i=1}^n \sum_{|\alpha| \geq 1}
+    (1 - \rho^{|\alpha|})\,(c_\alpha^{(i)})^2.
+\end{equation}
+The weight $1 - \rho^{|\alpha|}$ increases with degree: higher-order
+components are penalized more heavily because they decorrelate faster
+under the OU transition.
+
+We now split the sum by degree. At degree~1 the weight is exactly
+$1 - \rho$. At degree $|\alpha| \geq 2$, the bound
+$\rho^{|\alpha|} \leq \rho^2$ (valid for $0 < \rho < 1$) gives
+$1 - \rho^{|\alpha|} \geq 1 - \rho^2 = (1-\rho)(1+\rho)$, so
+\begin{equation}
+    \mathcal{L}(h) \;\geq\; 2(1-\rho)\,\|M\|_F^2
+    \;+\; 2(1-\rho)(1+\rho)\, W_{\mathrm{nl}}.
+\end{equation}
+Substituting the Pythagorean decomposition
+$\|M\|_F^2 = \mathrm{tr}(\mathrm{Cov}(h(z))) - W_{\mathrm{nl}}$
+from~\eqref{eq:parseval-split} and collecting terms:
+\begin{align}
+    \mathcal{L}(h)
+    &\;\geq\; 2(1-\rho)\bigl[\mathrm{tr}(\mathrm{Cov}(h(z)))
+        - W_{\mathrm{nl}}\bigr]
+        + 2(1-\rho)(1+\rho)\, W_{\mathrm{nl}} \notag\\
+    &\;=\; 2(1-\rho)\,\mathrm{tr}(\mathrm{Cov}(h(z)))
+        + 2(1-\rho)\bigl[(1+\rho) - 1\bigr]\, W_{\mathrm{nl}} \notag\\
+    &\;=\; 2(1-\rho)\,\mathrm{tr}(\mathrm{Cov}(h(z)))
+        + 2\rho(1-\rho)\, W_{\mathrm{nl}}.
+\end{align}
+
+To extract a bound on $W_{\mathrm{nl}}$, we need an upper bound on
+$\mathcal{L}(h)$. An encoder achieving exact alignment would satisfy
+$\mathcal{L}(h) = 2(1-\rho)\,\mathrm{tr}(\mathrm{Cov}(h(z)))$
+(attained when $h$ is linear). We assume the encoder is
+$\delta$-approximately aligned, meaning
+\begin{equation}
+    \mathcal{L}(h) \;\leq\;
+    2(1-\rho)\,\mathrm{tr}(\mathrm{Cov}(h(z))) + \delta.
+\end{equation}
+Combining the upper and lower bounds and rearranging:
+\begin{equation}\label{eq:wnl-bound}
+    \boxed{W_{\mathrm{nl}} \;\leq\; \frac{\delta}{2\rho(1-\rho)}.}
+\end{equation}
+The alignment gap $\delta$ directly controls how much variance the
+encoder can place on nonlinear Hermite components. The denominator
+$2\rho(1-\rho)$ is the spectral gap between degree-1 and degree-2
+eigenvalues, and governs the sensitivity of this bound.
+
+
+ 
+\subsection{Step 2: Whitening constraint forces $M$ near orthogonal}
+ 
+The covariance of $h(z)$ decomposes by Hermite orthogonality as
+\begin{equation}
+    \mathrm{Cov}(h(z)) = MM^\top + N,
+\end{equation}
+where $N_{ij} = \sum_{|\alpha| \geq 2} c_\alpha^{(i)}\, c_\alpha^{(j)}$ is the
+contribution from nonlinear terms. Since $N$ is a Gram matrix (positive
+semidefinite) with $\mathrm{tr}(N) = W_{\mathrm{nl}}$, and for any PSD matrix
+$\|N\|_F \leq \mathrm{tr}(N)$ (all eigenvalues are non-negative, so
+$\sum \lambda_i^2 \leq (\sum \lambda_i)^2$), we have
+$\|N\|_F \leq W_{\mathrm{nl}}$.
+ 
+The approximate whitening assumption gives:
+\begin{equation}
+    \|MM^\top - I_n\|_F
+    = \|\mathrm{Cov}(h(z)) - I_n - N\|_F
+    \leq \varepsilon + W_{\mathrm{nl}}.
+\end{equation}
+Let $M = QP$ be the polar decomposition with $Q \in O(n)$ and $P$ symmetric
+positive semidefinite with singular values $\sigma_1, \ldots, \sigma_n$.
+Then $MM^\top = QP^2Q^\top$, so
+$\|P^2 - I_n\|_F = \|MM^\top - I_n\|_F$.
+Since $P$ is PSD, each $\sigma_i \geq 0$, and
+$|\sigma_i - 1| \leq |\sigma_i + 1||\sigma_i - 1| = |\sigma_i^2 - 1|$.
+Therefore:
+\begin{equation}\label{eq:M-Q-bound}
+    \|M - Q\|_F = \|P - I_n\|_F \leq \|P^2 - I_n\|_F
+    \leq \varepsilon + W_{\mathrm{nl}}.
+\end{equation}
+ 
+\subsection{Step 3: Pythagorean decomposition}
+ 
+Write
+\begin{equation}
+    h(z) - Qz = \underbrace{(M - Q)z}_{\text{degree 1}} + \underbrace{\nu(z)}_{\text{degree} \geq 2}.
+\end{equation}
+Since $(M-Q)z$ lives entirely in Hermite degree~1 and $\nu(z)$ lives entirely
+in degree $\geq 2$, orthogonality of Hermite degrees under $\gamma_n$ gives:
+\begin{equation}
+    \mathbb{E}[\|h(z) - Qz\|^2]
+    = \mathbb{E}[\|(M-Q)z\|^2] + \mathbb{E}[\|\nu(z)\|^2].
+\end{equation}
+The cross term $\mathbb{E}[\nu(z)^\top (M-Q)z] = 0$ vanishes exactly.
+For the first term, since $z \sim \mathcal{N}(0, I_n)$:
+\begin{equation}
+    \mathbb{E}[\|(M-Q)z\|^2]
+    = \mathrm{tr}\!\left((M-Q)\,\mathbb{E}[zz^\top]\,(M-Q)^\top\right)
+    = \|M - Q\|_F^2.
+\end{equation}
+Combining with~\eqref{eq:wnl-bound} and~\eqref{eq:M-Q-bound}:
+\begin{equation}
+    \mathbb{E}[\|h(z) - Qz\|^2]
+    = \|M - Q\|_F^2 + W_{\mathrm{nl}}
+    \leq (\varepsilon + W_{\mathrm{nl}})^2 + W_{\mathrm{nl}}
+    \leq \left(\varepsilon + \frac{\delta}{2\rho(1-\rho)}\right)^{\!2}
+    + \frac{\delta}{2\rho(1-\rho)}.
+\end{equation}
+This completes the proof. \qed
+
+\paragraph{Role of the Gaussian on the latent side vs.\ the output side.}
+The proof uses the Gaussian assumption on $z$ in two essential ways:
+the Hermite basis and Mehler's formula (which provide the spectral
+decomposition~\eqref{eq:loss-hermite}), and the geometric eigenvalue
+decay $\rho^d$ (which creates the spectral gap exploited in
+Step~1). By contrast, the proof uses \emph{no} distributional
+assumption on $h(z)$ beyond zero mean and approximate whitening.
+In particular, the full distributional Gaussianity condition
+$h(z) \sim \mathcal{N}(0, I_n)$ of Thm.~\ref{thm:main}
+can be relaxed to $\mathbb{E}[h(z)] = 0$ and
+$\|\mathrm{Cov}(h(z)) - I_n\|_F \leq \varepsilon$ without
+any change to the bound.
+
+
+
+\section{Proof and Discussion of Theorem~\ref{thm:planning}}\label{app:planning}
+
+\begin{theoremrestate}[Theorem~\ref{thm:planning} (Optimal Latent Planning)]
+Let $h(z) = Qz$ with $Q \in O(n)$, write $\hat z := h(z)$, and consider any finite-horizon optimal control problem whose stage and terminal costs $\ell, \ell_T$ are $O(n)$-invariant in the state argument:
+\begin{equation}\label{eq:orth-inv-app}
+    \ell(Rz, a) = \ell(z, a), \qquad \ell_T(Rz) = \ell_T(z), \qquad \forall\, R \in O(n).
+\end{equation}
+Let $\hat p(\cdot \mid \hat z_t, a_t)$ denote the pushforward of $p$ under $h$, and let $\hat V^*, \hat a^*_{1:T}$ denote the value function and optimal plan of the $\hat z$-space problem defined by replacing $p$ with $\hat p$ and leaving costs unchanged. Then $\hat V^*\!\big(h(z_0)\big) = V^*(z_0)$ and $\hat a^*_{1:T}\!\big(h(z_0)\big) = a^*_{1:T}(z_0)$.
+\end{theoremrestate}
+
+\begin{proof}
+Fix any action sequence $a_{1:T} \in \mathcal{A}^T$ and initial state $z_0$, and let $\hat z_0 = h(z_0) = Q z_0$. By construction of the pushforward, the joint law of $(\hat z_0, \hat z_1, \ldots, \hat z_T)$ under $\hat p$ equals the joint law of $(Q z_0, Q z_1, \ldots, Q z_T)$ under $p$. Applying~\eqref{eq:orth-inv-app} with $R = Q$,
+\begin{equation}
+    \ell(\hat z_t, a_t) \;=\; \ell(Q z_t, a_t) \;=\; \ell(z_t, a_t) \quad \text{a.s.}, \qquad \ell_T(\hat z_T) \;=\; \ell_T(z_T) \quad \text{a.s.}
+\end{equation}
+Summing and taking expectations,
+\begin{equation}
+    \mathbb{E}_{\hat p}\!\left[\sum_{t=0}^{T-1}\ell(\hat z_t, a_t) + \ell_T(\hat z_T) \,\Big|\, \hat z_0\right]
+    \;=\; \mathbb{E}_{p}\!\left[\sum_{t=0}^{T-1}\ell(z_t, a_t) + \ell_T(z_T) \,\Big|\, z_0\right].
+\end{equation}
+Since this holds for every $a_{1:T}$, the minima coincide, giving $\hat V^*(\hat z_0) = V^*(z_0)$, and any minimizer of one side is a minimizer of the other.
+\end{proof}
+
+\subsection{Worked Applications}\label{app:planning-instances}
+
+The invariance condition~\eqref{eq:orth-inv-app} covers a substantial part of control applications. We spell out three.
+
+\paragraph{Goal-reaching.}
+The terminal cost $\ell_T(z) = \|z - z^*\|^2$ is $O(n)$-invariant when the state and goal rotate together: $\|Rz - Rz^*\|^2 = \|z - z^*\|^2$. A planner choosing a goal $\hat z^* \in \mathbb{R}^n$ in the learned latent and minimizing $\|\hat z_T - \hat z^*\|^2$ solves the true goal-reaching problem for the goal $z^* = Q^\top \hat z^*$. The learned goal need never be mapped back to the true latent for this to work; the planner's actions are correct as a sequence, regardless of the coordinate system they are computed in.
+
+\paragraph{Linear-quadratic regulation.}
+Take linear dynamics $z_{t+1} = A z_t + B a_t + \varepsilon_t$ with $\varepsilon_t \sim \mathcal{N}(0, \Sigma)$, and quadratic costs $\ell(z,a) = z^\top W z + a^\top R a$, $\ell_T(z) = z^\top W_T z$, with $W, W_T \succeq 0$ and $R \succ 0$.
+The pushforward dynamics in $\hat z$-coordinates are
+\begin{equation}
+    \hat z_{t+1} = (Q A Q^\top)\,\hat z_t + (Q B)\,a_t + Q\varepsilon_t, \qquad Q\varepsilon_t \sim \mathcal{N}(0, Q\Sigma Q^\top),
+\end{equation}
+so the LQR problem in $\hat z$-space has system matrices $(\hat A, \hat B, \hat\Sigma) = (QAQ^\top, QB, Q\Sigma Q^\top)$ and cost matrices $(\hat W, \hat W_T, R) = (QWQ^\top, QW_T Q^\top, R)$. The discrete algebraic Riccati equation
+\begin{equation}
+    P = A^\top P A - A^\top P B (R + B^\top P B)^{-1} B^\top P A + W
+\end{equation}
+is covariant under $(A, B, W, P) \mapsto (QAQ^\top, QB, QWQ^\top, QPQ^\top)$: if $P$ solves the true-latent equation, then $\hat P = QPQ^\top$ solves the $\hat z$-space equation. The optimal feedback gain $K = (R + B^\top P B)^{-1} B^\top P A$ transforms as $\hat K = KQ^\top$, and the feedback action is
+\begin{equation}
+    \hat a_t = -\hat K \hat z_t = -(K Q^\top)(Q z_t) = -K z_t,
+\end{equation}
+which is the true LQR action at every state. The value function is likewise $\hat V^*(\hat z) = \hat z^\top \hat P \hat z = z^\top P z = V^*(z)$. LQR is therefore a special case of Thm.~\ref{thm:planning} in which the invariance is inherited from the quadratic structure and the covariance of all system matrices under the rotation.
+
+\paragraph{General rotation-invariant objectives.}
+Any cost depending on the state only through quantities preserved by rotations satisfies~\eqref{eq:orth-inv-app}. Examples: norms $\|z\|$ and radial functions $f(\|z\|)$; inner products $\langle z, z' \rangle$ between pairs of states; quadratic forms $z^\top W z$ with $W$ specified in the learned coordinates (which silently corresponds to $Q^\top W Q$ in the true latent); Gaussian belief updates, whose covariance updates are covariant under rotation; and linear value functions $w^\top z$ with $w$ specified in the learned coordinates. In each case, an engineer who writes down the cost using only these operations has unwittingly written down a cost in the equivalence class of~\eqref{eq:orth-inv-app}, and Thm.~\ref{thm:planning} certifies that planning is unaffected by the ambiguity.
+
+\subsection{Scope: encoder versus action-conditioned dynamics}\label{app:planning-scope}
+
+Thm.~\ref{thm:planning} concerns the encoder alone. The action-conditioned transition $\hat p(\hat z' \mid \hat z, a)$ must still be learned from data \citep{maes2026leworldmodel}; our theorems do not prove that it is. What they do guarantee is that the encoder does not corrupt the learning problem for the transition: for $h(z) = Qz$, the pushforward of the true transition lies in the same function class as the original (linear transitions remain linear, Gaussian transitions remain Gaussian, and any class closed under orthogonal reparametrization of the state is equally expressive in both coordinate systems). The residue of the orthogonal ambiguity is a consistent reparametrization across the encoder, the transition model, and the cost: so long as these three components are trained or specified to be mutually consistent in the learned coordinates, planning in those coordinates is planning in the true ones.
+
+The natural next theoretical step is to prove that the action-conditioned transition itself is identifiable. This is a genuinely different problem: the encoder identifiability proved here relies on stationarity plus Gaussianity of the latent distribution, whereas transition identifiability would trade these for an excitation condition on the action sequence (the actions must explore all latent directions). Persistent excitation is the classical condition in subspace identification \citep{ahuja2023, buchholz2024}, and extending LeJEPA-style identifiability to the controlled setting is the subject of ongoing work.
+
+\subsection{Connection to classical optimal control}\label{app:planning-classical}
+
+The covariance of LQR under orthogonal reparametrization has been exploited for decades in control theory: the Kalman filter, the Riccati equation, and Lyapunov stability analysis all transform covariantly under orthogonal changes of basis, and this is why principal-component and whitening transforms are used as preprocessing steps in classical state estimation. What is new here is not the covariance itself but its role as a \emph{consequence of an identifiability guarantee}. In classical control, the state is assumed given; the engineer chooses a coordinate system. In the LeJEPA setting, the coordinate system is chosen by the learning procedure, and the theorem is that the choice is made consistently enough, orthogonal rather than arbitrary linear (let alone arbitrary nonlinear), that classical control tools continue to apply without modification. Latent-space planning with a learned world model has a long heritage \citep{brysonho1975, nguyen1990neural, ha2018world}; Thm.~\ref{thm:planning} provides a representation-learning foundation for the classical pipeline.
+
+
+
+\section{Alternative Proof via Dirichlet Energy}\label{app:dirichlet}
+
+We provide a second, independent proof of identifiability using a different noise model and different mathematical machinery. This proof requires stronger regularity ($C^1$ diffeomorphism and infinitesimal noise limit) but offers complementary geometric insight and makes explicit contact with the local isometry approach used in prior nonlinear ICA  \citep{buchholz2025robustness}.
+
+\subsection{Setup}
+
+Consider the alternative noise model $z' = z + \sqrt{\epsilon}\,\eta$ with $\eta \sim \mathcal{N}(0, I_n)$, define the normalized loss:
+\begin{equation}
+    \mathcal{L}(h) = \lim_{\epsilon \to 0} \frac{1}{\epsilon}\, \mathbb{E}\!\left[\|h(z + \sqrt{\epsilon}\eta) - h(z)\|^2\right].
+\end{equation}
+We require $h: \mathbb{R}^n \to \mathbb{R}^n$ to be a $C^1$ diffeomorphism with $h(z) \sim \mathcal{N}(0, I_n)$ when $z \sim \mathcal{N}(0, I_n)$.
+
+\subsection{Proof}
+
+\begin{theorembox}[Identifiability via Dirichlet energy]\label{thm:dirichlet}
+Any $C^1$ diffeomorphism $h$ that preserves the standard Gaussian measure and minimizes $\mathcal{L}(h)$ must satisfy $h(z) = Qz$ for some orthogonal matrix $Q \in O(n)$.
+\end{theorembox}
+
+
+\paragraph{Step 1: Reduction to Dirichlet energy.}
+By the first-order Taylor expansion $h(z + \sqrt{\epsilon}\eta) - h(z) = \sqrt{\epsilon}\, J_h(z)\,\eta + o(\sqrt{\epsilon})$, where $J_h(z)$ is the Jacobian of $h$ at $z$. Squaring, dividing by $\epsilon$, taking expectations, and using $\mathbb{E}_\eta[\|A\eta\|^2] = \|A\|_F^2$ for any matrix $A$:
+\begin{equation}
+    \mathcal{L}(h) = \mathbb{E}_{z \sim \gamma_n}\!\left[\|J_h(z)\|_F^2\right],
+\end{equation}
+which is the Dirichlet energy of $h$ with respect to the Gaussian measure $\gamma_n$.
+
+The exchange of limit and expectation is justified by dominated convergence: the $C^1$ regularity of $h$ combined with the Gaussian decay of $\gamma_n$ provides the necessary integrability. The full computation, including careful treatment of the remainder term, is given below.
+
+Starting from the Taylor expansion:
+\begin{equation}
+    h(z + \sqrt{\epsilon}\eta) - h(z) = \sqrt{\epsilon}\, J_h(z)\,\eta + R(z, \sqrt{\epsilon}\eta),
+\end{equation}
+where $\|R(z,\sqrt{\epsilon}\eta)\| = o(\sqrt{\epsilon})$. Expanding the squared norm:
+\begin{equation}
+    \|h(z{+}\sqrt{\epsilon}\eta) - h(z)\|^2 = \epsilon\,\|J_h(z)\eta\|^2 + 2\sqrt{\epsilon}\,(J_h(z)\eta)^\top R + \|R\|^2.
+\end{equation}
+Dividing by $\epsilon$ and taking $\epsilon \to 0$, the last two terms vanish, yielding:
+\begin{equation}
+    \frac{1}{\epsilon}\,\mathbb{E}_{z,\eta}\!\left[\|h(z{+}\sqrt{\epsilon}\eta) - h(z)\|^2\right] \;\xrightarrow{\epsilon \to 0}\; \mathbb{E}_{z,\eta}\!\left[\|J_h(z)\eta\|^2\right].
+\end{equation}
+Using $\mathbb{E}_\eta[\eta^\top M \eta] = \mathrm{tr}(M)$ for $M = J_h(z)^\top J_h(z)$:
+\begin{equation}
+    \mathbb{E}_\eta\!\left[\|J_h(z)\eta\|^2\right] = \mathrm{tr}(J_h(z)^\top J_h(z)) = \|J_h(z)\|_F^2.
+\end{equation}
+
+\paragraph{Step 2: The expected log-determinant is zero.}
+By the change of variables formula for densities, $p(h(z))\,|\det J_h(z)| = p(z)$ for all $z$. Substituting the Gaussian density $p(z) = (2\pi)^{-n/2}\exp(-\|z\|^2/2)$ and noting that the normalizing constants cancel:
+\begin{equation}
+    \ln|\det J_h(z)| = \tfrac{1}{2}\|h(z)\|^2 - \tfrac{1}{2}\|z\|^2.
+\end{equation}
+Taking expectations and using $\mathbb{E}[\|h(z)\|^2] = \mathbb{E}[\|z\|^2] = n$ (both follow from $h(z) \sim \mathcal{N}(0,I_n)$):
+\begin{equation}
+    \mathbb{E}\!\left[\ln|\det J_h(z)|\right] = 0.
+\end{equation}
+
+\paragraph{Step 3: Lower bound via AM-GM and Jensen.}
+Let $\sigma_1(z), \ldots, \sigma_n(z)$ be the singular values of $J_h(z)$. Then $\|J_h(z)\|_F^2 = \sum_i \sigma_i(z)^2$ and $|\det J_h(z)| = \prod_i \sigma_i(z)$. By AM-GM applied to $\sigma_1^2, \ldots, \sigma_n^2$:
+\begin{equation}
+    \frac{1}{n}\sum_{i=1}^n \sigma_i(z)^2 \geq \left(\prod_{i=1}^n \sigma_i(z)^2\right)^{1/n} = |\det J_h(z)|^{2/n},
+\end{equation}
+so $\|J_h(z)\|_F^2 \geq n\,|\det J_h(z)|^{2/n}$ pointwise. Taking expectations:
+\begin{equation}
+    \mathcal{L}(h) \geq n\,\mathbb{E}\!\left[|\det J_h(z)|^{2/n}\right].
+\end{equation}
+Writing $|\det J_h(z)|^{2/n} = \exp\!\left(\tfrac{2}{n}\ln|\det J_h(z)|\right)$ and applying Jensen's inequality to the strictly convex function $x \mapsto e^{(2/n)x}$:
+\begin{equation}
+    \mathbb{E}\!\left[|\det J_h(z)|^{2/n}\right] \geq \exp\!\left(\tfrac{2}{n}\,\mathbb{E}\!\left[\ln|\det J_h(z)|\right]\right) = \exp(0) = 1.
+\end{equation}
+Therefore $\mathcal{L}(h) \geq n$. Any orthogonal map $h(z) = Qz$ achieves this bound since $\|Q\|_F^2 = n$.
+
+\paragraph{Step 4: Equality forces orthogonal Jacobian.}
+At the minimum $\mathcal{L}(h) = n$, equality must hold in both Jensen and AM-GM. Strict convexity of the exponential forces $\ln|\det J_h(z)|$ to be constant a.e., and since its expectation is 0, we get $|\det J_h(z)| = 1$ a.e. Equality in AM-GM forces all squared singular values to be equal: $\sigma_i(z)^2 = \cdots = \sigma_n(z)^2$. Combined with $\prod_i \sigma_i = 1$, this gives $\sigma_i(z) = 1$ for all $i$. Thus:
+\begin{equation}
+    J_h(z)^\top J_h(z) = I_n \qquad \text{for a.e.\ } z.
+\end{equation}
+By $C^1$ continuity, this holds everywhere.
+
+\paragraph{Step 5: Orthogonal Jacobian implies linearity (Mazur--Ulam).}
+Since $J_h(z)^\top J_h(z) = I_n$ everywhere, $h$ preserves the norm of tangent vectors: $\|J_h(z) v\| = \|v\|$ for all $v$. For any $z_1, z_2 \in \mathbb{R}^n$, integrating along the straight-line path $\gamma(t) = z_1 + t(z_2 - z_1)$:
+\begin{equation}
+    h(z_2) - h(z_1) = \int_0^1 J_h(\gamma(t))(z_2 - z_1)\,dt.
+\end{equation}
+Taking norms and applying the triangle inequality:
+\begin{equation}
+    \|h(z_2) - h(z_1)\| \leq \int_0^1 \|J_h(\gamma(t))(z_2-z_1)\|\,dt = \int_0^1 \|z_2-z_1\|\,dt = \|z_2-z_1\|.
+\end{equation}
+Since $h$ is a diffeomorphism, $h^{-1}$ exists and is $C^1$ with $J_{h^{-1}}(h(z)) = J_h(z)^{-1} = J_h(z)^\top$, which is also orthogonal ($J_h J_h^\top = I_n$ for square matrices with $J_h^\top J_h = I_n$). Applying the same argument to $h^{-1}$ yields $\|z_2 - z_1\| \leq \|h(z_2) - h(z_1)\|$. Together:
+\begin{equation}
+    \|h(z_1) - h(z_2)\| = \|z_1 - z_2\| \qquad \text{for all } z_1, z_2 \in \mathbb{R}^n,
+\end{equation}
+so $h$ is a surjective isometry of $\mathbb{R}^n$. By the Mazur--Ulam theorem \citep{mazur1932}, every surjective isometry of a real normed space is affine: $h(z) = Qz + b$ with $Q$ orthogonal and $b \in \mathbb{R}^n$. Measure preservation forces $0 = \mathbb{E}[h(z)] = Q\mathbb{E}[z] + b = b$, giving $h(z) = Qz$. \qed
+
+\paragraph{Generalization.}
+No step in the proof above uses the Gaussian assumption on~$p$;
+the noise~$\eta$ need only satisfy $\mathbb{E}[\eta\eta^\top] = I_n$
+(Step~1), and Steps~2--5 hold for any density preserved by~$h$.
+The identity map always achieves $\mathcal{L} = n$, so the
+lower bound is tight regardless of~$p$.
+The conclusion is that any $C^1$ measure-preserving
+diffeomorphism minimizing~$\mathcal{L}$ must be an isometry
+$h(z) = Qz + b$ with $p(Qz + b) = p(z)$.
+
+
+\subsection{Comparison of the Two Proofs}
+
+The Hermite proof (Thm.~\ref{thm:main}) and the Dirichlet energy proof (Thm.~\ref{thm:dirichlet}) establish the same conclusion through different mechanisms:
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{lll}
+\hline
+& \textbf{Hermite proof} & \textbf{Dirichlet energy proof} \\
+\hline
+Regularity & Measurable & $C^1$ diffeomorphism \\
+Noise level & Any $\rho \in (0,1)$ & Infinitesimal ($\rho \to 1$) \\
+Key tool & Mehler's formula & AM-GM + Jensen + Mazur--Ulam \\
+Mechanism & Low-pass filter on degrees & Jacobian rigidity \\
+Connection to & Harmonic analysis & Differential geometry \\
+\hline
+\end{tabular}
+\end{center}
+
+The Hermite proof is strictly more general (weaker assumptions, finite noise), but the Dirichlet energy proof provides geometric intuition that complements the spectral perspective: the Jacobian must be an isometry at every point, so the map cannot compress or stretch any direction anywhere.
+
+
+
+\section{Prior Work: Connection to Slow Feature Analysis}
+\label{app:prior-work}
+
+Our identifiability result has a deep connection to the theory of Slow Feature Analysis (SFA) developed by \citet{wiskott2002} and extended to nonlinear blind source separation by \citet{sprekeler2014}. \citet{sobal2022slow} analyzed the tendency of JEPAs to focus on slow features. We spell out this connection in detail, both because it clarifies the scope of our contribution and because the SFA perspective suggests natural generalizations.
+
+\paragraph{SFA and its optimization problem.}
+SFA seeks scalar output functions $g_j(x)$ whose output signals $y_j(t) = g_j(x(t))$ vary as slowly as possible in time, as measured by the $\Delta$-value $\Delta(y_j) = \langle \dot{y}_j^2 \rangle_t$, subject to the constraints $\langle y_j \rangle = 0$ (zero mean), $\langle y_j^2 \rangle = 1$ (unit variance), and $\langle y_i y_j \rangle = 0$ for $i < j$ (decorrelation) \citep{wiskott2002}.
+For discrete-time data, the $\Delta$-value is proportional to $\langle y^2 \rangle - \langle y(t) y(t+1) \rangle$, so that for unit-variance outputs, minimizing $\Delta$ is equivalent to maximizing the temporal correlation $\langle y(t) y(t+1) \rangle$.
+The SFA constraints are therefore precisely whitening, and the SFA objective is precisely the alignment loss used in our setting.
+
+\paragraph{Nonlinear identifiability via SFA.}
+\citet{sprekeler2014} analyzed SFA in the setting where the input data $x(t) = F(s(t))$ are generated from statistically independent latent variables $s(t)$ via an unknown invertible nonlinear mixing function $F$.
+They showed that if the function space $\mathcal{F}$ accessible to SFA is unrestricted (a Sobolev space), then the set of achievable output signals is independent of $F$: for every $g \in \mathcal{F}$, the composition $g \circ F$ is also in $\mathcal{F}$, so the mixing function drops out of the analysis entirely.
+This is the same role played by our assumption that the encoder is expressive enough to invert the mixing function.
+
+\paragraph{Eigenfunction structure and Sturm--Liouville theory.}
+Building on \citet{franzius2007}, \citet{sprekeler2014} showed that the optimal SFA functions satisfy an eigenvalue equation $\mathcal{D} g = \lambda g$ for a second-order partial differential operator $\mathcal{D}$.
+When the latent variables are statistically independent, the operator separates as $\mathcal{D} = \sum_\alpha \mathcal{D}_\alpha$, where each $\mathcal{D}_\alpha$ depends on a single latent variable $s_\alpha$ only.
+By separation of variables, the eigenfunctions of the full operator are products $g_{\mathbf{i}}(s) = \prod_\alpha g_{\alpha i_\alpha}(s_\alpha)$ of the eigenfunctions of the individual operators, with eigenvalues $\lambda_{\mathbf{i}} = \sum_\alpha \lambda_{\alpha i_\alpha}$.
+Each one-dimensional eigenvalue problem is of Sturm--Liouville type, and standard results guarantee that the eigenfunctions $g_{\alpha i}$ are oscillatory with exactly $i$ zeros.
+In particular, the first non-constant eigenfunction $g_{\alpha 1}$ is monotonic and therefore invertible, yielding identifiability of each latent variable up to a monotonic transformation for \emph{any} latent variable distribution.
+
+\paragraph{The Gaussian specialization and Hermite polynomials.}
+When the latent variables are reversible Gaussian processes (equivalently, Ornstein--Uhlenbeck processes), the conditional variance of the derivative given the current value is constant ($K_\alpha(s_\alpha) = K_\alpha$), and the latent variable density is Gaussian.
+The Sturm--Liouville equation then reduces to Hermite's differential equation, with eigenfunctions given by the Hermite polynomials $H_i$ and eigenvalues $\lambda_{\alpha i} = i K_\alpha$.
+The first non-constant eigenfunction is simply $g_{\alpha 1}(s_\alpha) = s_\alpha$: the identity.
+This is the same Hermite eigenstructure that appears in our proof via Mehler's formula.
+Indeed, Mehler's formula is the spectral expansion of the Green's function (transition kernel) of the operator $\mathcal{D}_\alpha$ in the Gaussian case, so the two proof routes, Sturm--Liouville eigenvalue analysis and direct Mehler expansion, access the same underlying mathematical structure from different entry points.
+
+\paragraph{Sequential versus simultaneous extraction.}
+A key difference between the approach of \citet{sprekeler2014} and ours lies in how the $d$ output dimensions are determined.
+Their xSFA algorithm extracts latent variables \emph{sequentially}: it identifies the slowest latent variable, projects out all its nonlinear transformations, and repeats.
+This greedy procedure, combined with the assumption that the latent variables have distinct autocorrelation rates ($K_\alpha$ all different), yields identifiability up to \emph{permutation}, a stronger result than our orthogonal identifiability.
+However, the sequential approach is fragile in practice: it requires representing the nonlinear transformations of already-extracted latent variables (approximated by high-degree polynomial expansions), accumulates estimation errors across iterations, and degrades rapidly as the number of latent variables increases \citep[Section~5]{sprekeler2014}.
+
+Our approach instead optimizes all $d$ output dimensions \emph{simultaneously} via a joint loss (alignment plus whitening or SIGReg).
+Because whitening is invariant under orthogonal transformations, the simultaneous approach cannot resolve individual latent variable axes, yielding identifiability up to orthogonal rotation rather than permutation.
+This is the natural and complete identifiability class for the simultaneous setting.
+
+\paragraph{The role of isotropic transitions.}
+The distinction between sequential and simultaneous extraction is intimately connected to the structure of the latent transitions.
+When the autocorrelation parameters $\rho_\alpha$ differ across dimensions, the eigenvalue $\lambda_{\alpha i} = i K_\alpha$ of the $i$-th Hermite component of latent variable $\alpha$ depends on $\alpha$.
+For the simultaneous approach to correctly identify the subspace of first harmonics (degree-1 Hermite components), all first harmonics must have smaller eigenvalues than all higher-order terms.
+This requires $\max_\alpha K_\alpha < 2 \min_\beta K_\beta$, or equivalently, the fastest latent variable must not be more than twice as fast as the slowest.
+When $\rho_\alpha$ are all equal (isotropic transitions), this condition is trivially satisfied, and the first $d$ eigenfunctions are exactly the $d$ first harmonics, yielding clean orthogonal identifiability.
+
+We verified empirically that anisotropic transitions break the simultaneous approach: with distinct $\rho_\alpha$, the encoder recovers the second Hermite polynomial of the slow latent variable in place of the first Hermite polynomial of the fast latent variable, exactly as the eigenvalue interleaving predicts. See also the anisotropy in Tab.~\ref{tab:reacher}.
+This confirms that isotropic transitions are not merely a simplifying assumption but a necessary condition for simultaneous (parallel) identifiability.
+The anisotropic case requires either sequential extraction \`a la \citet{sprekeler2014} or a modified objective such as the AnInfoNCE loss of \citet{rusak2024}, which reweights the contrastive objective to account for per-dimension variance differences, at the cost of downstream accuracy.
+
+\paragraph{Beyond Gaussian latents.}
+The Sturm--Liouville perspective of \citet{sprekeler2014} suggests a generalization of our result that does not require Gaussian latents.
+If all latent variables are drawn i.i.d.\ from the \emph{same} (arbitrary) distribution with the same transition structure, then the eigenvalue spectra of the individual operators $\mathcal{D}_\alpha$ are identical: $\lambda_{\alpha i} = \lambda_i$ for all $\alpha$.
+All first harmonics share the same eigenvalue $\lambda_1$, all second harmonics share $\lambda_2 > \lambda_1$ (the gap is guaranteed by Sturm--Liouville theory), and the top-$d$ eigenspace of the simultaneous problem is exactly the span of the first harmonics.
+The simultaneous approach then yields identifiability up to orthogonal rotation, not in the original latent variable space but in the space of first harmonics.
+Since the first harmonics are monotonic functions of the latent variables, this amounts to identifiability up to an orthogonal rotation composed with a shared monotonic nonlinearity applied elementwise.
+Only in the Gaussian case does the first harmonic equal the identity, collapsing this to linear orthogonal identifiability.
+A rigorous treatment of this non-Gaussian generalization is an interesting direction for future work.
+
+\paragraph{Relation to Mehler's formula and maximal correlation.}
+The Hermite expansion and temporal correlation bounds used in our proof are closely related to classical results in probability theory.
+Specifically, the correlation bound (equation~\eqref{eq:corr-decomp}) is a consequence of the classical Hirschfeld--Gebelein--R\'enyi maximal correlation for jointly Gaussian variables \citep{gebelein1941, renyi1959, lancaster1958}.
+Our contribution is not the bound itself but its application to identifiability via the measure-preservation constraint.
+As discussed above, Mehler's formula, the key technical tool in our proof, is equivalent to the spectral expansion of the transition kernel associated with the Sturm--Liouville (SL) operator of \citet{sprekeler2014} in the Gaussian case.
+The SL route is more general (handles arbitrary latent variable distributions) but does not directly yield the quantitative bound (Thm.~\ref{thm:approx}) that Mehler's formula provides.
+
+\paragraph{Practical differences: learned features versus fixed kernels.}
+While the theoretical optimization problems coincide, the practical implementations differ substantially.
+\citet{sprekeler2014} use fixed polynomial kernel expansions (degree 7 for two latent variables) followed by a linear eigenvalue problem, a two-stage procedure in which the feature space is chosen a priori and never adapted.
+In contrast, the LeJEPA/SIGReg pipeline learns the encoder end-to-end via gradient descent on a neural network, jointly optimizing the feature representation and the alignment plus regularization objectives.
+This learned-feature approach avoids the numerical instabilities of high-degree polynomial expansions noted by \citet{sprekeler2014}, scales to high-dimensional data, and is the standard paradigm in modern self-supervised learning.
+Our identifiability result thus provides theoretical grounding for an architecture and training procedure that is already in widespread use. %; whereas the xSFA algorithm, despite its stronger theoretical guarantees, never gained practical traction.
+
+\paragraph{Connections to diffusion maps and spectral geometry.}
+\citet{sprekeler2011} showed that SFA is closely related to Laplacian eigenmaps and diffusion maps, with the operator $\mathcal{D}$ playing the role of a Laplace--Beltrami operator weighted by the temporal structure of the data.
+The eigenfunctions of $\mathcal{D}$ are the same objects studied in spectral geometry and manifold learning (see also \citep{balestriero2022contrastivenoncontrastiveselfsupervisedlearning}).
+\citet{singer2008} exploited a similar connection, using data-driven diffusion maps with a carefully chosen local metric to achieve nonlinear latent variable separation.
+This spectral-geometric perspective suggests that the identifiability phenomenon we study, encoders converging to specific linear transformations of the latents, may be an instance of a broader principle: that temporal or geometric structure on the data manifold, combined with appropriate regularization, constrains learned representations to align with the intrinsic coordinates of the generative process.
+
+\paragraph{Summary of the relationship.}
+Table~\ref{tab:comparison-sfa} summarizes the key similarities and differences.
+The mathematical core, Hermite eigenfunctions under Gaussian measure with temporal correlations yielding identifiability, is shared.
+Our contributions are (a)~the simultaneous formulation with its clean orthogonal identifiability class, (b)~the converse result identifying the Gaussian as the \emph{unique} latent distribution yielding linear identifiability (Thm.~\ref{thm:converse}), (c)~the quantitative approximate identifiability bound under whitening alone (Thm.~\ref{thm:approx}), (d)~the observation that isotropic transitions are necessary for the simultaneous approach, and (e)~the planning equivalence (Thm.~\ref{thm:planning}) connecting linear identifiability to optimal latent-space planning.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+& \textbf{Sprekeler et al.\ (2014)} & \textbf{This work} \\
+\midrule
+Identifiability class & Permutation & Orthogonal \\
+Latent variable distributions & Any independent & Gaussian (or i.i.d.\ factorial) \\
+Transition structure & Distinct rates required & Isotropic required \\
+Extraction & Sequential (greedy) & Simultaneous \\
+Function space & Fixed polynomial kernel & Learned (neural network) \\
+Proof technique & Sturm--Liouville / PDE & Mehler's formula / Parseval \\
+Approximate bound & None & $D + (\varepsilon + D)^2$ \\
+Practical algorithm & xSFA (fragile, $\leq 6$ latent variables) & LeJEPA / SIGReg (scalable) \\
+\bottomrule
+\end{tabular}
+\vspace{5pt}
+\caption{Comparison of the SFA identifiability theory of \citet{sprekeler2014} and the present work.}
+\label{tab:comparison-sfa}
+\end{table}
+
+
+
+
+
+\section{Lean Verification}\label{app:lean}
+
+We formally verify all five theoretical results, namely the Hermite proof of Thm.~\ref{thm:main}, the Gaussian uniqueness result (Thm.~\ref{thm:converse}), the Dirichlet energy proof (Appendix~\ref{app:dirichlet}), the approximate identifiability bound (Thm.~\ref{thm:approx}), and the planning equivalence theorem (Thm.~\ref{thm:planning}), in the Lean~4 theorem prover using the Mathlib mathematical library. The formalization compiles with zero \texttt{sorry} obligations: every logical step from axiomatized premises to stated conclusions is machine-checked.
+
+\paragraph{Scope and methodology.}
+Lean~4 verification requires every inference step to be justified by a previously established lemma or axiom. When a standard mathematical result exists in Mathlib (e.g., \texttt{Finset.sum\_lt\_sum} for strict finite-sum monotonicity), we invoke it directly. When a result is standard but not yet available in Mathlib, either because the mathematical objects have not been formalized (Hermite polynomials) or because connecting available results to our specific statement forms would require substantial software engineering (Mazur--Ulam, AM-GM with uniform weights), we introduce it as a Lean \texttt{axiom} with a reference to its mathematical source. The complete reasoning chains \emph{between} these axioms are fully verified.
+Table~\ref{tab:lean-summary} gives the complete inventory.
+The formalization is organized into five files corresponding to the five results.
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{llc}
+\toprule
+\textbf{File / Component} & \textbf{Lean name} & \textbf{Status} \\
+\midrule
+\multicolumn{3}{l}{\textit{Hermite.lean --- Thm.~\ref{thm:main} via Hermite polynomials}} \\
+Hermite basis completeness & \texttt{mehler\_summability} & axiomatized \\
+Contraction lemma ($\rho^d$ decay) & (folded into above) & axiomatized \\
+Mehler's formula & \texttt{correlation\_eq\_spectral\_sum} & axiomatized \\
+$\rho^d \leq \rho$ for $d \geq 1$ & \texttt{pow\_le\_self\_of\_pos\_lt\_one} & \textsc{verified} \\
+$\rho^d < \rho$ for $d \geq 2$ (strict) & \texttt{pow\_lt\_self\_of\_ge\_two} & \textsc{verified} \\
+Pointwise bound $w_d \rho^d \leq w_d \rho$ & \texttt{spectral\_term\_le} & \textsc{verified} \\
+Correlation bound $\leq \rho$~\eqref{eq:corr-decomp} & \texttt{correlation\_le\_rho} & \textsc{verified} \\
+Equality $\Leftrightarrow$ $w_1 = 1$ & \texttt{equality\_forces\_degree\_one} & \textsc{verified} \\
+Degree-1 $\Rightarrow$ linearity & \texttt{linear\_of\_degree\_one} & axiomatized \\
+Gaussianity + linear $\Rightarrow$ orthogonal & \texttt{orthogonal\_of\_gaussian\_linear} & axiomatized \\
+Loss lower bound $\mathcal{L} \geq 2(1-\rho)n$ & \texttt{loss\_lower\_bound} & \textsc{verified} \\
+Theorem assembly $h = Qz$ & \texttt{hermite\_identifiability} & \textsc{verified} \\
+\midrule
+\multicolumn{3}{l}{\textit{Uniqueness.lean --- Thm.~\ref{thm:converse} (Gaussian uniqueness)}} \\
+Affine eigenfunction $\Rightarrow$ affine score & \texttt{score\_affine\_of\_eigenfunction} & \textsc{verified} \\
+Affine score $\Rightarrow$ Gaussian density & \texttt{gaussian\_of\_affine\_score} & axiomatized \\
+Only-if direction assembly & \texttt{gaussian\_of\_affine\_eigenfunction} & \textsc{verified} \\
+Gaussian $\Rightarrow$ Hermite eigenfunctions & \texttt{hermite\_first\_eigenfunction\_of\_gaussian} & axiomatized \\
+Full biconditional & \texttt{gaussian\_uniqueness} & \textsc{verified} \\
+Zero-mean specialization & \texttt{score\_pure\_linear\_zero\_mean} & \textsc{verified} \\
+\midrule
+\multicolumn{3}{l}{\textit{Dirichlet.lean --- Appendix~\ref{app:dirichlet} via Dirichlet energy}} \\
+AM-GM inequality & \texttt{amgm\_sum\_ge\_prod\_pow} & axiomatized \\
+Jensen's inequality (exp) & \texttt{exp\_mean\_ge\_mean\_exp} & axiomatized \\
+Mazur--Ulam theorem & \texttt{mazur\_ulam} & axiomatized \\
+Norm-preserving CLM $\Rightarrow$ isometry & \texttt{clm\_isometry\_of\_norm\_preserving} & \textsc{verified} \\
+Orthogonal Jacobian $\Rightarrow$ 1-Lipschitz & \texttt{lipschitz\_of\_orthogonal\_jacobian} & \textsc{verified} \\
+Bilipschitz $\Rightarrow$ global isometry & \texttt{isometry\_of\_bilipschitz} & \textsc{verified} \\
+$h(0) = 0 \Rightarrow$ linear isometry & (part of assembly) & \textsc{verified} \\
+Theorem assembly $h = Qz$ & \texttt{dirichlet\_identifiability} & \textsc{verified} \\
+\midrule
+\multicolumn{3}{l}{\textit{Approx.lean --- Thm.~\ref{thm:approx} (approximate bound)}} \\
+Spectral gap positivity & \texttt{spectral\_gap\_pos} & \textsc{verified} \\
+$W_{\mathrm{nl}} \leq D$ from alignment gap & \texttt{nonlinear\_energy\_le\_D} & \textsc{verified} \\
+Polar decomposition bound & \texttt{polar\_bound\_axiom} & axiomatized \\
+Pythagorean decomposition & \texttt{pythagorean\_axiom} & axiomatized \\
+$\|M - Q\|_F^2$ bound & \texttt{linear\_deviation\_sq\_bound} & \textsc{verified} \\
+Monotonicity of $({\varepsilon} + t)^2 + t$ & \texttt{bound\_monotone} & \textsc{verified} \\
+Full bound $D + (\varepsilon + D)^2$ & \texttt{approximate\_identifiability} & \textsc{verified} \\
+Exact recovery ($\delta = \varepsilon = 0$) & \texttt{exact\_recovery\_special\_case} & \textsc{verified} \\
+\midrule
+\multicolumn{3}{l}{\textit{Planning.lean --- Thm.~\ref{thm:planning} (planning equivalence)}} \\
+Orthogonal invariance definition        & \texttt{IsOrthogonalInvariant}   & \textsc{verified} \\
+Stage pushforward                        & \texttt{stage\_pushforward}      & axiomatized \\
+Terminal pushforward                     & \texttt{terminal\_pushforward}   & axiomatized \\
+Per-step stage cost equivalence          & \texttt{stage\_cost\_equiv}      & \textsc{verified} \\
+Terminal cost equivalence                & \texttt{terminal\_cost\_equiv}   & \textsc{verified} \\
+Total cost equivalence (main step)       & \texttt{planning\_equivalence}   & \textsc{verified} \\
+Minimizer equivalence                    & \texttt{minimizer\_equivalence}  & \textsc{verified} \\
+Value equivalence                        & \texttt{value\_equivalence}      & \textsc{verified} \\
+\bottomrule
+\end{tabular}
+\vspace{1pt}
+\caption{Lean~4 verification status for each proof component. \textsc{verified}: machine-checked with zero \texttt{sorry}. \textsc{axiomatized}: stated as a Lean \texttt{axiom}; standard result not yet in Mathlib or requiring nontrivial API software engineering.}
+\label{tab:lean-summary}
+\end{table}
+
+\subsection{What Is Axiomatized and Why}
+
+The axiomatized results fall into five categories:
+
+\paragraph{1.\ Hermite polynomial infrastructure.}
+Mathlib does not yet define Hermite polynomials or their properties under the Gaussian measure. The contraction property~\eqref{eq:contraction-result}, Mehler's formula~\eqref{eq:mehler-result}, and the correspondence between degree-1 concentration and linearity are axiomatized for this reason. These are classical results in probability theory \citep{mehler1866, lancaster1958}; their eventual formalization in Mathlib would allow these axioms to be discharged.
+
+\paragraph{2.\ Sturm--Liouville spectral theory.}
+The Gaussian uniqueness proof (Thm.~\ref{thm:converse}) axiomatizes two results: that an affine score function uniquely determines a Gaussian density (standard exponential family characterization), and that a Gaussian density yields Hermite eigenfunctions with the identity as the first non-constant eigenfunction. The core algebraic step between these, namely extracting the affine score from the Sturm--Liouville eigenfunction equation via field arithmetic (including the sign argument that the score slope $-\lambda_1/K$ is strictly negative), is fully verified.
+
+\paragraph{3.\ Standard analysis results requiring API software engineering.}
+The AM-GM inequality with uniform weights, Jensen's inequality for $\exp$, and the Mazur--Ulam theorem are all available in Mathlib in closely related forms, but connecting them to our specific statement signatures requires nontrivial type-class and measure-theory software engineering. We axiomatize the exact statements we need and reference their Mathlib counterparts in the source code.
+
+\paragraph{4.\ Measure-theoretic and matrix-analytic facts.}
+The polar decomposition bound ($\|M - Q\|_F \leq \varepsilon + W_{\mathrm{nl}}$) and the Pythagorean decomposition ($\mathbb{E}[\|h(z) - Qz\|^2] = \|M - Q\|_F^2 + W_{\mathrm{nl}}$) combine matrix analysis with integration under the Gaussian measure. These are stated as axioms with their mathematical content documented in the source.
+
+\paragraph{5.\ Trajectory pushforward for expected costs.}
+The planning equivalence theorem (Thm.~\ref{thm:planning}) axiomatizes the pushforward relation between the learned-latent and true-latent expected per-step costs: for any test function $c$, the expected value of $c(\hat z_t, a_t)$ under the pushforward dynamics starting from $Q z_0$ equals the expected value of $c(Q z_t, a_t)$ under the original dynamics starting from $z_0$. This is the measure-theoretic content of ``the joint law of $(\hat z_0, \ldots, \hat z_T)$ under the pushforward equals the joint law of $(Q z_0, \ldots, Q z_T)$ under the original''; stating it at the level of expected values rather than joint distributions sidesteps the need to formalize stochastic dynamics in Lean while preserving the algebraic content of the theorem's proof.
+
+\paragraph{What is verified.}
+All reasoning chains \emph{between} the axiomatized premises are fully machine-checked: the correlation bound and its strict equality characterization (the mathematical core of the Hermite proof), the algebraic chain from the SL eigenfunction equation to the affine score function and the biconditional assembly (the Gaussian uniqueness proof), the geometric chain from orthogonal Jacobian to linear isometry (the core of the Dirichlet proof), the spectral gap argument controlling nonlinear energy, the monotonicity and algebraic assembly of the approximate bound, and the recovery of the exact theorem as a special case. The inverse function theorem is incorporated as a structural assumption on the diffeomorphism rather than invoked as a separate lemma.
+
+\subsection{Build Information}
+The project compiles against Lean~4 v4.28.0 with Mathlib v4.28.0 (8{,}032 build targets, zero errors, zero \texttt{sorry} obligations) and is available at \url{https://github.com/klindtlab/lejepa-identifiability}.
+
+
+
+
+\section{Experimental Details and Additional Results}\label{app:experiment}
+
+\subsection{Nonlinear Mixing Functions}
+The four mixing functions $g: \mathbb{R}^2 \to \mathbb{R}^2$ used in Figs.~\ref{fig:teaser},\ref{fig:demo} are:
+\begin{enumerate}
+    \item \textbf{Spiral:} $g(z) = R(\pi\|z\|_2)\, z$, where $R(\theta) = \bigl(\begin{smallmatrix} \cos\theta & -\sin\theta \\ \sin\theta & \cos\theta \end{smallmatrix}\bigr)$. This norm-dependent rotation is a measure-preserving diffeomorphism of $\mathcal{N}(0, I_2)$: at each point, $g$ acts as an orthogonal rotation ($|\det J_g| = 1$), so it preserves the Gaussian density despite being highly nonlinear.
+    \item \textbf{Sinusoidal shear:} $g(z_1, z_2) = (z_1 + \sin(1.5\,z_2),\; z_2)$.
+    \item \textbf{Parabolic shear:} $g(z_1, z_2) = (z_1,\; z_2 + z_1^2)$.
+    \item \textbf{RealNVP coupling layer:} a single affine coupling block \citep{dinh2016density} of the form $g(z_1, z_2) = (z_1,\; z_2 \odot \exp(s(z_1)) + t(z_1))$, where $s, t$ are small MLPs with random initialization. This is the same family used as the matched encoder in the scaling experiment (App.~\ref{app:scaling}); here we use it in 2D as an additional nonlinear diffeomorphism.
+\end{enumerate}
+
+The first (spiral) map applies a rotation whose angle $\pi\|z\|_2$ depends on the distance from the origin. Points at different radii are rotated by different angles, producing a characteristic spiral structure in observation space (Figure~\ref{fig:demo}, center). The map is a measure-preserving diffeomorphism of $\mathcal{N}(0, I_2)$: at each point, $g$ acts as an orthogonal rotation ($|\det J_g| = 1$ everywhere), so it preserves the Gaussian density. This is an interesting case because it entails SIGReg is already fulfilled in input space. However, $g$ is highly nonlinear; it entangles the radial and angular components of the latent space.
+
+\subsection{Network Architecture and Training}
+
+The encoder $f$ is a 4-layer MLP with hidden dimension 256 and GELU activations. The architecture is:
+\begin{equation}
+    \mathbb{R}^2 \xrightarrow{\text{Linear}(2,256)} \xrightarrow{\text{GELU}} \xrightarrow{\text{Linear}(256,256)} \xrightarrow{\text{GELU}} \xrightarrow{\text{Linear}(256,256)} \xrightarrow{\text{GELU}} \xrightarrow{\text{Linear}(256,2)} \mathbb{R}^2.
+\end{equation}
+
+\subsection{Training Procedure}
+
+The loss function combines two terms with a balancing coefficient $\lambda \in [0, 1]$:
+\begin{equation}\label{eq:loss-combined}
+    \mathcal{L} = \lambda\,\mathcal{L}_{\mathrm{SIG}} + (1 - \lambda)\,\mathcal{L}_{\mathrm{inv}}.
+\end{equation}
+\begin{enumerate}
+    \item \textbf{Invariance loss:} $\mathcal{L}_{\text{inv}} = \frac{1}{B}\sum_{i=1}^B \|f(x_i) - f(x_i')\|^2$, where $(x_i, x_i')$ are positive pairs generated by sampling $z_i \sim \mathcal{N}(0, I_2)$, generating $z_i' = \rho z_i + \sqrt{1-\rho^2}\eta_i$ via the Ornstein--Uhlenbeck channel, and mixing: $x_i = g(z_i)$, $x_i' = g(z_i')$.
+    \item \textbf{SIGReg regularization:} The SIGReg regularizer of \citet{balestriero2025lejepa} encourages the empirical distribution of embeddings to match the standard Gaussian by penalizing deviations of the empirical sliced characteristic function from the Gaussian target.
+\end{enumerate}
+
+\subsection{Hyperparameters}
+
+All experiments share the same training infrastructure and learning rate schedule: constant learning rate for the first half of training, followed by cosine decay to zero. Data is generated online (fresh samples each step, infinite data regime). 
+
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{lll}
+\hline
+\textbf{Hyperparameter} & \textbf{2D / Gennorm / Grid} & \textbf{Scaling} \\
+\hline
+Optimizer & AdamW & AdamW \\
+Learning rate & $3 \times 10^{-3}$ & $3 \times 10^{-3}$ \\
+LR schedule & warmup (10k) + cosine (10k) & warmup (10k) + cosine (10k) \\
+Weight decay & 0 & 0 \\
+Batch size & 256 & 256 \\
+Training steps & 20{,}000 & 20{,}000 \\
+Data regime & online (infinite) & online (infinite) \\
+Eval points & 10{,}000 (fixed) & 10{,}000 (fixed) \\
+Views per sample & 2 & 2 \\
+$\rho$ & 0.95 (2D/Gennorm), swept (Grid) & 0.95 \\
+$\lambda$ & $10^{-3}$ (2D/Gennorm), swept (Grid) & $10^{-6}$ \\
+Encoder & MLP (spiral/banana/sinusoid) & matched inverse-NVP \citep{dinh2016density} \\
+ & matched NVP (nvp mixing) & \\
+Hidden dimension & 256 (MLP) & --- \\
+MLP layers & 4 & --- \\
+NVP coupling layers & 8 (2D/Gennorm) & 4 \\
+Activation & GELU (MLP) & tanh (NVP) \\
+\hline
+\end{tabular}
+\end{center}
+
+\subsection{Evaluation Metrics}
+
+After training, we evaluate the composed map $h = f \circ g$ on a fixed evaluation set of 10{,}000 points. All metrics are computed on GPU via PyTorch for efficiency at large $N$. We report:
+
+\begin{enumerate}
+    \item \textbf{Linear $R^2$ (bidirectional):} We fit linear maps $\hat{z} = Az + b$ and $\hat{h} = Bh + c$ via ordinary least squares and report $R^2(z \to h)$ and $R^2(h \to z)$. Values close to 1 indicate that $h$ is well-approximated by a linear function of $z$.
+
+    \item \textbf{Orthogonality error:} For the fitted linear map $\hat Q$, we report $\|\hat Q^\top \hat Q - I_n\|_F / \sqrt{n}$. A value near 0 indicates that $\hat Q$ is orthogonal, consistent with Thm.~\ref{thm:main}.
+
+    \item \textbf{Approximate bound quantities:} The covariance deviation $\varepsilon = \|\mathrm{Cov}(h(z)) - I_n\|_F$, the alignment gap $\delta = \mathcal{L}(h) - 2(1-\rho)\,\mathrm{tr}(\mathrm{Cov}(h(z)))$ (clamped to $\geq 0$), and the Orthogonal recovery error $\min_{Q \in O(n)} \mathbb{E}[\|h(z) - Qz\|^2]$ solved via SVD.
+\end{enumerate}
+
+
+
+\subsection{Grid Search}\label{app:grid}
+
+We perform a 2D grid search over the regularization weight $\lambda$ and the OU correlation $\rho$:
+\begin{itemize}
+    \item $\lambda \in \{10^{-6},\; 10^{-5},\; 10^{-4},\; 10^{-3},\; 5 \times 10^{-3},\; 10^{-2},\; 5 \times 10^{-2},\; 10^{-1},\; 5 \times 10^{-1}\}$
+    \item $\rho \in \{0.3,\; 0.5,\; 0.7,\; 0.8,\; 0.9,\; 0.95,\; 0.99\}$
+\end{itemize}
+For each of the $9 \times 7 = 63$ settings, we train 3 independent seeds, for a total of 189 runs.
+The extended $\lambda$ range (down to $10^{-6}$) covers the regime where SIGReg has negligible weight, showing that Gaussianity regularization below $\lambda = 10^{-4}$ is insufficient for identifiability regardless of $\rho$.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/heatmap_r2_hz.pdf}
+    \includegraphics[width=\textwidth]{figures/heatmap_orth_err_normalized.pdf}
+    \caption{Grid search over the regularization weight $\lambda$ and OU correlation $\rho$ (5 seeds each, mean $\pm$ std). \textbf{Left:} Linear $R^2$ between true and learned latents ($\uparrow$ better). \textbf{Right:} Normalized orthogonality error of the fitted linear map ($\downarrow$ better). Identifiability requires both objectives to be active: too much Gaussianity ($\lambda = 0.5$) collapses the representation entirely ($R^2 \approx 0$), while even weak regularization ($\lambda \leq 10^{-2}$) suffices when the alignment signal is strong. At very high correlation ($\rho = 0.99$), performance degrades for moderate $\lambda$ because near-identical positive pairs make the invariance loss trivially small, allowing SIGReg to dominate. The best identifiability ($R^2 > 0.96$, orthogonality error $< 0.2$) occurs at $\lambda \in [10^{-3}, 10^{-2}]$ with $\rho \in [0.8, 0.95]$.}
+    \label{fig:grid}
+\end{figure}
+
+Figure~\ref{fig:grid} shows the results. Three regimes are visible. First, when Gaussianity regularization is too strong ($\lambda = 0.5$), the encoder collapses to a non-informative Gaussian representation with $R^2 \approx 0$, regardless of $\rho$: the regularizer overwhelms the alignment signal. Second, at low $\lambda$ ($\leq 10^{-2}$), identifiability improves monotonically with $\rho$, consistent with the theoretical prediction that the correlation bound tightens as $\rho \to 1$. The best performance ($R^2 > 0.97$, orthogonality error $\approx 0.15$) is achieved at $\lambda \in \{10^{-3}, 5 \times 10^{-3}\}$ with $\rho \in \{0.9, 0.95\}$. Third, at intermediate $\lambda$ ($5 \times 10^{-2}$ to $10^{-1}$), there is a non-monotonic interaction: performance peaks at moderate $\rho$ and degrades at $\rho = 0.99$. This occurs because very high correlation makes the invariance loss trivially small, shifting the loss balance toward Gaussianity and pushing the system into the collapse regime.
+
+
+
+\subsection{Latent Variable Distribution Sweep Across Mixings}
+\label{app:gennorm}
+
+The main-text gennorm figure (Fig.~\ref{fig:bound_unique_plan}b) shows linear recovery on the spiral mixing across latent distribution shapes $\alpha \in \{2^{-3}, \ldots, 2^{5}\}$ in the generalized normal family ($\alpha=2$ Gaussian, $\alpha=1$ Laplace, $\alpha \to \infty$ uniform). We extend this sweep to all four 2D mixings used in our paper (Figs.~\ref{fig:gennorm_full},~\ref{fig:gennorm_orth}).
+
+Two patterns are robust across mixings. First, both methods peak at $\alpha=2$, confirming Thm.~\ref{thm:converse} empirically: linear identifiability is maximal precisely at the Gaussian latents. Second, SIGReg's plateau is consistently wider than whitening's. Whitening collapses sharply for $\alpha < 2$ (heavier-than-Gaussian tails), whereas SIGReg retains high recovery across a broad range of latent distribution shapes. This confirms that SIGReg's Gaussianization of $h$ is doing more than enforcing covariance: it absorbs latent-side non-Gaussianity that whitening cannot see.
+
+The contrast between methods is most pronounced for the spiral mixing, the only one of the four that is approximately measure-preserving and therefore unconstrained by second-order statistics alone. For the banana, sinusoid, and NVP mixings, the mixing structure itself partially constrains the recovery, narrowing the gap between methods. The orthogonality error (Fig.~\ref{fig:gennorm_orth}) tells the same story from the geometric side: whitening achieves a sharp minimum at $\alpha=2$ where the second-order constraint exactly matches the latents, while SIGReg's basin is broader.
+
+
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{figures/fig_gennorm.pdf}
+    \caption{
+        \textbf{Linear identifiability across the gennorm family for all four 2D mixings.}
+        $R^2(h \to z)$ on a fixed evaluation grid as a function of latent shape $\alpha$ ($\alpha{=}1$ Laplace, $\alpha{=}2$ Gaussian). All three methods peak at $\alpha = 2$ as predicted by Thm.~\ref{thm:converse}; SIGReg and InfoNCE, which constrain $h$ beyond second moments, retain a wider plateau than VICReg for heavy-tailed latents. Mean $\pm$ std over 3 seeds.
+        \label{fig:gennorm_full}
+    }
+\end{figure}
+
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{figures/fig_gennorm_orth.pdf}
+    \caption{
+        \textbf{Orthogonality error across the gennorm family for all four 2D mixings.}
+        $\|\hat Q^\top \hat Q - I\|_F / \sqrt{n}$ on the same fixed grid (log scale). VICReg and SIGReg dip sharply near $\alpha=2$ where their constraints align with the latent distribution; InfoNCE remains roughly flat, reflecting weaker control over the linear map under fixed kernel width. Mean $\pm$ std over 3 seeds.
+        \label{fig:gennorm_orth}
+    }
+\end{figure}
+
+
+
+
+\subsection{Approximate Bound Decomposition}\label{app:bound}
+
+Figure~\ref{fig:bound-decomp} decomposes the recovery error into its two sources: the whitening error $\varepsilon$ and the alignment gap $\delta$. The two quantities have distinct roles. Large $\varepsilon$ alone does not predict poor recovery: the $\lambda = 5 \times 10^{-1}$ runs (crosses) achieve near-zero $\varepsilon$ because SIGReg dominates, yet their recovery error is maximal because the alignment signal is absent ($\delta$ is large). Conversely, the alignment gap $\delta$ is a much stronger predictor of actual recovery error, consistent with the interpretation that the $D$ term in the bound captures the nonlinear energy that alignment fails to suppress. This asymmetry confirms the practical takeaway from Thm.~\ref{thm:approx}: approximate whitening is easy to achieve in practice, so the binding constraint on identifiability is the quality of the alignment objective.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{figures/bound_decomposition.pdf}
+    \caption{Decomposition of the recovery error into its two sources. \textbf{Left column:} Error vs whitening deviation $\varepsilon$. \textbf{Right column:} Error vs alignment gap $\delta$. Top and bottom rows use different marker/color encodings for $\lambda$ and $\rho$. The alignment gap $\delta$ is a much stronger predictor of recovery error than the whitening error $\varepsilon$, confirming that approximate whitening is the easy part; the binding constraint is alignment quality.}
+    \label{fig:bound-decomp}
+\end{figure}
+
+
+
+\subsection{Loss Predictivity}\label{app:loss}
+
+Figure~\ref{fig:scatter} pools all trained encoders across our four experiments to examine whether the training losses are predictive of linear identifiability.
+We restrict the view to converged runs ($R^2 > 0.9$) to focus on the regime where the theory applies.
+The alignment loss is the strongest single predictor of $R^2$, consistent with its direct connection to the alignment gap $\delta$ in Thm.~\ref{thm:approx}.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.8\linewidth]{figures/scatter_plots.pdf}
+    \caption{
+    \textbf{Losses predict linear identifiability.}
+    Each point is one trained encoder from one of our three experiments (2D illustrations, grid search, scaling), zoomed to the converged regime ($R^2 > 0.9$).
+    \textbf{Top left:} Total loss (alignment + $\lambda$ SIGReg) correlates with linear $R^2(h \to z)$.
+    \textbf{Top right:} Alignment loss alone is predictive of identifiability quality.
+    \textbf{Bottom left:} SIGReg loss vs.\ $R^2$.
+    \textbf{Bottom right:} SIGReg and whitening losses are correlated.
+    }
+    \label{fig:scatter}
+\end{figure}
+
+
+\subsection{Scaling Experiment}\label{app:scaling}
+
+% ── Appendix: detailed per-method tables ──
+\begin{table}[t]
+\centering
+\caption{\textbf{Scaling Experiment (SIGReg)} (mean $\pm$ std, 5 seeds). The RealNVP mixing is consistently nonlinear across dimensions ($R^2(x \to z) < 1$). The learned model nonetheless recovers the true latents at all dimensions. Training losses are stable; orthogonality error grows gradually with $N$.}
+\label{tab:scaling-sigreg}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{r cc cc c cc}
+\toprule
+ \multicolumn{1}{c}{\textbf{Latents}} & \multicolumn{2}{c}{\textbf{Mixing difficulty}} & \multicolumn{2}{c}{\textbf{Linear identifiability}} & \multicolumn{1}{c}{\textbf{Orthogonality}} & \multicolumn{2}{c}{\textbf{SIGReg losses}} \\
+\cmidrule(lr){1-1} \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-6} \cmidrule(lr){7-8}
+$N$ & $R^2(z \to x)$ & $R^2(x \to z)$ & $R^2(z \to h)$ & $R^2(h \to z)$ & $\|\hat Q^\top \hat Q - I\|_F / \sqrt{N}$ & Align & SIGReg \\
+ & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std\,$\times 10^{-7}$} & {\scriptsize $\pm$std\,$\times 10^{-7}$} & {\scriptsize $\pm$std\,$\times 10^{-5}$} & {\scriptsize $\pm$std\,$\times 10^{-4}$} & {\scriptsize $\pm$std} \\
+\midrule
+  $2^{1}$ & 0.871\tiny{$\pm$1.4} & 0.782\tiny{$\pm$2.8} & 0.99999\tiny{$\pm$3.4} & 0.99999\tiny{$\pm$3.4} & 0.000\tiny{$\pm$24} & 0.0472\tiny{$\pm$15} & 2.54\tiny{$\pm$1.4} \\
+  $2^{2}$ & 0.865\tiny{$\pm$16} & 0.724\tiny{$\pm$24} & 0.99999\tiny{$\pm$12} & 0.99999\tiny{$\pm$12} & 0.001\tiny{$\pm$12} & 0.0475\tiny{$\pm$10} & 2.09\tiny{$\pm$1.3} \\
+  $2^{3}$ & 0.860\tiny{$\pm$4.2} & 0.729\tiny{$\pm$10} & 0.99999\tiny{$\pm$9.0} & 0.99999\tiny{$\pm$9.0} & 0.001\tiny{$\pm$14} & 0.0473\tiny{$\pm$13} & 2.06\tiny{$\pm$0.78} \\
+  $2^{4}$ & 0.858\tiny{$\pm$6.9} & 0.733\tiny{$\pm$6.0} & 0.99998\tiny{$\pm$4.9} & 0.99998\tiny{$\pm$4.9} & 0.002\tiny{$\pm$18} & 0.0476\tiny{$\pm$3.6} & 1.76\tiny{$\pm$0.18} \\
+  $2^{5}$ & 0.851\tiny{$\pm$3.0} & 0.738\tiny{$\pm$1.6} & 0.99998\tiny{$\pm$7.2} & 0.99998\tiny{$\pm$7.2} & 0.003\tiny{$\pm$7.6} & 0.0479\tiny{$\pm$5.0} & 1.93\tiny{$\pm$0.17} \\
+  $2^{6}$ & 0.854\tiny{$\pm$1.5} & 0.737\tiny{$\pm$1.4} & 0.99996\tiny{$\pm$7.6} & 0.99996\tiny{$\pm$7.4} & 0.005\tiny{$\pm$10} & 0.0484\tiny{$\pm$3.9} & 2.03\tiny{$\pm$0.14} \\
+  $2^{7}$ & 0.853\tiny{$\pm$0.62} & 0.739\tiny{$\pm$0.50} & 0.99993\tiny{$\pm$3.1} & 0.99993\tiny{$\pm$3.2} & 0.007\tiny{$\pm$7.4} & 0.0486\tiny{$\pm$1.2} & 1.80\tiny{$\pm$0.09} \\
+  $2^{8}$ & 0.855\tiny{$\pm$0.30} & 0.742\tiny{$\pm$0.48} & 0.99988\tiny{$\pm$7.7} & 0.99988\tiny{$\pm$7.9} & 0.010\tiny{$\pm$5.0} & 0.0486\tiny{$\pm$2.9} & 1.88\tiny{$\pm$0.17} \\
+  $2^{9}$ & 0.859\tiny{$\pm$0.24} & 0.749\tiny{$\pm$0.30} & 0.99977\tiny{$\pm$6.5} & 0.99977\tiny{$\pm$6.7} & 0.015\tiny{$\pm$3.7} & 0.0489\tiny{$\pm$2.4} & 1.93\tiny{$\pm$0.08} \\
+  $2^{10}$ & 0.866\tiny{$\pm$0.10} & 0.763\tiny{$\pm$0.17} & 0.99956\tiny{$\pm$12} & 0.99956\tiny{$\pm$12} & 0.023\tiny{$\pm$4.7} & 0.0488\tiny{$\pm$0.91} & 1.93\tiny{$\pm$0.06} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Scaling Experiment (VICReg)} (mean $\pm$ std, 5 seeds). VICReg matches SIGReg on linear identifiability across all dimensions; orthogonality error grows similarly with $N$. The whitening loss is stable and small throughout.}
+\label{tab:scaling-vicreg}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{r cc cc c cc}
+\toprule
+ \multicolumn{1}{c}{\textbf{Latents}} & \multicolumn{2}{c}{\textbf{Mixing difficulty}} & \multicolumn{2}{c}{\textbf{Linear identifiability}} & \multicolumn{1}{c}{\textbf{Orthogonality}} & \multicolumn{2}{c}{\textbf{VICReg losses}} \\
+\cmidrule(lr){1-1} \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-6} \cmidrule(lr){7-8}
+$N$ & $R^2(z \to x)$ & $R^2(x \to z)$ & $R^2(z \to h)$ & $R^2(h \to z)$ & $\|\hat Q^\top \hat Q - I\|_F / \sqrt{N}$ & Align & Whitening \\
+ & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std\,$\times 10^{-7}$} & {\scriptsize $\pm$std\,$\times 10^{-7}$} & {\scriptsize $\pm$std\,$\times 10^{-5}$} & {\scriptsize $\pm$std\,$\times 10^{-4}$} & {\scriptsize $\pm$std\,$\times 10^{-4}$} \\
+\midrule
+  $2^{1}$ & 0.871\tiny{$\pm$0.66} & 0.782\tiny{$\pm$1.7} & 0.99999\tiny{$\pm$8.4} & 0.99999\tiny{$\pm$8.4} & 0.001\tiny{$\pm$19} & 0.0491\tiny{$\pm$24} & 0.0022\tiny{$\pm$13} \\
+  $2^{2}$ & 0.865\tiny{$\pm$15} & 0.726\tiny{$\pm$24} & 0.99998\tiny{$\pm$54} & 0.99998\tiny{$\pm$54} & 0.001\tiny{$\pm$65} & 0.0476\tiny{$\pm$11} & 0.0041\tiny{$\pm$13} \\
+  $2^{3}$ & 0.869\tiny{$\pm$4.4} & 0.731\tiny{$\pm$8.1} & 0.99998\tiny{$\pm$4.9} & 0.99998\tiny{$\pm$4.8} & 0.002\tiny{$\pm$31} & 0.0476\tiny{$\pm$13} & 0.0045\tiny{$\pm$12} \\
+  $2^{4}$ & 0.860\tiny{$\pm$6.9} & 0.733\tiny{$\pm$5.9} & 0.99998\tiny{$\pm$4.7} & 0.99998\tiny{$\pm$4.6} & 0.002\tiny{$\pm$12} & 0.0476\tiny{$\pm$3.6} & 0.0036\tiny{$\pm$2.8} \\
+  $2^{5}$ & 0.855\tiny{$\pm$1.5} & 0.736\tiny{$\pm$1.9} & 0.99998\tiny{$\pm$9.4} & 0.99998\tiny{$\pm$9.4} & 0.003\tiny{$\pm$3.6} & 0.0477\tiny{$\pm$6.7} & 0.0035\tiny{$\pm$3.3} \\
+  $2^{6}$ & 0.853\tiny{$\pm$1.7} & 0.737\tiny{$\pm$1.4} & 0.99996\tiny{$\pm$8.2} & 0.99996\tiny{$\pm$8.1} & 0.004\tiny{$\pm$9.0} & 0.0488\tiny{$\pm$2.1} & 0.0035\tiny{$\pm$1.8} \\
+  $2^{7}$ & 0.853\tiny{$\pm$0.87} & 0.739\tiny{$\pm$0.66} & 0.99994\tiny{$\pm$7.1} & 0.99994\tiny{$\pm$7.2} & 0.006\tiny{$\pm$9.5} & 0.0487\tiny{$\pm$0.99} & 0.0035\tiny{$\pm$0.75} \\
+  $2^{8}$ & 0.855\tiny{$\pm$0.25} & 0.742\tiny{$\pm$0.49} & 0.99988\tiny{$\pm$7.2} & 0.99988\tiny{$\pm$7.2} & 0.009\tiny{$\pm$4.1} & 0.0486\tiny{$\pm$2.9} & 0.0035\tiny{$\pm$0.39} \\
+  $2^{9}$ & 0.858\tiny{$\pm$0.23} & 0.749\tiny{$\pm$0.30} & 0.99978\tiny{$\pm$7.2} & 0.99978\tiny{$\pm$6.9} & 0.014\tiny{$\pm$3.7} & 0.0489\tiny{$\pm$2.4} & 0.0035\tiny{$\pm$0.29} \\
+  $2^{10}$ & 0.866\tiny{$\pm$0.10} & 0.763\tiny{$\pm$0.17} & 0.99958\tiny{$\pm$11} & 0.99958\tiny{$\pm$11} & 0.022\tiny{$\pm$4.5} & 0.0488\tiny{$\pm$0.91} & 0.0035\tiny{$\pm$0.06} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Scaling Experiment (InfoNCE)} (mean $\pm$ std, 5 seeds). InfoNCE matches the batch-statistic methods at low $N$ but degrades at scale under a fixed Gaussian kernel width. 
+The InfoNCE loss column shows the saturation directly: at $N \geq 32$, both positive- and negative-pair similarities $\exp(-\|\cdot\|^2/\sigma^2)$ underflow to zero, killing the gradient. The non-monotone $R^2$ across $N$ (note the spike at $N{=}16$) is the fingerprint of this kernel-width mismatch rather than a property of the InfoNCE objective itself.
+}
+\label{tab:scaling-infonce}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{r cc cc c cc}
+\toprule
+ \multicolumn{1}{c}{\textbf{Latents}} & \multicolumn{2}{c}{\textbf{Mixing difficulty}} & \multicolumn{2}{c}{\textbf{Linear identifiability}} & \multicolumn{1}{c}{\textbf{Orthogonality}} & \multicolumn{2}{c}{\textbf{InfoNCE losses}} \\
+\cmidrule(lr){1-1} \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-6} \cmidrule(lr){7-8}
+$N$ & $R^2(z \to x)$ & $R^2(x \to z)$ & $R^2(z \to h)$ & $R^2(h \to z)$ & $\|\hat Q^\top \hat Q - I\|_F / \sqrt{N}$ & Align & InfoNCE \\
+ & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std} & {\scriptsize $\pm$std\,$\times 10^{-3}$} & {\scriptsize $\pm$std} \\
+\midrule
+  $2^{1}$ & 0.870\tiny{$\pm$0.92} & 0.781\tiny{$\pm$1.4} & 0.96030\tiny{$\pm$2.4} & 0.95096\tiny{$\pm$1.6} & 0.505\tiny{$\pm$0.06} & 0.0653\tiny{$\pm$5.1} & 4.529\tiny{$\pm$0.03} \\
+  $2^{2}$ & 0.855\tiny{$\pm$11} & 0.730\tiny{$\pm$23} & 0.93874\tiny{$\pm$8.1} & 0.91087\tiny{$\pm$8.2} & 0.908\tiny{$\pm$0.12} & 0.0866\tiny{$\pm$5.0} & 3.557\tiny{$\pm$0.03} \\
+  $2^{3}$ & 0.870\tiny{$\pm$2.0} & 0.724\tiny{$\pm$12} & 0.92503\tiny{$\pm$25} & 0.88681\tiny{$\pm$42} & 0.876\tiny{$\pm$0.11} & 0.0883\tiny{$\pm$11} & 1.811\tiny{$\pm$0.05} \\
+  $2^{4}$ & 0.858\tiny{$\pm$6.4} & 0.736\tiny{$\pm$6.8} & 0.99988\tiny{$\pm$0.01} & 0.99988\tiny{$\pm$0.01} & 0.010\tiny{$\pm$0.00} & 0.0489\tiny{$\pm$1.2} & 0.156\tiny{$\pm$0.01} \\
+  $2^{5}$ & 0.853\tiny{$\pm$2.9} & 0.737\tiny{$\pm$2.8} & 0.92206\tiny{$\pm$18} & 0.90780\tiny{$\pm$26} & 0.393\tiny{$\pm$0.07} & 0.0738\tiny{$\pm$6.5} & 0.000\tiny{$\pm$0.00} \\
+  $2^{6}$ & 0.853\tiny{$\pm$1.7} & 0.737\tiny{$\pm$1.4} & 0.77351\tiny{$\pm$0.82} & 0.64849\tiny{$\pm$3.1} & 1.756\tiny{$\pm$0.04} & 0.2123\tiny{$\pm$3.5} & 0.000\tiny{$\pm$0.00} \\
+  $2^{7}$ & 0.853\tiny{$\pm$0.87} & 0.739\tiny{$\pm$0.66} & 0.77232\tiny{$\pm$5.2} & 0.56695\tiny{$\pm$6.6} & 4.875\tiny{$\pm$0.08} & 0.3803\tiny{$\pm$6.2} & 0.000\tiny{$\pm$0.00} \\
+  $2^{8}$ & 0.855\tiny{$\pm$0.25} & 0.742\tiny{$\pm$0.49} & 0.83727\tiny{$\pm$0.51} & 0.69658\tiny{$\pm$0.49} & 3.922\tiny{$\pm$0.04} & 0.2519\tiny{$\pm$2.5} & 0.000\tiny{$\pm$0.00} \\
+  $2^{9}$ & 0.858\tiny{$\pm$0.23} & 0.749\tiny{$\pm$0.30} & 0.84131\tiny{$\pm$0.15} & 0.70439\tiny{$\pm$0.26} & 3.946\tiny{$\pm$0.00} & 0.2507\tiny{$\pm$0.95} & 0.000\tiny{$\pm$0.00} \\
+  $2^{10}$ & 0.866\tiny{$\pm$0.10} & 0.763\tiny{$\pm$0.17} & 0.84972\tiny{$\pm$0.18} & 0.72024\tiny{$\pm$0.20} & 4.003\tiny{$\pm$0.00} & 0.2507\tiny{$\pm$1.1} & 0.000\tiny{$\pm$0.00} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+
+We test whether identifiability holds at scale by sweeping the latent dimension $N \in \{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024\}$ with 5 seeds each.
+The mixing function is a RealNVP-style coupling layer architecture (4 layers with orthogonal weight matrices) \citep{dinh2016density}, and the encoder is a \emph{matched} inverse-coupling-layer architecture with learnable weights.
+This architectural matching removes encoder expressivity as a confounder: any failure of identifiability is due to the optimization landscape, not the encoder's function class.
+For $N \leq 32$, we train $K=3$ encoders per seed and select the one with lowest final loss; for $N > 32$, all runs converge to equivalent solutions ($K=1$).
+
+Tabs.~\ref{tab:scaling-sigreg}--\ref{tab:scaling-infonce} report the per-method results. The mixing difficulty is consistently nonlinear across dimensions ($R^2(x \to z) \approx 0.73$--$0.78$) for all methods, since the RealNVP mixing is shared. The three methods differ sharply in their failure modes:
+
+\textbf{SIGReg} (Tab.~\ref{tab:scaling-sigreg}). Linear identifiability is essentially perfect at all dimensions ($R^2 > 0.9995$). Alignment and SIGReg losses are stable across $N$. The only quantity that drifts is the orthogonality error $\|\hat Q^\top \hat Q - I\|_F / \sqrt{N}$, which grows from $\sim 10^{-5}$ at $N{=}2$ to $\sim 2 \times 10^{-2}$ at $N{=}1024$. This is the slow degradation predicted by Thm.~\ref{thm:approx}: at fixed alignment quality, the bound on the linear-part distortion grows with the dimension being whitened.
+
+\textbf{VICReg} (Tab.~\ref{tab:scaling-vicreg}). Numerically indistinguishable from SIGReg across the entire sweep, on both linear identifiability and orthogonality error. The whitening loss is small ($\sim 4 \times 10^{-7}$) and stable. Confirms that for Gaussian latents at the population optimum, second-moment whitening is sufficient (the Gaussianity assumption on $h(z)$ in Thm.~\ref{thm:main} can be relaxed to whitening, see remark after Thm.~\ref{thm:approx}).
+
+\textbf{InfoNCE} (Tab.~\ref{tab:scaling-infonce}). Qualitatively different. $R^2$ is non-monotone in $N$: high at $N{=}16$ ($\sim 0.9999$), then collapsing to $\sim 0.65$--$0.72$ for $N \geq 64$. Orthogonality error is one to three orders of magnitude larger than for the batch-statistic methods. The InfoNCE loss column reveals the mechanism: at $N \geq 32$, the loss saturates at zero, indicating that the Gaussian kernel $\exp(-\|\cdot\|^2/\sigma^2)$ underflows for both positive and negative pairs once $\|z\|^2 \approx N$ at $\sigma{=}1$, killing the gradient. The non-monotone $R^2$ is the fingerprint of this kernel-width mismatch, not a property of the InfoNCE objective itself; per-dimension kernel tuning would presumably restore performance, at the cost of a hyperparameter sweep absent from the batch-statistic methods.
+
+These three patterns make the main-text story precise: the practical gap between methods is not in their theoretical identifiability guarantees (Thm.~\ref{thm:main} applies to all), but in how each method's optimization behaves at scale.
+
+
+\subsection{Reacher Experiment}\label{app:reacher}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/reacher_annotated.png}
+    \caption{
+        \textbf{DMC Reacher.} The latent state $z = (z_0, z_1)$ consists of two joint angles (shoulder and wrist) that fully determine the arm configuration. The nonlinear mixing $g$ is the MuJoCo rendering pipeline producing $64 \times 64$ pixel observations.
+    }
+    \label{fig:reacher_annotated}
+\end{figure}
+
+\paragraph{Environment and rendering.}
+We use the DeepMind Control Suite Reacher (``hard'' variant)~\citep{tassa2018dmcontrol} with two revolute joints: a shoulder (unbounded) and a wrist (limited to $[-2.79, 2.79]$ rad).
+The latent state is $z = (\theta_0, \theta_1) \in \mathbb{R}^2$ (Fig.~\ref{fig:reacher_annotated}).
+Images are rendered at $64 \times 64$ pixels via MuJoCo with EGL headless rendering.
+The target position is fixed at $(0.1, 0.1)$ across all experiments to eliminate it as a confound.
+For each experimental condition, we pre-render 100{,}000 image pairs and 10{,}000 evaluation images (i.i.d.\ Gaussian samples, shared across all conditions).
+Images are stored as uint8 and normalized per-channel at training time.
+
+\textbf{OU condition.}
+For each $\rho \in \{0.3, 0.5, 0.7, 0.8, 0.9, 0.95, 0.99\}$, we sample $z \sim \mathcal{N}(0, I_2)$, generate $z'$ via~\eqref{eq:dgp}, and render.
+The theory's assumptions (Gaussian marginals, isotropic OU transitions, additive noise) are exactly satisfied.
+Wrapping beyond $\pm\pi$ occurs for $<0.2\%$ of samples.
+
+\textbf{Trajectory condition.}
+We use 10{,}000 episodes (201 steps each) from the LeWorldModel~\citep{maes2026leworldmodel} dataset, collected by a trained SAC policy.
+For each temporal stride $\delta \in \{1, 2, 4, 8, 16, 32, 64\}$, we subsample 10 pairs per episode (100{,}000 total), extract the joint angles $(\theta_0^t, \theta_1^t)$ and $(\theta_0^{t+\delta}, \theta_1^{t+\delta})$, and re-render with the fixed target.
+The marginal distributions (Figure~\ref{fig:traj_distributions}) violate the Gaussian assumption: the shoulder is broad and heavy-tailed ($13.6\%$ beyond $\pm\pi$), while the wrist is nearly uniform over $[-\pi, \pi]$.
+Autocorrelations are anisotropic (e.g., at $\delta=8$: $\rho_0 = 0.992$, $\rho_1 = 0.982$).
+
+\paragraph{Encoder architecture.}
+We use a CNN with BatchNorm:
+\begin{align*}
+    &\texttt{Conv}(3 \to 32, 4\times4, s{=}2) \to \texttt{BN} \to \texttt{GELU} \to
+    \texttt{Conv}(32 \to 64) \to \texttt{BN} \to \texttt{GELU} \\
+    &\to \texttt{Conv}(64 \to 128) \to \texttt{BN} \to \texttt{GELU} \to
+    \texttt{Conv}(128 \to 256) \to \texttt{BN} \to \texttt{GELU} \\
+    &\to \texttt{AvgPool}(4) \to \texttt{Flatten} \to \texttt{Linear}(256, 256) \to \texttt{BN} \to \texttt{GELU} \to \texttt{Linear}(256, 2).
+\end{align*}
+This architecture has ${\sim}1.1$M parameters.
+BatchNorm was critical for stable training: without it, ${\sim}36\%$ of runs collapsed to zero-variance outputs.
+Gradient clipping ($\|\nabla\|_{\max} = 1.0$) is applied after each backward pass.
+
+\paragraph{Training.}
+We train with AdamW (lr $= 3 \times 10^{-3}$, weight decay $10^{-4}$) and cosine annealing for 100 epochs, batch size 256, with SIGReg using 256 random slices.
+The loss is $\mathcal{L} = \lambda \mathcal{L}_{\mathrm{SIG}} + (1 - \lambda) \mathcal{L}_{\mathrm{inv}}$.
+We sweep $\lambda \in \{10^{-3}, 5 \times 10^{-3}, 10^{-2}, 5 \times 10^{-2}\}$ with 3 seeds per setting, reporting the best $\lambda$ per condition (mean $\pm$ std over seeds).
+The final model (after 100 epochs) is always used; no early stopping or checkpoint selection is applied.
+
+\paragraph{Evaluation.}
+We fit a linear regression from embeddings to joint angles on 10{,}000 training images and score on 10{,}000 held-out evaluation images (proper train/test split).
+We report bidirectional $R^2$, per-dimension $R^2$, and an $R^2$ diagnostic for $\sin/\cos$ targets $(\sin\theta_0, \cos\theta_0, \sin\theta_1, \cos\theta_1)$.
+The $\sin/\cos$ diagnostic tests whether the encoder learns a trigonometric representation of the cyclic angles; negative values indicate the 2D embedding encodes raw angles (linear in $\theta$) rather than their trigonometric functions.
+
+\paragraph{Latent distributions.}
+Figure~\ref{fig:traj_distributions} shows the stationary joint-angle distribution and, for each stride $\delta$, the 2D transition-difference distribution together with the per-dimension autocorrelation scatter.
+The stationary marginal (leftmost panel) reveals a striking asymmetry: the shoulder ($z_0$) is broad and mildly platykurtic, while the wrist ($z_1$) is nearly bimodal, reflecting a policy-induced preference for two joint-limit configurations.
+The transition-difference panels (top row) grow from tight, narrow clouds at small $\delta$ to fully-developed isotropic clouds at $\delta = 64$.
+The autocorrelation scatter (bottom row) confirms that both joints have $\rho \approx 1$ at $\delta = 1$ (the transition is nearly trivial) and decorrelate monotonically, with the wrist decorrelating faster.
+The per-dimension $R^2$ values annotated on each panel already hint at the core phenomenon examined in the next paragraph: both small and large $\delta$ are bad, and identifiability peaks in an intermediate regime.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/fig_reacher_distribution.pdf}
+    \caption{
+        \textbf{Reacher trajectory latent distributions across temporal strides $\delta$.}
+        \textbf{Left:} Stationary marginal of $(z_0, z_1)$; shoulder is broad, wrist is nearly bimodal.
+        \textbf{Top row:} 2D transition differences $z_{t+\delta} - z_t$, with the per-dimension $R^2$ of the best-tuned encoder.
+        \textbf{Bottom row:} Autocorrelation scatter $z_t$ vs.\ $z_{t+\delta}$, per dimension, with Pearson $\rho$ annotated.
+        Small $\delta$: $\rho \approx 1$, transition is trivial, alignment carries no signal.
+        Large $\delta$: $\rho$ has dropped but the difference distribution inherits the non-Gaussian structure of the stationary marginals.
+        Intermediate $\delta$: both $\rho$ is informative and the differences are effectively Gaussian, and identifiability is highest.
+    }
+    \label{fig:traj_distributions}
+\end{figure}
+
+\paragraph{Gaussianity and autocorrelation jointly determine identifiability.}
+Thm.~\ref{thm:main} requires two conditions on the data-generating process: Gaussian latent marginals and a non-trivial autocorrelation $\rho \in (0, 1)$. Thm.~\ref{thm:approx} relaxes these to approximate whitening and a non-vanishing spectral gap.
+The trajectory condition satisfies neither exactly, and the temporal stride $\delta$ controls how close each condition comes to being met.
+To disentangle these two effects, we measure the (zscored) SIGReg value of each transition-difference distribution and of their 2D joint, and plot it against the Pearson autocorrelation, colored by identifiability $R^2$ (Figure~\ref{fig:rho_vs_sigreg}).
+We compare to a finite-sample floor obtained by evaluating SIGReg on iid standard Gaussian samples of matched size; this floor is approximately $1.2$, so any value near $1$--$2$ is indistinguishable from Gaussian at this sample size.
+
+Three regimes are visible.
+At $\delta = 1, 2$ (top right of each panel), $\rho$ is essentially $1$ and SIGReg is two or three orders of magnitude above the floor: the transition is too trivial to carry an identifiability signal \emph{and} the differences inherit the non-Gaussian structure of the stationary marginals, because at this stride the differences $z_{t+\delta} - z_t$ are tiny perturbations that cannot Gaussianize via any averaging.
+At $\delta = 64$ (far left), $\rho$ has dropped to $0.86$--$0.92$ and the shoulder differences are near the Gaussian floor, but the wrist differences climb again because the increments at this stride start to resolve the bimodal stationary distribution (they approach a symmetrized sum of two draws from a bimodal law).
+At $\delta = 8, 16$, \emph{both} constraints are satisfied simultaneously: $\rho \in [0.96, 0.99]$ gives a meaningful spectral gap $2\rho(1-\rho)$, and SIGReg drops to within a few times the floor for both marginals and the joint.
+This is precisely the regime where $R^2$ is maximal, as shown by the yellow points clustered in the bottom-middle region of each panel.
+The best OU $\rho$ value (vertical dashed line, $\rho = 0.95$) sits near these high-$R^2$ points, confirming that the trajectory condition most closely approaches the theoretical assumptions at intermediate stride.
+
+The joint panel (rightmost) tells a consistent story at slightly higher absolute values: the 2D SIGReg of the transition-difference distribution is always larger than either marginal because it additionally penalizes the cross-dimension dependence that neither marginal can see.
+The $R^2$ ordering is the same as in the per-dimension panels.
+
+
+\paragraph{Additional results on OU and Trajectory conditions.}
+Fig.~\ref{fig:reacher_r2} directly contrasts the two: at matched $\rho$, Gaussian (OU) latents achieve substantially higher $R^2$ than SAC-policy trajectories (right panel); an empirical instance of Thm.~\ref{thm:converse} on raw pixels. Within OU alone (left), $R^2$ rises monotonically in $\rho$, and stronger $\lambda$ helps only at low $\rho$ where the alignment signal is weak.
+
+Fig.~\ref{fig:reacher_appendix_perdim} resolves identifiability by joint. OU recovers shoulder and wrist symmetrically, consistent with the isotropy of the Gaussian OU transition (see App.~\ref{app:prior-work} for why isotropic transitions are necessary for the simultaneous approach). Trajectory recovery is massively asymmetric: the wrist, driven by a nearly-bimodal policy-induced marginal and a faster autocorrelation, is recovered poorly at small $\delta$ and improves only once $\delta$ is large enough to provide informative temporal variation; the shoulder degrades at large $\delta$ due to wrapping beyond $\pm\pi$. This is the empirical signature predicted by the Sturm--Liouville analysis when isotropy fails.
+
+Fig.~\ref{fig:reacher_lambda} connects back to the approximate bound. \textbf{Left:} OU identifiability is robust to $\lambda$ at high $\rho$; only at $\rho = 0.99$ with the strongest $\lambda$ does SIGReg begin to dominate alignment, mirroring the collapse regime of the grid search (Fig.~\ref{fig:grid}). \textbf{Right:} the fitted orthogonality error $\|\hat Q^\top \hat Q - I\|_F / \sqrt{n}$ decreases monotonically with $\rho$, tracking the tightening spectral gap $2\rho(1-\rho)$ that governs Thm.~\ref{thm:approx}.
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/reacher_rho_vs_sigreg.png}
+    \caption{
+        \textbf{Identifiability requires both approximate Gaussianity and non-trivial autocorrelation.}
+        For each temporal stride $\delta$, we plot SIGReg (zscored, averaged over random projections and subsamples, error bars show one standard deviation) against the Pearson autocorrelation $\rho$ of the transition-difference distribution, colored by the corresponding identifiability $R^2$ (see Table~\ref{tab:reacher}).
+        \textbf{Left:} shoulder ($z_0$, 1D marginal).
+        \textbf{Middle:} wrist ($z_1$, 1D marginal).
+        \textbf{Right:} 2D joint; $x$-axis is the average $\bar{\rho}$ across dimensions.
+        Dotted red line: SIGReg floor from matched iid $\mathcal{N}(0, I)$ samples ($\approx 1.2$).
+        Dashed red line: best-performing OU autocorrelation ($\rho = 0.95$).
+        Small $\delta$ (top right): $\rho \approx 1$ yields no spectral gap, and small differences inherit the non-Gaussian stationary shape; both constraints fail.
+        Large $\delta$ (far left): the wrist difference starts resolving the bimodal stationary, so SIGReg climbs again.
+        Intermediate $\delta \in \{8, 16\}$: simultaneously near the Gaussian floor and in a regime of informative $\rho$; identifiability $R^2$ peaks here.
+    }
+    \label{fig:rho_vs_sigreg}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/ou_r2_vs_rho.png}
+    \includegraphics[width=0.8\textwidth]{figures/ou_vs_traj.png}
+    \caption{
+        \textbf{Left:} OU identifiability vs.\ $\rho$ for different $\lambda$ values. $R^2$ increases monotonically, with all $\lambda$ values converging at high $\rho$. Higher $\lambda$ (stronger SIGReg) helps at low $\rho$ where the alignment signal is weak.
+        \textbf{Right:} Gaussian (OU) vs.\ trajectory data at matched autocorrelation $\rho$. At the same $\rho$, Gaussian latents achieve substantially higher $R^2$, directly validating the converse theorem: non-Gaussian marginals reduce identifiability.
+    }
+    \label{fig:reacher_r2}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/ou_perdim_r2.png}
+    \includegraphics[width=0.8\textwidth]{figures/traj_perdim_r2.png}
+    \caption{
+        \textbf{Per-dimension identifiability.}
+        \textbf{Left:} OU condition; shoulder and wrist are recovered symmetrically, consistent with the isotropic transition.
+        \textbf{Right:} Trajectory condition; massive asymmetry: the wrist ($R^2 \approx 0$ at $\delta = 1$) recovers only at larger $\delta$ where temporal variation provides learning signal; the shoulder is consistently easier but degrades at large $\delta$ due to wrapping beyond $\pm\pi$.
+        Per-dimension $\rho$ values are annotated.
+    }
+    \label{fig:reacher_appendix_perdim}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/ou_lambda_robustness.png}
+    \includegraphics[width=0.8\textwidth]{figures/ou_orth_err.png}
+    \caption{
+        \textbf{Left:} $\lambda$ robustness in the OU condition. For high $\rho$, identifiability is stable across $\lambda$; for low $\rho$, stronger regularization ($\lambda = 5 \times 10^{-2}$) compensates for the weak alignment signal. At $\rho = 0.99$, the highest $\lambda$ degrades slightly as SIGReg begins to dominate alignment.
+        \textbf{Right:} Orthogonality error decreases monotonically with $\rho$, consistent with the approximate bound (Thm.~\ref{thm:approx}).
+    }
+    \label{fig:reacher_lambda}
+\end{figure}
+
+
+\subsection{Planning Experiment}\label{app:planning-exp}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/planning_scatter.png}
+    \caption{
+        \textbf{Planning: embedding and straight-line paths.}
+        Columns: true $\theta$-space (left), Gaussian/OU encoder (center), Trajectory encoder (right).
+        \textbf{Top row:} scatter of eval-set embeddings, colored by true $\theta$-space polar angle. The Gaussian encoder is an approximate rotation of the true latent; the Trajectory encoder is visibly warped.
+        \textbf{Middle row:} three example trajectories that are straight in the \emph{true} joint space, rendered in each representation. They remain approximately straight in the Gaussian embedding but curve in the Trajectory embedding.
+        \textbf{Bottom row:} the complementary test; straight lines in each model's latent, decoded back to joint space. Gaussian-encoder plans stay near-straight in $\theta$-space; Trajectory-encoder plans curve.
+        Together, the middle and bottom rows confirm Fig.~\ref{fig:planning}: only linear identifiability turns straight-latent plans into straight joint-space paths.
+    }
+    \label{fig:planning_scatter}
+\end{figure}
+
+The planning experiment (Sec.~\ref{sec:planning-exp}, Fig.~\ref{fig:planning}) evaluates straight-line latent interpolation across all trained Reacher encoders (App.~\ref{app:reacher}). The qualitative panels (Fig.~\ref{fig:planning} left) compare the best Gaussian encoder (OU condition at $\rho = 0.99$) against the best Trajectory encoder (stride $\delta = 8$); the quantitative panels (middle, right) aggregate over the full set.
+
+\paragraph{Setup.}
+We construct a retrieval library of $10{,}000$ held-out evaluation frames paired with their joint-angle labels. Given a start frame $x_s$ and a goal frame $x_g$, we encode both to latents $y_s = f(x_s)$ and $y_g = f(x_g)$ and form the straight-line latent interpolant $y_t = (1-t)\, y_s + t\, y_g$ for $t \in \{0, \tfrac{1}{T}, \ldots, 1\}$ with $T = 15$. Each $y_t$ is decoded back to a frame by $k$-nearest-neighbor retrieval ($k = 1$, Euclidean distance) against the library's embeddings, yielding a decoded joint-space path $\{\hat{\theta}_t\}$. We evaluate this path against the ideal straight-in-joint-space trajectory connecting $\theta_s$ and $\theta_g$.
+
+\paragraph{Metric.}
+We sample $K = 30$ start--goal pairs uniformly from the eval library (shared seed across encoders) and report \textbf{path length}: $\big(\sum_t \|\hat{\theta}_{t+1} - \hat{\theta}_t\|\big) / \|\theta_g - \theta_s\|$, the $\theta$-space arc length of the decoded path divided by the chord length. Ideal value $1$ (straight chord); larger values indicate the encoder warps joint-space geometry. We also track mean orthogonal deviation from the chord as a complementary diagnostic.
+
+\paragraph{Interpretation.}
+Under an affine encoder $h(z) = Qz$, the latent straight line maps to the true straight line in joint space and the metric attains its ideal value; deviations measure how much the encoder warps joint-space geometry. Fig.~\ref{fig:planning_scatter} decomposes this geometrically.

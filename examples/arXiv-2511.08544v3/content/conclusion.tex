@@ -1,0 +1,20 @@
+
+\section{Conclusion}
+We have established a principled theoretical framework for JEPA-based self-supervised 
+learning that fundamentally resolves its core pathologies. Our contributions span 
+theory and practice: we proved that isotropic Gaussian embeddings uniquely minimize 
+worst-case downstream risk, introduced SIGReg as a tractable and provably correct 
+method to enforce this distribution, and demonstrated that this approach eliminates 
+representational collapse by design--and not through ad-hoc combinations of teacher-student 
+networks, stop-gradients, or asymmetric architectures.
+
+We validate LeJEPA across domains and over $60$ architectures including gigantic versions with 1.8B parameters. In spite of its simplicify , LeJEPA matches state-of-the-art 
+performance while requiring fewer than 50 lines of core implementation. Critically, 
+our approach provides what SSL has long needed: a mathematically rigorous foundation 
+that directly informs practical algorithm design.
+
+
+\section*{Acknowledgments}
+We would like to thank Mike Rabbat and
+Lucas Maes for providing valuable feedbacks on the manuscript.
+

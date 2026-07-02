@@ -1,0 +1,32 @@
+[build]
+engine = "pdflatex"
+runner = "direct"
+bib = "auto"
+out_dir = "build"
+draft_prepass = "auto"
+max_runs = 8
+fast = false
+once = false
+synctex = false
+shell_escape = false
+
+[build.env]
+# TEXINPUTS = "tex//:"
+# BIBINPUTS = "bib//:"
+# BSTINPUTS = "bst//:"
+
+[lint]
+indent_size = 2
+indent_environments = true
+indent_display_math = true
+ignored_indent_environments = ["document"]
+prefer_paren_inline_math = true
+prefer_bracket_display_math = true
+prefer_prime_command = false
+check_environment_stack = true
+max_line_length = 120
+
+[lint.rules]
+# "math/prime-command" = "warn"
+# "math/inline-dollar" = "error"
+# "line/length" = "off"
