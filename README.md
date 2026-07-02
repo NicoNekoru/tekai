@@ -637,8 +637,8 @@ from the native direct runner owning TeX/BibTeX/rerun scheduling.
 The experimental `--engine texpilot-pdftex` path is a separate native-renderer
 track rather than a `pdflatex` scheduler optimization. In the latest release
 gate on this workspace, three forced full native builds of each bundled large
-example completed as single final PDF passes with median wall times of 0.501s
-for `arXiv-2605.26379v1` (48 pages) and 0.426s for
+example completed as single final PDF passes with median wall times of 0.468s
+for `arXiv-2605.26379v1` (48 pages) and 0.576s for
 `arXiv-2511.08544v3` (50 pages), with zero external `pdflatex`, BibTeX, Biber,
 or draft-prepass runs. The native speed/parity harnesses now also require the
 caption-placement trace field so page-builder diagnostics are present on the
@@ -648,6 +648,10 @@ rendered-parity harness; the current large-example gate enforces zero remaining
 two-column graphic fallback entries and zero estimated fallback slots, so
 sub-second results remain tied to shrinking the native functionality gap rather
 than hiding it.
+When Kpathsea can resolve the local TeX Gyre files, the native writer now embeds
+the Pagella/Heros Type 1 document fonts directly, so rendered-pixel differences
+come from layout and page-builder divergence instead of viewer-side font
+substitution.
 
 Compatibility for this track means accepting the TeX/STY input surface and
 producing a near-identical rendered PDF. Legacy intermediates such as `.aux`,

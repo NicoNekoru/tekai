@@ -184,6 +184,10 @@ subset:
 - other resolved graphics as tracked placeholders;
 - style-aware built-in PDF base-font selection for the current NeurIPS-like
   Times and `simpleicml` Palatino/sans-heading profiles;
+- direct TeX Gyre Pagella/Heros Type 1 font embedding when Kpathsea resolves
+  the local PFB files, using static ASCII metrics and compressed font streams
+  so the native PDF does not depend on viewer font substitution for document
+  text;
 - calibrated NeurIPS-style `\LARGE` title sizing, baseline, and centering;
 - native NeurIPS-style `\And` author-grid title blocks with preserved author,
   affiliation, and email rows;
@@ -280,7 +284,7 @@ It runs the two bundled large examples through `--engine texpilot-pdftex`,
 requires the native trace path plus caption-placement diagnostics rather than
 fallback, and fails if either median full-build wall time exceeds one second by
 default. The current release gate on this workspace passes with medians of
-0.501s for `arXiv-2605.26379v1` and 0.426s for `arXiv-2511.08544v3` across
+0.468s for `arXiv-2605.26379v1` and 0.576s for `arXiv-2511.08544v3` across
 three forced clean native builds per paper.
 It also reports the two-column graphic float fallback counters and estimated
 native-slot debt, and can enforce the same native-coverage budgets as the
@@ -354,18 +358,22 @@ dimension agreement, not near-identical output yet. At the harness default of
 | source | pages | mean RMSE | max page RMSE | max diff ratio |
 | --- | ---: | ---: | ---: | ---: |
 | `examples/arXiv-2605.26379v1/main.tex` | 48/48 | 47.377 | 97.243 | 0.3513 |
-| `examples/arXiv-2511.08544v3/main.tex` | 50/50 | 49.147 | 75.454 | 0.6390 |
+| `examples/arXiv-2511.08544v3/main.tex` | 50/50 | 54.772 | 79.607 | 0.6769 |
 
 With caption-flow diagnostics enabled, the same run reports aggregate absolute
 caption drift of 27 pages across 23 matched captions for `arXiv-2605.26379v1`
-and 30 pages across 21 matched captions for `arXiv-2511.08544v3`; their largest
-single-caption drift is 5 and 3 pages, respectively.
+and 27 pages across 21 matched captions for `arXiv-2511.08544v3`; their largest
+single-caption drift is 5 and 2 pages, respectively.
 The corresponding native trace surface shows 0 two-column graphic-float
 fallbacks for both large examples, including 0 starred/wide graphic fallbacks
 and 0 estimated native-slot debt. The remaining output-routine gap is therefore
 not hidden fallback coverage: it is the exact float queue release, paragraph
 breaking, and package layout fidelity needed to move the rendered pixels and
 caption pages into alignment.
+The ICML-style RMSE is higher after direct font embedding because the native
+text now renders as embedded black Type 1 glyphs instead of pale viewer
+substitutions; that exposes the remaining layout mismatch instead of hiding it
+behind weaker font rendering.
 
 The main remaining replacement gaps are therefore visual-fidelity gaps rather
 than scheduler gaps: real TeX paragraph breaking, page-builder/output-routine
@@ -391,8 +399,9 @@ early, Figures 9 and 10 are 2 pages early, and Figure 13 is 2 pages late.
 The ICML-style paper now keeps 50/50 pages while admitting two-column
 `figure*` graphics and `table*` bodies into the native wide-float path. Its
 remaining main-body flow error is concentrated in a dense float cluster:
-Table 2 and Figures 12-13 are 3 pages late, while Figure 5 is also 3 pages
-late. The appendix tables and Figure 15 then run about 2 pages early. One-column
+Algorithm 2, Figures 8-14, and Table 2 are still about 2 pages late in the main
+body, while appendix Figure 15 and Tables 3, 5, and 6 are about 2 pages early.
+One-column
 graphic figures still enter the native top-float path, including starred
 `figure*` graphics once `\onecolumn` is active, and scoped one-column starred
 `table*` bodies enter the same top-float path when their table payload can be

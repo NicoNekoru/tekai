@@ -1968,7 +1968,7 @@ impl DocumentLayout {
             column_gap_pt: 18.0,
             left_pt: 46.8,
             top_pt: 720.0,
-            line_height_pt: 13.5,
+            line_height_pt: 14.5,
             text_font_pt: 8.0,
             title_font_pt: 12.0,
             author_font_pt: 8.0,
@@ -2703,8 +2703,8 @@ fn layout_lines(layout: DocumentLayout, lines: &[Line], images: &[ImageAsset]) -
             apply_output_control(&mut pass, &mut active_layout, *control, lines);
             continue;
         }
-        flush_pending_normal_top_floats_if_ready(&mut pass, active_layout, lines);
         flush_pending_wide_top_floats_if_ready(&mut pass);
+        flush_pending_normal_top_floats_if_ready(&mut pass, active_layout, lines);
         if should_skip_blank_before_deferred_wide_top_float(
             lines,
             line_index,
@@ -2755,8 +2755,8 @@ fn layout_lines(layout: DocumentLayout, lines: &[Line], images: &[ImageAsset]) -
             );
         }
     }
-    flush_pending_normal_top_floats_at_end(&mut pass, active_layout, lines);
     flush_pending_wide_top_floats_at_end(&mut pass, active_layout, lines);
+    flush_pending_normal_top_floats_at_end(&mut pass, active_layout, lines);
     flush_pending_bottom_floats(&mut pass, active_layout, lines);
     flush_pending_late_floats_at_end(&mut pass, active_layout, lines);
     pass
@@ -2797,8 +2797,8 @@ fn apply_soft_newpage(pass: &mut LayoutPass, layout: DocumentLayout, lines: &[Li
         return;
     }
     advance_to_next_page_in_pass(pass, layout, lines);
-    flush_pending_normal_top_floats(pass, lines);
     flush_pending_wide_top_floats(pass, lines);
+    flush_pending_normal_top_floats(pass, lines);
 }
 
 fn flush_pending_top_floats_for_output_barrier(
@@ -2814,8 +2814,8 @@ fn flush_pending_top_floats_for_output_barrier(
     if !pass.cursor.is_page_start() {
         advance_to_next_page_in_pass(pass, layout, lines);
     }
-    flush_pending_normal_top_floats(pass, lines);
     flush_pending_wide_top_floats(pass, lines);
+    flush_pending_normal_top_floats(pass, lines);
 }
 
 fn should_skip_blank_before_deferred_wide_top_float(
@@ -2944,6 +2944,7 @@ fn flush_pending_normal_top_floats_if_ready(
 ) {
     if pass.pending_normal_top_floats.is_empty()
         || !pass.saw_normal_after_pending_normal_float
+        || !pass.pending_wide_top_floats.is_empty()
         || !cursor_accepts_pending_normal_top_float(layout, pass.cursor)
     {
         return;
@@ -15151,7 +15152,15 @@ fn write_pdf(
     let math_font_object = code_font_object + 1;
     let heading_font_object = math_font_object + 1;
     let symbol_font_object = heading_font_object + 1;
-    let image_object_start = symbol_font_object + 1;
+    let mut next_object_id = symbol_font_object + 1;
+    let font_resources = [
+        pdf_type1_font_resource(document.layout.text_base_font, &mut next_object_id)?,
+        pdf_type1_font_resource("Courier", &mut next_object_id)?,
+        pdf_type1_font_resource(document.layout.math_base_font, &mut next_object_id)?,
+        pdf_type1_font_resource(document.layout.heading_base_font, &mut next_object_id)?,
+        pdf_type1_font_resource("Symbol", &mut next_object_id)?,
+    ];
+    let image_object_start = next_object_id;
     let image_object_ids = image_object_ids(document, image_object_start);
     let image_object_count = document
         .images
@@ -15213,24 +15222,12 @@ fn write_pdf(
             stream
         )));
     }
-    objects.push(pdf_object(format!(
-        "<< /Type /Font /Subtype /Type1 /BaseFont /{} >>",
-        document.layout.text_base_font
-    )));
-    objects.push(pdf_object(
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
-    ));
-    objects.push(pdf_object(format!(
-        "<< /Type /Font /Subtype /Type1 /BaseFont /{} >>",
-        document.layout.math_base_font
-    )));
-    objects.push(pdf_object(format!(
-        "<< /Type /Font /Subtype /Type1 /BaseFont /{} >>",
-        document.layout.heading_base_font
-    )));
-    objects.push(pdf_object(
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Symbol >>",
-    ));
+    for resource in &font_resources {
+        objects.push(resource.font_object.clone());
+    }
+    for resource in font_resources {
+        objects.extend(resource.extra_objects);
+    }
     for (index, image) in document.images.iter().enumerate() {
         let image_id = image_object_ids[index];
         objects.extend(image_objects(image, image_id));
@@ -15331,6 +15328,217 @@ fn image_pdf_object_count(image: &ImageAsset) -> usize {
 
 fn pdf_object(source: impl AsRef<str>) -> Vec<u8> {
     source.as_ref().as_bytes().to_vec()
+}
+
+#[derive(Debug)]
+struct PdfFontResource {
+    font_object: Vec<u8>,
+    extra_objects: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Type1FontFiles {
+    pfb: &'static str,
+    metrics: Type1Metrics,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Type1Metrics {
+    font_bbox: [i32; 4],
+    italic_angle: f32,
+    ascender: i32,
+    descender: i32,
+    cap_height: i32,
+    x_height: i32,
+    fixed_pitch: bool,
+    bold: bool,
+    widths: &'static [f32; 95],
+}
+
+#[derive(Debug)]
+struct Type1Program {
+    bytes: Vec<u8>,
+    length1: usize,
+    length2: usize,
+    length3: usize,
+}
+
+fn pdf_type1_font_resource(
+    base_font: &str,
+    next_object_id: &mut usize,
+) -> io::Result<PdfFontResource> {
+    let Some(files) = type1_font_files(base_font) else {
+        return Ok(simple_type1_font_resource(base_font));
+    };
+    let Some(pfb_path) = resolve_tex_font_file(files.pfb)? else {
+        return Ok(simple_type1_font_resource(base_font));
+    };
+    let metrics = files.metrics;
+    let pfb = match fs::read(&pfb_path)
+        .ok()
+        .and_then(|bytes| parse_pfb_program(&bytes))
+    {
+        Some(pfb) => pfb,
+        None => return Ok(simple_type1_font_resource(base_font)),
+    };
+
+    let descriptor_id = *next_object_id;
+    *next_object_id += 1;
+    let font_file_id = *next_object_id;
+    *next_object_id += 1;
+
+    let widths = metrics
+        .widths
+        .iter()
+        .map(|width| (*width as i32).to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let differences = PDF_ASCII_GLYPH_NAMES
+        .iter()
+        .map(|name| format!("/{name}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let font_object = pdf_object(format!(
+        "<< /Type /Font /Subtype /Type1 /BaseFont /{base_font} /FirstChar 32 /LastChar 126 /Widths [{widths}] /Encoding << /Type /Encoding /Differences [32 {differences}] >> /FontDescriptor {descriptor_id} 0 R >>"
+    ));
+
+    let flags = type1_font_descriptor_flags(&metrics);
+    let stem_v = if metrics.bold { 120 } else { 80 };
+    let descriptor = pdf_object(format!(
+        "<< /Type /FontDescriptor /FontName /{base_font} /Flags {flags} /FontBBox [{} {} {} {}] /ItalicAngle {:.2} /Ascent {} /Descent {} /CapHeight {} /XHeight {} /StemV {stem_v} /FontFile {font_file_id} 0 R >>",
+        metrics.font_bbox[0],
+        metrics.font_bbox[1],
+        metrics.font_bbox[2],
+        metrics.font_bbox[3],
+        metrics.italic_angle,
+        metrics.ascender,
+        metrics.descender,
+        metrics.cap_height,
+        metrics.x_height
+    ));
+    let font_file = type1_font_file_object(&pfb)?;
+    Ok(PdfFontResource {
+        font_object,
+        extra_objects: vec![descriptor, font_file],
+    })
+}
+
+fn simple_type1_font_resource(base_font: &str) -> PdfFontResource {
+    PdfFontResource {
+        font_object: pdf_object(format!(
+            "<< /Type /Font /Subtype /Type1 /BaseFont /{base_font} >>"
+        )),
+        extra_objects: Vec::new(),
+    }
+}
+
+fn type1_font_files(base_font: &str) -> Option<Type1FontFiles> {
+    match base_font {
+        "TeXGyrePagellaX-Regular" => Some(Type1FontFiles {
+            pfb: "TeXGyrePagellaX-Regular.pfb",
+            metrics: PAGELLA_TYPE1_METRICS,
+        }),
+        "TeXGyrePagellaX-Italic" => Some(Type1FontFiles {
+            pfb: "TeXGyrePagellaX-Italic.pfb",
+            metrics: PAGELLA_ITALIC_TYPE1_METRICS,
+        }),
+        "TeXGyrePagellaX-Bold" => Some(Type1FontFiles {
+            pfb: "TeXGyrePagellaX-Bold.pfb",
+            metrics: PAGELLA_BOLD_TYPE1_METRICS,
+        }),
+        "TeXGyreHeros-Bold" => Some(Type1FontFiles {
+            pfb: "qhvb.pfb",
+            metrics: HEROS_BOLD_TYPE1_METRICS,
+        }),
+        _ => None,
+    }
+}
+
+fn resolve_tex_font_file(file_name: &str) -> io::Result<Option<PathBuf>> {
+    let output = match Command::new("kpsewhich").arg(file_name).output() {
+        Ok(output) => output,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return Ok(None);
+    }
+    fs::canonicalize(path).map(Some)
+}
+
+fn parse_pfb_program(data: &[u8]) -> Option<Type1Program> {
+    let mut cursor = 0_usize;
+    let mut segments: Vec<(u8, Vec<u8>)> = Vec::new();
+    while cursor + 6 <= data.len() && data[cursor] == 0x80 {
+        let kind = data[cursor + 1];
+        cursor += 2;
+        if kind == 3 {
+            break;
+        }
+        let length = u32::from_le_bytes(data[cursor..cursor + 4].try_into().ok()?) as usize;
+        cursor += 4;
+        let end = cursor.checked_add(length)?;
+        if end > data.len() {
+            return None;
+        }
+        segments.push((kind, data[cursor..end].to_vec()));
+        cursor = end;
+    }
+    let first_ascii = segments
+        .iter()
+        .position(|(kind, _)| *kind == 1)
+        .and_then(|index| segments.get(index))?;
+    let first_binary_index = segments.iter().position(|(kind, _)| *kind == 2)?;
+    let first_binary = segments.get(first_binary_index)?;
+    let length1 = first_ascii.1.len();
+    let length2 = first_binary.1.len();
+    let length3 = segments
+        .iter()
+        .skip(first_binary_index + 1)
+        .filter(|(kind, _)| *kind == 1)
+        .map(|(_, segment)| segment.len())
+        .sum::<usize>();
+    let bytes = segments
+        .into_iter()
+        .flat_map(|(_, segment)| segment)
+        .collect::<Vec<_>>();
+    Some(Type1Program {
+        bytes,
+        length1,
+        length2,
+        length3,
+    })
+}
+
+fn type1_font_descriptor_flags(metrics: &Type1Metrics) -> i32 {
+    let mut flags = 32;
+    if metrics.fixed_pitch {
+        flags |= 1;
+    }
+    if metrics.italic_angle.abs() > f32::EPSILON {
+        flags |= 64;
+    }
+    flags
+}
+
+fn type1_font_file_object(program: &Type1Program) -> io::Result<Vec<u8>> {
+    let compressed = zlib_compress(&program.bytes).map_err(io::Error::other)?;
+    let mut object = Vec::new();
+    write!(
+        object,
+        "<< /Length {} /Length1 {} /Length2 {} /Length3 {} /Filter /FlateDecode >>\nstream\n",
+        compressed.len(),
+        program.length1,
+        program.length2,
+        program.length3
+    )?;
+    object.extend_from_slice(&compressed);
+    object.extend_from_slice(b"\nendstream");
+    Ok(object)
 }
 
 fn image_objects(image: &ImageAsset, image_object_id: usize) -> Vec<Vec<u8>> {
@@ -17666,6 +17874,152 @@ const HEROS_BOLD_WIDTHS: [f32; 95] = [
     389.0, 280.0, 389.0, 584.0,
 ];
 
+const PDF_ASCII_GLYPH_NAMES: [&str; 95] = [
+    "space",
+    "exclam",
+    "quotedbl",
+    "numbersign",
+    "dollar",
+    "percent",
+    "ampersand",
+    "quotesingle",
+    "parenleft",
+    "parenright",
+    "asterisk",
+    "plus",
+    "comma",
+    "hyphen",
+    "period",
+    "slash",
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "colon",
+    "semicolon",
+    "less",
+    "equal",
+    "greater",
+    "question",
+    "at",
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N",
+    "O",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U",
+    "V",
+    "W",
+    "X",
+    "Y",
+    "Z",
+    "bracketleft",
+    "backslash",
+    "bracketright",
+    "asciicircum",
+    "underscore",
+    "grave",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h",
+    "i",
+    "j",
+    "k",
+    "l",
+    "m",
+    "n",
+    "o",
+    "p",
+    "q",
+    "r",
+    "s",
+    "t",
+    "u",
+    "v",
+    "w",
+    "x",
+    "y",
+    "z",
+    "braceleft",
+    "bar",
+    "braceright",
+    "asciitilde",
+];
+
+const PAGELLA_TYPE1_METRICS: Type1Metrics = Type1Metrics {
+    font_bbox: [-514, -283, 1284, 1098],
+    italic_angle: 0.0,
+    ascender: 662,
+    descender: -269,
+    cap_height: 700,
+    x_height: 469,
+    fixed_pitch: false,
+    bold: false,
+    widths: &PAGELLA_WIDTHS,
+};
+
+const PAGELLA_ITALIC_TYPE1_METRICS: Type1Metrics = Type1Metrics {
+    font_bbox: [-423, -277, 1292, 1094],
+    italic_angle: -10.0,
+    ascender: 681,
+    descender: -274,
+    cap_height: 700,
+    x_height: 529,
+    fixed_pitch: false,
+    bold: false,
+    widths: &PAGELLA_ITALIC_WIDTHS,
+};
+
+const PAGELLA_BOLD_TYPE1_METRICS: Type1Metrics = Type1Metrics {
+    font_bbox: [-560, -272, 1311, 1097],
+    italic_angle: 0.0,
+    ascender: 676,
+    descender: -259,
+    cap_height: 678,
+    x_height: 471,
+    fixed_pitch: false,
+    bold: true,
+    widths: &PAGELLA_BOLD_WIDTHS,
+};
+
+const HEROS_BOLD_TYPE1_METRICS: Type1Metrics = Type1Metrics {
+    font_bbox: [-173, -219, 1001, 944],
+    italic_angle: 0.0,
+    ascender: 718,
+    descender: -207,
+    cap_height: 729,
+    x_height: 549,
+    fixed_pitch: false,
+    bold: true,
+    widths: &HEROS_BOLD_WIDTHS,
+};
+
 fn pdf_font_text_units(text: &str, metric: PdfFontMetric) -> f32 {
     let mut units = 0.0_f32;
     for ch in text.chars() {
@@ -17786,6 +18140,30 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn simple_test_document(layout: DocumentLayout, lines: Vec<Line>) -> SimpleDocument {
+        SimpleDocument {
+            layout,
+            lines,
+            images: Vec::new(),
+            timings: ParseTimings::default(),
+            generated_outputs: Vec::new(),
+            labels: BTreeMap::new(),
+            citations: CitationRegistry::default(),
+            bibliography: BibliographyMetadata::default(),
+            index: IndexRegistry::default(),
+            pdf_metadata: PdfMetadata::default(),
+            footnotes: Vec::new(),
+            toc_entries: Vec::new(),
+            float_entries: Vec::new(),
+            bookmarks: Vec::new(),
+            toc_requested: false,
+            list_of_figures_requested: false,
+            list_of_tables_requested: false,
+            hyperref_out_requested: false,
+            backref_requested: false,
+        }
     }
 
     fn pdf_literal_text(pdf: &[u8]) -> String {
@@ -18035,6 +18413,36 @@ This is a tiny native document.
         assert!(out.join("main.aux").exists());
         assert!(out.join("main.fls").exists());
         assert!(out.join("main.texpilot-pdftex.trace").exists());
+    }
+
+    #[test]
+    fn native_icml_pdf_embeds_tex_gyre_type1_fonts_when_available() {
+        if resolve_tex_font_file("TeXGyrePagellaX-Regular.pfb")
+            .unwrap()
+            .is_none()
+        {
+            return;
+        }
+        let root = temp_dir("embedded-fonts");
+        let pdf = root.join("main.pdf");
+        let document = simple_test_document(
+            DocumentLayout::icml_two_column(),
+            vec![
+                Line::Text("Native Pagella text should use an embedded font.".to_string()),
+                Line::Heading("Embedded heading".to_string()),
+            ],
+        );
+        let placements = line_placements(&document);
+        let page_count = page_count_from_placements(&placements, &document.lines);
+
+        write_pdf(&pdf, &document, page_count, &placements).unwrap();
+        let pdf_bytes = fs::read(&pdf).unwrap();
+        let pdf_text = String::from_utf8_lossy(&pdf_bytes);
+
+        assert!(pdf_text.contains("/BaseFont /TeXGyrePagellaX-Regular"));
+        assert!(pdf_text.contains("/BaseFont /TeXGyreHeros-Bold"));
+        assert!(pdf_text.contains("/FontFile"));
+        assert!(pdf_text.contains("/Differences [32 /space /exclam"));
     }
 
     #[test]
@@ -19014,6 +19422,58 @@ Native SyncTeX output.
         assert_eq!(after.page_slot, 1);
         assert_eq!(float.page_index, 1);
         assert_eq!(float.page_slot, 0);
+    }
+
+    #[test]
+    fn native_layout_releases_pending_wide_top_float_before_column_top_float() {
+        let layout = DocumentLayout::icml_two_column();
+        let mut lines = vec![
+            Line::Text("Before floats.".to_string()),
+            Line::FloatBlock {
+                lines: vec![Line::WideAbstractText("Wide top float.".to_string())],
+                wide: true,
+                top: true,
+            },
+            Line::FloatBlock {
+                lines: vec![Line::Text("Column top float.".to_string())],
+                wide: false,
+                top: true,
+            },
+        ];
+        for index in 0..layout.lines_per_page {
+            lines.push(Line::Text(format!("Fill {index}")));
+        }
+        lines.push(Line::Text("After floats.".to_string()));
+        let document = simple_test_document(layout, lines);
+
+        let placements = line_placements(&document);
+        let wide_float = placements
+            .iter()
+            .find(|placement| {
+                matches!(
+                    document.lines[placement.line_index],
+                    Line::FloatBlock { wide: true, .. }
+                )
+            })
+            .expect("wide float placement");
+        let column_float = placements
+            .iter()
+            .find(|placement| {
+                matches!(
+                    document.lines[placement.line_index],
+                    Line::FloatBlock {
+                        wide: false,
+                        top: true,
+                        ..
+                    }
+                )
+            })
+            .expect("column float placement");
+
+        assert_eq!(wide_float.page_index, 1);
+        assert_eq!(wide_float.page_slot, 0);
+        assert_eq!(column_float.page_index, 1);
+        assert_eq!(column_float.page_slot, 1);
     }
 
     #[test]
