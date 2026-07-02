@@ -185,9 +185,9 @@ subset:
 - style-aware built-in PDF base-font selection for the current NeurIPS-like
   Times and `simpleicml` Palatino/sans-heading profiles;
 - direct TeX Gyre Pagella/Heros Type 1 font embedding when Kpathsea resolves
-  the local PFB files, using static ASCII metrics and compressed font streams
-  so the native PDF does not depend on viewer font substitution for document
-  text;
+  the local PFB files, including ICML-style Heros code/listing text, using
+  static ASCII metrics and compressed font streams so the native PDF does not
+  depend on viewer font substitution for document text;
 - calibrated NeurIPS-style `\LARGE` title sizing, baseline, and centering;
 - native NeurIPS-style `\And` author-grid title blocks with preserved author,
   affiliation, and email rows;
@@ -284,7 +284,7 @@ It runs the two bundled large examples through `--engine texpilot-pdftex`,
 requires the native trace path plus caption-placement diagnostics rather than
 fallback, and fails if either median full-build wall time exceeds one second by
 default. The current release gate on this workspace passes with medians of
-0.468s for `arXiv-2605.26379v1` and 0.576s for `arXiv-2511.08544v3` across
+0.474s for `arXiv-2605.26379v1` and 0.657s for `arXiv-2511.08544v3` across
 three forced clean native builds per paper.
 It also reports the two-column graphic float fallback counters and estimated
 native-slot debt, and can enforce the same native-coverage budgets as the
@@ -358,7 +358,7 @@ dimension agreement, not near-identical output yet. At the harness default of
 | source | pages | mean RMSE | max page RMSE | max diff ratio |
 | --- | ---: | ---: | ---: | ---: |
 | `examples/arXiv-2605.26379v1/main.tex` | 48/48 | 47.377 | 97.243 | 0.3513 |
-| `examples/arXiv-2511.08544v3/main.tex` | 50/50 | 54.772 | 79.607 | 0.6769 |
+| `examples/arXiv-2511.08544v3/main.tex` | 50/50 | 54.775 | 79.607 | 0.6769 |
 
 With caption-flow diagnostics enabled, the same run reports aggregate absolute
 caption drift of 27 pages across 23 matched captions for `arXiv-2605.26379v1`
@@ -371,9 +371,9 @@ not hidden fallback coverage: it is the exact float queue release, paragraph
 breaking, and package layout fidelity needed to move the rendered pixels and
 caption pages into alignment.
 The ICML-style RMSE is higher after direct font embedding because the native
-text now renders as embedded black Type 1 glyphs instead of pale viewer
-substitutions; that exposes the remaining layout mismatch instead of hiding it
-behind weaker font rendering.
+text now renders as embedded black Type 1 glyphs, including Heros code/listing
+text, instead of pale viewer substitutions; that exposes the remaining layout
+mismatch instead of hiding it behind weaker font rendering.
 
 The main remaining replacement gaps are therefore visual-fidelity gaps rather
 than scheduler gaps: real TeX paragraph breaking, page-builder/output-routine

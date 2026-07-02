@@ -1890,6 +1890,7 @@ struct DocumentLayout {
     footnote_font_pt: f32,
     code_font_pt: f32,
     text_base_font: &'static str,
+    code_base_font: &'static str,
     math_base_font: &'static str,
     heading_base_font: &'static str,
 }
@@ -1919,6 +1920,7 @@ impl DocumentLayout {
             footnote_font_pt: 10.0,
             code_font_pt: 9.0,
             text_base_font: "NimbusRomNo9L-Regu",
+            code_base_font: "Courier",
             math_base_font: "NimbusRomNo9L-ReguItal",
             heading_base_font: "NimbusRomNo9L-Medi",
         }
@@ -1948,6 +1950,7 @@ impl DocumentLayout {
             footnote_font_pt: 7.5,
             code_font_pt: 7.0,
             text_base_font: "NimbusRomNo9L-Regu",
+            code_base_font: "Courier",
             math_base_font: "NimbusRomNo9L-ReguItal",
             heading_base_font: "NimbusRomNo9L-Medi",
         }
@@ -1977,6 +1980,7 @@ impl DocumentLayout {
             footnote_font_pt: 7.0,
             code_font_pt: 6.7,
             text_base_font: "TeXGyrePagellaX-Regular",
+            code_base_font: "TeXGyreHeros-Regular",
             math_base_font: "TeXGyrePagellaX-Italic",
             heading_base_font: "TeXGyreHeros-Bold",
         }
@@ -2150,7 +2154,13 @@ impl DocumentLayout {
                     PdfFontMetric::TimesRoman
                 }
             }
-            PdfTextFont::Code => PdfFontMetric::Courier,
+            PdfTextFont::Code => {
+                if self.code_base_font == "TeXGyreHeros-Regular" {
+                    PdfFontMetric::Heros
+                } else {
+                    PdfFontMetric::Courier
+                }
+            }
             PdfTextFont::Math => {
                 if self.math_base_font == "TeXGyrePagellaX-Italic" {
                     PdfFontMetric::PagellaItalic
@@ -15155,7 +15165,7 @@ fn write_pdf(
     let mut next_object_id = symbol_font_object + 1;
     let font_resources = [
         pdf_type1_font_resource(document.layout.text_base_font, &mut next_object_id)?,
-        pdf_type1_font_resource("Courier", &mut next_object_id)?,
+        pdf_type1_font_resource(document.layout.code_base_font, &mut next_object_id)?,
         pdf_type1_font_resource(document.layout.math_base_font, &mut next_object_id)?,
         pdf_type1_font_resource(document.layout.heading_base_font, &mut next_object_id)?,
         pdf_type1_font_resource("Symbol", &mut next_object_id)?,
@@ -15445,6 +15455,10 @@ fn type1_font_files(base_font: &str) -> Option<Type1FontFiles> {
         "TeXGyrePagellaX-Bold" => Some(Type1FontFiles {
             pfb: "TeXGyrePagellaX-Bold.pfb",
             metrics: PAGELLA_BOLD_TYPE1_METRICS,
+        }),
+        "TeXGyreHeros-Regular" => Some(Type1FontFiles {
+            pfb: "qhvr.pfb",
+            metrics: HEROS_TYPE1_METRICS,
         }),
         "TeXGyreHeros-Bold" => Some(Type1FontFiles {
             pfb: "qhvb.pfb",
@@ -16440,6 +16454,7 @@ enum PdfFontMetric {
     Pagella,
     PagellaItalic,
     PagellaBold,
+    Heros,
     HerosBold,
     Courier,
     Symbol,
@@ -17863,6 +17878,17 @@ const PAGELLA_BOLD_WIDTHS: [f32; 95] = [
     472.0, 232.0, 472.0, 606.0,
 ];
 
+const HEROS_WIDTHS: [f32; 95] = [
+    278.0, 278.0, 355.0, 556.0, 556.0, 889.0, 667.0, 191.0, 333.0, 333.0, 389.0, 584.0, 278.0,
+    333.0, 278.0, 278.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0,
+    278.0, 278.0, 584.0, 584.0, 584.0, 556.0, 1015.0, 667.0, 667.0, 722.0, 722.0, 667.0, 611.0,
+    778.0, 722.0, 278.0, 500.0, 667.0, 556.0, 833.0, 722.0, 778.0, 667.0, 778.0, 722.0, 667.0,
+    611.0, 722.0, 667.0, 944.0, 667.0, 667.0, 611.0, 278.0, 278.0, 278.0, 469.0, 556.0, 333.0,
+    556.0, 556.0, 500.0, 556.0, 556.0, 278.0, 556.0, 556.0, 222.0, 222.0, 500.0, 222.0, 833.0,
+    556.0, 556.0, 556.0, 556.0, 333.0, 500.0, 278.0, 556.0, 500.0, 722.0, 500.0, 500.0, 500.0,
+    334.0, 260.0, 334.0, 584.0,
+];
+
 const HEROS_BOLD_WIDTHS: [f32; 95] = [
     278.0, 333.0, 474.0, 556.0, 556.0, 889.0, 722.0, 238.0, 333.0, 333.0, 389.0, 584.0, 278.0,
     333.0, 278.0, 278.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0,
@@ -18008,6 +18034,18 @@ const PAGELLA_BOLD_TYPE1_METRICS: Type1Metrics = Type1Metrics {
     widths: &PAGELLA_BOLD_WIDTHS,
 };
 
+const HEROS_TYPE1_METRICS: Type1Metrics = Type1Metrics {
+    font_bbox: [-529, -284, 1353, 1148],
+    italic_angle: 0.0,
+    ascender: 729,
+    descender: -216,
+    cap_height: 729,
+    x_height: 524,
+    fixed_pitch: false,
+    bold: false,
+    widths: &HEROS_WIDTHS,
+};
+
 const HEROS_BOLD_TYPE1_METRICS: Type1Metrics = Type1Metrics {
     font_bbox: [-173, -219, 1001, 944],
     italic_angle: 0.0,
@@ -18045,6 +18083,7 @@ fn pdf_font_char_width_units(ch: char, metric: PdfFontMetric) -> f32 {
         PdfFontMetric::Pagella => table_char_width_units(ch, &PAGELLA_WIDTHS),
         PdfFontMetric::PagellaItalic => table_char_width_units(ch, &PAGELLA_ITALIC_WIDTHS),
         PdfFontMetric::PagellaBold => table_char_width_units(ch, &PAGELLA_BOLD_WIDTHS),
+        PdfFontMetric::Heros => table_char_width_units(ch, &HEROS_WIDTHS),
         PdfFontMetric::HerosBold => table_char_width_units(ch, &HEROS_BOLD_WIDTHS),
         PdfFontMetric::Courier => courier_char_width_units(ch),
         PdfFontMetric::Symbol => symbol_char_width_units(ch),
@@ -18440,6 +18479,7 @@ This is a tiny native document.
         let pdf_text = String::from_utf8_lossy(&pdf_bytes);
 
         assert!(pdf_text.contains("/BaseFont /TeXGyrePagellaX-Regular"));
+        assert!(pdf_text.contains("/BaseFont /TeXGyreHeros-Regular"));
         assert!(pdf_text.contains("/BaseFont /TeXGyreHeros-Bold"));
         assert!(pdf_text.contains("/FontFile"));
         assert!(pdf_text.contains("/Differences [32 /space /exclam"));
