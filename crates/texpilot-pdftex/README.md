@@ -273,14 +273,14 @@ The p5 clean-build timing gate is encoded as:
 
 ```sh
 scripts/native_pdftex_gate.py
-scripts/native_pdftex_gate.py --max-two-column-graphic-float-fallbacks 11 --max-two-column-wide-graphic-float-fallbacks 6 --max-two-column-graphic-float-fallback-native-slots 258 --max-two-column-wide-graphic-float-fallback-native-slots 132
+scripts/native_pdftex_gate.py --max-two-column-graphic-float-fallbacks 0 --max-two-column-wide-graphic-float-fallbacks 0 --max-two-column-graphic-float-fallback-native-slots 0 --max-two-column-wide-graphic-float-fallback-native-slots 0
 ```
 
 It runs the two bundled large examples through `--engine texpilot-pdftex`,
 requires the native trace path plus caption-placement diagnostics rather than
 fallback, and fails if either median full-build wall time exceeds one second by
 default. The current release gate on this workspace passes with medians of
-0.575s for `arXiv-2605.26379v1` and 0.534s for `arXiv-2511.08544v3` across
+0.501s for `arXiv-2605.26379v1` and 0.426s for `arXiv-2511.08544v3` across
 three forced clean native builds per paper.
 It also reports the two-column graphic float fallback counters and estimated
 native-slot debt, and can enforce the same native-coverage budgets as the
@@ -353,19 +353,19 @@ dimension agreement, not near-identical output yet. At the harness default of
 
 | source | pages | mean RMSE | max page RMSE | max diff ratio |
 | --- | ---: | ---: | ---: | ---: |
-| `examples/arXiv-2605.26379v1/main.tex` | 48/48 | 53.139 | 65.208 | 0.2788 |
-| `examples/arXiv-2511.08544v3/main.tex` | 50/50 | 53.503 | 77.314 | 0.5779 |
+| `examples/arXiv-2605.26379v1/main.tex` | 48/48 | 47.377 | 97.243 | 0.3513 |
+| `examples/arXiv-2511.08544v3/main.tex` | 50/50 | 49.147 | 75.454 | 0.6390 |
 
 With caption-flow diagnostics enabled, the same run reports aggregate absolute
-caption drift of 35 pages across 23 matched captions for `arXiv-2605.26379v1`
-and 37 pages across 21 matched captions for `arXiv-2511.08544v3`; both have a
-largest single-caption drift of 5 pages.
+caption drift of 27 pages across 23 matched captions for `arXiv-2605.26379v1`
+and 30 pages across 21 matched captions for `arXiv-2511.08544v3`; their largest
+single-caption drift is 5 and 3 pages, respectively.
 The corresponding native trace surface shows 0 two-column graphic-float
-fallbacks for `arXiv-2605.26379v1`, but 11 for `arXiv-2511.08544v3`, including
-6 starred/wide graphic floats. Their shadow native footprint is 258 estimated
-slots total, including 132 estimated slots from starred/wide floats. That makes
-the ICML-style output-routine work a measurable TeX/STY-to-PDF functionality
-gap rather than a legacy sidecar issue.
+fallbacks for both large examples, including 0 starred/wide graphic fallbacks
+and 0 estimated native-slot debt. The remaining output-routine gap is therefore
+not hidden fallback coverage: it is the exact float queue release, paragraph
+breaking, and package layout fidelity needed to move the rendered pixels and
+caption pages into alignment.
 
 The main remaining replacement gaps are therefore visual-fidelity gaps rather
 than scheduler gaps: real TeX paragraph breaking, page-builder/output-routine
@@ -375,40 +375,33 @@ model before `--strict` rendered parity can pass.
 
 Recent float experiments reinforce that rendered parity is the only useful
 compatibility test here. Treating more float bodies as native blocks sounds
-closer to TeX, but naive single-column top placement moved a large appendix
-figure too early and changed the worst-page RMSE; broad tabular-float block
-placement changed the large NeurIPS-style paper from 48/48 pages to 48/49 pages.
-Those are regressions, not progress. The accepted path is narrower: once the
-active layout has switched to `\onecolumn`, scoped starred `table*` bodies with
-native-parsable `tabular` or `\resizebox` payloads enter the wide top-float
-path, preserving the current large-paper page counts and rendered metrics. The
-next float target is therefore not more command-by-command legacy emulation,
-but an actual deferred float-page/output-routine model that can hold oversized
-tables and figures until the rendered baseline would place them.
+closer to TeX, but it only counts as progress when the rendered pages improve.
+The accepted path is now narrower and stricter: native-parsable two-column
+`figure*` graphics and `table*` tabular bodies enter the wide top-float path,
+the ICML vertical slot model uses a float/image reservation height calibrated to
+the local `simpleicml` baseline behavior, and the large examples keep 48/48 and
+50/50 page counts with zero two-column graphic fallback debt. The next float
+target is therefore not more command-by-command legacy emulation, but an actual
+deferred float-page/output-routine model that can hold and release queued
+tables and figures exactly where the rendered baseline would place them.
 
 The caption-flow diagnostic currently shows that the large NeurIPS-style paper's
-appendix floats are still early, but less severely after bibliography placement
-was moved to the source command location: Table 4 is now 5 pages early, Figures
-7 and 9 are 4 pages early, Table 6 and Figure 10 are 3 pages early, Tables 5 and
-7 are 2 pages early, and Figure 4 is 2 pages late.
-The ICML-style paper now uses a denser `simpleicml` two-column row model and a
-separate physical one-column row model after `\onecolumn`; that keeps 50/50
-pages while bringing the main experimental floats and tables from 5-7 pages late
-down to roughly one page late, and the early two-column `figure*` after the
-ICML title block now lands on the baseline page instead of 2 pages early.
-One-column graphic figures now enter the native
-top-float path, including starred `figure*` graphics once `\onecolumn` is active,
-and scoped one-column starred `table*` bodies now enter the same top-float path
-when their table payload can be represented natively. Oversized top floats start
-at a page top instead of mid-page, and overflow
-placements reserve page count without re-rendering the same oversized visual
-object on every overflow page. This is still not true TeX clipping or float-page
-splitting, but it removes a duplicated-figure artifact, improves the
-NeurIPS-style mean RMSE measurement, and moves several ICML appendix floats
-closer to the baseline. The remaining ICML flow error is concentrated in the
-appendix: Figure 17 still lands 5 pages early, Figures 18, 19, and 20 land 3
-pages early, Figure 15 lands 2 pages early, Table 4 lands 3 pages late, and
-nearby appendix tables are 2 pages late. The native page
+appendix floats are still early: Table 4 is 5 pages early, Figure 7 is 3 pages
+early, Figures 9 and 10 are 2 pages early, and Figure 13 is 2 pages late.
+The ICML-style paper now keeps 50/50 pages while admitting two-column
+`figure*` graphics and `table*` bodies into the native wide-float path. Its
+remaining main-body flow error is concentrated in a dense float cluster:
+Table 2 and Figures 12-13 are 3 pages late, while Figure 5 is also 3 pages
+late. The appendix tables and Figure 15 then run about 2 pages early. One-column
+graphic figures still enter the native top-float path, including starred
+`figure*` graphics once `\onecolumn` is active, and scoped one-column starred
+`table*` bodies enter the same top-float path when their table payload can be
+represented natively. Oversized top floats start at a page top instead of
+mid-page, and overflow placements reserve page count without re-rendering the
+same oversized visual object on every overflow page. This is still not true TeX
+clipping or float-page splitting, but it removes a duplicated-figure artifact,
+improves the NeurIPS-style mean RMSE measurement, removes the ICML graphic
+fallback debt, and preserves both large-example page counts. The native page
 builder now carries layout with each placement and supports explicit output
 controls for `\clearpage`, `\onecolumn`, and `\twocolumn`, plus a soft
 near-bottom `\newpage` hint for the approximate line model, so appendix content
@@ -420,17 +413,15 @@ isolated experiments were worse: literal hard `\newpage` handling changed the
 NeurIPS-style example from 48/48 to 48/49 pages, while the accepted soft
 near-bottom handling preserves the current 48/48 and 50/50 rendered-page
 counts; simple `\clearpage` handling changed a large example to 50/51 pages, a
-narrower
-one-column-graphics-only experiment made the ICML-style paper 50/53 pages,
-promoting two-column `figure*` graphics directly to wide top floats made it
-50/54 pages, and compacting table rows dropped the ICML-style paper to 50/49
-pages. Deferring one-column wide top floats behind following text preserved
-page counts and slightly lowered ICML mean RMSE, but worsened appendix caption
-flow, moving Figure 17 from 5 to 6 pages early and Figures 18-20 from 3 to 5
-pages early. The next target is therefore the real deferred
-float-page/output-routine itself, especially queue release around appendix
-transitions, oversized tables, and real float clipping/splitting, not more
-command-by-command legacy emulation.
+narrower one-column-graphics-only experiment made the ICML-style paper 50/53
+pages, and compacting table rows alone dropped the ICML-style paper to 50/49
+pages. Admitting two-column `figure*` graphics before calibrating ICML
+float/image slot height made the ICML-style paper 50/52 pages; with calibrated
+slot height and `table*` admission it returns to 50/50, removes the remaining
+graphic fallback debt, and lowers ICML mean RMSE. The next target is therefore
+the real deferred float-page/output-routine itself, especially queue release
+around dense main-body float clusters, appendix transitions, oversized tables,
+and real float clipping/splitting, not more command-by-command legacy emulation.
 
 Recent display-math experiments landed the same lesson in smaller form:
 lightweight raw `$$...$$` display rows preserve the current page-count parity,

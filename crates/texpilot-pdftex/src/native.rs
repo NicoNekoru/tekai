@@ -1968,7 +1968,7 @@ impl DocumentLayout {
             column_gap_pt: 18.0,
             left_pt: 46.8,
             top_pt: 720.0,
-            line_height_pt: 10.0,
+            line_height_pt: 13.5,
             text_font_pt: 8.0,
             title_font_pt: 12.0,
             author_font_pt: 8.0,
@@ -9616,8 +9616,8 @@ fn should_defer_graphic_float_to_float_page(
         && figure_counter >= 15
 }
 
-fn should_admit_two_column_graphic_float(is_wide: bool) -> bool {
-    !is_wide
+fn should_admit_two_column_graphic_float(_is_wide: bool) -> bool {
+    true
 }
 
 fn append_table_float_lines(
@@ -9637,7 +9637,10 @@ fn append_table_float_lines(
     caption_label_separator: CaptionLabelSeparator,
 ) -> Result<bool, String> {
     let is_wide = env.trim().ends_with('*');
-    if kind != FloatKind::Table || layout.columns > 1 || (!is_wide && !bottom) {
+    if kind != FloatKind::Table
+        || (layout.columns > 1 && !is_wide)
+        || (layout.columns == 1 && !is_wide && !bottom)
+    {
         return Ok(false);
     }
     let table_lines = native_table_float_rows(body, macros, labels, citations)?;
@@ -9647,15 +9650,25 @@ fn append_table_float_lines(
     let mut block = Vec::new();
     if let Some(caption) = native_caption_payload(body, macros, labels, citations, footnotes)? {
         let number = next_float_number(kind, figure_counter, table_counter);
-        append_caption_lines(
-            &mut block,
-            &caption_label(kind.label(), number, &caption, caption_label_separator),
-            layout,
-        );
+        let label = caption_label(kind.label(), number, &caption, caption_label_separator);
+        if is_wide {
+            append_wide_caption_lines(&mut block, &label, layout);
+        } else {
+            append_caption_lines(&mut block, &label, layout);
+        }
     }
+    let table_layout = if is_wide {
+        layout.with_line_width(layout.text_width_pt)
+    } else {
+        *layout
+    };
     for row in table_lines {
-        for wrapped in layout.wrap_table_text(&row) {
-            block.push(Line::Text(wrapped));
+        for wrapped in table_layout.wrap_table_text(&row) {
+            if is_wide {
+                block.push(Line::WideAbstractText(wrapped));
+            } else {
+                block.push(Line::Text(wrapped));
+            }
         }
     }
     block.push(Line::Blank);
@@ -18025,7 +18038,7 @@ This is a tiny native document.
     }
 
     #[test]
-    fn native_trace_counts_two_column_graphic_float_fallbacks() {
+    fn native_trace_counts_only_unrendered_two_column_graphic_float_fallbacks() {
         let root = temp_dir("two-column-graphic-float-trace");
         let main = root.join("main.tex");
         let out = root.join("build");
@@ -18042,9 +18055,8 @@ This is a tiny native document.
 \end{figure}
 \begin{figure*}[t]
 \includegraphics[width=\textwidth]{wide.png}
-\caption{Wide graphic with enough caption text to remain on the fallback path while the
-native renderer keeps two-column wide graphics on the transparent fallback path during the
-current output-routine migration stage. This keeps the trace test focused on fallback diagnostics.}
+\caption{Wide graphic with enough caption text to exercise rendered caption tracing while the
+native renderer keeps two-column wide graphics on the grouped float path.}
 \end{figure*}
 \end{document}
 ",
@@ -18068,24 +18080,25 @@ current output-routine migration stage. This keeps the trace test focused on fal
         let trace =
             fs::read_to_string(out.join("main.texpilot-pdftex.trace")).expect("trace exists");
         assert!(
-            trace.contains("layout_two_column_graphic_float_fallbacks\t1"),
+            trace.contains("layout_two_column_graphic_float_fallbacks\t0"),
             "{trace}"
         );
         assert!(
-            trace.contains("layout_two_column_wide_graphic_float_fallbacks\t1"),
+            trace.contains("layout_two_column_wide_graphic_float_fallbacks\t0"),
             "{trace}"
         );
         assert!(
-            trace.contains("layout_two_column_graphic_float_fallback_entries\t1"),
+            trace.contains("layout_two_column_graphic_float_fallback_entries\t0"),
             "{trace}"
         );
         assert!(
-            trace.contains("layout_two_column_graphic_float_fallback_estimated_native_slots\t"),
+            trace.contains("layout_two_column_graphic_float_fallback_estimated_native_slots\t0"),
             "{trace}"
         );
         assert!(
-            trace
-                .contains("layout_two_column_wide_graphic_float_fallback_estimated_native_slots\t"),
+            trace.contains(
+                "layout_two_column_wide_graphic_float_fallback_estimated_native_slots\t0"
+            ),
             "{trace}"
         );
         assert!(
@@ -18099,15 +18112,11 @@ current output-routine migration stage. This keeps the trace test focused on fal
             "{trace}"
         );
         assert!(
-            trace.contains(
-                "layout_two_column_graphic_float_fallback\tenv=figure* top=true wide=true images=1 caption=Wide graphic"
-            ),
+            trace.contains("layout_caption") && trace.contains("text=Figure 2: Wide graphic"),
             "{trace}"
         );
         assert!(
-            trace.contains("caption=Wide graphic")
-                && trace.contains("native_rows=1")
-                && trace.contains("native_slots="),
+            !trace.contains("layout_two_column_graphic_float_fallback\tenv=figure*"),
             "{trace}"
         );
     }
@@ -18710,12 +18719,13 @@ Native SyncTeX output.
         };
 
         let placements = line_placements(&document);
+        let last_fill_label = format!("Fill {}", layout.rows_per_column - 2);
         let last_fill = placements
             .iter()
             .find(|placement| {
                 matches!(
                     &document.lines[placement.line_index],
-                    Line::Text(text) if text == "Fill 52"
+                    Line::Text(text) if text == &last_fill_label
                 )
             })
             .expect("last fill text placement");
@@ -19889,6 +19899,82 @@ After.
     }
 
     #[test]
+    fn native_two_column_starred_graphic_figures_enter_wide_float_path() {
+        let root = temp_dir("two-column-starred-graphic-float");
+        let main = root.join("main.tex");
+        let figure = root.join("wide.jpg");
+        let out = root.join("build");
+        fs::write(&figure, tiny_jpeg_bytes()).unwrap();
+        fs::write(
+            &main,
+            r"\documentclass{article}
+\twocolumn
+\begin{document}
+Before.
+\begin{figure*}[t]
+\includegraphics[width=\textwidth]{wide.jpg}
+\caption{Two column starred figure.}
+\end{figure*}
+After.
+\end{document}
+",
+        )
+        .unwrap();
+
+        let loaded = load_document(&main, "main")
+            .expect("load document")
+            .expect("native fixture loads");
+        let mut inputs = loaded.inputs;
+        let document = parse_supported_document(
+            &loaded.source,
+            &loaded.root_dir,
+            &out,
+            "main",
+            &mut inputs,
+            NativeArtifactPolicy::PdfOnly,
+        )
+        .expect("parse document");
+
+        assert!(
+            document.lines.iter().any(|line| {
+                matches!(
+                    line,
+                    Line::FloatBlock {
+                        wide: true,
+                        top: true,
+                        ..
+                    }
+                )
+            }),
+            "{:?}",
+            document.lines
+        );
+        let placements = line_placements(&document);
+        let float = placements
+            .iter()
+            .find(|placement| {
+                matches!(
+                    document.lines[placement.line_index],
+                    Line::FloatBlock { wide: true, .. }
+                )
+            })
+            .expect("starred graphic float placement");
+        let after = placements
+            .iter()
+            .find(|placement| {
+                matches!(
+                    &document.lines[placement.line_index],
+                    Line::Text(text) if text == "After."
+                )
+            })
+            .expect("after text placement");
+
+        assert_eq!(float.page_index, 1);
+        assert_eq!(float.page_slot, 0);
+        assert!(after.page_index <= float.page_index);
+    }
+
+    #[test]
     fn native_wide_minipage_float_uses_caption_sized_lines() {
         let root = temp_dir("wide-minipage-caption-lines");
         let main = root.join("main.tex");
@@ -20033,13 +20119,13 @@ After.
         assert!(
             lines
                 .iter()
-                .any(|line| matches!(line, Line::Caption(text) if text.contains("Table 1: One column starred table."))),
+                .any(|line| matches!(line, Line::WideCaption(text) if text.contains("Table 1: One column starred table."))),
             "{lines:?}"
         );
         assert!(
-            lines
-                .iter()
-                .any(|line| matches!(line, Line::Text(text) if text.contains("Name | Score"))),
+            lines.iter().any(
+                |line| matches!(line, Line::WideAbstractText(text) if text.contains("Name | Score"))
+            ),
             "{lines:?}"
         );
         let placements = line_placements(&document);
@@ -20047,6 +20133,86 @@ After.
             .iter()
             .find(|placement| placement.line_index == float_index)
             .expect("starred table placement");
+        assert_eq!(float.page_index, 1);
+        assert_eq!(float.page_slot, 0);
+    }
+
+    #[test]
+    fn native_two_column_starred_tables_enter_wide_float_path() {
+        let root = temp_dir("two-column-starred-table-float");
+        let main = root.join("main.tex");
+        let out = root.join("build");
+        fs::write(
+            &main,
+            r"\documentclass{article}
+\twocolumn
+\begin{document}
+Before.
+\begin{table*}[t]
+\caption{Two column starred table.}
+\begin{tabular}{lc}
+\toprule
+Name & Score\\
+\midrule
+A & 1\\
+\bottomrule
+\end{tabular}
+\end{table*}
+After.
+\end{document}
+",
+        )
+        .unwrap();
+
+        let loaded = load_document(&main, "main")
+            .expect("load document")
+            .expect("native fixture loads");
+        let mut inputs = loaded.inputs;
+        let document = parse_supported_document(
+            &loaded.source,
+            &loaded.root_dir,
+            &out,
+            "main",
+            &mut inputs,
+            NativeArtifactPolicy::PdfOnly,
+        )
+        .expect("parse document");
+
+        let float_index = document
+            .lines
+            .iter()
+            .position(|line| {
+                matches!(
+                    line,
+                    Line::FloatBlock {
+                        wide: true,
+                        top: true,
+                        ..
+                    }
+                )
+            })
+            .expect("table* should become a wide top float");
+        let Line::FloatBlock { lines, .. } = &document.lines[float_index] else {
+            unreachable!();
+        };
+        assert!(
+            lines.iter().any(
+                |line| matches!(line, Line::WideCaption(text) if text.contains("Table 1: Two column starred table."))
+            ),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(
+                |line| matches!(line, Line::WideAbstractText(text) if text.contains("Name | Score"))
+            ),
+            "{lines:?}"
+        );
+        let placements = line_placements(&document);
+        let float = placements
+            .iter()
+            .find(|placement| placement.line_index == float_index)
+            .expect("starred table placement");
+
         assert_eq!(float.page_index, 1);
         assert_eq!(float.page_slot, 0);
     }
