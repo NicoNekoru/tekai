@@ -2107,7 +2107,50 @@ impl DocumentLayout {
         if self == Self::neurips_single_column() {
             wrap_calibrated_prose_text_lines(text, width, font_size, max_width_pt)
         } else {
-            wrap_prose_text_lines(text, width, font_size, max_width_pt)
+            wrap_prose_text_lines(
+                text,
+                width,
+                self.line_break_metric_for_font(PdfTextFont::Text),
+                font_size,
+                max_width_pt,
+            )
+        }
+    }
+
+    fn metric_for_font(self, font: PdfTextFont) -> PdfFontMetric {
+        match font {
+            PdfTextFont::Text => {
+                if self.text_base_font == "TeXGyrePagellaX-Regular" {
+                    PdfFontMetric::Pagella
+                } else {
+                    PdfFontMetric::TimesRoman
+                }
+            }
+            PdfTextFont::Code => PdfFontMetric::Courier,
+            PdfTextFont::Math => {
+                if self.math_base_font == "TeXGyrePagellaX-Italic" {
+                    PdfFontMetric::PagellaItalic
+                } else {
+                    PdfFontMetric::TimesItalic
+                }
+            }
+            PdfTextFont::Heading => {
+                if self.heading_base_font == "TeXGyreHeros-Bold" {
+                    PdfFontMetric::HerosBold
+                } else if self.heading_base_font == "TeXGyrePagellaX-Bold" {
+                    PdfFontMetric::PagellaBold
+                } else {
+                    PdfFontMetric::TimesBold
+                }
+            }
+            PdfTextFont::Symbol => PdfFontMetric::Symbol,
+        }
+    }
+
+    fn line_break_metric_for_font(self, font: PdfTextFont) -> PdfFontMetric {
+        match font {
+            PdfTextFont::Text => PdfFontMetric::TimesRoman,
+            _ => self.metric_for_font(font),
         }
     }
 }
@@ -14011,6 +14054,7 @@ const LINE_BREAK_OVERFULL_TOLERANCE_EM: f32 = 0.08;
 fn wrap_prose_text_lines(
     text: &str,
     width: usize,
+    font_metric: PdfFontMetric,
     font_size: f32,
     max_width_pt: f32,
 ) -> Vec<WrappedTextLine> {
@@ -14024,9 +14068,10 @@ fn wrap_prose_text_lines(
     let target_width_pt = prose_wrap_target_width_pt(width, font_size, max_width_pt);
     let word_widths = words
         .iter()
-        .map(|word| natural_text_width_pt(word, font_size))
+        .map(|word| natural_text_width_for_metric_pt(word, font_metric, font_size))
         .collect::<Vec<_>>();
-    let breaks = balanced_line_breaks(&word_widths, font_size, target_width_pt);
+    let space_width_pt = natural_text_width_for_metric_pt(" ", font_metric, font_size);
+    let breaks = balanced_line_breaks(&word_widths, space_width_pt, font_size, target_width_pt);
     let mut start = 0_usize;
     let mut lines = Vec::with_capacity(breaks.len());
     for end in breaks {
@@ -14078,12 +14123,16 @@ fn prose_wrap_target_width_pt(width: usize, font_size: f32, max_width_pt: f32) -
     calibrated.max(minimum).min(max_width_pt)
 }
 
-fn balanced_line_breaks(word_widths: &[f32], font_size: f32, target_width_pt: f32) -> Vec<usize> {
+fn balanced_line_breaks(
+    word_widths: &[f32],
+    space_width_pt: f32,
+    font_size: f32,
+    target_width_pt: f32,
+) -> Vec<usize> {
     let word_count = word_widths.len();
     if word_count == 0 {
         return Vec::new();
     }
-    let space_width_pt = natural_text_width_pt(" ", font_size);
     let mut costs = vec![f32::INFINITY; word_count + 1];
     let mut next_breaks = vec![word_count; word_count];
     costs[word_count] = 0.0;
@@ -15132,8 +15181,10 @@ fn append_author_grid_to_page_stream(
         for (column_index, block) in row.iter().enumerate() {
             let center_x = author_grid_column_center(layout, row.len(), column_index);
             for (line_index, text) in block.lines.iter().enumerate() {
-                let width = text_width_pt(
+                let width = text_width_for_layout_font_pt(
                     text,
+                    layout,
+                    PdfTextFont::Heading,
                     NEURIPS_AUTHOR_GRID_FONT_PT,
                     layout.text_width_pt / row.len().max(1) as f32,
                 );
@@ -15178,7 +15229,13 @@ fn should_render_page_number(layout: DocumentLayout, page_index: usize) -> bool 
 
 fn append_page_number_to_stream(stream: &mut String, layout: DocumentLayout, page_number: usize) {
     let text = page_number.to_string();
-    let width = text_width_pt(&text, PAGE_NUMBER_FONT_PT, layout.text_width_pt);
+    let width = text_width_for_layout_font_pt(
+        &text,
+        layout,
+        PdfTextFont::Text,
+        PAGE_NUMBER_FONT_PT,
+        layout.text_width_pt,
+    );
     let x = 306.0 - width / 2.0;
     let y = page_number_y_pt(layout);
     writeln!(
@@ -15297,8 +15354,13 @@ fn append_line_to_page_stream(
             append_author_grid_to_page_stream(stream, layout, page_slot, grid);
         }
         Line::AbstractHeading(text) => {
-            let (x, y) =
-                centered_text_position(layout, page_slot, text, layout.abstract_heading_font_pt);
+            let (x, y) = centered_text_position_for_font(
+                layout,
+                page_slot,
+                text,
+                PdfTextFont::Heading,
+                layout.abstract_heading_font_pt,
+            );
             append_pdf_text_object(
                 stream,
                 PdfTextFont::Heading,
@@ -15316,6 +15378,7 @@ fn append_line_to_page_stream(
             let (x, y) = layout.point_for_slot(page_slot, 12.0);
             append_pdf_text_object_justified(
                 stream,
+                layout,
                 PdfTextFont::Text,
                 layout.text_font_pt,
                 x,
@@ -15390,7 +15453,13 @@ fn append_line_to_page_stream(
             );
         }
         Line::WideEquation(text) => {
-            let (x, y) = wide_centered_text_position(layout, page_slot, text, layout.text_font_pt);
+            let (x, y) = wide_centered_text_position_for_font(
+                layout,
+                page_slot,
+                text,
+                PdfTextFont::Math,
+                layout.text_font_pt,
+            );
             append_pdf_text_object(stream, PdfTextFont::Math, layout.text_font_pt, x, y, text);
         }
         Line::Heading(text) => {
@@ -15408,6 +15477,7 @@ fn append_line_to_page_stream(
             let (x, y) = layout.point_for_slot(page_slot + 1, 0.0);
             append_pdf_text_object_justified(
                 stream,
+                layout,
                 PdfTextFont::Text,
                 layout.text_font_pt,
                 x,
@@ -15424,6 +15494,7 @@ fn append_line_to_page_stream(
             let (x, y) = layout.point_for_slot(page_slot, 0.0);
             append_pdf_text_object_justified(
                 stream,
+                layout,
                 PdfTextFont::Text,
                 layout.text_font_pt,
                 x,
@@ -15559,6 +15630,19 @@ enum PdfTextFont {
     Symbol,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PdfFontMetric {
+    TimesRoman,
+    TimesItalic,
+    TimesBold,
+    Pagella,
+    PagellaItalic,
+    PagellaBold,
+    HerosBold,
+    Courier,
+    Symbol,
+}
+
 impl PdfTextFont {
     const fn name(self) -> &'static str {
         match self {
@@ -15590,6 +15674,7 @@ fn append_pdf_text_object(
 
 fn append_pdf_text_object_justified(
     stream: &mut String,
+    layout: DocumentLayout,
     base_font: PdfTextFont,
     font_size: f32,
     x: f32,
@@ -15597,7 +15682,12 @@ fn append_pdf_text_object_justified(
     text: &str,
     target_width_pt: f32,
 ) {
-    let word_spacing_pt = justified_word_spacing_pt(text, font_size, target_width_pt);
+    let word_spacing_pt = justified_word_spacing_pt(
+        text,
+        layout.metric_for_font(base_font),
+        font_size,
+        target_width_pt,
+    );
     append_pdf_text_object_with_word_spacing(
         stream,
         base_font,
@@ -15645,12 +15735,17 @@ fn append_pdf_text_object_with_word_spacing(
     writeln!(stream, "ET\nQ").unwrap();
 }
 
-fn justified_word_spacing_pt(text: &str, font_size: f32, target_width_pt: f32) -> Option<f32> {
+fn justified_word_spacing_pt(
+    text: &str,
+    font_metric: PdfFontMetric,
+    font_size: f32,
+    target_width_pt: f32,
+) -> Option<f32> {
     let spaces = text.chars().filter(|ch| *ch == ' ').count();
     if spaces == 0 {
         return None;
     }
-    let natural_width_pt = natural_text_width_pt(text, font_size);
+    let natural_width_pt = natural_text_width_for_metric_pt(text, font_metric, font_size);
     let spacing_pt = (target_width_pt - natural_width_pt) / spaces as f32;
     if !spacing_pt.is_finite() {
         return None;
@@ -16202,12 +16297,24 @@ fn synctex_line_geometry(
         )),
         Line::Author(text) => Some((
             0.0,
-            text_width_pt(text, layout.author_font_pt, layout.column_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.author_font_pt,
+                layout.column_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::WideAuthor(text) => Some((
             0.0,
-            text_width_pt(text, layout.author_font_pt, layout.text_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.author_font_pt,
+                layout.text_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::AuthorGrid(_) => Some((
@@ -16217,8 +16324,10 @@ fn synctex_line_geometry(
         )),
         Line::AbstractHeading(text) => Some((
             0.0,
-            text_width_pt(
+            text_width_for_layout_font_pt(
                 text,
+                layout,
+                PdfTextFont::Heading,
                 layout.abstract_heading_font_pt,
                 layout.column_width_pt,
             ),
@@ -16226,13 +16335,21 @@ fn synctex_line_geometry(
         )),
         Line::AbstractText(text) => Some((
             12.0,
-            text_width_pt(text, layout.text_font_pt, layout.column_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.text_font_pt,
+                layout.column_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::JustifiedAbstractText { text, width_pt } => Some((
             12.0,
-            (*width_pt).max(text_width_pt(
+            (*width_pt).max(text_width_for_layout_font_pt(
                 text,
+                layout,
+                PdfTextFont::Text,
                 layout.text_font_pt,
                 layout.column_width_pt,
             )),
@@ -16242,33 +16359,65 @@ fn synctex_line_geometry(
         Line::WideTheoremBackground { .. } => None,
         Line::WideAbstractText(text) => Some((
             12.0,
-            text_width_pt(text, layout.text_font_pt, layout.text_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.text_font_pt,
+                layout.text_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::WideCaption(text) => Some((
             0.0,
-            text_width_pt(text, layout.footnote_font_pt, layout.text_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.footnote_font_pt,
+                layout.text_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::WideEquation(text) => Some((
             0.0,
-            text_width_pt(text, layout.text_font_pt, layout.text_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Math,
+                layout.text_font_pt,
+                layout.text_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::Heading(text) => Some((
             0.0,
-            text_width_pt(text, layout.heading_font_pt, layout.text_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Heading,
+                layout.heading_font_pt,
+                layout.text_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::ParagraphText(text) => Some((
             0.0,
-            text_width_pt(text, layout.text_font_pt, layout.column_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.text_font_pt,
+                layout.column_width_pt,
+            ),
             layout.line_height_pt,
         )),
         Line::JustifiedParagraphText { text, width_pt } => Some((
             0.0,
-            (*width_pt).max(text_width_pt(
+            (*width_pt).max(text_width_for_layout_font_pt(
                 text,
+                layout,
+                PdfTextFont::Text,
                 layout.text_font_pt,
                 layout.column_width_pt,
             )),
@@ -16276,13 +16425,21 @@ fn synctex_line_geometry(
         )),
         Line::Text(text) => Some((
             0.0,
-            text_width_pt(text, layout.text_font_pt, layout.column_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.text_font_pt,
+                layout.column_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::JustifiedText { text, width_pt } => Some((
             0.0,
-            (*width_pt).max(text_width_pt(
+            (*width_pt).max(text_width_for_layout_font_pt(
                 text,
+                layout,
+                PdfTextFont::Text,
                 layout.text_font_pt,
                 layout.column_width_pt,
             )),
@@ -16290,27 +16447,57 @@ fn synctex_line_geometry(
         )),
         Line::TableRow(text) => Some((
             0.0,
-            text_width_pt(text, layout.footnote_font_pt, layout.column_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.footnote_font_pt,
+                layout.column_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::Caption(text) => Some((
             0.0,
-            text_width_pt(text, layout.footnote_font_pt, layout.column_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.footnote_font_pt,
+                layout.column_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::Footnote(text) => Some((
             12.0,
-            text_width_pt(text, layout.footnote_font_pt, layout.column_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Text,
+                layout.footnote_font_pt,
+                layout.column_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::DisplayEquation(text) | Line::Equation(text) => Some((
             24.0,
-            text_width_pt(text, layout.text_font_pt, layout.column_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Math,
+                layout.text_font_pt,
+                layout.column_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::Code(text) => Some((
             12.0,
-            text_width_pt(text, layout.code_font_pt, layout.column_width_pt),
+            text_width_for_layout_font_pt(
+                text,
+                layout,
+                PdfTextFont::Code,
+                layout.code_font_pt,
+                layout.column_width_pt,
+            ),
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::Image(index) => {
@@ -16705,12 +16892,27 @@ fn wide_teaser_cell_height(
     }
 }
 
-fn text_width_pt(text: &str, font_size: f32, max_width: f32) -> f32 {
-    natural_text_width_pt(text, font_size).clamp(font_size, max_width)
+fn text_width_for_layout_font_pt(
+    text: &str,
+    layout: DocumentLayout,
+    font: PdfTextFont,
+    font_size: f32,
+    max_width: f32,
+) -> f32 {
+    text_width_for_metric_pt(text, layout.metric_for_font(font), font_size, max_width)
 }
 
-fn natural_text_width_pt(text: &str, font_size: f32) -> f32 {
-    times_roman_text_units(text) * font_size / 1000.0
+fn text_width_for_metric_pt(
+    text: &str,
+    font_metric: PdfFontMetric,
+    font_size: f32,
+    max_width: f32,
+) -> f32 {
+    natural_text_width_for_metric_pt(text, font_metric, font_size).clamp(font_size, max_width)
+}
+
+fn natural_text_width_for_metric_pt(text: &str, font_metric: PdfFontMetric, font_size: f32) -> f32 {
+    pdf_font_text_units(text, font_metric) * font_size / 1000.0
 }
 
 fn centered_text_position(
@@ -16719,8 +16921,19 @@ fn centered_text_position(
     text: &str,
     font_size: f32,
 ) -> (f32, f32) {
+    centered_text_position_for_font(layout, page_slot, text, PdfTextFont::Text, font_size)
+}
+
+fn centered_text_position_for_font(
+    layout: DocumentLayout,
+    page_slot: usize,
+    text: &str,
+    font: PdfTextFont,
+    font_size: f32,
+) -> (f32, f32) {
     let (left, y) = layout.point_for_slot(page_slot, 0.0);
-    let width = text_width_pt(text, font_size, layout.column_width_pt);
+    let width =
+        text_width_for_layout_font_pt(text, layout, font, font_size, layout.column_width_pt);
     let x = left + ((layout.column_width_pt - width) / 2.0).max(0.0);
     (x, y)
 }
@@ -16742,8 +16955,18 @@ fn wide_centered_text_position(
     text: &str,
     font_size: f32,
 ) -> (f32, f32) {
+    wide_centered_text_position_for_font(layout, page_slot, text, PdfTextFont::Text, font_size)
+}
+
+fn wide_centered_text_position_for_font(
+    layout: DocumentLayout,
+    page_slot: usize,
+    text: &str,
+    font: PdfTextFont,
+    font_size: f32,
+) -> (f32, f32) {
     let (left, y) = layout.point_for_wide_slot(page_slot, 0.0);
-    let width = text_width_pt(text, font_size, layout.text_width_pt);
+    let width = text_width_for_layout_font_pt(text, layout, font, font_size, layout.text_width_pt);
     let x = left + ((layout.text_width_pt - width) / 2.0).max(0.0);
     (x, y)
 }
@@ -16760,7 +16983,8 @@ fn wide_centered_title_text_position(
 }
 
 fn title_text_width_pt(layout: DocumentLayout, text: &str, font_size: f32, max_width: f32) -> f32 {
-    let width = text_width_pt(text, font_size, max_width);
+    let width =
+        text_width_for_layout_font_pt(text, layout, PdfTextFont::Heading, font_size, max_width);
     if layout == DocumentLayout::neurips_single_column() {
         (width * NEURIPS_TITLE_WIDTH_SCALE).clamp(font_size, max_width)
     } else {
@@ -16768,64 +16992,134 @@ fn title_text_width_pt(layout: DocumentLayout, text: &str, font_size: f32, max_w
     }
 }
 
-fn times_roman_text_units(text: &str) -> f32 {
+const ASCII_WIDTH_FIRST: u32 = 32;
+const ASCII_WIDTH_LAST: u32 = 126;
+
+const TIMES_ROMAN_WIDTHS: [f32; 95] = [
+    250.0, 333.0, 408.0, 500.0, 500.0, 833.0, 778.0, 333.0, 333.0, 333.0, 500.0, 564.0, 250.0,
+    333.0, 250.0, 278.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0,
+    278.0, 278.0, 564.0, 564.0, 564.0, 444.0, 921.0, 722.0, 667.0, 667.0, 722.0, 611.0, 556.0,
+    722.0, 722.0, 333.0, 389.0, 722.0, 611.0, 889.0, 722.0, 722.0, 556.0, 722.0, 667.0, 556.0,
+    611.0, 722.0, 722.0, 944.0, 722.0, 722.0, 611.0, 333.0, 278.0, 333.0, 469.0, 500.0, 333.0,
+    444.0, 500.0, 444.0, 500.0, 444.0, 333.0, 500.0, 500.0, 278.0, 278.0, 500.0, 278.0, 778.0,
+    500.0, 500.0, 500.0, 500.0, 333.0, 389.0, 278.0, 500.0, 500.0, 722.0, 500.0, 500.0, 444.0,
+    480.0, 200.0, 480.0, 541.0,
+];
+
+const TIMES_ITALIC_WIDTHS: [f32; 95] = [
+    250.0, 333.0, 420.0, 500.0, 500.0, 833.0, 778.0, 333.0, 333.0, 333.0, 500.0, 675.0, 250.0,
+    333.0, 250.0, 278.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0,
+    333.0, 333.0, 675.0, 675.0, 675.0, 500.0, 920.0, 611.0, 611.0, 667.0, 722.0, 611.0, 611.0,
+    722.0, 722.0, 333.0, 444.0, 667.0, 556.0, 833.0, 667.0, 722.0, 611.0, 722.0, 611.0, 500.0,
+    556.0, 722.0, 611.0, 833.0, 611.0, 556.0, 556.0, 389.0, 278.0, 389.0, 422.0, 500.0, 333.0,
+    500.0, 500.0, 444.0, 500.0, 444.0, 278.0, 500.0, 500.0, 278.0, 278.0, 444.0, 278.0, 722.0,
+    500.0, 500.0, 500.0, 500.0, 389.0, 389.0, 278.0, 500.0, 444.0, 667.0, 444.0, 444.0, 389.0,
+    400.0, 275.0, 400.0, 541.0,
+];
+
+const TIMES_BOLD_WIDTHS: [f32; 95] = [
+    250.0, 333.0, 555.0, 500.0, 500.0, 1000.0, 833.0, 333.0, 333.0, 333.0, 500.0, 570.0, 250.0,
+    333.0, 250.0, 278.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0,
+    333.0, 333.0, 570.0, 570.0, 570.0, 500.0, 930.0, 722.0, 667.0, 722.0, 722.0, 667.0, 611.0,
+    778.0, 778.0, 389.0, 500.0, 778.0, 667.0, 944.0, 722.0, 778.0, 611.0, 778.0, 722.0, 556.0,
+    667.0, 722.0, 722.0, 1000.0, 722.0, 722.0, 667.0, 333.0, 278.0, 333.0, 581.0, 500.0, 333.0,
+    500.0, 556.0, 444.0, 556.0, 444.0, 333.0, 500.0, 556.0, 278.0, 333.0, 556.0, 278.0, 833.0,
+    556.0, 500.0, 556.0, 556.0, 444.0, 389.0, 333.0, 556.0, 500.0, 722.0, 500.0, 500.0, 444.0,
+    394.0, 220.0, 394.0, 520.0,
+];
+
+const PAGELLA_WIDTHS: [f32; 95] = [
+    250.0, 278.0, 371.0, 500.0, 500.0, 840.0, 778.0, 208.0, 456.0, 456.0, 390.0, 760.0, 250.0,
+    333.0, 250.0, 486.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0,
+    250.0, 250.0, 767.0, 760.0, 767.0, 444.0, 747.0, 778.0, 611.0, 709.0, 774.0, 611.0, 556.0,
+    763.0, 832.0, 337.0, 333.0, 726.0, 611.0, 946.0, 831.0, 786.0, 604.0, 786.0, 668.0, 525.0,
+    613.0, 778.0, 722.0, 1000.0, 667.0, 667.0, 667.0, 428.0, 486.0, 428.0, 606.0, 500.0, 333.0,
+    500.0, 553.0, 444.0, 611.0, 479.0, 333.0, 556.0, 582.0, 287.0, 234.0, 556.0, 291.0, 883.0,
+    582.0, 546.0, 601.0, 560.0, 395.0, 424.0, 326.0, 603.0, 565.0, 834.0, 516.0, 556.0, 500.0,
+    441.0, 208.0, 441.0, 606.0,
+];
+
+const PAGELLA_ITALIC_WIDTHS: [f32; 95] = [
+    250.0, 333.0, 500.0, 500.0, 500.0, 889.0, 778.0, 233.0, 456.0, 456.0, 390.0, 760.0, 250.0,
+    333.0, 250.0, 486.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0,
+    250.0, 250.0, 767.0, 760.0, 767.0, 500.0, 747.0, 722.0, 611.0, 667.0, 778.0, 611.0, 556.0,
+    722.0, 778.0, 333.0, 333.0, 667.0, 556.0, 944.0, 778.0, 778.0, 611.0, 778.0, 667.0, 556.0,
+    611.0, 778.0, 722.0, 944.0, 722.0, 667.0, 667.0, 428.0, 486.0, 428.0, 606.0, 500.0, 333.0,
+    444.0, 463.0, 407.0, 500.0, 389.0, 278.0, 500.0, 500.0, 278.0, 278.0, 444.0, 278.0, 778.0,
+    556.0, 444.0, 500.0, 463.0, 389.0, 389.0, 333.0, 556.0, 500.0, 722.0, 500.0, 500.0, 444.0,
+    441.0, 208.0, 441.0, 606.0,
+];
+
+const PAGELLA_BOLD_WIDTHS: [f32; 95] = [
+    250.0, 278.0, 402.0, 500.0, 500.0, 889.0, 833.0, 227.0, 490.0, 490.0, 421.0, 760.0, 250.0,
+    333.0, 250.0, 511.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0,
+    250.0, 250.0, 769.0, 760.0, 769.0, 444.0, 747.0, 778.0, 667.0, 722.0, 833.0, 611.0, 556.0,
+    833.0, 833.0, 389.0, 389.0, 778.0, 611.0, 1000.0, 833.0, 833.0, 611.0, 833.0, 722.0, 611.0,
+    667.0, 778.0, 778.0, 1000.0, 667.0, 667.0, 667.0, 457.0, 511.0, 457.0, 606.0, 500.0, 333.0,
+    500.0, 611.0, 444.0, 611.0, 500.0, 389.0, 556.0, 611.0, 333.0, 333.0, 611.0, 333.0, 889.0,
+    611.0, 556.0, 611.0, 611.0, 389.0, 444.0, 333.0, 611.0, 556.0, 833.0, 500.0, 556.0, 500.0,
+    472.0, 232.0, 472.0, 606.0,
+];
+
+const HEROS_BOLD_WIDTHS: [f32; 95] = [
+    278.0, 333.0, 474.0, 556.0, 556.0, 889.0, 722.0, 238.0, 333.0, 333.0, 389.0, 584.0, 278.0,
+    333.0, 278.0, 278.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0, 556.0,
+    333.0, 333.0, 584.0, 584.0, 584.0, 611.0, 975.0, 722.0, 722.0, 722.0, 722.0, 667.0, 611.0,
+    778.0, 722.0, 278.0, 556.0, 722.0, 611.0, 833.0, 722.0, 778.0, 667.0, 778.0, 722.0, 667.0,
+    611.0, 722.0, 667.0, 944.0, 667.0, 667.0, 611.0, 333.0, 278.0, 333.0, 584.0, 556.0, 333.0,
+    556.0, 611.0, 556.0, 611.0, 556.0, 333.0, 611.0, 611.0, 278.0, 278.0, 556.0, 278.0, 889.0,
+    611.0, 611.0, 611.0, 611.0, 389.0, 556.0, 333.0, 611.0, 556.0, 778.0, 556.0, 556.0, 500.0,
+    389.0, 280.0, 389.0, 584.0,
+];
+
+fn pdf_font_text_units(text: &str, metric: PdfFontMetric) -> f32 {
     let mut units = 0.0_f32;
     for ch in text.chars() {
         if pdf_symbol_byte(ch).is_some() {
-            units += 500.0;
+            units += pdf_font_char_width_units(ch, PdfFontMetric::Symbol);
         } else if let Some(replacement) = pdf_text_ascii_replacement(ch) {
             units += replacement
                 .chars()
-                .map(times_roman_char_width_units)
+                .map(|replacement_ch| pdf_font_char_width_units(replacement_ch, metric))
                 .sum::<f32>();
         } else {
-            units += times_roman_char_width_units(ch);
+            units += pdf_font_char_width_units(ch, metric);
         }
     }
     units
 }
 
-fn times_roman_char_width_units(ch: char) -> f32 {
-    match ch {
-        ' ' => 250.0,
-        '!' => 333.0,
-        '"' => 408.0,
-        '#' | '$' | '*' | '0'..='9' | '_' => 500.0,
-        '%' => 833.0,
-        '&' => 778.0,
-        '\'' => 180.0,
-        '(' | ')' => 333.0,
-        ',' | '.' => 250.0,
-        '+' | '<' | '=' | '>' => 564.0,
-        '-' => 333.0,
-        '/' | ':' | ';' => 278.0,
-        '?' => 444.0,
-        '@' => 921.0,
-        'A' | 'K' | 'U' | 'V' | 'X' | 'Y' => 722.0,
-        'B' | 'C' | 'R' => 667.0,
-        'D' | 'G' | 'H' | 'N' | 'O' | 'Q' => 722.0,
-        'E' | 'L' | 'T' | 'Z' => 611.0,
-        'F' | 'P' | 'S' => 556.0,
-        'I' => 333.0,
-        'J' => 389.0,
-        'M' => 889.0,
-        'W' => 944.0,
-        '[' | ']' | '`' => 333.0,
-        '\\' => 278.0,
-        '^' => 469.0,
-        'a' | 'c' | 'e' | 'z' => 444.0,
-        'b' | 'd' | 'g' | 'h' | 'k' | 'n' | 'o' | 'p' | 'q' | 'u' | 'v' | 'x' | 'y' => 500.0,
-        'f' | 'r' => 333.0,
-        'i' | 'j' | 'l' | 't' => 278.0,
-        'm' => 778.0,
-        's' => 389.0,
-        'w' => 722.0,
-        '{' | '}' => 480.0,
-        '|' => 200.0,
-        '~' => 541.0,
-        ch if ch.is_ascii() && !ch.is_control() => 500.0,
-        _ => 500.0,
+fn pdf_font_char_width_units(ch: char, metric: PdfFontMetric) -> f32 {
+    match metric {
+        PdfFontMetric::TimesRoman => table_char_width_units(ch, &TIMES_ROMAN_WIDTHS),
+        PdfFontMetric::TimesItalic => table_char_width_units(ch, &TIMES_ITALIC_WIDTHS),
+        PdfFontMetric::TimesBold => table_char_width_units(ch, &TIMES_BOLD_WIDTHS),
+        PdfFontMetric::Pagella => table_char_width_units(ch, &PAGELLA_WIDTHS),
+        PdfFontMetric::PagellaItalic => table_char_width_units(ch, &PAGELLA_ITALIC_WIDTHS),
+        PdfFontMetric::PagellaBold => table_char_width_units(ch, &PAGELLA_BOLD_WIDTHS),
+        PdfFontMetric::HerosBold => table_char_width_units(ch, &HEROS_BOLD_WIDTHS),
+        PdfFontMetric::Courier => courier_char_width_units(ch),
+        PdfFontMetric::Symbol => symbol_char_width_units(ch),
     }
+}
+
+fn table_char_width_units(ch: char, widths: &[f32; 95]) -> f32 {
+    let code = ch as u32;
+    if (ASCII_WIDTH_FIRST..=ASCII_WIDTH_LAST).contains(&code) {
+        widths[(code - ASCII_WIDTH_FIRST) as usize]
+    } else if ch.is_control() {
+        0.0
+    } else {
+        500.0
+    }
+}
+
+fn courier_char_width_units(ch: char) -> f32 {
+    if ch.is_control() { 0.0 } else { 600.0 }
+}
+
+fn symbol_char_width_units(ch: char) -> f32 {
+    if ch.is_control() { 0.0 } else { 500.0 }
 }
 
 fn synctex_sp(points: f32) -> i64 {
@@ -16995,6 +17289,52 @@ mod tests {
             "{stream}"
         );
         assert!(stream.ends_with("ET\nQ\n"), "{stream}");
+    }
+
+    #[test]
+    fn pdf_font_metrics_use_monospace_code_widths() {
+        let code_narrow = natural_text_width_for_metric_pt("iiii", PdfFontMetric::Courier, 10.0);
+        let code_wide = natural_text_width_for_metric_pt("WWWW", PdfFontMetric::Courier, 10.0);
+        let text_narrow = natural_text_width_for_metric_pt("iiii", PdfFontMetric::TimesRoman, 10.0);
+        let text_wide = natural_text_width_for_metric_pt("WWWW", PdfFontMetric::TimesRoman, 10.0);
+
+        assert!((code_narrow - code_wide).abs() < f32::EPSILON);
+        assert!(text_wide > text_narrow);
+    }
+
+    #[test]
+    fn justified_word_spacing_uses_active_font_metrics() {
+        let target_width = 28.0;
+        let text_spacing =
+            justified_word_spacing_pt("mi mi", PdfFontMetric::TimesRoman, 10.0, target_width)
+                .unwrap();
+        let code_spacing =
+            justified_word_spacing_pt("mi mi", PdfFontMetric::Courier, 10.0, target_width).unwrap();
+
+        assert!(text_spacing > code_spacing);
+    }
+
+    #[test]
+    fn icml_layout_uses_pagella_body_metrics() {
+        let layout = DocumentLayout::icml_two_column();
+        let pagella_width = natural_text_width_for_metric_pt(
+            "mmmm",
+            layout.metric_for_font(PdfTextFont::Text),
+            10.0,
+        );
+        let times_width = natural_text_width_for_metric_pt("mmmm", PdfFontMetric::TimesRoman, 10.0);
+
+        assert!(pagella_width > times_width);
+    }
+
+    #[test]
+    fn icml_line_breaking_keeps_calibrated_body_metric() {
+        let layout = DocumentLayout::icml_two_column();
+
+        assert_eq!(
+            layout.line_break_metric_for_font(PdfTextFont::Text),
+            PdfFontMetric::TimesRoman
+        );
     }
 
     #[test]
