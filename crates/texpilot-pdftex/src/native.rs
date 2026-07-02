@@ -1,11 +1,13 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+use std::thread;
 use std::time::Instant;
 
 use flate2::Compression;
@@ -168,6 +170,10 @@ pub fn run_native_with_artifact_policy(
     trace.push(TraceEvent::new(
         "timing_parse_includegraphics_ms",
         parsed.timings.includegraphics_ms.to_string(),
+    ));
+    trace.push(TraceEvent::new(
+        "timing_parse_includegraphics_prewarm_ms",
+        parsed.timings.includegraphics_prewarm_ms.to_string(),
     ));
     trace.push(TraceEvent::new(
         "timing_parse_preprocess_ms",
@@ -1766,6 +1772,7 @@ struct ParseTimings {
     pre_body_ms: u128,
     body_ms: u128,
     includegraphics_ms: u128,
+    includegraphics_prewarm_ms: u128,
     preprocess_ms: u128,
     expansion_ms: u128,
     metadata_ms: u128,
@@ -1779,6 +1786,23 @@ struct ParseTimings {
     two_column_graphic_float_fallbacks: usize,
     two_column_wide_graphic_float_fallbacks: usize,
     two_column_graphic_float_fallback_details: Vec<GraphicFloatFallbackTrace>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HyperrefFlags {
+    hyperref_out_requested: bool,
+    backref_requested: bool,
+}
+
+#[derive(Debug)]
+struct PreBodyAnalysis {
+    labels: HashMap<String, LabelInfo>,
+    citations: CitationRegistry,
+    hyperref_flags: HyperrefFlags,
+    labels_ms: u128,
+    citations_ms: u128,
+    hyperref_ms: u128,
+    citation_input_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3503,7 +3527,7 @@ struct ImageAsset {
     display_height_pt: f32,
     rotation_degrees: f32,
     viewport: ImageViewport,
-    payload: ImagePayload,
+    payload: Arc<ImagePayload>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3883,14 +3907,6 @@ fn parse_supported_document(
         .or(source_caption_label_separator)
         .unwrap_or(CaptionLabelSeparator::Colon);
     timings.metadata_ms = metadata_started.elapsed().as_millis();
-    let labels_started = Instant::now();
-    let labels = collect_section_labels(
-        body,
-        &base_layout,
-        &listing_reference_name,
-        capitalize_cref_names,
-    )?;
-    timings.labels_ms = labels_started.elapsed().as_millis();
     let bibliography_started = Instant::now();
     let bibliography = if artifact_policy == NativeArtifactPolicy::LegacySidecars {
         bibliography_metadata(&expanded_source, root_dir, inputs)?
@@ -3898,9 +3914,23 @@ fn parse_supported_document(
         BibliographyMetadata::default()
     };
     timings.bibliography_ms = bibliography_started.elapsed().as_millis();
-    let citations_started = Instant::now();
-    let citations = collect_citations(&expanded_source, body, root_dir, inputs, &base_layout)?;
-    timings.citations_ms = citations_started.elapsed().as_millis();
+    let analysis = collect_pre_body_analysis(
+        &expanded_source,
+        body,
+        root_dir,
+        inputs,
+        base_layout,
+        &listing_reference_name,
+        capitalize_cref_names,
+        artifact_policy,
+    )?;
+    timings.labels_ms = analysis.labels_ms;
+    timings.citations_ms = analysis.citations_ms;
+    timings.hyperref_ms = analysis.hyperref_ms;
+    inputs.extend(analysis.citation_input_paths);
+    let labels = analysis.labels;
+    let citations = analysis.citations;
+    let hyperref_flags = analysis.hyperref_flags;
     let index_started = Instant::now();
     let index = collect_index_entries(body, &macros, &labels, &citations, &base_layout)?;
     if index.should_write_sidecar() {
@@ -3928,34 +3958,15 @@ fn parse_supported_document(
         Vec::new()
     };
     timings.lists_floats_ms = lists_floats_started.elapsed().as_millis();
-    let hyperref_started = Instant::now();
-    let hyperref_out_requested = if artifact_policy == NativeArtifactPolicy::PdfOnly {
-        source_has_direct_hyperref_surface(&expanded_source, body)?
-    } else {
-        source_loads_package(&expanded_source, root_dir, "hyperref")?
-            || source_contains_control(body, "pdfbookmark")
-    };
-    let backref_requested = hyperref_out_requested
-        && if artifact_policy == NativeArtifactPolicy::PdfOnly {
-            source_directly_loads_package_with_any_option(
-                &expanded_source,
-                "hyperref",
-                &["backref", "backref=true", "pagebackref", "pagebackref=true"],
-            )?
-        } else {
-            source_loads_package_with_any_option(
-                &expanded_source,
-                root_dir,
-                "hyperref",
-                &["backref", "backref=true", "pagebackref", "pagebackref=true"],
-            )?
-        };
+    let hyperref_out_requested = hyperref_flags.hyperref_out_requested;
+    let backref_requested = hyperref_flags.backref_requested;
+    let bookmarks_started = Instant::now();
     let bookmarks = if hyperref_out_requested {
         collect_bookmarks(body, &macros, &labels, &citations, &base_layout)?
     } else {
         Vec::new()
     };
-    timings.hyperref_ms = hyperref_started.elapsed().as_millis();
+    timings.hyperref_ms += bookmarks_started.elapsed().as_millis();
     let title_started = Instant::now();
     let mut footnotes = FootnoteRegistry::default();
     let title = braced_command_payload_collecting(
@@ -4010,7 +4021,9 @@ fn parse_supported_document(
     let mut list_stack = Vec::new();
     let mut in_abstract = false;
     let mut bibliography_rendered = false;
+    let mut graphics_cache = GraphicsCache::default();
     timings.pre_body_ms = pre_body_started.elapsed().as_millis();
+    prewarm_graphics_cache(body, root_dir, &graphics, &mut graphics_cache, &mut timings);
     let body_started = Instant::now();
     if let Some(page_style) = raw_page_style
         .or_else(|| native_page_style_from_source(&source))
@@ -4209,6 +4222,7 @@ fn parse_supported_document(
                 abstract_text,
                 root_dir,
                 &graphics,
+                &mut graphics_cache,
                 &layout,
                 &macros,
                 &labels,
@@ -4338,7 +4352,8 @@ fn parse_supported_document(
         }
         if let Some(rest) = cursor.strip_prefix("\\includegraphics") {
             let includegraphics_started = Instant::now();
-            let (graphic, remaining) = parse_includegraphics(rest, root_dir, &graphics, &layout)?;
+            let (graphic, remaining) =
+                parse_includegraphics(rest, root_dir, &graphics, &mut graphics_cache, &layout)?;
             timings.includegraphics_ms += includegraphics_started.elapsed().as_millis();
             match graphic {
                 GraphicElement::Image(image) => {
@@ -4607,6 +4622,7 @@ fn parse_supported_document(
                     theorem_body,
                     root_dir,
                     &graphics,
+                    &mut graphics_cache,
                     &layout,
                     &macros,
                     &labels,
@@ -4665,6 +4681,7 @@ fn parse_supported_document(
                     float_body,
                     root_dir,
                     &graphics,
+                    &mut graphics_cache,
                     &layout,
                     &macros,
                     &labels,
@@ -4688,6 +4705,7 @@ fn parse_supported_document(
                         float_body,
                         root_dir,
                         &graphics,
+                        &mut graphics_cache,
                         &layout,
                         &macros,
                         &labels,
@@ -4739,6 +4757,7 @@ fn parse_supported_document(
                         float_body,
                         root_dir,
                         &graphics,
+                        &mut graphics_cache,
                         &layout,
                         &macros,
                         &labels,
@@ -4768,6 +4787,7 @@ fn parse_supported_document(
                             float_body,
                             root_dir,
                             &graphics,
+                            &mut graphics_cache,
                             &layout,
                             caption_label_separator,
                         );
@@ -5110,6 +5130,102 @@ fn reject_known_unsupported(source: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn collect_pre_body_analysis(
+    expanded_source: &str,
+    body: &str,
+    root_dir: &Path,
+    inputs: &[PathBuf],
+    base_layout: DocumentLayout,
+    listing_reference_name: &str,
+    capitalize_cref_names: bool,
+    artifact_policy: NativeArtifactPolicy,
+) -> Result<PreBodyAnalysis, String> {
+    let citation_input_start = inputs.len();
+    let citation_input_seed = inputs.to_vec();
+    thread::scope(|scope| {
+        let labels_handle = scope.spawn(|| {
+            let started = Instant::now();
+            collect_section_labels(
+                body,
+                &base_layout,
+                listing_reference_name,
+                capitalize_cref_names,
+            )
+            .map(|labels| (labels, started.elapsed().as_millis()))
+        });
+        let citations_handle = scope.spawn(move || {
+            let mut citation_inputs = citation_input_seed;
+            let started = Instant::now();
+            let citations = collect_citations(
+                expanded_source,
+                body,
+                root_dir,
+                &mut citation_inputs,
+                &base_layout,
+            )?;
+            let added_inputs = citation_inputs[citation_input_start..].to_vec();
+            Ok::<_, String>((citations, started.elapsed().as_millis(), added_inputs))
+        });
+        let hyperref_handle = scope.spawn(|| {
+            let started = Instant::now();
+            collect_hyperref_flags(expanded_source, body, root_dir, artifact_policy)
+                .map(|flags| (flags, started.elapsed().as_millis()))
+        });
+
+        let (labels, labels_ms) = labels_handle
+            .join()
+            .map_err(|_| "native backend label analysis worker panicked".to_string())??;
+        let (citations, citations_ms, citation_input_paths) = citations_handle
+            .join()
+            .map_err(|_| "native backend citation analysis worker panicked".to_string())??;
+        let (hyperref_flags, hyperref_ms) = hyperref_handle
+            .join()
+            .map_err(|_| "native backend hyperref analysis worker panicked".to_string())??;
+        Ok(PreBodyAnalysis {
+            labels,
+            citations,
+            hyperref_flags,
+            labels_ms,
+            citations_ms,
+            hyperref_ms,
+            citation_input_paths,
+        })
+    })
+}
+
+fn collect_hyperref_flags(
+    expanded_source: &str,
+    body: &str,
+    root_dir: &Path,
+    artifact_policy: NativeArtifactPolicy,
+) -> Result<HyperrefFlags, String> {
+    let hyperref_out_requested = if artifact_policy == NativeArtifactPolicy::PdfOnly {
+        source_has_direct_hyperref_surface(expanded_source, body)?
+    } else {
+        source_loads_package(expanded_source, root_dir, "hyperref")?
+            || source_contains_control(body, "pdfbookmark")
+    };
+    let backref_requested = hyperref_out_requested
+        && if artifact_policy == NativeArtifactPolicy::PdfOnly {
+            source_directly_loads_package_with_any_option(
+                expanded_source,
+                "hyperref",
+                &["backref", "backref=true", "pagebackref", "pagebackref=true"],
+            )?
+        } else {
+            source_loads_package_with_any_option(
+                expanded_source,
+                root_dir,
+                "hyperref",
+                &["backref", "backref=true", "pagebackref", "pagebackref=true"],
+            )?
+        };
+    Ok(HyperrefFlags {
+        hyperref_out_requested,
+        backref_requested,
+    })
 }
 
 fn apply_native_document_hooks(source: &str) -> Result<Cow<'_, str>, String> {
@@ -7470,6 +7586,53 @@ struct GraphicsConfig {
     extensions: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct GraphicsCacheKey {
+    path: PathBuf,
+    pdf_page_number: u32,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedGraphicReference {
+    key: GraphicsCacheKey,
+    path: PathBuf,
+    extension: String,
+    pdf_page_number: u32,
+}
+
+#[derive(Debug, Clone)]
+struct CachedGraphicDimensions {
+    path: PathBuf,
+    width_px: u16,
+    height_px: u16,
+    natural_width_pt: f32,
+    natural_height_pt: f32,
+}
+
+#[derive(Debug, Clone)]
+struct CachedGraphicAsset {
+    path: PathBuf,
+    width_px: u16,
+    height_px: u16,
+    natural_width_pt: f32,
+    natural_height_pt: f32,
+    payload: Arc<ImagePayload>,
+}
+
+#[derive(Debug, Default)]
+struct GraphicsCache {
+    assets: HashMap<GraphicsCacheKey, CachedGraphicAsset>,
+    dimensions: HashMap<GraphicsCacheKey, CachedGraphicDimensions>,
+}
+
+impl GraphicsCache {
+    fn insert_asset(&mut self, key: GraphicsCacheKey, asset: CachedGraphicAsset) {
+        self.dimensions
+            .insert(key.clone(), cached_dimensions_from_asset(&asset));
+        self.assets.insert(key, asset);
+    }
+}
+
 impl Default for GraphicsConfig {
     fn default() -> Self {
         Self {
@@ -7499,6 +7662,399 @@ fn graphics_config(source: &str) -> Result<GraphicsConfig, String> {
         }
     }
     Ok(config)
+}
+
+fn prewarm_graphics_cache(
+    source: &str,
+    root_dir: &Path,
+    graphics: &GraphicsConfig,
+    cache: &mut GraphicsCache,
+    timings: &mut ParseTimings,
+) {
+    let references = collect_graphic_references_for_prewarm(source, root_dir, graphics, cache);
+    if references.is_empty() {
+        return;
+    }
+
+    let started = Instant::now();
+    let worker_count = thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(references.len())
+        .min(8);
+    let decoded = if worker_count <= 1 {
+        references
+            .into_iter()
+            .map(|reference| {
+                let key = reference.key.clone();
+                (key, decode_graphic_asset(&reference))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        let mut chunks = vec![Vec::new(); worker_count];
+        for (index, reference) in references.into_iter().enumerate() {
+            chunks[index % worker_count].push(reference);
+        }
+        thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for chunk in chunks {
+                handles.push(scope.spawn(move || {
+                    chunk
+                        .into_iter()
+                        .map(|reference| {
+                            let key = reference.key.clone();
+                            (key, decode_graphic_asset(&reference))
+                        })
+                        .collect::<Vec<_>>()
+                }));
+            }
+            let mut decoded = Vec::new();
+            for handle in handles {
+                if let Ok(items) = handle.join() {
+                    decoded.extend(items);
+                }
+            }
+            decoded
+        })
+    };
+    for (key, result) in decoded {
+        if let Ok(Some(asset)) = result {
+            cache.insert_asset(key, asset);
+        }
+    }
+    let elapsed = started.elapsed().as_millis();
+    timings.includegraphics_prewarm_ms += elapsed;
+    timings.includegraphics_ms += elapsed;
+}
+
+fn collect_graphic_references_for_prewarm(
+    source: &str,
+    root_dir: &Path,
+    graphics: &GraphicsConfig,
+    cache: &GraphicsCache,
+) -> Vec<ResolvedGraphicReference> {
+    let mut references = Vec::new();
+    let mut seen = HashSet::new();
+    let mut cursor = source;
+    while let Some(index) = find_control(cursor, "includegraphics") {
+        let rest = &cursor[index + "\\includegraphics".len()..];
+        let source = rest.strip_prefix('*').unwrap_or(rest).trim_start();
+        let (options, source) = take_optional_bracketed(source);
+        let Some((payload, remaining)) = take_braced(source) else {
+            cursor = rest;
+            continue;
+        };
+        if let Ok(reference) =
+            resolve_graphic_reference(root_dir, payload.trim(), options, graphics)
+            && supported_graphic_extension(&reference.extension)
+            && !cache.assets.contains_key(&reference.key)
+            && seen.insert(reference.key.clone())
+        {
+            references.push(reference);
+        }
+        cursor = remaining;
+    }
+    references
+}
+
+fn load_cached_graphic_asset(
+    cache: &mut GraphicsCache,
+    root_dir: &Path,
+    payload: &str,
+    options: Option<&str>,
+    graphics: &GraphicsConfig,
+) -> Result<Option<CachedGraphicAsset>, String> {
+    let reference = resolve_graphic_reference(root_dir, payload, options, graphics)?;
+    if !supported_graphic_extension(&reference.extension) {
+        return Ok(None);
+    }
+    if let Some(asset) = cache.assets.get(&reference.key) {
+        return Ok(Some(asset.clone()));
+    }
+    let Some(asset) = decode_graphic_asset(&reference)? else {
+        return Ok(None);
+    };
+    cache.insert_asset(reference.key, asset.clone());
+    Ok(Some(asset))
+}
+
+fn load_cached_graphic_dimensions(
+    cache: &mut GraphicsCache,
+    root_dir: &Path,
+    payload: &str,
+    options: Option<&str>,
+    graphics: &GraphicsConfig,
+) -> Result<Option<CachedGraphicDimensions>, String> {
+    let reference = resolve_graphic_reference(root_dir, payload, options, graphics)?;
+    if !supported_graphic_extension(&reference.extension) {
+        return Ok(None);
+    }
+    if let Some(dimensions) = cache.dimensions.get(&reference.key) {
+        return Ok(Some(dimensions.clone()));
+    }
+    if let Some(asset) = cache.assets.get(&reference.key) {
+        let dimensions = cached_dimensions_from_asset(asset);
+        cache.dimensions.insert(reference.key, dimensions.clone());
+        return Ok(Some(dimensions));
+    }
+    let Some(dimensions) = read_graphic_dimensions(&reference)? else {
+        return Ok(None);
+    };
+    cache.dimensions.insert(reference.key, dimensions.clone());
+    Ok(Some(dimensions))
+}
+
+fn resolve_graphic_reference(
+    root_dir: &Path,
+    payload: &str,
+    options: Option<&str>,
+    graphics: &GraphicsConfig,
+) -> Result<ResolvedGraphicReference, String> {
+    let path = resolve_graphics_path(root_dir, payload, graphics)?;
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let pdf_page_number = options.and_then(graphics_page_number).unwrap_or(1);
+    let key = GraphicsCacheKey {
+        path: path.clone(),
+        pdf_page_number: if extension == "pdf" {
+            pdf_page_number
+        } else {
+            0
+        },
+    };
+    Ok(ResolvedGraphicReference {
+        key,
+        path,
+        extension,
+        pdf_page_number,
+    })
+}
+
+fn supported_graphic_extension(extension: &str) -> bool {
+    matches!(extension, "jpg" | "jpeg" | "png" | "pdf")
+}
+
+fn decode_graphic_asset(
+    reference: &ResolvedGraphicReference,
+) -> Result<Option<CachedGraphicAsset>, String> {
+    let data = fs::read(&reference.path).map_err(|error| {
+        format!(
+            "native backend could not read graphic `{}`: {error}",
+            reference.path.display()
+        )
+    })?;
+    let (width_px, height_px, natural_width_pt, natural_height_pt, payload) =
+        match reference.extension.as_str() {
+            "jpg" | "jpeg" => {
+                let (width_px, height_px) = jpeg_dimensions(&data).ok_or_else(|| {
+                    format!(
+                        "native backend could not read JPEG dimensions for `{}`",
+                        reference.path.display()
+                    )
+                })?;
+                (
+                    width_px,
+                    height_px,
+                    width_px as f32 * 72.0 / 96.0,
+                    height_px as f32 * 72.0 / 96.0,
+                    ImagePayload::Jpeg(data),
+                )
+            }
+            "png" => {
+                let (width_px, height_px, payload) = decode_png_image(&data).map_err(|error| {
+                    format!(
+                        "native backend could not decode PNG graphic `{}`: {error}",
+                        reference.path.display()
+                    )
+                })?;
+                (
+                    width_px,
+                    height_px,
+                    width_px as f32 * 72.0 / 96.0,
+                    height_px as f32 * 72.0 / 96.0,
+                    payload,
+                )
+            }
+            "pdf" => {
+                let form = decode_pdf_form(&data, reference.pdf_page_number).map_err(|error| {
+                    format!(
+                        "native backend could not import PDF graphic `{}`: {error}",
+                        reference.path.display()
+                    )
+                })?;
+                let natural_width_pt = (form.bbox[2] - form.bbox[0]).abs().max(1.0);
+                let natural_height_pt = (form.bbox[3] - form.bbox[1]).abs().max(1.0);
+                (
+                    pdf_graphic_dimension_to_u16(natural_width_pt)?,
+                    pdf_graphic_dimension_to_u16(natural_height_pt)?,
+                    natural_width_pt,
+                    natural_height_pt,
+                    ImagePayload::PdfForm(form),
+                )
+            }
+            _ => return Ok(None),
+        };
+    Ok(Some(CachedGraphicAsset {
+        path: reference.path.clone(),
+        width_px,
+        height_px,
+        natural_width_pt,
+        natural_height_pt,
+        payload: Arc::new(payload),
+    }))
+}
+
+fn read_graphic_dimensions(
+    reference: &ResolvedGraphicReference,
+) -> Result<Option<CachedGraphicDimensions>, String> {
+    let data = fs::read(&reference.path).map_err(|error| {
+        format!(
+            "native backend could not read graphic `{}`: {error}",
+            reference.path.display()
+        )
+    })?;
+    let (width_px, height_px, natural_width_pt, natural_height_pt) =
+        match reference.extension.as_str() {
+            "jpg" | "jpeg" => {
+                let (width_px, height_px) = jpeg_dimensions(&data).ok_or_else(|| {
+                    format!(
+                        "native backend could not read JPEG dimensions for `{}`",
+                        reference.path.display()
+                    )
+                })?;
+                (
+                    width_px,
+                    height_px,
+                    width_px as f32 * 72.0 / 96.0,
+                    height_px as f32 * 72.0 / 96.0,
+                )
+            }
+            "png" => {
+                let (width_px, height_px) = png_dimensions(&data).map_err(|error| {
+                    format!(
+                        "native backend could not read PNG dimensions for `{}`: {error}",
+                        reference.path.display()
+                    )
+                })?;
+                (
+                    width_px,
+                    height_px,
+                    width_px as f32 * 72.0 / 96.0,
+                    height_px as f32 * 72.0 / 96.0,
+                )
+            }
+            "pdf" => pdf_form_dimensions(&data, reference.pdf_page_number).map_err(|error| {
+                format!(
+                    "native backend could not read PDF graphic dimensions for `{}`: {error}",
+                    reference.path.display()
+                )
+            })?,
+            _ => return Ok(None),
+        };
+    Ok(Some(CachedGraphicDimensions {
+        path: reference.path.clone(),
+        width_px,
+        height_px,
+        natural_width_pt,
+        natural_height_pt,
+    }))
+}
+
+fn cached_dimensions_from_asset(asset: &CachedGraphicAsset) -> CachedGraphicDimensions {
+    CachedGraphicDimensions {
+        path: asset.path.clone(),
+        width_px: asset.width_px,
+        height_px: asset.height_px,
+        natural_width_pt: asset.natural_width_pt,
+        natural_height_pt: asset.natural_height_pt,
+    }
+}
+
+fn image_asset_from_cached(
+    asset: &CachedGraphicAsset,
+    options: Option<&str>,
+    layout: &DocumentLayout,
+) -> ImageAsset {
+    let (display_width_pt, display_height_pt, rotation_degrees, viewport) =
+        graphic_display_geometry(
+            options,
+            layout,
+            asset.natural_width_pt,
+            asset.natural_height_pt,
+        );
+    ImageAsset {
+        path: asset.path.clone(),
+        width_px: asset.width_px,
+        height_px: asset.height_px,
+        display_width_pt,
+        display_height_pt,
+        rotation_degrees,
+        viewport,
+        payload: asset.payload.clone(),
+    }
+}
+
+fn measurement_image_asset_from_cached(
+    dimensions: &CachedGraphicDimensions,
+    options: Option<&str>,
+    layout: &DocumentLayout,
+) -> ImageAsset {
+    let (display_width_pt, display_height_pt, rotation_degrees, viewport) =
+        graphic_display_geometry(
+            options,
+            layout,
+            dimensions.natural_width_pt,
+            dimensions.natural_height_pt,
+        );
+    ImageAsset {
+        path: dimensions.path.clone(),
+        width_px: dimensions.width_px,
+        height_px: dimensions.height_px,
+        display_width_pt,
+        display_height_pt,
+        rotation_degrees,
+        viewport,
+        payload: Arc::new(ImagePayload::Jpeg(Vec::new())),
+    }
+}
+
+fn graphic_display_geometry(
+    options: Option<&str>,
+    layout: &DocumentLayout,
+    natural_width_pt: f32,
+    natural_height_pt: f32,
+) -> (f32, f32, f32, ImageViewport) {
+    let viewport = options
+        .map(|options| graphics_viewport(options, layout, natural_width_pt, natural_height_pt))
+        .unwrap_or_else(ImageViewport::full);
+    let visible_natural_width_pt = natural_width_pt * viewport.width_fraction;
+    let visible_natural_height_pt = natural_height_pt * viewport.height_fraction;
+    let rotation_degrees = options.and_then(graphics_angle_degrees).unwrap_or(0.0);
+    let (display_width_pt, display_height_pt) = options
+        .and_then(|options| {
+            graphics_display_size_pt(
+                options,
+                layout,
+                visible_natural_width_pt,
+                visible_natural_height_pt,
+            )
+        })
+        .unwrap_or_else(|| {
+            let width = visible_natural_width_pt.min(layout.text_width_pt);
+            (
+                width,
+                width * visible_natural_height_pt / visible_natural_width_pt,
+            )
+        });
+    (
+        display_width_pt,
+        display_height_pt,
+        rotation_degrees,
+        viewport,
+    )
 }
 
 fn parse_graphicspath_entries(payload: &str) -> Result<Vec<PathBuf>, String> {
@@ -7537,110 +8093,23 @@ fn parse_includegraphics<'a>(
     source: &'a str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
 ) -> Result<(GraphicElement, &'a str), String> {
     let source = source.strip_prefix('*').unwrap_or(source).trim_start();
     let (options, source) = take_optional_bracketed(source);
     let (payload, remaining) = take_braced(source)
         .ok_or_else(|| "native backend requires braced \\includegraphics paths".to_string())?;
-    let image_path = resolve_graphics_path(root_dir, payload.trim(), graphics)?;
-    let extension = image_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let data = fs::read(&image_path).map_err(|error| {
-        format!(
-            "native backend could not read graphic `{}`: {error}",
-            image_path.display()
-        )
-    })?;
-    let pdf_page_number = options.and_then(graphics_page_number).unwrap_or(1);
-    let (width_px, height_px, natural_width_pt, natural_height_pt, payload) =
-        match extension.as_str() {
-            "jpg" | "jpeg" => {
-                let (width_px, height_px) = jpeg_dimensions(&data).ok_or_else(|| {
-                    format!(
-                        "native backend could not read JPEG dimensions for `{}`",
-                        image_path.display()
-                    )
-                })?;
-                (
-                    width_px,
-                    height_px,
-                    width_px as f32 * 72.0 / 96.0,
-                    height_px as f32 * 72.0 / 96.0,
-                    ImagePayload::Jpeg(data),
-                )
-            }
-            "png" => {
-                let (width_px, height_px, payload) = decode_png_image(&data).map_err(|error| {
-                    format!(
-                        "native backend could not decode PNG graphic `{}`: {error}",
-                        image_path.display()
-                    )
-                })?;
-                (
-                    width_px,
-                    height_px,
-                    width_px as f32 * 72.0 / 96.0,
-                    height_px as f32 * 72.0 / 96.0,
-                    payload,
-                )
-            }
-            "pdf" => {
-                let form = decode_pdf_form(&data, pdf_page_number).map_err(|error| {
-                    format!(
-                        "native backend could not import PDF graphic `{}`: {error}",
-                        image_path.display()
-                    )
-                })?;
-                let natural_width_pt = (form.bbox[2] - form.bbox[0]).abs().max(1.0);
-                let natural_height_pt = (form.bbox[3] - form.bbox[1]).abs().max(1.0);
-                (
-                    pdf_graphic_dimension_to_u16(natural_width_pt)?,
-                    pdf_graphic_dimension_to_u16(natural_height_pt)?,
-                    natural_width_pt,
-                    natural_height_pt,
-                    ImagePayload::PdfForm(form),
-                )
-            }
-            _ => return Ok((GraphicElement::Placeholder(image_path), remaining)),
-        };
-    let viewport = options
-        .map(|options| graphics_viewport(options, layout, natural_width_pt, natural_height_pt))
-        .unwrap_or_else(ImageViewport::full);
-    let visible_natural_width_pt = natural_width_pt * viewport.width_fraction;
-    let visible_natural_height_pt = natural_height_pt * viewport.height_fraction;
-    let rotation_degrees = options.and_then(graphics_angle_degrees).unwrap_or(0.0);
-    let (display_width_pt, display_height_pt) = options
-        .and_then(|options| {
-            graphics_display_size_pt(
-                options,
-                layout,
-                visible_natural_width_pt,
-                visible_natural_height_pt,
-            )
-        })
-        .unwrap_or_else(|| {
-            let width = visible_natural_width_pt.min(layout.text_width_pt);
-            (
-                width,
-                width * visible_natural_height_pt / visible_natural_width_pt,
-            )
-        });
-
+    let Some(asset) =
+        load_cached_graphic_asset(graphics_cache, root_dir, payload.trim(), options, graphics)?
+    else {
+        return Ok((
+            GraphicElement::Placeholder(resolve_graphics_path(root_dir, payload.trim(), graphics)?),
+            remaining,
+        ));
+    };
     Ok((
-        GraphicElement::Image(ImageAsset {
-            path: image_path,
-            width_px,
-            height_px,
-            display_width_pt,
-            display_height_pt,
-            rotation_degrees,
-            viewport,
-            payload,
-        }),
+        GraphicElement::Image(image_asset_from_cached(&asset, options, layout)),
         remaining,
     ))
 }
@@ -7649,98 +8118,22 @@ fn parse_includegraphics_measurement<'a>(
     source: &'a str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
 ) -> Result<(Option<ImageAsset>, &'a str), String> {
     let source = source.strip_prefix('*').unwrap_or(source).trim_start();
     let (options, source) = take_optional_bracketed(source);
     let (payload, remaining) = take_braced(source)
         .ok_or_else(|| "native backend requires braced \\includegraphics paths".to_string())?;
-    let image_path = resolve_graphics_path(root_dir, payload.trim(), graphics)?;
-    let extension = image_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let data = fs::read(&image_path).map_err(|error| {
-        format!(
-            "native backend could not read graphic `{}`: {error}",
-            image_path.display()
-        )
-    })?;
-    let pdf_page_number = options.and_then(graphics_page_number).unwrap_or(1);
-    let (width_px, height_px, natural_width_pt, natural_height_pt) = match extension.as_str() {
-        "jpg" | "jpeg" => {
-            let (width_px, height_px) = jpeg_dimensions(&data).ok_or_else(|| {
-                format!(
-                    "native backend could not read JPEG dimensions for `{}`",
-                    image_path.display()
-                )
-            })?;
-            (
-                width_px,
-                height_px,
-                width_px as f32 * 72.0 / 96.0,
-                height_px as f32 * 72.0 / 96.0,
-            )
-        }
-        "png" => {
-            let (width_px, height_px) = png_dimensions(&data).map_err(|error| {
-                format!(
-                    "native backend could not read PNG dimensions for `{}`: {error}",
-                    image_path.display()
-                )
-            })?;
-            (
-                width_px,
-                height_px,
-                width_px as f32 * 72.0 / 96.0,
-                height_px as f32 * 72.0 / 96.0,
-            )
-        }
-        "pdf" => pdf_form_dimensions(&data, pdf_page_number).map_err(|error| {
-            format!(
-                "native backend could not read PDF graphic dimensions for `{}`: {error}",
-                image_path.display()
-            )
-        })?,
-        _ => return Ok((None, remaining)),
-    };
-    let viewport = options
-        .map(|options| graphics_viewport(options, layout, natural_width_pt, natural_height_pt))
-        .unwrap_or_else(ImageViewport::full);
-    let visible_natural_width_pt = natural_width_pt * viewport.width_fraction;
-    let visible_natural_height_pt = natural_height_pt * viewport.height_fraction;
-    let rotation_degrees = options.and_then(graphics_angle_degrees).unwrap_or(0.0);
-    let (display_width_pt, display_height_pt) = options
-        .and_then(|options| {
-            graphics_display_size_pt(
-                options,
-                layout,
-                visible_natural_width_pt,
-                visible_natural_height_pt,
-            )
-        })
-        .unwrap_or_else(|| {
-            let width = visible_natural_width_pt.min(layout.text_width_pt);
-            (
-                width,
-                width * visible_natural_height_pt / visible_natural_width_pt,
-            )
-        });
-
-    Ok((
-        Some(ImageAsset {
-            path: image_path,
-            width_px,
-            height_px,
-            display_width_pt,
-            display_height_pt,
-            rotation_degrees,
-            viewport,
-            payload: ImagePayload::Jpeg(Vec::new()),
-        }),
-        remaining,
-    ))
+    let image = load_cached_graphic_dimensions(
+        graphics_cache,
+        root_dir,
+        payload.trim(),
+        options,
+        graphics,
+    )?
+    .map(|dimensions| measurement_image_asset_from_cached(&dimensions, options, layout));
+    Ok((image, remaining))
 }
 
 fn native_tikz_graphic(source: &str) -> Option<ImageAsset> {
@@ -7764,12 +8157,12 @@ fn native_tikz_graphic(source: &str) -> Option<ImageAsset> {
         display_height_pt: height,
         rotation_degrees: 0.0,
         viewport: ImageViewport::full(),
-        payload: ImagePayload::PdfForm(PdfFormAsset {
+        payload: Arc::new(ImagePayload::PdfForm(PdfFormAsset {
             bbox: [0.0, 0.0, width, height],
             content: native_lejepa_overview_form(width, height),
             resources: None,
             imported_objects: Vec::new(),
-        }),
+        })),
     })
 }
 
@@ -7804,12 +8197,12 @@ fn native_tikz_rule_graphic(source: &str) -> Option<ImageAsset> {
         display_height_pt: display_height,
         rotation_degrees: 0.0,
         viewport: ImageViewport::full(),
-        payload: ImagePayload::PdfForm(PdfFormAsset {
+        payload: Arc::new(ImagePayload::PdfForm(PdfFormAsset {
             bbox: [0.0, 0.0, display_width, display_height],
             content: content.into_bytes(),
             resources: None,
             imported_objects: Vec::new(),
-        }),
+        })),
     })
 }
 
@@ -8834,6 +9227,7 @@ fn append_nativeicml_abstract_lines(
     source: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     macros: &HashMap<String, String>,
     labels: &HashMap<String, LabelInfo>,
@@ -8858,6 +9252,7 @@ fn append_nativeicml_abstract_lines(
             center_body,
             root_dir,
             graphics,
+            graphics_cache,
             layout,
             macros,
             labels,
@@ -8904,6 +9299,7 @@ fn append_theorem_box_lines(
     body: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     macros: &HashMap<String, String>,
     labels: &HashMap<String, LabelInfo>,
@@ -8918,7 +9314,17 @@ fn append_theorem_box_lines(
         block.push(Line::WideEquation(equation));
     }
     let minipages = parse_minipage_renders(
-        body, images, inputs, root_dir, graphics, layout, macros, labels, citations, footnotes,
+        body,
+        images,
+        inputs,
+        root_dir,
+        graphics,
+        graphics_cache,
+        layout,
+        macros,
+        labels,
+        citations,
+        footnotes,
         timings,
     )?;
     if !minipages.is_empty() {
@@ -8959,6 +9365,7 @@ fn append_theorem_float_lines(
     body: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     macros: &HashMap<String, String>,
     labels: &HashMap<String, LabelInfo>,
@@ -8996,6 +9403,7 @@ fn append_theorem_float_lines(
             theorem_body,
             root_dir,
             graphics,
+            graphics_cache,
             layout,
             macros,
             labels,
@@ -9019,6 +9427,7 @@ fn append_minipage_float_lines(
     body: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     macros: &HashMap<String, String>,
     labels: &HashMap<String, LabelInfo>,
@@ -9036,8 +9445,19 @@ fn append_minipage_float_lines(
         layout.column_width_pt
     };
     let minipages = parse_minipage_renders_for_width(
-        body, images, inputs, root_dir, graphics, layout, macros, labels, citations, footnotes,
-        timings, base_width,
+        body,
+        images,
+        inputs,
+        root_dir,
+        graphics,
+        graphics_cache,
+        layout,
+        macros,
+        labels,
+        citations,
+        footnotes,
+        timings,
+        base_width,
     )?;
     if minipages.is_empty() {
         return Ok(());
@@ -9092,6 +9512,7 @@ fn append_graphic_float_lines(
     body: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     macros: &HashMap<String, String>,
     labels: &HashMap<String, LabelInfo>,
@@ -9119,6 +9540,7 @@ fn append_graphic_float_lines(
         inputs,
         root_dir,
         graphics,
+        graphics_cache,
         &float_layout,
         timings,
         base_width,
@@ -9401,6 +9823,7 @@ fn append_nativeicml_teaser_lines(
     source: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     macros: &HashMap<String, String>,
     labels: &HashMap<String, LabelInfo>,
@@ -9412,7 +9835,17 @@ fn append_nativeicml_teaser_lines(
     caption_label_separator: CaptionLabelSeparator,
 ) -> Result<(), String> {
     let minipages = parse_minipage_renders(
-        source, images, inputs, root_dir, graphics, layout, macros, labels, citations, footnotes,
+        source,
+        images,
+        inputs,
+        root_dir,
+        graphics,
+        graphics_cache,
+        layout,
+        macros,
+        labels,
+        citations,
+        footnotes,
         timings,
     )?;
     if !minipages.is_empty() {
@@ -9433,8 +9866,16 @@ fn append_nativeicml_teaser_lines(
             }
         }
     } else {
-        let row_images =
-            parse_standalone_graphics(source, images, inputs, root_dir, graphics, layout, timings)?;
+        let row_images = parse_standalone_graphics(
+            source,
+            images,
+            inputs,
+            root_dir,
+            graphics,
+            graphics_cache,
+            layout,
+            timings,
+        )?;
         if !row_images.is_empty() {
             lines.push(Line::WideImageRow(row_images));
         }
@@ -9458,6 +9899,7 @@ fn parse_minipage_renders(
     inputs: &mut Vec<PathBuf>,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     macros: &HashMap<String, String>,
     labels: &HashMap<String, LabelInfo>,
@@ -9471,6 +9913,7 @@ fn parse_minipage_renders(
         inputs,
         root_dir,
         graphics,
+        graphics_cache,
         layout,
         macros,
         labels,
@@ -9487,6 +9930,7 @@ fn parse_minipage_renders_for_width(
     inputs: &mut Vec<PathBuf>,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     macros: &HashMap<String, String>,
     labels: &HashMap<String, LabelInfo>,
@@ -9514,6 +9958,7 @@ fn parse_minipage_renders_for_width(
             inputs,
             root_dir,
             graphics,
+            graphics_cache,
             &minipage_layout,
             macros,
             labels,
@@ -9536,6 +9981,7 @@ fn parse_minipage_render(
     inputs: &mut Vec<PathBuf>,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     macros: &HashMap<String, String>,
     labels: &HashMap<String, LabelInfo>,
@@ -9550,7 +9996,8 @@ fn parse_minipage_render(
         text_source.push_str(&cursor[..index]);
         let rest = &cursor[index + "\\includegraphics".len()..];
         let includegraphics_started = Instant::now();
-        let (graphic, remaining) = parse_includegraphics(rest, root_dir, graphics, layout)?;
+        let (graphic, remaining) =
+            parse_includegraphics(rest, root_dir, graphics, graphics_cache, layout)?;
         timings.includegraphics_ms += includegraphics_started.elapsed().as_millis();
         match graphic {
             GraphicElement::Image(image) => {
@@ -9631,6 +10078,7 @@ fn parse_standalone_graphics(
     inputs: &mut Vec<PathBuf>,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     timings: &mut ParseTimings,
 ) -> Result<Vec<usize>, String> {
@@ -9639,7 +10087,8 @@ fn parse_standalone_graphics(
     while let Some(index) = cursor.find("\\includegraphics") {
         let rest = &cursor[index + "\\includegraphics".len()..];
         let includegraphics_started = Instant::now();
-        let (graphic, remaining) = parse_includegraphics(rest, root_dir, graphics, layout)?;
+        let (graphic, remaining) =
+            parse_includegraphics(rest, root_dir, graphics, graphics_cache, layout)?;
         timings.includegraphics_ms += includegraphics_started.elapsed().as_millis();
         match graphic {
             GraphicElement::Image(image) => {
@@ -9663,6 +10112,7 @@ fn parse_standalone_graphic_rows(
     inputs: &mut Vec<PathBuf>,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     timings: &mut ParseTimings,
     max_width_pt: f32,
@@ -9679,7 +10129,8 @@ fn parse_standalone_graphic_rows(
         }
         let rest = &cursor[index + "\\includegraphics".len()..];
         let includegraphics_started = Instant::now();
-        let (graphic, remaining) = parse_includegraphics(rest, root_dir, graphics, layout)?;
+        let (graphic, remaining) =
+            parse_includegraphics(rest, root_dir, graphics, graphics_cache, layout)?;
         timings.includegraphics_ms += includegraphics_started.elapsed().as_millis();
         match graphic {
             GraphicElement::Image(image) => {
@@ -9712,6 +10163,7 @@ fn parse_standalone_graphic_measurement_rows(
     source: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     timings: &mut ParseTimings,
     max_width_pt: f32,
@@ -9730,7 +10182,7 @@ fn parse_standalone_graphic_measurement_rows(
         let rest = &cursor[index + "\\includegraphics".len()..];
         let includegraphics_started = Instant::now();
         let (image, remaining) =
-            parse_includegraphics_measurement(rest, root_dir, graphics, layout)?;
+            parse_includegraphics_measurement(rest, root_dir, graphics, graphics_cache, layout)?;
         timings.includegraphics_ms += includegraphics_started.elapsed().as_millis();
         if let Some(image) = image {
             let image_width = image.display_width_pt.min(max_width_pt);
@@ -9791,6 +10243,7 @@ fn record_two_column_graphic_float_fallback(
     body: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     caption_label_separator: CaptionLabelSeparator,
 ) {
@@ -9803,6 +10256,7 @@ fn record_two_column_graphic_float_fallback(
         body,
         root_dir,
         graphics,
+        graphics_cache,
         layout,
         timings,
         caption_label_separator,
@@ -9830,6 +10284,7 @@ fn estimate_two_column_graphic_float_fallback(
     body: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
+    graphics_cache: &mut GraphicsCache,
     layout: &DocumentLayout,
     timings: &mut ParseTimings,
     caption_label_separator: CaptionLabelSeparator,
@@ -9844,6 +10299,7 @@ fn estimate_two_column_graphic_float_fallback(
         body,
         root_dir,
         graphics,
+        graphics_cache,
         &float_layout,
         timings,
         base_width,
@@ -14853,7 +15309,7 @@ fn image_object_ids(document: &SimpleDocument, first_object_id: usize) -> Vec<us
 }
 
 fn image_pdf_object_count(image: &ImageAsset) -> usize {
-    match &image.payload {
+    match image.payload.as_ref() {
         ImagePayload::Jpeg(_) => 1,
         ImagePayload::Png { alpha, .. } => 1 + usize::from(alpha.is_some()),
         ImagePayload::PdfForm(form) => 1 + form.imported_objects.len(),
@@ -14865,7 +15321,7 @@ fn pdf_object(source: impl AsRef<str>) -> Vec<u8> {
 }
 
 fn image_objects(image: &ImageAsset, image_object_id: usize) -> Vec<Vec<u8>> {
-    match &image.payload {
+    match image.payload.as_ref() {
         ImagePayload::Jpeg(data) => vec![jpeg_image_object(image, data)],
         ImagePayload::Png {
             color_space,
@@ -17903,7 +18359,7 @@ Native SyncTeX output.
                     * DocumentLayout::default().line_height_pt,
                 rotation_degrees: 0.0,
                 viewport: ImageViewport::full(),
-                payload: ImagePayload::Jpeg(Vec::new()),
+                payload: Arc::new(ImagePayload::Jpeg(Vec::new())),
             }],
             timings: ParseTimings::default(),
             generated_outputs: Vec::new(),
@@ -19151,7 +19607,7 @@ After.
             display_height_pt: 28.35,
             rotation_degrees: 90.0,
             viewport: ImageViewport::full(),
-            payload: ImagePayload::Jpeg(Vec::new()),
+            payload: Arc::new(ImagePayload::Jpeg(Vec::new())),
         };
         let (width, height) = layout.image_display_size(&image);
         assert!((width - 28.35).abs() < 0.02, "{width} {height}");
