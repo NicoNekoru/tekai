@@ -284,7 +284,7 @@ It runs the two bundled large examples through `--engine texpilot-pdftex`,
 requires the native trace path plus caption-placement diagnostics rather than
 fallback, and fails if either median full-build wall time exceeds one second by
 default. The current release gate on this workspace passes with medians of
-0.474s for `arXiv-2605.26379v1` and 0.657s for `arXiv-2511.08544v3` across
+0.487s for `arXiv-2605.26379v1` and 0.672s for `arXiv-2511.08544v3` across
 three forced clean native builds per paper.
 It also reports the two-column graphic float fallback counters and estimated
 native-slot debt, and can enforce the same native-coverage budgets as the
@@ -357,8 +357,8 @@ dimension agreement, not near-identical output yet. At the harness default of
 
 | source | pages | mean RMSE | max page RMSE | max diff ratio |
 | --- | ---: | ---: | ---: | ---: |
-| `examples/arXiv-2605.26379v1/main.tex` | 48/48 | 47.377 | 97.243 | 0.3513 |
-| `examples/arXiv-2511.08544v3/main.tex` | 50/50 | 54.775 | 79.607 | 0.6769 |
+| `examples/arXiv-2605.26379v1/main.tex` | 48/48 | 47.370 | 97.243 | 0.3513 |
+| `examples/arXiv-2511.08544v3/main.tex` | 50/50 | 54.696 | 78.313 | 0.6769 |
 
 With caption-flow diagnostics enabled, the same run reports aggregate absolute
 caption drift of 27 pages across 23 matched captions for `arXiv-2605.26379v1`

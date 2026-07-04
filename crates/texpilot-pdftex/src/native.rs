@@ -2273,6 +2273,14 @@ enum Line {
         text: String,
         width_pt: f32,
     },
+    TableCells {
+        cells: Vec<String>,
+        slots: usize,
+    },
+    WideTableCells {
+        cells: Vec<String>,
+        slots: usize,
+    },
     TableRow(String),
     Caption(String),
     Footnote(String),
@@ -2342,6 +2350,7 @@ impl Line {
             Line::DisplayEquation(_) => 1,
             Line::Equation(_) | Line::WideEquation(_) => 2,
             Line::AuthorGrid(grid) => grid.slots(),
+            Line::TableCells { slots, .. } | Line::WideTableCells { slots, .. } => *slots,
             Line::Author(_)
             | Line::WideAuthor(_)
             | Line::AbstractHeading(_)
@@ -2369,6 +2378,7 @@ impl Line {
                 | Line::WideTheoremBackground { .. }
                 | Line::WideAbstractText(_)
                 | Line::WideCaption(_)
+                | Line::WideTableCells { .. }
                 | Line::WideEquation(_)
                 | Line::WideImageRow(_)
                 | Line::WideTeaserRow(_)
@@ -9674,7 +9684,17 @@ fn append_table_float_lines(
         *layout
     };
     for row in table_lines {
-        for wrapped in table_layout.wrap_table_text(&row) {
+        let wrapped_rows = table_layout.wrap_table_text(&row);
+        if let Some(cells) = table_cells_from_row(&row) {
+            let slots = wrapped_rows.len().max(1);
+            if is_wide {
+                block.push(Line::WideTableCells { cells, slots });
+            } else {
+                block.push(Line::TableCells { cells, slots });
+            }
+            continue;
+        }
+        for wrapped in wrapped_rows {
             if is_wide {
                 block.push(Line::WideAbstractText(wrapped));
             } else {
@@ -10789,6 +10809,17 @@ fn normalize_table_pipes(source: &str) -> String {
         .map(str::trim)
         .collect::<Vec<_>>()
         .join(" | ")
+}
+
+fn table_cells_from_row(row: &str) -> Option<Vec<String>> {
+    if !row.contains('|') {
+        return None;
+    }
+    let cells = row
+        .split('|')
+        .map(|cell| cell.trim().to_string())
+        .collect::<Vec<_>>();
+    (cells.len() > 1).then_some(cells)
 }
 
 fn loose_clean_text(
@@ -16075,6 +16106,87 @@ fn page_number_y_pt(layout: DocumentLayout) -> f32 {
     }
 }
 
+fn append_table_cells_to_stream(
+    stream: &mut String,
+    layout: DocumentLayout,
+    page_slot: usize,
+    cells: &[String],
+    wide: bool,
+) {
+    if cells.is_empty() {
+        return;
+    }
+    let (x, y) = if wide {
+        layout.point_for_wide_slot(page_slot, 0.0)
+    } else {
+        layout.point_for_slot(page_slot, 0.0)
+    };
+    let available_width = if wide {
+        layout.text_width_pt
+    } else {
+        layout.column_width_pt
+    };
+    let column_count = cells.len().max(1);
+    let gutter_pt = if column_count > 8 { 2.0 } else { 4.0 };
+    let cell_width = ((available_width - gutter_pt * (column_count - 1) as f32)
+        / column_count as f32)
+        .max(layout.code_font_pt * 2.0);
+    let font_size = table_cell_font_size(layout, column_count);
+    for (index, cell) in cells.iter().enumerate() {
+        let cell_x = x + index as f32 * (cell_width + gutter_pt);
+        let fitted = fit_table_cell_text(cell, layout, font_size, cell_width);
+        if fitted.is_empty() {
+            continue;
+        }
+        append_pdf_text_object(stream, PdfTextFont::Text, font_size, cell_x, y, &fitted);
+    }
+}
+
+fn table_cell_font_size(layout: DocumentLayout, column_count: usize) -> f32 {
+    if column_count >= 12 {
+        (layout.footnote_font_pt * 0.72).max(4.8)
+    } else if column_count >= 8 {
+        (layout.footnote_font_pt * 0.82).max(5.2)
+    } else {
+        layout.footnote_font_pt
+    }
+}
+
+fn fit_table_cell_text(
+    text: &str,
+    layout: DocumentLayout,
+    font_size: f32,
+    max_width_pt: f32,
+) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        return String::new();
+    }
+    let metric = layout.metric_for_font(PdfTextFont::Text);
+    if natural_text_width_for_metric_pt(text, metric, font_size) <= max_width_pt {
+        return text.to_string();
+    }
+    let suffix = "...";
+    let suffix_width = natural_text_width_for_metric_pt(suffix, metric, font_size);
+    let target = (max_width_pt - suffix_width).max(font_size);
+    let mut fitted = String::new();
+    let mut fitted_width = 0.0_f32;
+    for ch in text.chars() {
+        let char_width = pdf_font_char_width_units(ch, metric) * font_size / 1000.0;
+        if fitted_width + char_width > target {
+            break;
+        }
+        fitted.push(ch);
+        fitted_width += char_width;
+    }
+    if fitted.is_empty() {
+        String::new()
+    } else {
+        fitted.push_str(suffix);
+        fitted
+    }
+}
+
 fn primary_line_placements_from(placements: &[LinePlacement]) -> Vec<LinePlacement> {
     let mut primary = Vec::new();
     let mut seen_lines = BTreeSet::new();
@@ -16333,6 +16445,12 @@ fn append_line_to_page_stream(
                 y,
                 text,
             );
+        }
+        Line::TableCells { cells, .. } => {
+            append_table_cells_to_stream(stream, layout, page_slot, cells, false);
+        }
+        Line::WideTableCells { cells, .. } => {
+            append_table_cells_to_stream(stream, layout, page_slot, cells, true);
         }
         Line::Caption(text) => {
             let (x, y) = layout.point_for_slot(page_slot, 0.0);
@@ -17271,6 +17389,16 @@ fn synctex_line_geometry(
                 layout.footnote_font_pt,
                 layout.column_width_pt,
             ),
+            line_slots as f32 * layout.line_height_pt,
+        )),
+        Line::TableCells { .. } => Some((
+            0.0,
+            layout.column_width_pt,
+            line_slots as f32 * layout.line_height_pt,
+        )),
+        Line::WideTableCells { .. } => Some((
+            0.0,
+            layout.text_width_pt,
             line_slots as f32 * layout.line_height_pt,
         )),
         Line::Caption(text) => Some((
@@ -20624,7 +20752,7 @@ After.
         );
         assert!(
             lines.iter().any(
-                |line| matches!(line, Line::WideAbstractText(text) if text.contains("Name | Score"))
+                |line| matches!(line, Line::WideTableCells { cells, slots } if cells.as_slice() == ["Name", "Score"] && *slots == 1)
             ),
             "{lines:?}"
         );
@@ -20703,7 +20831,7 @@ After.
         );
         assert!(
             lines.iter().any(
-                |line| matches!(line, Line::WideAbstractText(text) if text.contains("Name | Score"))
+                |line| matches!(line, Line::WideTableCells { cells, slots } if cells.as_slice() == ["Name", "Score"] && *slots == 1)
             ),
             "{lines:?}"
         );

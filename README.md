@@ -637,8 +637,8 @@ from the native direct runner owning TeX/BibTeX/rerun scheduling.
 The experimental `--engine texpilot-pdftex` path is a separate native-renderer
 track rather than a `pdflatex` scheduler optimization. In the latest release
 gate on this workspace, three forced full native builds of each bundled large
-example completed as single final PDF passes with median wall times of 0.474s
-for `arXiv-2605.26379v1` (48 pages) and 0.657s for
+example completed as single final PDF passes with median wall times of 0.487s
+for `arXiv-2605.26379v1` (48 pages) and 0.672s for
 `arXiv-2511.08544v3` (50 pages), with zero external `pdflatex`, BibTeX, Biber,
 or draft-prepass runs. The native speed/parity harnesses now also require the
 caption-placement trace field so page-builder diagnostics are present on the
