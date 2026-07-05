@@ -178,26 +178,18 @@ pub unsafe extern "C" fn writezip(mut finish: boolean) {
                 ::core::mem::size_of::<z_stream>() as ::core::ffi::c_int,
             ) != Z_OK
             {
-                pdftex_fail(
-                    b"zlib: %s() failed (error code %d)\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    b"deflateInit\0" as *const u8 as *const ::core::ffi::c_char,
-                    deflateInit_(
+                crate::utils::pdftex_fail_args(b"zlib: %s() failed (error code %d)\0" as *const u8
+                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"deflateInit\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(deflateInit_(
                         &raw mut c_stream,
                         level,
                         b"1.3.2\0" as *const u8 as *const ::core::ffi::c_char,
                         ::core::mem::size_of::<z_stream>() as ::core::ffi::c_int,
-                    ),
-                );
+                    ))]);
             }
         } else if level != level_old {
             if deflateEnd(&raw mut c_stream) != Z_OK {
-                pdftex_fail(
-                    b"zlib: %s() failed (error code %d)\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    b"deflateEnd\0" as *const u8 as *const ::core::ffi::c_char,
-                    deflateEnd(&raw mut c_stream),
-                );
+                crate::utils::pdftex_fail_args(b"zlib: %s() failed (error code %d)\0" as *const u8
+                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"deflateEnd\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(deflateEnd(&raw mut c_stream))]);
             }
             c_stream.zalloc = None;
             c_stream.zfree = None;
@@ -209,24 +201,16 @@ pub unsafe extern "C" fn writezip(mut finish: boolean) {
                 ::core::mem::size_of::<z_stream>() as ::core::ffi::c_int,
             ) != Z_OK
             {
-                pdftex_fail(
-                    b"zlib: %s() failed (error code %d)\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    b"deflateInit\0" as *const u8 as *const ::core::ffi::c_char,
-                    deflateInit_(
+                crate::utils::pdftex_fail_args(b"zlib: %s() failed (error code %d)\0" as *const u8
+                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"deflateInit\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(deflateInit_(
                         &raw mut c_stream,
                         level,
                         b"1.3.2\0" as *const u8 as *const ::core::ffi::c_char,
                         ::core::mem::size_of::<z_stream>() as ::core::ffi::c_int,
-                    ),
-                );
+                    ))]);
             }
         } else if deflateReset(&raw mut c_stream) != Z_OK {
-            pdftex_fail(
-                b"zlib: %s() failed (error code %d)\0" as *const u8 as *const ::core::ffi::c_char,
-                b"deflateReset\0" as *const u8 as *const ::core::ffi::c_char,
-                deflateReset(&raw mut c_stream),
-            );
+            crate::utils::pdftex_fail_args(b"zlib: %s() failed (error code %d)\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"deflateReset\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(deflateReset(&raw mut c_stream))]);
         }
         level_old = level;
         c_stream.next_out = zipbuf as *mut Bytef;
@@ -265,11 +249,7 @@ pub unsafe extern "C" fn writezip(mut finish: boolean) {
             break;
         }
         if err != Z_OK {
-            pdftex_fail(
-                b"zlib: %s() failed (error code %d)\0" as *const u8 as *const ::core::ffi::c_char,
-                b"deflate\0" as *const u8 as *const ::core::ffi::c_char,
-                err,
-            );
+            crate::utils::pdftex_fail_args(b"zlib: %s() failed (error code %d)\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"deflate\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(err)]);
         }
         if finish == 0 && c_stream.avail_in == 0 as uInt {
             break;
@@ -298,11 +278,7 @@ pub unsafe extern "C" fn writezip(mut finish: boolean) {
 pub unsafe extern "C" fn zip_free() {
     if !zipbuf.is_null() {
         if deflateEnd(&raw mut c_stream) != Z_OK {
-            pdftex_fail(
-                b"zlib: %s() failed (error code %d)\0" as *const u8 as *const ::core::ffi::c_char,
-                b"deflateEnd\0" as *const u8 as *const ::core::ffi::c_char,
-                deflateEnd(&raw mut c_stream),
-            );
+            crate::utils::pdftex_fail_args(b"zlib: %s() failed (error code %d)\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"deflateEnd\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(deflateEnd(&raw mut c_stream))]);
         }
         free(zipbuf as *mut ::core::ffi::c_void);
     }

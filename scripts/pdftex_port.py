@@ -206,6 +206,7 @@ def normalize_generated_rust(path: Path) -> None:
     )
     if path.name == "writet1.rs":
         text = normalize_writet1_rust(text)
+    text = rewrite_pdftex_vararg_calls(text)
     path.write_text(text)
 
 
@@ -290,6 +291,143 @@ def normalize_writet1_rust(text: str) -> str:
         "                                );",
     )
     return text
+
+
+VARARG_REWRITES = {
+    "pdf_printf": "pdf_printf_args",
+    "tex_printf": "tex_printf_args",
+    "pdftex_warn": "pdftex_warn_args",
+    "pdftex_fail": "pdftex_fail_args",
+}
+
+
+def rewrite_pdftex_vararg_calls(text: str) -> str:
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        match = None
+        for name in VARARG_REWRITES:
+            if (
+                text.startswith(name, i)
+                and _is_word_boundary(text, i - 1)
+                and _is_word_boundary(text, i + len(name))
+            ):
+                match = name
+                break
+        if match is None:
+            out.append(text[i])
+            i += 1
+            continue
+        prefix = text[max(0, i - 4):i]
+        if prefix.endswith("fn "):
+            out.append(text[i])
+            i += 1
+            continue
+        j = i + len(match)
+        while j < len(text) and text[j].isspace():
+            j += 1
+        if j >= len(text) or text[j] != "(":
+            out.append(text[i])
+            i += 1
+            continue
+        end = _find_matching_paren(text, j)
+        if end is None:
+            out.append(text[i])
+            i += 1
+            continue
+        args = _split_top_level_args(text[j + 1:end])
+        if not args:
+            out.append(text[i:end + 1])
+        else:
+            fmt = args[0].strip()
+            wrapped_args = [
+                f"crate::utils::PrintfArg::from({arg.strip()})" for arg in args[1:]
+            ]
+            if wrapped_args:
+                arg_expr = "&[" + ", ".join(wrapped_args) + "]"
+            else:
+                arg_expr = "&[]"
+            out.append(f"crate::utils::{VARARG_REWRITES[match]}({fmt}, {arg_expr})")
+        i = end + 1
+    return "".join(out)
+
+
+def _is_word_boundary(text: str, index: int) -> bool:
+    if index < 0 or index >= len(text):
+        return True
+    return not (text[index].isalnum() or text[index] == "_")
+
+
+def _find_matching_paren(text: str, start: int) -> int | None:
+    depth = 0
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if ch == '"':
+            i = _skip_string(text, i)
+            continue
+        if ch == "'":
+            i = _skip_char(text, i)
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
+
+
+def _split_top_level_args(source: str) -> list[str]:
+    args: list[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    while i < len(source):
+        ch = source[i]
+        if ch == '"':
+            i = _skip_string(source, i)
+            continue
+        if ch == "'":
+            i = _skip_char(source, i)
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            args.append(source[start:i])
+            start = i + 1
+        i += 1
+    tail = source[start:].strip()
+    if tail:
+        args.append(source[start:])
+    return args
+
+
+def _skip_string(text: str, start: int) -> int:
+    i = start + 1
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == '"':
+            return i + 1
+        i += 1
+    return i
+
+
+def _skip_char(text: str, start: int) -> int:
+    i = start + 1
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == "'":
+            return i + 1
+        i += 1
+    return i
 
 
 def transpile(write_crate: bool) -> None:
@@ -378,7 +516,6 @@ def link_rust_pdftex(force: bool = False) -> None:
         "-o",
         RUST_BINARY.name,
         str(RUST_ARCHIVE),
-        "libpdftex.a",
         str(BUILD_DIR / "libs" / "libpng" / "libpng.a"),
         str(BUILD_DIR / "libs" / "zlib" / "libz.a"),
         str(BUILD_DIR / "libs" / "xpdf" / "libxpdf.a"),

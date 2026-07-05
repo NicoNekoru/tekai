@@ -83,7 +83,7 @@ unsafe extern "C" fn pkbyte() -> shalfword {
     let mut i: shalfword = 0;
     i = xgetc(t3_file) as shalfword;
     if i as ::core::ffi::c_int == EOF {
-        pdftex_fail(b"unexpected eof in pk file\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::utils::pdftex_fail_args(b"unexpected eof in pk file\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     }
     return i;
 }
@@ -207,7 +207,7 @@ unsafe extern "C" fn rest() -> halfword {
             return i;
         }
     } else {
-        pdftex_fail(b"shouldn't happen\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::utils::pdftex_fail_args(b"shouldn't happen\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     };
 }
 unsafe extern "C" fn handlehuge(mut i: halfword, mut k: halfword) -> halfword {
@@ -370,10 +370,8 @@ unsafe extern "C" fn unpack(mut cd: *mut chardesc) {
         if rowsleft as ::core::ffi::c_int != 0 as ::core::ffi::c_int
             || hbit as integer != (*cd).cwidth
         {
-            pdftex_fail(
-                b"error while unpacking; more bits than required\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            crate::utils::pdftex_fail_args(b"error while unpacking; more bits than required\0" as *const u8
+                    as *const ::core::ffi::c_char, &[]);
         }
     };
 }
@@ -387,10 +385,10 @@ pub unsafe extern "C" fn readchar(
     let mut length: integer = 0 as integer;
     if check_preamble != 0 {
         if pkbyte() as ::core::ffi::c_int != 247 as ::core::ffi::c_int {
-            pdftex_fail(b"bad pk file, expected pre\0" as *const u8 as *const ::core::ffi::c_char);
+            crate::utils::pdftex_fail_args(b"bad pk file, expected pre\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         if pkbyte() as ::core::ffi::c_int != 89 as ::core::ffi::c_int {
-            pdftex_fail(b"bad version of pk file\0" as *const u8 as *const ::core::ffi::c_char);
+            crate::utils::pdftex_fail_args(b"bad version of pk file\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         i = pkbyte();
         while i as ::core::ffi::c_int > 0 as ::core::ffi::c_int {
@@ -460,10 +458,7 @@ pub unsafe extern "C" fn readchar(
                 _ => {}
             }
             if length <= 0 as ::core::ffi::c_int {
-                pdftex_fail(
-                    b"packet length (%i) too small\0" as *const u8 as *const ::core::ffi::c_char,
-                    length,
-                );
+                crate::utils::pdftex_fail_args(b"packet length (%i) too small\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(length)]);
             }
             unpack(cd);
             return 1 as ::core::ffi::c_int;
@@ -495,10 +490,7 @@ pub unsafe extern "C" fn readchar(
                     current_block_59 = 11777552016271000781;
                 }
                 _ => {
-                    pdftex_fail(
-                        b"unexpected command (%i)\0" as *const u8 as *const ::core::ffi::c_char,
-                        flagbyte,
-                    );
+                    crate::utils::pdftex_fail_args(b"unexpected command (%i)\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(flagbyte)]);
                 }
             }
             match current_block_59 {

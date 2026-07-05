@@ -875,7 +875,7 @@ unsafe extern "C" fn enc_getline() {
     let mut c: ::core::ffi::c_int = 0;
     loop {
         if feof(enc_file) != 0 {
-            pdftex_fail(b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char);
+            crate::utils::pdftex_fail_args(b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         p = &raw mut enc_line as *mut ::core::ffi::c_char;
         loop {
@@ -896,13 +896,9 @@ unsafe extern "C" fn enc_getline() {
                     + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
                     > 0x1000 as ::core::ffi::c_int as ::core::ffi::c_uint
                 {
-                    pdftex_fail(
-                        b"buffer overflow at file %s, line %d\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet1.c\0"
-                            as *const u8 as *const ::core::ffi::c_char,
-                        223 as ::core::ffi::c_int,
-                    );
+                    crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet1.c\0"
+                            as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(223 as ::core::ffi::c_int)]);
                 }
                 let fresh4 = p;
                 p = p.offset(1);
@@ -916,13 +912,9 @@ unsafe extern "C" fn enc_getline() {
             + 2 as ::core::ffi::c_long) as ::core::ffi::c_uint
             > 0x1000 as ::core::ffi::c_int as ::core::ffi::c_uint
         {
-            pdftex_fail(
-                b"buffer overflow at file %s, line %d\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet1.c\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                225 as ::core::ffi::c_int,
-            );
+            crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet1.c\0"
+                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(225 as ::core::ffi::c_int)]);
         }
         if p.offset_from(&raw mut enc_line as *mut ::core::ffi::c_char) as ::core::ffi::c_long
             > 1 as ::core::ffi::c_long
@@ -969,9 +961,7 @@ pub unsafe extern "C" fn load_enc_file(
         FOPEN_RBIN_MODE.as_ptr(),
     ) == 0
     {
-        pdftex_fail(
-            b"cannot open encoding file for reading\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"cannot open encoding file for reading\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     }
     glyph_names = xmalloc(
         (256 as size_t).wrapping_mul(::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t),
@@ -982,16 +972,10 @@ pub unsafe extern "C" fn load_enc_file(
         *fresh0 = &raw mut notdef as *mut ::core::ffi::c_char;
         i += 1;
     }
-    tex_printf(
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        b"{\0" as *const u8 as *const ::core::ffi::c_char,
-    );
+    crate::utils::tex_printf_args(b"%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"{\0" as *const u8 as *const ::core::ffi::c_char)]);
     cur_file_name =
         (nameoffile as *mut ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize);
-    tex_printf(
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        cur_file_name,
-    );
+    crate::utils::tex_printf_args(b"%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cur_file_name)]);
     enc_getline();
     if *(&raw mut enc_line as *mut ::core::ffi::c_char) as ::core::ffi::c_int != '/' as i32 || {
         r = strchr(&raw mut enc_line as *mut ::core::ffi::c_char, '[' as i32);
@@ -1005,11 +989,8 @@ pub unsafe extern "C" fn load_enc_file(
         if *r as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
             *r = 0 as ::core::ffi::c_char;
         }
-        pdftex_fail(
-            b"invalid encoding vector (a name or `[' missing): `%s'\0" as *const u8
-                as *const ::core::ffi::c_char,
-            &raw mut enc_line as *mut ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"invalid encoding vector (a name or `[' missing): `%s'\0" as *const u8
+                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(&raw mut enc_line as *mut ::core::ffi::c_char)]);
     }
     names_count = 0 as ::core::ffi::c_int;
     r = r.offset(1);
@@ -1036,10 +1017,8 @@ pub unsafe extern "C" fn load_enc_file(
                 r = r.offset(1);
             }
             if names_count > 255 as ::core::ffi::c_int {
-                pdftex_fail(
-                    b"encoding vector contains more than 256 names\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_fail_args(b"encoding vector contains more than 256 names\0" as *const u8
+                        as *const ::core::ffi::c_char, &[]);
             }
             if strcmp(
                 &raw mut buf as *mut ::core::ffi::c_char,
@@ -1071,21 +1050,15 @@ pub unsafe extern "C" fn load_enc_file(
             if *r as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
                 *r = 0 as ::core::ffi::c_char;
             }
-            pdftex_fail(
-                b"invalid encoding vector: a name or `] def' expected: `%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &raw mut enc_line as *mut ::core::ffi::c_char,
-            );
+            crate::utils::pdftex_fail_args(b"invalid encoding vector: a name or `] def' expected: `%s'\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(&raw mut enc_line as *mut ::core::ffi::c_char)]);
         } else {
             enc_getline();
             r = &raw mut enc_line as *mut ::core::ffi::c_char;
         }
     }
     xfclose(enc_file, cur_file_name as const_string);
-    tex_printf(
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        b"}\0" as *const u8 as *const ::core::ffi::c_char,
-    );
+    crate::utils::tex_printf_args(b"%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"}\0" as *const u8 as *const ::core::ffi::c_char)]);
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
     return glyph_names;
 }
@@ -1105,7 +1078,7 @@ unsafe extern "C" fn t1_getbyte() -> ::core::ffi::c_int {
     }
     if t1_block_length == 0 as ::core::ffi::c_long {
         if c != 128 as ::core::ffi::c_int {
-            pdftex_fail(b"invalid marker\0" as *const u8 as *const ::core::ffi::c_char);
+            crate::utils::pdftex_fail_args(b"invalid marker\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         c = fgetc(t1_file);
         if c == 3 as ::core::ffi::c_int {
@@ -1210,10 +1183,7 @@ unsafe extern "C" fn t1_scan_num(
         if *p as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
             *p = 0 as ::core::ffi::c_char;
         }
-        pdftex_fail(
-            b"a number expected: `%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            t1_line_array,
-        );
+        crate::utils::pdftex_fail_args(b"a number expected: `%s'\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t1_line_array)]);
     }
     if !r.is_null() {
         while isdigit(*p as ::core::ffi::c_uchar as ::core::ffi::c_int) != 0
@@ -1262,7 +1232,7 @@ unsafe extern "C" fn t1_getline() {
     static mut eexec_len: ::core::ffi::c_int = 17 as ::core::ffi::c_int;
     loop {
         if feof(t1_file) != 0 {
-            pdftex_fail(b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char);
+            crate::utils::pdftex_fail_args(b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         t1_line_ptr = t1_line_array;
         if t1_line_array.is_null() {
@@ -1290,10 +1260,8 @@ unsafe extern "C" fn t1_getline() {
                     + 1 as ::core::ffi::c_long) as size_t;
             }
             if t1_line_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-                pdftex_fail(
-                    b"t1_line_array exceeds size limit\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_fail_args(b"t1_line_array exceeds size limit\0" as *const u8
+                        as *const ::core::ffi::c_char, &[]);
             }
             t1_line_array = xrealloc(
                 t1_line_array as address,
@@ -1337,10 +1305,8 @@ unsafe extern "C" fn t1_getline() {
                         + 1 as ::core::ffi::c_long) as size_t;
                 }
                 if t1_line_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-                    pdftex_fail(
-                        b"t1_line_array exceeds size limit\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
+                    crate::utils::pdftex_fail_args(b"t1_line_array exceeds size limit\0" as *const u8
+                            as *const ::core::ffi::c_char, &[]);
                 }
                 t1_line_array = xrealloc(
                     t1_line_array as address,
@@ -1364,13 +1330,9 @@ unsafe extern "C" fn t1_getline() {
                     + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
                     > t1_line_limit as ::core::ffi::c_uint
                 {
-                    pdftex_fail(
-                        b"buffer overflow at file %s, line %d\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet1.c\0"
-                            as *const u8 as *const ::core::ffi::c_char,
-                        422 as ::core::ffi::c_int,
-                    );
+                    crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet1.c\0"
+                            as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(422 as ::core::ffi::c_int)]);
                 }
                 let fresh8 = t1_line_ptr;
                 t1_line_ptr = t1_line_ptr.offset(1);
@@ -1446,10 +1408,8 @@ unsafe extern "C" fn t1_getline() {
                                 + l as ::core::ffi::c_long) as size_t;
                     }
                     if t1_line_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-                        pdftex_fail(
-                            b"t1_line_array exceeds size limit\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                        );
+                        crate::utils::pdftex_fail_args(b"t1_line_array exceeds size limit\0" as *const u8
+                                as *const ::core::ffi::c_char, &[]);
                     }
                     t1_line_array = xrealloc(
                         t1_line_array as address,
@@ -1496,10 +1456,8 @@ unsafe extern "C" fn t1_getline() {
                     + 2 as ::core::ffi::c_long) as size_t;
             }
             if t1_line_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-                pdftex_fail(
-                    b"t1_line_array exceeds size limit\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_fail_args(b"t1_line_array exceeds size limit\0" as *const u8
+                        as *const ::core::ffi::c_char, &[]);
             }
             t1_line_array = xrealloc(
                 t1_line_array as address,
@@ -1511,13 +1469,9 @@ unsafe extern "C" fn t1_getline() {
             + 2 as ::core::ffi::c_long) as ::core::ffi::c_uint
             > t1_line_limit as ::core::ffi::c_uint
         {
-            pdftex_fail(
-                b"buffer overflow at file %s, line %d\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet1.c\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                445 as ::core::ffi::c_int,
-            );
+            crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet1.c\0"
+                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(445 as ::core::ffi::c_int)]);
         }
         if t1_line_ptr.offset_from(t1_line_array) as ::core::ffi::c_long > 1 as ::core::ffi::c_long
             && *t1_line_ptr.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
@@ -1569,9 +1523,7 @@ unsafe extern "C" fn t1_getline() {
                 .wrapping_add(t1_line_limit);
         }
         if t1_buf_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-            pdftex_fail(
-                b"t1_buf_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+            crate::utils::pdftex_fail_args(b"t1_buf_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         t1_buf_array = xrealloc(
             t1_buf_array as address,
@@ -1615,14 +1567,8 @@ unsafe extern "C" fn t1_printf(
     t1_puts(t1_line_array);
 }
 unsafe extern "C" fn t1_init_params(mut open_name_prefix: *const ::core::ffi::c_char) {
-    tex_printf(
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        open_name_prefix,
-    );
-    tex_printf(
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        cur_file_name,
-    );
+    crate::utils::tex_printf_args(b"%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(open_name_prefix)]);
+    crate::utils::tex_printf_args(b"%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cur_file_name)]);
     t1_lenIV = 4 as ::core::ffi::c_short;
     t1_dr = 55665 as ::core::ffi::c_ushort;
     t1_er = 55665 as ::core::ffi::c_ushort;
@@ -1635,10 +1581,7 @@ unsafe extern "C" fn t1_init_params(mut open_name_prefix: *const ::core::ffi::c_
     t1_check_pfa();
 }
 unsafe extern "C" fn t1_close_font_file(mut close_name_suffix: *const ::core::ffi::c_char) {
-    tex_printf(
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        close_name_suffix,
-    );
+    crate::utils::tex_printf_args(b"%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(close_name_suffix)]);
     xfclose(t1_file, cur_file_name as const_string);
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
@@ -1656,10 +1599,7 @@ unsafe extern "C" fn t1_check_block_len(mut decrypt: boolean) {
     if !(l == 0 as ::core::ffi::c_int
         && (c == 10 as ::core::ffi::c_int || c == 13 as ::core::ffi::c_int))
     {
-        pdftex_fail(
-            b"%i bytes more than expected\0" as *const u8 as *const ::core::ffi::c_char,
-            l + 1 as ::core::ffi::c_int,
-        );
+        crate::utils::pdftex_fail_args(b"%i bytes more than expected\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(l + 1 as ::core::ffi::c_int)]);
     }
 }
 unsafe extern "C" fn t1_start_eexec() {
@@ -1718,9 +1658,7 @@ unsafe extern "C" fn t1_stop_eexec() {
             if last_hexbyte == 0 as ::core::ffi::c_int {
                 t1_puts(b"00\0" as *const u8 as *const ::core::ffi::c_char);
             } else {
-                pdftex_fail(
-                    b"unexpected data after eexec\0" as *const u8 as *const ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_fail_args(b"unexpected data after eexec\0" as *const u8 as *const ::core::ffi::c_char, &[]);
             }
         }
     }
@@ -1743,10 +1681,7 @@ unsafe extern "C" fn t1_modify_fm() {
             if *p as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
                 *p = 0 as ::core::ffi::c_char;
             }
-            pdftex_fail(
-                b"FontMatrix: an array expected: `%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                t1_line_array,
-            );
+            crate::utils::pdftex_fail_args(b"FontMatrix: an array expected: `%s'\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t1_line_array)]);
         }
     }
     let fresh41 = p;
@@ -1825,12 +1760,8 @@ unsafe extern "C" fn t1_modify_fm() {
         if *p as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
             *p = 0 as ::core::ffi::c_char;
         }
-        pdftex_fail(
-            b"FontMatrix: cannot find the corresponding character to '%c': `%s'\0" as *const u8
-                as *const ::core::ffi::c_char,
-            c,
-            t1_line_array,
-        );
+        crate::utils::pdftex_fail_args(b"FontMatrix: cannot find the corresponding character to '%c': `%s'\0" as *const u8
+                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(c), crate::utils::PrintfArg::from(t1_line_array)]);
     }
     strcpy(r, p);
     strcpy(t1_line_array as *mut ::core::ffi::c_char, t1_buf_array);
@@ -1910,10 +1841,7 @@ unsafe extern "C" fn t1_scan_keys() {
         i = t1_scan_num(p, ::core::ptr::null_mut::<*mut ::core::ffi::c_char>())
             as ::core::ffi::c_int;
         if i != 1 as ::core::ffi::c_int {
-            pdftex_fail(
-                b"Type%d fonts unsupported by pdfTeX\0" as *const u8 as *const ::core::ffi::c_char,
-                i,
-            );
+            crate::utils::pdftex_fail_args(b"Type%d fonts unsupported by pdfTeX\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i)]);
         }
         return;
     }
@@ -1953,10 +1881,7 @@ unsafe extern "C" fn t1_scan_keys() {
             if *p as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
                 *p = 0 as ::core::ffi::c_char;
             }
-            pdftex_fail(
-                b"a name expected: `%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                t1_line_array,
-            );
+            crate::utils::pdftex_fail_args(b"a name expected: `%s'\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t1_line_array)]);
         }
         p = p.offset(1);
         r = p;
@@ -2051,10 +1976,8 @@ unsafe extern "C" fn t1_scan_param() {
             ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
         ) as ::core::ffi::c_short;
         if (t1_lenIV as ::core::ffi::c_int) < 0 as ::core::ffi::c_int {
-            pdftex_fail(
-                b"negative value of lenIV is not supported\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            crate::utils::pdftex_fail_args(b"negative value of lenIV is not supported\0" as *const u8
+                    as *const ::core::ffi::c_char, &[]);
         }
         return;
     }
@@ -2130,11 +2053,8 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
             }
             return glyph_names;
         }
-        pdftex_fail(
-            b"cannot subset font (unknown predefined encoding `%s')\0" as *const u8
-                as *const ::core::ffi::c_char,
-            t1_buf_array,
-        );
+        crate::utils::pdftex_fail_args(b"cannot subset font (unknown predefined encoding `%s')\0" as *const u8
+                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t1_buf_array)]);
     }
     t1_encoding = ENC_BUILTIN;
     if strncmp(
@@ -2172,10 +2092,8 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
                     r = r.offset(1);
                 }
                 if counter > 255 as ::core::ffi::c_int {
-                    pdftex_fail(
-                        b"encoding vector contains more than 256 names\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
+                    crate::utils::pdftex_fail_args(b"encoding vector contains more than 256 names\0" as *const u8
+                            as *const ::core::ffi::c_char, &[]);
                 }
                 if strcmp(t1_buf_array, &raw mut notdef as *mut ::core::ffi::c_char)
                     != 0 as ::core::ffi::c_int
@@ -2206,11 +2124,8 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
                 if *r as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
                     *r = 0 as ::core::ffi::c_char;
                 }
-                pdftex_fail(
-                    b"a name or `] def' or `] readonly def' expected: `%s'\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    t1_line_array,
-                );
+                crate::utils::pdftex_fail_args(b"a name or `] def' or `] readonly def' expected: `%s'\0" as *const u8
+                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t1_line_array)]);
             } else {
                 t1_getline();
                 r = t1_line_array as *mut ::core::ffi::c_char;
@@ -2244,10 +2159,8 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
                 }
                 p = strstr(p, b" put\0" as *const u8 as *const ::core::ffi::c_char);
                 if p.is_null() {
-                    pdftex_fail(
-                        b"invalid pfb, no put found in dup\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
+                    crate::utils::pdftex_fail_args(b"invalid pfb, no put found in dup\0" as *const u8
+                            as *const ::core::ffi::c_char, &[]);
                 }
                 p = p.offset(strlen(b" put\0" as *const u8 as *const ::core::ffi::c_char) as isize);
                 if *p as ::core::ffi::c_int == ' ' as i32 {
@@ -2265,10 +2178,8 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
                 copy_glyph_names(glyph_names, a, b);
                 p = strstr(p, b" get put\0" as *const u8 as *const ::core::ffi::c_char);
                 if p.is_null() {
-                    pdftex_fail(
-                        b"invalid pfb, no get put found in dup dup\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
+                    crate::utils::pdftex_fail_args(b"invalid pfb, no get put found in dup dup\0" as *const u8
+                            as *const ::core::ffi::c_char, &[]);
                 }
                 p = p.offset(
                     strlen(b" get put\0" as *const u8 as *const ::core::ffi::c_char) as isize,
@@ -2298,10 +2209,8 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
                     b" putinterval\0" as *const u8 as *const ::core::ffi::c_char,
                 );
                 if p.is_null() {
-                    pdftex_fail(
-                        b"invalid pfb, no putinterval found in dup dup\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
+                    crate::utils::pdftex_fail_args(b"invalid pfb, no putinterval found in dup dup\0" as *const u8
+                            as *const ::core::ffi::c_char, &[]);
                 }
                 p = p.offset(
                     strlen(b" putinterval\0" as *const u8 as *const ::core::ffi::c_char) as isize,
@@ -2359,10 +2268,8 @@ unsafe extern "C" fn t1_open_fontfile(mut open_name_prefix: *const ::core::ffi::
     } else {
         cur_file_name = (*(*fd_cur).fm).ff_name;
         zpackfilename(maketexstring(cur_file_name), getnullstr(), getnullstr());
-        pdftex_fail(
-            b"cannot open Type 1 font file for reading\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"cannot open Type 1 font file for reading\0" as *const u8
+                as *const ::core::ffi::c_char, &[]);
     }
     t1_init_params(open_name_prefix);
     return true_0;
@@ -2457,11 +2364,8 @@ unsafe extern "C" fn cs_store(mut is_subr: boolean) {
             ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
         ) as ::core::ffi::c_int;
         if subr >= subr_size || subr < 0 as ::core::ffi::c_int {
-            pdftex_fail(
-                b"Subrs array: entry index out of range (%i)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                subr,
-            );
+            crate::utils::pdftex_fail_args(b"Subrs array: entry index out of range (%i)\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(subr)]);
         }
         ptr = subr_tab.offset(subr as isize);
     } else {
@@ -2469,11 +2373,8 @@ unsafe extern "C" fn cs_store(mut is_subr: boolean) {
         cs_ptr = cs_ptr.offset(1);
         ptr = fresh35;
         if cs_ptr.offset_from(cs_tab) as ::core::ffi::c_long > cs_size as ::core::ffi::c_long {
-            pdftex_fail(
-                b"CharStrings dict: more entries than dict size (%i)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                cs_size,
-            );
+            crate::utils::pdftex_fail_args(b"CharStrings dict: more entries than dict size (%i)\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cs_size)]);
         }
         if strcmp(
             t1_buf_array.offset(1 as ::core::ffi::c_int as isize),
@@ -2729,17 +2630,9 @@ unsafe extern "C" fn cs_fail(
     let mut buf: [::core::ffi::c_char; 256] = [0; 256];
     sprintf(&raw mut buf as *mut ::core::ffi::c_char, fmt, arg1, arg2);
     if cs_name.is_null() {
-        pdftex_fail(
-            b"Subr (%i): %s\0" as *const u8 as *const ::core::ffi::c_char,
-            subr,
-            &raw mut buf as *mut ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"Subr (%i): %s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(subr), crate::utils::PrintfArg::from(&raw mut buf as *mut ::core::ffi::c_char)]);
     } else {
-        pdftex_fail(
-            b"CharString (/%s): %s\0" as *const u8 as *const ::core::ffi::c_char,
-            cs_name,
-            &raw mut buf as *mut ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"CharString (/%s): %s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cs_name), crate::utils::PrintfArg::from(&raw mut buf as *mut ::core::ffi::c_char)]);
     };
 }
 unsafe extern "C" fn append_cs_return(mut ptr: *mut cs_entry) {
@@ -2833,11 +2726,8 @@ unsafe extern "C" fn cs_mark(
     let mut cc: *mut cc_entry = ::core::ptr::null_mut::<cc_entry>();
     if cs_name.is_null() {
         if subr >= subr_size || subr < 0 as ::core::ffi::c_int {
-            pdftex_fail(
-                b"Subrs array: entry index out of range (%i)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                subr,
-            );
+            crate::utils::pdftex_fail_args(b"Subrs array: entry index out of range (%i)\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(subr)]);
         }
         ptr = subr_tab.offset(subr as isize);
         if (*ptr).valid == 0 {
@@ -2858,10 +2748,7 @@ unsafe extern "C" fn cs_mark(
             ptr = ptr.offset(1);
         }
         if ptr == cs_ptr {
-            pdftex_warn(
-                b"glyph `%s' undefined\0" as *const u8 as *const ::core::ffi::c_char,
-                cs_name,
-            );
+            crate::utils::pdftex_warn_args(b"glyph `%s' undefined\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cs_name)]);
             return;
         }
         if (*ptr).name == &raw mut notdef as *mut ::core::ffi::c_char {
@@ -3016,15 +2903,11 @@ unsafe extern "C" fn cs_mark(
                                 as ::core::ffi::c_long)
                                 < 1 as ::core::ffi::c_long
                             {
-                                pdftex_fail(
-                                    b"CharString: invalid access (%i) to stack (%i entries)\0"
+                                crate::utils::pdftex_fail_args(b"CharString: invalid access (%i) to stack (%i entries)\0"
                                         as *const u8
-                                        as *const ::core::ffi::c_char,
-                                    1 as ::core::ffi::c_int,
-                                    stack_ptr.offset_from(&raw mut cc_stack as *mut integer)
+                                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(1 as ::core::ffi::c_int), crate::utils::PrintfArg::from(stack_ptr.offset_from(&raw mut cc_stack as *mut integer)
                                         as ::core::ffi::c_long
-                                        as ::core::ffi::c_int,
-                                );
+                                        as ::core::ffi::c_int)]);
                             } else {
                                 stack_ptr = stack_ptr.offset(-(1 as ::core::ffi::c_int as isize));
                                 cs_mark(
@@ -3051,15 +2934,11 @@ unsafe extern "C" fn cs_mark(
                                 as ::core::ffi::c_long)
                                 < 2 as ::core::ffi::c_long
                             {
-                                pdftex_fail(
-                                    b"CharString: invalid access (%i) to stack (%i entries)\0"
+                                crate::utils::pdftex_fail_args(b"CharString: invalid access (%i) to stack (%i entries)\0"
                                         as *const u8
-                                        as *const ::core::ffi::c_char,
-                                    2 as ::core::ffi::c_int,
-                                    stack_ptr.offset_from(&raw mut cc_stack as *mut integer)
+                                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(2 as ::core::ffi::c_int), crate::utils::PrintfArg::from(stack_ptr.offset_from(&raw mut cc_stack as *mut integer)
                                         as ::core::ffi::c_long
-                                        as ::core::ffi::c_int,
-                                );
+                                        as ::core::ffi::c_int)]);
                             } else {
                                 stack_ptr = stack_ptr.offset(-(2 as ::core::ffi::c_int as isize));
                                 let fresh27 = stack_ptr;
@@ -3094,15 +2973,11 @@ unsafe extern "C" fn cs_mark(
                                 as ::core::ffi::c_long)
                                 < a1 as ::core::ffi::c_long
                             {
-                                pdftex_fail(
-                                    b"CharString: invalid access (%i) to stack (%i entries)\0"
+                                crate::utils::pdftex_fail_args(b"CharString: invalid access (%i) to stack (%i entries)\0"
                                         as *const u8
-                                        as *const ::core::ffi::c_char,
-                                    a1,
-                                    stack_ptr.offset_from(&raw mut cc_stack as *mut integer)
+                                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(a1), crate::utils::PrintfArg::from(stack_ptr.offset_from(&raw mut cc_stack as *mut integer)
                                         as ::core::ffi::c_long
-                                        as ::core::ffi::c_int,
-                                );
+                                        as ::core::ffi::c_int)]);
                             } else {
                                 stack_ptr = stack_ptr.offset(-(a1 as isize));
                             }
@@ -3158,11 +3033,8 @@ unsafe extern "C" fn cs_mark(
         }
         _ => {
             if cs_name.is_null() && last_cmd != CS_RETURN {
-                pdftex_warn(
-                    b"last command in subr `%i' is not a RETURN; I will add it now but please consider fixing the font\0"
-                        as *const u8 as *const ::core::ffi::c_char,
-                    subr,
-                );
+                crate::utils::pdftex_warn_args(b"last command in subr `%i' is not a RETURN; I will add it now but please consider fixing the font\0"
+                        as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(subr)]);
                 append_cs_return(ptr);
             }
             return;
@@ -3552,10 +3424,8 @@ unsafe extern "C" fn t1_read_subrs() {
                         + s as ::core::ffi::c_long) as size_t;
                 }
                 if t1_buf_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-                    pdftex_fail(
-                        b"t1_buf_array exceeds size limit\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
+                    crate::utils::pdftex_fail_args(b"t1_buf_array exceeds size limit\0" as *const u8
+                            as *const ::core::ffi::c_char, &[]);
                 }
                 t1_buf_array = xrealloc(
                     t1_buf_array as address,
@@ -3899,9 +3769,7 @@ unsafe extern "C" fn t1_check_unusual_charstring() {
                     ));
             }
             if t1_buf_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-                pdftex_fail(
-                    b"t1_buf_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_fail_args(b"t1_buf_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char, &[]);
             }
             t1_buf_array = xrealloc(
                 t1_buf_array as address,
@@ -3939,10 +3807,8 @@ unsafe extern "C" fn t1_check_unusual_charstring() {
                     .wrapping_add(strlen(t1_buf_array).wrapping_add(1 as size_t));
             }
             if t1_line_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-                pdftex_fail(
-                    b"t1_line_array exceeds size limit\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_fail_args(b"t1_line_array exceeds size limit\0" as *const u8
+                        as *const ::core::ffi::c_char, &[]);
             }
             t1_line_array = xrealloc(
                 t1_line_array as address,
@@ -3987,10 +3853,8 @@ unsafe extern "C" fn t1_subset_charstrings() {
     t1_mark_glyphs();
     if !subr_tab.is_null() {
         if cs_token_pair.is_null() {
-            pdftex_fail(
-                b"This Type 1 font uses mismatched subroutine begin/end token pairs.\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            crate::utils::pdftex_fail_args(b"This Type 1 font uses mismatched subroutine begin/end token pairs.\0" as *const u8
+                    as *const ::core::ffi::c_char, &[]);
         }
         t1_flush_cs(true_0);
     }

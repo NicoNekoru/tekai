@@ -967,7 +967,7 @@ unsafe extern "C" fn ttf_getnum(mut s: ::core::ffi::c_int) -> ::core::ffi::c_lon
     while s > 0 as ::core::ffi::c_int {
         c = xgetc(ttf_file);
         if c < 0 as ::core::ffi::c_int {
-            pdftex_fail(b"unexpected EOF\0" as *const u8 as *const ::core::ffi::c_char);
+            crate::utils::pdftex_fail_args(b"unexpected EOF\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         i = (i << 8 as ::core::ffi::c_int) + c as ::core::ffi::c_long;
         s -= 1;
@@ -1017,10 +1017,7 @@ unsafe extern "C" fn ttf_name_lookup(
     }
     if tab.offset_from(dir_tab) as ::core::ffi::c_long == ntabs as ::core::ffi::c_long {
         if required != 0 {
-            pdftex_fail(
-                b"can't find table `%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                s,
-            );
+            crate::utils::pdftex_fail_args(b"can't find table `%s'\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(s)]);
         } else {
             tab = ::core::ptr::null_mut::<dirtab_entry>();
         }
@@ -1162,12 +1159,8 @@ unsafe extern "C" fn ttf_copy_encoding() {
             e = (&raw mut ttfenc_tab as *mut ttfenc_entry).offset(*q as isize);
             (*e).code = *charcodes.offset(*q as isize);
             if (*e).code == -(1 as ::core::ffi::c_int) as ::core::ffi::c_long {
-                pdftex_warn(
-                    b"character %i in subfont %s is not mapped to any charcode\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    *q,
-                    (*(*fd_cur).fm).tfm_name,
-                );
+                crate::utils::pdftex_warn_args(b"character %i in subfont %s is not mapped to any charcode\0" as *const u8
+                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(*q), crate::utils::PrintfArg::from((*(*fd_cur).fm).tfm_name)]);
             } else {
                 if !((*e).code < 0x10000 as ::core::ffi::c_long) as ::core::ffi::c_int
                     as ::core::ffi::c_long
@@ -1603,11 +1596,8 @@ unsafe extern "C" fn ttf_read_post() {
             current_block_46 = 1202518105438317935;
         }
         _ => {
-            pdftex_warn(
-                b"unsupported format (%.8X) of `post' table, assuming 3.0\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                post_format as ::core::ffi::c_uint,
-            );
+            crate::utils::pdftex_warn_args(b"unsupported format (%.8X) of `post' table, assuming 3.0\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(post_format as ::core::ffi::c_uint)]);
             current_block_46 = 1202518105438317935;
         }
     }
@@ -1761,10 +1751,7 @@ unsafe extern "C" fn ttf_read_cmap(
                 break;
             }
             if warn != 0 {
-                pdftex_warn(
-                    b"cmap format %i unsupported\0" as *const u8 as *const ::core::ffi::c_char,
-                    format as ::core::ffi::c_int,
-                );
+                crate::utils::pdftex_warn_args(b"cmap format %i unsupported\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(format as ::core::ffi::c_int)]);
             }
             return ::core::ptr::null_mut::<ttf_cmap_entry>();
         } else {
@@ -1774,12 +1761,8 @@ unsafe extern "C" fn ttf_read_cmap(
     match current_block {
         14576567515993809846 => {
             if warn != 0 {
-                pdftex_warn(
-                    b"cannot find cmap subtable for (pid,eid) = (%i, %i)\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    pid,
-                    eid,
-                );
+                crate::utils::pdftex_warn_args(b"cannot find cmap subtable for (pid,eid) = (%i, %i)\0" as *const u8
+                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(pid), crate::utils::PrintfArg::from(eid)]);
             }
             return ::core::ptr::null_mut::<ttf_cmap_entry>();
         }
@@ -1882,23 +1865,14 @@ unsafe extern "C" fn ttf_read_cmap(
                             }
                         }
                         if index >= glyphs_count as ::core::ffi::c_long {
-                            pdftex_fail(
-                                b"cmap: glyph index %li out of range [0..%i)\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                index,
-                                glyphs_count as ::core::ffi::c_int,
-                            );
+                            crate::utils::pdftex_fail_args(b"cmap: glyph index %li out of range [0..%i)\0" as *const u8
+                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(index), crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int)]);
                         }
                         if *(*p).table.offset(i as isize)
                             != -(1 as ::core::ffi::c_int) as ::core::ffi::c_long
                         {
-                            pdftex_warn(
-                                b"cmap: multiple glyphs are mapped to unicode %.4lX, only %li will be used (glyph %li being ignored)\0"
-                                    as *const u8 as *const ::core::ffi::c_char,
-                                i,
-                                *(*p).table.offset(i as isize),
-                                index,
-                            );
+                            crate::utils::pdftex_warn_args(b"cmap: multiple glyphs are mapped to unicode %.4lX, only %li will be used (glyph %li being ignored)\0"
+                                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(*(*p).table.offset(i as isize)), crate::utils::PrintfArg::from(index)]);
                         } else {
                             *(*p).table.offset(i as isize) = index;
                         }
@@ -1978,11 +1952,8 @@ unsafe extern "C" fn ttf_reset_chksm(mut tab: *mut dirtab_entry) {
     tmp_ulong = 0 as TTF_ULONG;
     (*tab).offset = fb_offset() as TTF_ULONG;
     if (*tab).offset.wrapping_rem(4 as TTF_ULONG) != 0 as TTF_ULONG {
-        pdftex_warn(
-            b"offset of `%4.4s' is not a multiple of 4\0" as *const u8
-                as *const ::core::ffi::c_char,
-            &raw mut (*tab).tag as *mut ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_warn_args(b"offset of `%4.4s' is not a multiple of 4\0" as *const u8
+                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(&raw mut (*tab).tag as *mut ::core::ffi::c_char)]);
     }
 }
 unsafe extern "C" fn ttf_set_chksm(mut tab: *mut dirtab_entry) {
@@ -2024,12 +1995,8 @@ unsafe extern "C" fn ttf_byte_encoding() {
             if (*e).name
                 != &raw mut notdef as *mut ::core::ffi::c_char as *const ::core::ffi::c_char
             {
-                pdftex_warn(
-                    b"glyph `%s' has been mapped to `%s' in `ttf_byte_encoding' cmap table\0"
-                        as *const u8 as *const ::core::ffi::c_char,
-                    (*e).name,
-                    &raw mut notdef as *mut ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_warn_args(b"glyph `%s' has been mapped to `%s' in `ttf_byte_encoding' cmap table\0"
+                        as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*e).name), crate::utils::PrintfArg::from(&raw mut notdef as *mut ::core::ffi::c_char)]);
             }
             ttf_putnum(TTF_BYTE_SIZE, 0 as ::core::ffi::c_long);
         }
@@ -2148,10 +2115,8 @@ unsafe extern "C" fn ttf_write_cmap() {
                 offset += TRIMMED_TABLE_MAP_LENGTH as ::core::ffi::c_long;
             }
             _ => {
-                pdftex_fail(
-                    b"invalid format (it should not have happened)\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_fail_args(b"invalid format (it should not have happened)\0" as *const u8
+                        as *const ::core::ffi::c_char, &[]);
             }
         }
         ttf_putnum(TTF_USHORT_SIZE, (*ce).platform_id as ::core::ffi::c_long);
@@ -2395,10 +2360,7 @@ unsafe extern "C" fn ttf_write_dirtab() {
         }
     }
     if i.wrapping_rem(4 as TTF_ULONG) != 0 as TTF_ULONG {
-        pdftex_warn(
-            b"font length is not a multiple of 4 (%d)\0" as *const u8 as *const ::core::ffi::c_char,
-            i,
-        );
+        crate::utils::pdftex_warn_args(b"font length is not a multiple of 4 (%d)\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i)]);
         checksum <<= (8 as TTF_ULONG)
             .wrapping_mul((4 as TTF_ULONG).wrapping_sub(i.wrapping_rem(4 as TTF_ULONG)));
     }
@@ -2552,15 +2514,10 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                     } else {
                     };
                     if *t.offset((*e).code as isize) < 0 as ::core::ffi::c_long {
-                        pdftex_warn(
-                            b"subfont %s: wrong mapping: character %li --> 0x%4.4lX --> .notdef\0"
+                        crate::utils::pdftex_warn_args(b"subfont %s: wrong mapping: character %li --> 0x%4.4lX --> .notdef\0"
                                 as *const u8
-                                as *const ::core::ffi::c_char,
-                            (*(*fd_cur).fm).tfm_name,
-                            e.offset_from(&raw mut ttfenc_tab as *mut ttfenc_entry)
-                                as ::core::ffi::c_long,
-                            (*e).code,
-                        );
+                                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*(*fd_cur).fm).tfm_name), crate::utils::PrintfArg::from(e.offset_from(&raw mut ttfenc_tab as *mut ttfenc_entry)
+                                as ::core::ffi::c_long), crate::utils::PrintfArg::from((*e).code)]);
                         current_block = 16658872821858055392;
                     } else {
                         if !(*t.offset((*e).code as isize) >= 0 as ::core::ffi::c_long
@@ -2631,10 +2588,8 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                                 );
                             }
                             if cmap.is_null() {
-                                pdftex_warn(
-                                    b"no unicode mapping found, all `uniXXXX' names will be ignored\0"
-                                        as *const u8 as *const ::core::ffi::c_char,
-                                );
+                                crate::utils::pdftex_warn_args(b"no unicode mapping found, all `uniXXXX' names will be ignored\0"
+                                        as *const u8 as *const ::core::ffi::c_char, &[]);
                                 cmap_not_found = true_0 as boolean;
                             }
                         }
@@ -2657,25 +2612,16 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                             {
                                 if *t.offset(index as isize) >= glyphs_count as ::core::ffi::c_long
                                 {
-                                    pdftex_warn(
-                                        b"`%s' is mapped to index %li which is out of valid range [0..%i)\0"
-                                            as *const u8 as *const ::core::ffi::c_char,
-                                        (*e).name,
-                                        *t.offset(index as isize),
-                                        glyphs_count as ::core::ffi::c_int,
-                                    );
+                                    crate::utils::pdftex_warn_args(b"`%s' is mapped to index %li which is out of valid range [0..%i)\0"
+                                            as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*e).name), crate::utils::PrintfArg::from(*t.offset(index as isize)), crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int)]);
                                     current_block = 16658872821858055392;
                                 } else {
                                     glyph = glyph_tab.offset(*t.offset(index as isize) as isize);
                                     current_block = 9772907965827425793;
                                 }
                             } else {
-                                pdftex_warn(
-                                    b"`unicode %s%.4X' is not mapped to any glyph\0" as *const u8
-                                        as *const ::core::ffi::c_char,
-                                    GLYPH_PREFIX_UNICODE.as_ptr(),
-                                    index,
-                                );
+                                crate::utils::pdftex_warn_args(b"`unicode %s%.4X' is not mapped to any glyph\0" as *const u8
+                                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(GLYPH_PREFIX_UNICODE.as_ptr()), crate::utils::PrintfArg::from(index)]);
                                 current_block = 16658872821858055392;
                             }
                         }
@@ -2689,23 +2635,16 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                         );
                         if n as size_t == strlen((*e).name) {
                             if index >= glyphs_count as ::core::ffi::c_int {
-                                pdftex_warn(
-                                    b"`%s' out of valid range [0..%i)\0" as *const u8
-                                        as *const ::core::ffi::c_char,
-                                    (*e).name,
-                                    glyphs_count as ::core::ffi::c_int,
-                                );
+                                crate::utils::pdftex_warn_args(b"`%s' out of valid range [0..%i)\0" as *const u8
+                                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*e).name), crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int)]);
                                 current_block = 16658872821858055392;
                             } else {
                                 glyph = glyph_tab.offset(index as isize);
                                 current_block = 9772907965827425793;
                             }
                         } else {
-                            pdftex_warn(
-                                b"glyph `%s' not found\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                (*e).name,
-                            );
+                            crate::utils::pdftex_warn_args(b"glyph `%s' not found\0" as *const u8
+                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*e).name)]);
                             current_block = 16658872821858055392;
                         }
                     }
@@ -2883,10 +2822,7 @@ unsafe extern "C" fn ttf_write_OS2() {
     ttf_reset_chksm(tab);
     version = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
     if version as ::core::ffi::c_int > 5 as ::core::ffi::c_int {
-        pdftex_warn(
-            b"unknown version of OS/2 table (%.4X)\0" as *const u8 as *const ::core::ffi::c_char,
-            version as ::core::ffi::c_int,
-        );
+        crate::utils::pdftex_warn_args(b"unknown version of OS/2 table (%.4X)\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(version as ::core::ffi::c_int)]);
     }
     ttf_putnum(TTF_USHORT_SIZE, 0x1 as ::core::ffi::c_long);
     ttf_ncopy(
@@ -3122,10 +3058,8 @@ pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
         && (*fd_cur).fe.is_null()
         && !((*(*fd_cur).fm).type_0 as ::core::ffi::c_int & F_SUBFONT != 0 as ::core::ffi::c_int)
     {
-        pdftex_fail(
-            b"Subset TrueType must be a reencoded or a subfont\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"Subset TrueType must be a reencoded or a subfont\0" as *const u8
+                as *const ::core::ffi::c_char, &[]);
     }
     if open_input(
         &raw mut ttf_file,
@@ -3133,10 +3067,8 @@ pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
         FOPEN_RBIN_MODE.as_ptr(),
     ) == 0
     {
-        pdftex_fail(
-            b"cannot open TrueType font file for reading\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"cannot open TrueType font file for reading\0" as *const u8
+                as *const ::core::ffi::c_char, &[]);
     }
     cur_file_name =
         (nameoffile as *mut ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize);
@@ -3164,15 +3096,9 @@ pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
         }
     }
     if (*(*fd_cur).fm).type_0 as ::core::ffi::c_int & F_SUBSETTED != 0 as ::core::ffi::c_int {
-        tex_printf(
-            b"<%s\0" as *const u8 as *const ::core::ffi::c_char,
-            cur_file_name,
-        );
+        crate::utils::tex_printf_args(b"<%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cur_file_name)]);
     } else {
-        tex_printf(
-            b"<<%s\0" as *const u8 as *const ::core::ffi::c_char,
-            cur_file_name,
-        );
+        crate::utils::tex_printf_args(b"<<%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cur_file_name)]);
     }
     (*fd_cur).ff_found = true_0 as boolean;
     new_glyphs_count = 2 as TTF_USHORT;
@@ -3219,9 +3145,9 @@ pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
     name_buf = ::core::ptr::null_mut::<::core::ffi::c_char>();
     xfclose(ttf_file, cur_file_name as const_string);
     if (*(*fd_cur).fm).type_0 as ::core::ffi::c_int & F_SUBSETTED != 0 as ::core::ffi::c_int {
-        tex_printf(b">\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::utils::tex_printf_args(b">\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     } else {
-        tex_printf(b">>\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::utils::tex_printf_args(b">>\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     }
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
@@ -3266,9 +3192,7 @@ pub unsafe extern "C" fn writeotf(mut fd: *mut fd_entry) {
     cur_file_name = (*(*fd_cur).fm).ff_name;
     zpackfilename(maketexstring(cur_file_name), getnullstr(), getnullstr());
     if (*(*fd_cur).fm).type_0 as ::core::ffi::c_int & F_SUBSETTED != 0 as ::core::ffi::c_int {
-        pdftex_fail(
-            b"OTF fonts must be included entirely\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"OTF fonts must be included entirely\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     }
     if open_input(
         &raw mut ttf_file,
@@ -3276,17 +3200,12 @@ pub unsafe extern "C" fn writeotf(mut fd: *mut fd_entry) {
         FOPEN_RBIN_MODE.as_ptr(),
     ) == 0
     {
-        pdftex_fail(
-            b"cannot open OpenType font file for reading\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"cannot open OpenType font file for reading\0" as *const u8
+                as *const ::core::ffi::c_char, &[]);
     }
     cur_file_name =
         (nameoffile as *mut ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize);
-    tex_printf(
-        b"<<%s\0" as *const u8 as *const ::core::ffi::c_char,
-        cur_file_name,
-    );
+    crate::utils::tex_printf_args(b"<<%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cur_file_name)]);
     (*fd_cur).ff_found = true_0 as boolean;
     dir_tab = ::core::ptr::null_mut::<dirtab_entry>();
     glyph_tab = ::core::ptr::null_mut::<glyph_entry>();
@@ -3340,7 +3259,7 @@ pub unsafe extern "C" fn writeotf(mut fd: *mut fd_entry) {
     }
     dir_tab = ::core::ptr::null_mut::<dirtab_entry>();
     xfclose(ttf_file, cur_file_name as const_string);
-    tex_printf(b">>\0" as *const u8 as *const ::core::ffi::c_char);
+    crate::utils::tex_printf_args(b">>\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;

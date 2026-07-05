@@ -701,23 +701,17 @@ pub unsafe extern "C" fn avl_do_entry(
             match mode {
                 0 => {
                     if suppress_warn == 0 {
-                        pdftex_warn(
-                            b"fontmap entry for `%s' already exists, duplicates ignored\0"
+                        crate::utils::pdftex_warn_args(b"fontmap entry for `%s' already exists, duplicates ignored\0"
                                 as *const u8
-                                as *const ::core::ffi::c_char,
-                            (*fm).tfm_name,
-                        );
+                                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name)]);
                     }
                     current_block = 12876239492772886194;
                 }
                 1 | 2 => {
                     if (*p).in_use != 0 {
-                        pdftex_warn(
-                            b"fontmap entry for `%s' has been used, replace/delete not allowed\0"
+                        crate::utils::pdftex_warn_args(b"fontmap entry for `%s' has been used, replace/delete not allowed\0"
                                 as *const u8
-                                as *const ::core::ffi::c_char,
-                            (*fm).tfm_name,
-                        );
+                                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name)]);
                         current_block = 12876239492772886194;
                     } else {
                         a = avl_delete(tfm_tree, p as *const ::core::ffi::c_void);
@@ -991,11 +985,8 @@ unsafe extern "C" fn check_fm_entry(
         && !((*fm).type_0 as ::core::ffi::c_int & F_INCLUDED != 0 as ::core::ffi::c_int)
     {
         if warn != 0 {
-            pdftex_warn(
-                b"ambiguous entry for `%s': font file present but not included, will be treated as font file not present\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                (*fm).tfm_name,
-            );
+            crate::utils::pdftex_warn_args(b"ambiguous entry for `%s': font file present but not included, will be treated as font file not present\0"
+                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name)]);
         }
         if !(*fm).ff_name.is_null() {
             free((*fm).ff_name as *mut ::core::ffi::c_void);
@@ -1004,9 +995,7 @@ unsafe extern "C" fn check_fm_entry(
     }
     if *(*fm).tfm_name as ::core::ffi::c_int == '\0' as i32 {
         if warn != 0 {
-            pdftex_warn(
-                b"invalid map entry: tfm missing\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+            crate::utils::pdftex_warn_args(b"invalid map entry: tfm missing\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         a += 1 as ::core::ffi::c_int;
     }
@@ -1015,11 +1004,8 @@ unsafe extern "C" fn check_fm_entry(
         && !((*fm).type_0 as ::core::ffi::c_int & F_SUBSETTED != 0 as ::core::ffi::c_int)
     {
         if warn != 0 {
-            pdftex_warn(
-                b"invalid entry for `%s': only subsetted TrueType fonts can be reencoded\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                (*fm).tfm_name,
-            );
+            crate::utils::pdftex_warn_args(b"invalid entry for `%s': only subsetted TrueType fonts can be reencoded\0"
+                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name)]);
         }
         a += 2 as ::core::ffi::c_int;
     }
@@ -1030,11 +1016,8 @@ unsafe extern "C" fn check_fm_entry(
                 && (*fm).type_0 as ::core::ffi::c_int & F_INCLUDED != 0 as ::core::ffi::c_int))
     {
         if warn != 0 {
-            pdftex_warn(
-                b"invalid entry for `%s': SlantFont/ExtendFont can be used only with embedded Type1 fonts\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                (*fm).tfm_name,
-            );
+            crate::utils::pdftex_warn_args(b"invalid entry for `%s': SlantFont/ExtendFont can be used only with embedded Type1 fonts\0"
+                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name)]);
         }
         a += 4 as ::core::ffi::c_int;
     }
@@ -1045,12 +1028,8 @@ unsafe extern "C" fn check_fm_entry(
     }) > 1000 as ::core::ffi::c_int
     {
         if warn != 0 {
-            pdftex_warn(
-                b"invalid entry for `%s': SlantFont value too big: %g\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                (*fm).tfm_name,
-                (*fm).slant as ::core::ffi::c_double / 1000.0f64,
-            );
+            crate::utils::pdftex_warn_args(b"invalid entry for `%s': SlantFont value too big: %g\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name), crate::utils::PrintfArg::from((*fm).slant as ::core::ffi::c_double / 1000.0f64)]);
         }
         a += 8 as ::core::ffi::c_int;
     }
@@ -1061,12 +1040,8 @@ unsafe extern "C" fn check_fm_entry(
     }) > 2000 as ::core::ffi::c_int
     {
         if warn != 0 {
-            pdftex_warn(
-                b"invalid entry for `%s': ExtendFont value too big: %g\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                (*fm).tfm_name,
-                (*fm).extend as ::core::ffi::c_double / 1000.0f64,
-            );
+            crate::utils::pdftex_warn_args(b"invalid entry for `%s': ExtendFont value too big: %g\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name), crate::utils::PrintfArg::from((*fm).extend as ::core::ffi::c_double / 1000.0f64)]);
         }
         a += 16 as ::core::ffi::c_int;
     }
@@ -1076,11 +1051,8 @@ unsafe extern "C" fn check_fm_entry(
             && (*fm).encname.is_null())
     {
         if warn != 0 {
-            pdftex_warn(
-                b"invalid entry for `%s': PidEid can be used only with subsetted non-reencoded TrueType fonts\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                (*fm).tfm_name,
-            );
+            crate::utils::pdftex_warn_args(b"invalid entry for `%s': PidEid can be used only with subsetted non-reencoded TrueType fonts\0"
+                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name)]);
         }
         a += 32 as ::core::ffi::c_int;
     }
@@ -1088,12 +1060,8 @@ unsafe extern "C" fn check_fm_entry(
         && (*fm).type_0 as ::core::ffi::c_int & F_PK != 0 as ::core::ffi::c_int
     {
         if warn != 0 {
-            pdftex_warn(
-                b"invalid entry for `%s': FontFile cannot be specified for bitmap PK font: %s\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                (*fm).tfm_name,
-                (*fm).ff_name,
-            );
+            crate::utils::pdftex_warn_args(b"invalid entry for `%s': FontFile cannot be specified for bitmap PK font: %s\0"
+                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name), crate::utils::PrintfArg::from((*fm).ff_name)]);
         }
         a += 64 as ::core::ffi::c_int;
     }
@@ -1101,12 +1069,8 @@ unsafe extern "C" fn check_fm_entry(
         && (*fm).type_0 as ::core::ffi::c_int & F_PK != 0 as ::core::ffi::c_int
     {
         if warn != 0 {
-            pdftex_warn(
-                b"invalid entry for `%s': PsName cannot be specified for bitmap PK font: %s\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                (*fm).tfm_name,
-                (*fm).ps_name,
-            );
+            crate::utils::pdftex_warn_args(b"invalid entry for `%s': PsName cannot be specified for bitmap PK font: %s\0"
+                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name), crate::utils::PrintfArg::from((*fm).ps_name)]);
         }
         a += 128 as ::core::ffi::c_int;
     }
@@ -1229,13 +1193,9 @@ unsafe extern "C" fn fm_scan_line() {
                         + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
                         > 1024 as ::core::ffi::c_int as ::core::ffi::c_uint
                     {
-                        pdftex_fail(
-                            b"buffer overflow at file %s, line %d\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/mapfile.c\0"
-                                as *const u8 as *const ::core::ffi::c_char,
-                            440 as ::core::ffi::c_int,
-                        );
+                        crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/mapfile.c\0"
+                                as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(440 as ::core::ffi::c_int)]);
                     }
                     let fresh0 = p;
                     p = p.offset(1);
@@ -1284,13 +1244,9 @@ unsafe extern "C" fn fm_scan_line() {
             + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
             > 1024 as ::core::ffi::c_int as ::core::ffi::c_uint
         {
-            pdftex_fail(
-                b"buffer overflow at file %s, line %d\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/mapfile.c\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                455 as ::core::ffi::c_int,
-            );
+            crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/mapfile.c\0"
+                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(455 as ::core::ffi::c_int)]);
         }
         let fresh1 = r;
         r = r.offset(1);
@@ -1324,13 +1280,9 @@ unsafe extern "C" fn fm_scan_line() {
                     + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
                     > 1024 as ::core::ffi::c_int as ::core::ffi::c_uint
                 {
-                    pdftex_fail(
-                        b"buffer overflow at file %s, line %d\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/mapfile.c\0"
-                            as *const u8 as *const ::core::ffi::c_char,
-                        460 as ::core::ffi::c_int,
-                    );
+                    crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/mapfile.c\0"
+                            as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(460 as ::core::ffi::c_int)]);
                 }
                 let fresh3 = r;
                 r = r.offset(1);
@@ -1468,13 +1420,9 @@ unsafe extern "C" fn fm_scan_line() {
                                         }
                                         c = *r as ::core::ffi::c_int;
                                         *r = '\0' as i32 as ::core::ffi::c_char;
-                                        pdftex_warn(
-                                            b"invalid entry for `%s': unknown name `%s' ignored\0"
+                                        crate::utils::pdftex_warn_args(b"invalid entry for `%s': unknown name `%s' ignored\0"
                                                 as *const u8
-                                                as *const ::core::ffi::c_char,
-                                            (*fm).tfm_name,
-                                            s,
-                                        );
+                                                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name), crate::utils::PrintfArg::from(s)]);
                                         *r = c as ::core::ffi::c_char;
                                     }
                                 } else {
@@ -1493,11 +1441,8 @@ unsafe extern "C" fn fm_scan_line() {
                                 r = r.offset(1);
                                 continue;
                             } else {
-                                pdftex_warn(
-                                    b"invalid entry for `%s': closing quote missing\0" as *const u8
-                                        as *const ::core::ffi::c_char,
-                                    (*fm).tfm_name,
-                                );
+                                crate::utils::pdftex_warn_args(b"invalid entry for `%s': closing quote missing\0" as *const u8
+                                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fm).tfm_name)]);
                                 current_block = 17162251379607524254;
                                 break;
                             }
@@ -1545,13 +1490,9 @@ unsafe extern "C" fn fm_scan_line() {
                             as ::core::ffi::c_uint
                             > 1024 as ::core::ffi::c_int as ::core::ffi::c_uint
                         {
-                            pdftex_fail(
-                                b"buffer overflow at file %s, line %d\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/mapfile.c\0"
-                                    as *const u8 as *const ::core::ffi::c_char,
-                                531 as ::core::ffi::c_int,
-                            );
+                            crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/mapfile.c\0"
+                                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(531 as ::core::ffi::c_int)]);
                         }
                         let fresh7 = r;
                         r = r.offset(1);
@@ -1682,22 +1623,17 @@ pub unsafe extern "C" fn fm_read_info() {
                 FOPEN_RBIN_MODE.as_ptr(),
             ) == 0
             {
-                pdftex_warn(
-                    b"cannot open font map file\0" as *const u8 as *const ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_warn_args(b"cannot open font map file\0" as *const u8 as *const ::core::ffi::c_char, &[]);
             } else {
                 cur_file_name = (nameoffile as *mut ::core::ffi::c_char)
                     .offset(1 as ::core::ffi::c_int as isize);
-                tex_printf(
-                    b"{%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    cur_file_name,
-                );
+                crate::utils::tex_printf_args(b"{%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cur_file_name)]);
                 while feof(fm_file) == 0 {
                     fm_scan_line();
                     (*mitem).lineno += 1;
                 }
                 xfclose(fm_file, cur_file_name as const_string);
-                tex_printf(b"}\0" as *const u8 as *const ::core::ffi::c_char);
+                crate::utils::tex_printf_args(b"}\0" as *const u8 as *const ::core::ffi::c_char, &[]);
                 fm_file = ::core::ptr::null_mut::<FILE>();
             }
         }

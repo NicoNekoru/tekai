@@ -260,22 +260,11 @@ pub unsafe extern "C" fn epdf_write_enc(
     while i < 256 as ::core::ffi::c_int {
         if *glyph_names.offset(i as isize) != &raw mut notdef as *mut ::core::ffi::c_char {
             if i == i_old + 1 as ::core::ffi::c_int {
-                pdf_printf(
-                    b"/%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    *glyph_names.offset(i as isize),
-                );
+                crate::utils::pdf_printf_args(b"/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(*glyph_names.offset(i as isize))]);
             } else if i_old == -(2 as ::core::ffi::c_int) {
-                pdf_printf(
-                    b"%i/%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    i,
-                    *glyph_names.offset(i as isize),
-                );
+                crate::utils::pdf_printf_args(b"%i/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(*glyph_names.offset(i as isize))]);
             } else {
-                pdf_printf(
-                    b" %i/%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    i,
-                    *glyph_names.offset(i as isize),
-                );
+                crate::utils::pdf_printf_args(b" %i/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(*glyph_names.offset(i as isize))]);
             }
             i_old = i;
         }
@@ -333,22 +322,11 @@ unsafe extern "C" fn write_enc(
     p = avl_t_first(&raw mut t, tx_tree) as *mut ::core::ffi::c_int;
     while !p.is_null() {
         if *p == i_old + 1 as ::core::ffi::c_int {
-            pdf_printf(
-                b"/%s\0" as *const u8 as *const ::core::ffi::c_char,
-                *glyph_names.offset(*p as isize),
-            );
+            crate::utils::pdf_printf_args(b"/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(*glyph_names.offset(*p as isize))]);
         } else if i_old == -(2 as ::core::ffi::c_int) {
-            pdf_printf(
-                b"%i/%s\0" as *const u8 as *const ::core::ffi::c_char,
-                *p,
-                *glyph_names.offset(*p as isize),
-            );
+            crate::utils::pdf_printf_args(b"%i/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(*p), crate::utils::PrintfArg::from(*glyph_names.offset(*p as isize))]);
         } else {
-            pdf_printf(
-                b" %i/%s\0" as *const u8 as *const ::core::ffi::c_char,
-                *p,
-                *glyph_names.offset(*p as isize),
-            );
+            crate::utils::pdf_printf_args(b" %i/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(*p), crate::utils::PrintfArg::from(*glyph_names.offset(*p as isize))]);
         }
         i_old = *p;
         p = avl_t_next(&raw mut t) as *mut ::core::ffi::c_int;

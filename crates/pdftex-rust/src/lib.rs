@@ -56,9 +56,12 @@ pub mod generated {
 
 pub mod md5;
 pub mod openclose;
+pub mod pdftoepdf;
 pub mod support;
 pub mod synctex;
+pub mod utils;
 pub mod web2c;
+pub mod xpdf;
 
 #[cfg(not(test))]
 #[no_mangle]

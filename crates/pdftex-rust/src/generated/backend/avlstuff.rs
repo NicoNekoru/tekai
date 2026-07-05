@@ -240,10 +240,8 @@ pub unsafe extern "C" fn avlputobj(mut objptr: integer, mut t: integer) {
             &raw mut avl_xallocator,
         );
         if PdfObjTree[t as usize].is_null() {
-            pdftex_fail(
-                b"avlstuff.c: avl_create() PdfObjTree failed\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            crate::utils::pdftex_fail_args(b"avlstuff.c: avl_create() PdfObjTree failed\0" as *const u8
+                    as *const ::core::ffi::c_char, &[]);
         }
     }
     oe = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<oentry>() as size_t))
@@ -252,10 +250,8 @@ pub unsafe extern "C" fn avlputobj(mut objptr: integer, mut t: integer) {
     (*oe).objptr = objptr;
     pp = avl_probe(PdfObjTree[t as usize], oe as *mut ::core::ffi::c_void);
     if pp.is_null() {
-        pdftex_fail(
-            b"avlstuff.c: avl_probe() out of memory in insertion\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_fail_args(b"avlstuff.c: avl_probe() out of memory in insertion\0" as *const u8
+                as *const ::core::ffi::c_char, &[]);
     }
 }
 #[no_mangle]

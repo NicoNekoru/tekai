@@ -330,7 +330,7 @@ unsafe extern "C" fn sfd_getline(mut expect_eof: boolean) {
             if expect_eof != 0 {
                 return;
             } else {
-                pdftex_fail(b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char);
+                crate::utils::pdftex_fail_args(b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char, &[]);
             }
         }
         p = &raw mut sfd_line as *mut ::core::ffi::c_char;
@@ -352,13 +352,9 @@ unsafe extern "C" fn sfd_getline(mut expect_eof: boolean) {
                     + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
                     > 256 as ::core::ffi::c_int as ::core::ffi::c_uint
                 {
-                    pdftex_fail(
-                        b"buffer overflow at file %s, line %d\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/subfont.c\0"
-                            as *const u8 as *const ::core::ffi::c_char,
-                        95 as ::core::ffi::c_int,
-                    );
+                    crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/subfont.c\0"
+                            as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(95 as ::core::ffi::c_int)]);
                 }
                 let fresh3 = p;
                 p = p.offset(1);
@@ -372,13 +368,9 @@ unsafe extern "C" fn sfd_getline(mut expect_eof: boolean) {
             + 2 as ::core::ffi::c_long) as ::core::ffi::c_uint
             > 256 as ::core::ffi::c_int as ::core::ffi::c_uint
         {
-            pdftex_fail(
-                b"buffer overflow at file %s, line %d\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/subfont.c\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                97 as ::core::ffi::c_int,
-            );
+            crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/subfont.c\0"
+                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(97 as ::core::ffi::c_int)]);
         }
         if p.offset_from(&raw mut sfd_line as *mut ::core::ffi::c_char) as ::core::ffi::c_long
             > 1 as ::core::ffi::c_long
@@ -456,17 +448,12 @@ unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sf
         FOPEN_RBIN_MODE.as_ptr(),
     ) == 0
     {
-        pdftex_warn(
-            b"cannot open SFD file for reading\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdftex_warn_args(b"cannot open SFD file for reading\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
         return ::core::ptr::null_mut::<sfd_entry>();
     }
-    tex_printf(b"{\0" as *const u8 as *const ::core::ffi::c_char);
-    tex_printf(
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        cur_file_name,
-    );
+    crate::utils::tex_printf_args(b"{\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+    crate::utils::tex_printf_args(b"%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cur_file_name)]);
     sfd = new_sfd_entry();
     (*sfd).name = xstrdup(sfd_name as const_string) as *mut ::core::ffi::c_char;
     while feof(sfd_file) == 0 {
@@ -504,10 +491,7 @@ unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sf
                     &raw mut n,
                 ) == 0 as ::core::ffi::c_int
                 {
-                    pdftex_fail(
-                        b"invalid token:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
-                        p,
-                    );
+                    crate::utils::pdftex_fail_args(b"invalid token:\n%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(p)]);
                 }
                 p = p.offset(n as isize);
                 if *p as ::core::ffi::c_int == ':' as i32 {
@@ -521,16 +505,10 @@ unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sf
                         &raw mut n,
                     ) == 0 as ::core::ffi::c_int
                     {
-                        pdftex_fail(
-                            b"invalid token:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
-                            p,
-                        );
+                        crate::utils::pdftex_fail_args(b"invalid token:\n%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(p)]);
                     }
                     if i > j || k + (j - i) > 255 as ::core::ffi::c_long {
-                        pdftex_fail(
-                            b"invalid range:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
-                            p,
-                        );
+                        crate::utils::pdftex_fail_args(b"invalid range:\n%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(p)]);
                     }
                     while i <= j {
                         let fresh0 = i;
@@ -549,7 +527,7 @@ unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sf
         }
     }
     xfclose(sfd_file, cur_file_name as const_string);
-    tex_printf(b"}\0" as *const u8 as *const ::core::ffi::c_char);
+    crate::utils::tex_printf_args(b"}\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     aa = avl_probe(sfd_tree, sfd as *mut ::core::ffi::c_void);
     if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -610,13 +588,9 @@ pub unsafe extern "C" fn handle_subfont_fm(
         as ::core::ffi::c_uint
         > 256 as ::core::ffi::c_int as ::core::ffi::c_uint
     {
-        pdftex_fail(
-            b"buffer overflow at file %s, line %d\0" as *const u8
-                as *const ::core::ffi::c_char,
-            b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/subfont.c\0"
-                as *const u8 as *const ::core::ffi::c_char,
-            196 as ::core::ffi::c_int,
-        );
+        crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
+                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/subfont.c\0"
+                as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(196 as ::core::ffi::c_int)]);
     }
     strcat(
         &raw mut buf as *mut ::core::ffi::c_char,

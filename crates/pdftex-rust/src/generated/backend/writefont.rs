@@ -486,10 +486,7 @@ unsafe extern "C" fn fix_fontmetrics(mut fd: *mut fd_entry) {
         || (*p.offset(FONTBBOX3_CODE as isize)).set == 0
         || (*p.offset(FONTBBOX4_CODE as isize)).set == 0
     {
-        pdftex_warn(
-            b"font `%s' doesn't have a BoundingBox\0" as *const u8 as *const ::core::ffi::c_char,
-            (*(*fd).fm).ff_name,
-        );
+        crate::utils::pdftex_warn_args(b"font `%s' doesn't have a BoundingBox\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*(*fd).fm).ff_name)]);
         return;
     }
     if (*p.offset(ASCENT_CODE as isize)).set == 0 {
@@ -513,23 +510,12 @@ unsafe extern "C" fn write_fontmetrics(mut fd: *mut fd_entry) {
         && (*fd).font_dim[FONTBBOX3_CODE as usize].set != 0
         && (*fd).font_dim[FONTBBOX4_CODE as usize].set != 0
     {
-        pdf_printf(
-            b"/%s [%i %i %i %i]\n\0" as *const u8 as *const ::core::ffi::c_char,
-            font_key[FONTBBOX1_CODE as usize].pdfname,
-            (*fd).font_dim[FONTBBOX1_CODE as usize].val,
-            (*fd).font_dim[FONTBBOX2_CODE as usize].val,
-            (*fd).font_dim[FONTBBOX3_CODE as usize].val,
-            (*fd).font_dim[FONTBBOX4_CODE as usize].val,
-        );
+        crate::utils::pdf_printf_args(b"/%s [%i %i %i %i]\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(font_key[FONTBBOX1_CODE as usize].pdfname), crate::utils::PrintfArg::from((*fd).font_dim[FONTBBOX1_CODE as usize].val), crate::utils::PrintfArg::from((*fd).font_dim[FONTBBOX2_CODE as usize].val), crate::utils::PrintfArg::from((*fd).font_dim[FONTBBOX3_CODE as usize].val), crate::utils::PrintfArg::from((*fd).font_dim[FONTBBOX4_CODE as usize].val)]);
     }
     i = 0 as ::core::ffi::c_int;
     while i < GEN_KEY_NUM {
         if (*fd).font_dim[i as usize].set != 0 {
-            pdf_printf(
-                b"/%s %i\n\0" as *const u8 as *const ::core::ffi::c_char,
-                font_key[i as usize].pdfname,
-                (*fd).font_dim[i as usize].val,
-            );
+            crate::utils::pdf_printf_args(b"/%s %i\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(font_key[i as usize].pdfname), crate::utils::PrintfArg::from((*fd).font_dim[i as usize].val)]);
         }
         i += 1;
     }
@@ -555,18 +541,12 @@ unsafe extern "C" fn write_fontname(mut fd: *mut fd_entry, mut key: *const ::cor
     };
     pdf_puts(b"/\0" as *const u8 as *const ::core::ffi::c_char);
     if !key.is_null() {
-        pdf_printf(b"%s /\0" as *const u8 as *const ::core::ffi::c_char, key);
+        crate::utils::pdf_printf_args(b"%s /\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(key)]);
     }
     if !(*fd).subset_tag.is_null() {
-        pdf_printf(
-            b"%s+\0" as *const u8 as *const ::core::ffi::c_char,
-            (*fd).subset_tag,
-        );
+        crate::utils::pdf_printf_args(b"%s+\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fd).subset_tag)]);
     }
-    pdf_printf(
-        b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-        (*fd).fontname,
-    );
+    crate::utils::pdf_printf_args(b"%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fd).fontname)]);
 }
 unsafe extern "C" fn write_fontname_object(mut fd: *mut fd_entry) {
     if !((*fd).fn_objnum != 0 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long
@@ -1047,13 +1027,10 @@ unsafe extern "C" fn write_charwidth_array(mut fo: *mut fo_entry) {
     pdf_puts(b"[\0" as *const u8 as *const ::core::ffi::c_char);
     i = (*fo).first_char as ::core::ffi::c_int;
     while i <= (*fo).last_char {
-        pdf_printf(
-            b"%i\0" as *const u8 as *const ::core::ffi::c_char,
-            *(*(*fo).cw).width.offset(i as isize) / 10 as ::core::ffi::c_int,
-        );
+        crate::utils::pdf_printf_args(b"%i\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(*(*(*fo).cw).width.offset(i as isize) / 10 as ::core::ffi::c_int)]);
         j = *(*(*fo).cw).width.offset(i as isize) as ::core::ffi::c_int % 10 as ::core::ffi::c_int;
         if j != 0 as ::core::ffi::c_int {
-            pdf_printf(b".%i\0" as *const u8 as *const ::core::ffi::c_char, j);
+            crate::utils::pdf_printf_args(b".%i\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(j)]);
         }
         if i != (*fo).last_char {
             pdf_puts(b" \0" as *const u8 as *const ::core::ffi::c_char);
@@ -1249,17 +1226,9 @@ unsafe extern "C" fn write_fontfile(mut fd: *mut fd_entry) {
     (*fd).ff_objnum = pdfnewobjnum();
     zpdfbegindict((*fd).ff_objnum, 0 as ::core::ffi::c_int);
     if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_TYPE1 != 0 as ::core::ffi::c_int {
-        pdf_printf(
-            b"/Length1 %i\n/Length2 %i\n/Length3 %i\n\0" as *const u8 as *const ::core::ffi::c_char,
-            t1_length1,
-            t1_length2,
-            t1_length3,
-        );
+        crate::utils::pdf_printf_args(b"/Length1 %i\n/Length2 %i\n/Length3 %i\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t1_length1), crate::utils::PrintfArg::from(t1_length2), crate::utils::PrintfArg::from(t1_length3)]);
     } else if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_TRUETYPE != 0 as ::core::ffi::c_int {
-        pdf_printf(
-            b"/Length1 %i\n\0" as *const u8 as *const ::core::ffi::c_char,
-            ttf_length,
-        );
+        crate::utils::pdf_printf_args(b"/Length1 %i\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(ttf_length)]);
     } else if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_OTF != 0 as ::core::ffi::c_int {
         pdf_puts(b"/Subtype /Type1C\n\0" as *const u8 as *const ::core::ffi::c_char);
     } else {
@@ -1358,22 +1327,14 @@ unsafe extern "C" fn write_fontdescriptor(mut fd: *mut fd_entry) {
             } else {
                 FD_FLAGS_DEFAULT_NON_EMBED
             };
-        pdftex_warn(
-            b"No flags specified for non-embedded font `%s' (%s) (I'm using %i): fix your map entry.\0"
-                as *const u8 as *const ::core::ffi::c_char,
-            if !(*(*fd).fm).ps_name.is_null() {
+        crate::utils::pdftex_warn_args(b"No flags specified for non-embedded font `%s' (%s) (I'm using %i): fix your map entry.\0"
+                as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(if !(*(*fd).fm).ps_name.is_null() {
                 (*(*fd).fm).ps_name as *const ::core::ffi::c_char
             } else {
                 b"No name given\0" as *const u8 as *const ::core::ffi::c_char
-            },
-            (*(*fd).fm).tfm_name,
-            fd_flags,
-        );
+            }), crate::utils::PrintfArg::from((*(*fd).fm).tfm_name), crate::utils::PrintfArg::from(fd_flags)]);
     }
-    pdf_printf(
-        b"/Flags %i\n\0" as *const u8 as *const ::core::ffi::c_char,
-        fd_flags,
-    );
+    crate::utils::pdf_printf_args(b"/Flags %i\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(fd_flags)]);
     write_fontmetrics(fd);
     if (*fd).ff_found != 0 {
         if getpdfomitcharset() == 0 as ::core::ffi::c_int
@@ -1393,26 +1354,17 @@ unsafe extern "C" fn write_fontdescriptor(mut fd: *mut fd_entry) {
             pdf_puts(b"/CharSet (\0" as *const u8 as *const ::core::ffi::c_char);
             glyph = avl_t_first(&raw mut t, (*fd).gl_tree) as *mut ::core::ffi::c_char;
             while !glyph.is_null() {
-                pdf_printf(b"/%s\0" as *const u8 as *const ::core::ffi::c_char, glyph);
+                crate::utils::pdf_printf_args(b"/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(glyph)]);
                 glyph = avl_t_next(&raw mut t) as *mut ::core::ffi::c_char;
             }
             pdf_puts(b")\n\0" as *const u8 as *const ::core::ffi::c_char);
         }
         if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_TYPE1 != 0 as ::core::ffi::c_int {
-            pdf_printf(
-                b"/FontFile %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
-                (*fd).ff_objnum,
-            );
+            crate::utils::pdf_printf_args(b"/FontFile %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fd).ff_objnum)]);
         } else if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_TRUETYPE != 0 as ::core::ffi::c_int {
-            pdf_printf(
-                b"/FontFile2 %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
-                (*fd).ff_objnum,
-            );
+            crate::utils::pdf_printf_args(b"/FontFile2 %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fd).ff_objnum)]);
         } else if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_OTF != 0 as ::core::ffi::c_int {
-            pdf_printf(
-                b"/FontFile3 %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
-                (*fd).ff_objnum,
-            );
+            crate::utils::pdf_printf_args(b"/FontFile3 %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fd).ff_objnum)]);
         } else {
             if (0 as ::core::ffi::c_int == 0) as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
                 __assert_rtn(
@@ -1506,9 +1458,7 @@ unsafe extern "C" fn write_fontdictionary(mut fo: *mut fo_entry) {
             );
         } else if (*(*fo).fm).type_0 as ::core::ffi::c_int & F_TYPE1 != 0 as ::core::ffi::c_int {
             if (*(*fo).fd).builtin_glyph_names.is_null() {
-                pdftex_fail(
-                    b"builtin glyph names is empty\0" as *const u8 as *const ::core::ffi::c_char,
-                );
+                crate::utils::pdftex_fail_args(b"builtin glyph names is empty\0" as *const u8 as *const ::core::ffi::c_char, &[]);
             }
             (*fo).tounicode_objnum = write_tounicode(
                 (*(*fo).fd).builtin_glyph_names,
@@ -1521,20 +1471,11 @@ unsafe extern "C" fn write_fontdictionary(mut fo: *mut fo_entry) {
     pdf_puts(b"/Type /Font\n\0" as *const u8 as *const ::core::ffi::c_char);
     pdf_puts(b"/Subtype /\0" as *const u8 as *const ::core::ffi::c_char);
     if (*(*fo).fm).type_0 as ::core::ffi::c_int & F_TYPE1 != 0 as ::core::ffi::c_int {
-        pdf_printf(
-            b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            b"Type1\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdf_printf_args(b"%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"Type1\0" as *const u8 as *const ::core::ffi::c_char)]);
     } else if (*(*fo).fm).type_0 as ::core::ffi::c_int & F_TRUETYPE != 0 as ::core::ffi::c_int {
-        pdf_printf(
-            b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            b"TrueType\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdf_printf_args(b"%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"TrueType\0" as *const u8 as *const ::core::ffi::c_char)]);
     } else if (*(*fo).fm).type_0 as ::core::ffi::c_int & F_OTF != 0 as ::core::ffi::c_int {
-        pdf_printf(
-            b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            b"Type1\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        crate::utils::pdf_printf_args(b"%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"Type1\0" as *const u8 as *const ::core::ffi::c_char)]);
     } else {
         if (0 as ::core::ffi::c_int == 0) as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
             __assert_rtn(
@@ -1563,10 +1504,7 @@ unsafe extern "C" fn write_fontdictionary(mut fo: *mut fo_entry) {
         (*fo).fd,
         b"BaseFont\0" as *const u8 as *const ::core::ffi::c_char,
     );
-    pdf_printf(
-        b"/FontDescriptor %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
-        (*(*fo).fd).fd_objnum,
-    );
+    crate::utils::pdf_printf_args(b"/FontDescriptor %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*(*fo).fd).fd_objnum)]);
     if (*fo).cw.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"write_fontdictionary\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1576,28 +1514,17 @@ unsafe extern "C" fn write_fontdictionary(mut fo: *mut fo_entry) {
         );
     } else {
     };
-    pdf_printf(
-        b"/FirstChar %i\n/LastChar %i\n/Widths %i 0 R\n\0" as *const u8
-            as *const ::core::ffi::c_char,
-        (*fo).first_char,
-        (*fo).last_char,
-        (*(*fo).cw).cw_objnum,
-    );
+    crate::utils::pdf_printf_args(b"/FirstChar %i\n/LastChar %i\n/Widths %i 0 R\n\0" as *const u8
+            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fo).first_char), crate::utils::PrintfArg::from((*fo).last_char), crate::utils::PrintfArg::from((*(*fo).cw).cw_objnum)]);
     if ((*(*fo).fm).type_0 as ::core::ffi::c_int & F_TYPE1 != 0 as ::core::ffi::c_int
         || (*(*fo).fm).type_0 as ::core::ffi::c_int & F_OTF != 0 as ::core::ffi::c_int)
         && !(*fo).fe.is_null()
         && (*(*fo).fe).fe_objnum != 0 as ::core::ffi::c_int
     {
-        pdf_printf(
-            b"/Encoding %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
-            (*(*fo).fe).fe_objnum,
-        );
+        crate::utils::pdf_printf_args(b"/Encoding %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*(*fo).fe).fe_objnum)]);
     }
     if (*fo).tounicode_objnum != 0 as ::core::ffi::c_int {
-        pdf_printf(
-            b"/ToUnicode %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
-            (*fo).tounicode_objnum,
-        );
+        crate::utils::pdf_printf_args(b"/ToUnicode %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fo).tounicode_objnum)]);
     }
     if *pdffontattr.offset((*fo).tex_font as isize) != getnullstr() {
         zpdfprint(*pdffontattr.offset((*fo).tex_font as isize));
@@ -1704,11 +1631,8 @@ unsafe extern "C" fn create_fontdictionary(
         create_fontdescriptor(fo, f);
         write_fontdescriptor((*fo).fd);
         if !((*(*fo).fm).type_0 as ::core::ffi::c_int & F_STDT1FONT != 0 as ::core::ffi::c_int) {
-            pdftex_warn(
-                b"font `%s' is not a standard font; I suppose it is available to your PDF viewer then\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                (*(*fo).fm).ps_name,
-            );
+            crate::utils::pdftex_warn_args(b"font `%s' is not a standard font; I suppose it is available to your PDF viewer then\0"
+                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*(*fo).fm).ps_name)]);
         }
     }
     if (*(*fo).fm).type_0 as ::core::ffi::c_int & F_TYPE1 != 0 as ::core::ffi::c_int {
