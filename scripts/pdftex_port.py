@@ -28,6 +28,7 @@ GENERATED_BACKEND_DIR = GENERATED_DIR / "backend"
 RUST_ARCHIVE = ROOT / "target" / "release" / "libpdftex_rust.a"
 RUST_BINARY = ROOT / "target" / "release" / "pdftex-rust"
 RUST_LIBTOOL_BINARY = WEB2C_DIR / "pdftex-rust-full"
+FORMAT_DIR = PORT_ROOT / "formats"
 SOURCE_DATE_EPOCH = "1783191600"
 PDFTEX_BACKEND_C_SOURCES = [
     TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "avl.c",
@@ -565,6 +566,51 @@ def link_rust_pdftex(force: bool = False) -> None:
     run(link_cmd, cwd=WEB2C_DIR)
 
 
+def rust_tex_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    env = {
+        "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH,
+        "FORCE_SOURCE_DATE": "1",
+        "PDFTEX_RUST_FORMATS": str(FORMAT_DIR),
+        "TEXFORMATS": f"{FORMAT_DIR}:",
+    }
+    if extra:
+        env.update(extra)
+    return env
+
+
+def ensure_latex_format(binary: Path, *, force: bool = False, name: str = "pdflatex") -> Path:
+    FORMAT_DIR.mkdir(parents=True, exist_ok=True)
+    fmt = FORMAT_DIR / f"{name}.fmt"
+    if (
+        not force
+        and fmt.exists()
+        and fmt.stat().st_mtime >= binary.stat().st_mtime
+    ):
+        return fmt
+    if fmt.exists():
+        fmt.unlink()
+    for stale in (FORMAT_DIR / f"{name}.log", FORMAT_DIR / f"{name}.fls"):
+        stale.unlink(missing_ok=True)
+    run(
+        [
+            str(binary),
+            "-ini",
+            f"-jobname={name}",
+            f"-progname={name}",
+            "-translate-file=cp227.tcx",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            "*pdflatex.ini",
+        ],
+        cwd=FORMAT_DIR,
+        env=rust_tex_env(),
+        capture=True,
+    )
+    if not fmt.exists():
+        raise SystemExit(f"format generation did not produce {fmt}")
+    return fmt
+
+
 def run_initex_smoke(binary: Path, out_dir: Path, extra_args: list[str] | None = None) -> None:
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True)
@@ -587,6 +633,50 @@ def run_initex_smoke(binary: Path, out_dir: Path, extra_args: list[str] | None =
         env=env,
         capture=True,
     ).stdout
+
+
+def run_latex_smoke(binary: Path, out_dir: Path) -> None:
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+    run(
+        [
+            str(binary),
+            "-fmt=pdflatex",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            f"-output-directory={out_dir}",
+            str(ROOT / "examples" / "minimal.tex"),
+        ],
+        cwd=ROOT,
+        env=rust_tex_env(),
+        capture=True,
+    )
+    pdf = out_dir / "minimal.pdf"
+    if not pdf.exists() or pdf.stat().st_size == 0:
+        raise SystemExit(f"pdflatex smoke did not produce {pdf}")
+
+
+def run_system_latex_smoke(out_dir: Path) -> None:
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+    run(
+        [
+            "pdflatex",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            f"-output-directory={out_dir}",
+            str(ROOT / "examples" / "minimal.tex"),
+        ],
+        cwd=ROOT,
+        env={
+            "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH,
+            "FORCE_SOURCE_DATE": "1",
+        },
+        capture=True,
+    )
+    pdf = out_dir / "minimal.pdf"
+    if not pdf.exists() or pdf.stat().st_size == 0:
+        raise SystemExit(f"system pdflatex smoke did not produce {pdf}")
 
 
 def png_chunk(kind: bytes, data: bytes) -> bytes:
@@ -652,6 +742,83 @@ def write_pdf_fixture(path: Path) -> None:
     path.write_bytes(pdf)
 
 
+def png_pixels(path: Path) -> tuple[int, int, int, bytes]:
+    data = path.read_bytes()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError(f"not a PNG: {path}")
+    pos = 8
+    width = height = bit_depth = color_type = None
+    idat = bytearray()
+    while pos < len(data):
+        if pos + 8 > len(data):
+            raise ValueError(f"truncated PNG chunk header: {path}")
+        length = struct.unpack(">I", data[pos:pos + 4])[0]
+        kind = data[pos + 4:pos + 8]
+        chunk = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if kind == b"IHDR":
+            width, height, bit_depth, color_type, _, _, interlace = struct.unpack(
+                ">IIBBBBB", chunk
+            )
+            if bit_depth != 8 or interlace != 0:
+                raise ValueError(f"unsupported PNG layout in {path}")
+        elif kind == b"IDAT":
+            idat.extend(chunk)
+        elif kind == b"IEND":
+            break
+    if width is None or height is None or bit_depth is None or color_type is None:
+        raise ValueError(f"missing PNG IHDR: {path}")
+    channels = {0: 1, 2: 3, 4: 2, 6: 4}.get(color_type)
+    if channels is None:
+        raise ValueError(f"unsupported PNG color type {color_type} in {path}")
+    row_len = width * channels
+    raw = zlib.decompress(bytes(idat))
+    rows: list[bytes] = []
+    prev = bytearray(row_len)
+    offset = 0
+    for _ in range(height):
+        filter_type = raw[offset]
+        offset += 1
+        row = bytearray(raw[offset:offset + row_len])
+        offset += row_len
+        for i, value in enumerate(row):
+            left = row[i - channels] if i >= channels else 0
+            up = prev[i]
+            up_left = prev[i - channels] if i >= channels else 0
+            if filter_type == 0:
+                delta = 0
+            elif filter_type == 1:
+                delta = left
+            elif filter_type == 2:
+                delta = up
+            elif filter_type == 3:
+                delta = (left + up) // 2
+            elif filter_type == 4:
+                delta = paeth_predictor(left, up, up_left)
+            else:
+                raise ValueError(f"unsupported PNG filter {filter_type} in {path}")
+            row[i] = (value + delta) & 0xFF
+        rows.append(bytes(row))
+        prev = row
+    return width, height, color_type, b"".join(rows)
+
+
+def paeth_predictor(left: int, up: int, up_left: int) -> int:
+    estimate = left + up - up_left
+    left_distance = abs(estimate - left)
+    up_distance = abs(estimate - up)
+    up_left_distance = abs(estimate - up_left)
+    if left_distance <= up_distance and left_distance <= up_left_distance:
+        return left
+    if up_distance <= up_left_distance:
+        return up
+    return up_left
+
+
+def png_pixels_equal(left: Path, right: Path) -> bool:
+    return png_pixels(left) == png_pixels(right)
+
+
 def run_png_smoke(binary: Path, out_dir: Path) -> None:
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True)
@@ -707,6 +874,7 @@ def smoke(force_link: bool = False, legacy_libtool: bool = False) -> None:
     else:
         build_rust_executable()
         rust_binary = RUST_BINARY
+    ensure_latex_format(rust_binary)
     c_dir = PORT_ROOT / "smoke" / "c"
     rust_dir = PORT_ROOT / "smoke" / "rust"
     run_initex_smoke(WEB2C_DIR / "pdftex", c_dir)
@@ -729,10 +897,9 @@ def smoke(force_link: bool = False, legacy_libtool: bool = False) -> None:
                     str(render_dir / "page"),
                 ]
             )
-        comparisons["pixels"] = filecmp.cmp(
+        comparisons["pixels"] = png_pixels_equal(
             c_dir / "render" / "page-1.png",
             rust_dir / "render" / "page-1.png",
-            shallow=False,
         )
         png_c_dir = PORT_ROOT / "smoke-png" / "c"
         png_rust_dir = PORT_ROOT / "smoke-png" / "rust"
@@ -751,10 +918,9 @@ def smoke(force_link: bool = False, legacy_libtool: bool = False) -> None:
                     str(render_dir / "page"),
                 ]
             )
-        comparisons["png_pixels"] = filecmp.cmp(
+        comparisons["png_pixels"] = png_pixels_equal(
             png_c_dir / "render" / "page-1.png",
             png_rust_dir / "render" / "page-1.png",
-            shallow=False,
         )
         pdf_c_dir = PORT_ROOT / "smoke-pdf" / "c"
         pdf_rust_dir = PORT_ROOT / "smoke-pdf" / "rust"
@@ -773,10 +939,9 @@ def smoke(force_link: bool = False, legacy_libtool: bool = False) -> None:
                     str(render_dir / "page"),
                 ]
             )
-        comparisons["pdf_image_pixels"] = filecmp.cmp(
+        comparisons["pdf_image_pixels"] = png_pixels_equal(
             pdf_c_dir / "render" / "page-1.png",
             pdf_rust_dir / "render" / "page-1.png",
-            shallow=False,
         )
     synctex_c_dir = PORT_ROOT / "smoke-synctex" / "c"
     synctex_rust_dir = PORT_ROOT / "smoke-synctex" / "rust"
@@ -790,6 +955,31 @@ def smoke(force_link: bool = False, legacy_libtool: bool = False) -> None:
     comparisons["rust_synctex_sidecar_omitted"] = not (
         synctex_rust_dir / "test.synctex.gz"
     ).exists()
+    latex_rust_dir = PORT_ROOT / "smoke-latex" / "rust"
+    run_latex_smoke(rust_binary, latex_rust_dir)
+    comparisons["pdflatex_format_pdf"] = (
+        latex_rust_dir / "minimal.pdf"
+    ).exists()
+    if shutil.which("pdflatex") and shutil.which("pdftoppm"):
+        latex_c_dir = PORT_ROOT / "smoke-latex" / "pdflatex"
+        run_system_latex_smoke(latex_c_dir)
+        for directory in (latex_c_dir, latex_rust_dir):
+            render_dir = directory / "render"
+            render_dir.mkdir()
+            run(
+                [
+                    "pdftoppm",
+                    "-r",
+                    "144",
+                    "-png",
+                    str(directory / "minimal.pdf"),
+                    str(render_dir / "page"),
+                ]
+            )
+        comparisons["pdflatex_format_pixels"] = png_pixels_equal(
+            latex_c_dir / "render" / "page-1.png",
+            latex_rust_dir / "render" / "page-1.png",
+        )
     print(json.dumps(comparisons, indent=2))
     if not all(comparisons.values()):
         raise SystemExit("pdfTeX Rust smoke parity failed")
@@ -807,6 +997,10 @@ def main() -> None:
 
     link_parser = sub.add_parser("link", help="link legacy pdftex-rust-full with TeX Live libtool")
     link_parser.add_argument("--force", action="store_true")
+
+    format_parser = sub.add_parser("format", help="dump Rust-owned LaTeX format files")
+    format_parser.add_argument("--force", action="store_true")
+    format_parser.add_argument("--name", default="pdflatex")
 
     smoke_parser = sub.add_parser("smoke", help="build and byte-compare a deterministic fixture")
     smoke_parser.add_argument(
@@ -827,6 +1021,10 @@ def main() -> None:
         transpile(write_crate=args.write_crate)
     elif args.command == "link":
         link_rust_pdftex(force=args.force)
+    elif args.command == "format":
+        build_rust_executable()
+        fmt = ensure_latex_format(RUST_BINARY, force=args.force, name=args.name)
+        print(json.dumps({"format": str(fmt)}, indent=2))
     elif args.command == "smoke":
         smoke(force_link=args.force_link, legacy_libtool=args.legacy_libtool)
     else:

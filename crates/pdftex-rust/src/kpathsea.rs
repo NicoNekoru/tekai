@@ -32,6 +32,7 @@ const KPSE_TEXPOOL_FORMAT: c_uint = 28;
 const KPSE_TYPE1_FORMAT: c_uint = 32;
 const KPSE_VF_FORMAT: c_uint = 33;
 const KPSE_TRUETYPE_FORMAT: c_uint = 36;
+const KPSE_WEB2C_FORMAT: c_uint = 38;
 const KPSE_OPENTYPE_FORMAT: c_uint = 47;
 const KPSE_PDFTEX_CONFIG_FORMAT: c_uint = 48;
 const KPSE_GLYPH_SOURCE_NORMAL: c_uint = 0;
@@ -222,6 +223,29 @@ fn explicit_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+fn format_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![PathBuf::from(".")];
+    for key in ["PDFTEX_RUST_FORMATS", "TEXFORMATS"] {
+        if let Some(paths) = std::env::var_os(key) {
+            for item in std::env::split_paths(&paths) {
+                if item.as_os_str().is_empty() {
+                    continue;
+                }
+                dirs.push(item);
+            }
+        }
+    }
+    dirs.push(PathBuf::from("formats"));
+    dirs.push(PathBuf::from("target/pdftex-port/formats"));
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            dirs.push(bin_dir.join("../pdftex-port/formats"));
+            dirs.push(bin_dir.join("../share/pdftex-rust/formats"));
+        }
+    }
+    dirs
+}
+
 fn texlive_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     for key in ["TEXMFCONFIG", "TEXMFVAR", "TEXMFDIST"] {
@@ -280,17 +304,131 @@ fn parse_ls_r(root: &Path, by_name: &mut HashMap<String, Vec<PathBuf>>) {
     }
 }
 
-fn find_in_index(candidate: &str) -> Option<PathBuf> {
+fn find_in_index(candidate: &str, format: c_uint) -> Option<PathBuf> {
     let index = file_index();
     let key = basename(candidate);
     let matches = index.by_name.get(key)?;
     if candidate == key {
-        return matches.first().cloned();
+        return best_index_match(matches.iter(), format);
     }
+    best_index_match(
+        matches
+            .iter()
+            .filter(|path| path.to_string_lossy().ends_with(candidate)),
+        format,
+    )
+}
+
+fn best_index_match<'a>(
+    matches: impl Iterator<Item = &'a PathBuf>,
+    format: c_uint,
+) -> Option<PathBuf> {
     matches
-        .iter()
-        .find(|path| path.to_string_lossy().ends_with(candidate))
+        .filter(|path| path_is_readable(path))
+        .filter(|path| index_path_is_runtime(path, format))
+        .min_by_key(|path| index_path_rank(path, format))
         .cloned()
+}
+
+fn index_path_is_runtime(path: &Path, format: c_uint) -> bool {
+    if !matches!(
+        format,
+        KPSE_TEX_FORMAT
+            | KPSE_TEXPOOL_FORMAT
+            | KPSE_WEB2C_FORMAT
+            | KPSE_BIB_FORMAT
+            | KPSE_BST_FORMAT
+            | KPSE_TFM_FORMAT
+            | KPSE_GF_FORMAT
+            | KPSE_PK_FORMAT
+            | KPSE_ANY_GLYPH_FORMAT
+            | KPSE_TYPE1_FORMAT
+            | KPSE_VF_FORMAT
+            | KPSE_TRUETYPE_FORMAT
+            | KPSE_OPENTYPE_FORMAT
+            | KPSE_FONTMAP_FORMAT
+            | KPSE_PDFTEX_CONFIG_FORMAT
+    ) {
+        return true;
+    }
+    let path = path.to_string_lossy();
+    !(path.contains("/doc/") || path.contains("/source/"))
+}
+
+fn index_path_rank(path: &Path, format: c_uint) -> (u8, u8, usize) {
+    let path = path.to_string_lossy();
+    let rank = if path.contains("/doc/") || path.contains("/source/") {
+        200
+    } else {
+        match format {
+            KPSE_TEX_FORMAT => {
+                if path.contains("/tex/latex/") {
+                    0
+                } else if path.contains("/tex/generic/") {
+                    1
+                } else if path.contains("/tex/plain/") {
+                    2
+                } else if path.contains("/tex/") {
+                    3
+                } else {
+                    80
+                }
+            }
+            KPSE_TEXPOOL_FORMAT | KPSE_WEB2C_FORMAT => {
+                if path.contains("/web2c/") {
+                    0
+                } else {
+                    80
+                }
+            }
+            KPSE_BIB_FORMAT | KPSE_BST_FORMAT => {
+                if path.contains("/bibtex/") {
+                    0
+                } else {
+                    80
+                }
+            }
+            KPSE_TFM_FORMAT
+            | KPSE_GF_FORMAT
+            | KPSE_PK_FORMAT
+            | KPSE_ANY_GLYPH_FORMAT
+            | KPSE_TYPE1_FORMAT
+            | KPSE_VF_FORMAT
+            | KPSE_TRUETYPE_FORMAT
+            | KPSE_OPENTYPE_FORMAT => {
+                if path.contains("/fonts/") {
+                    0
+                } else {
+                    80
+                }
+            }
+            KPSE_FONTMAP_FORMAT | KPSE_PDFTEX_CONFIG_FORMAT => {
+                if path.contains("/fonts/map/") {
+                    0
+                } else if path.contains("/web2c/") {
+                    1
+                } else if path.contains("/tex/") {
+                    2
+                } else {
+                    80
+                }
+            }
+            _ => 50,
+        }
+    };
+    (rank, texlive_tree_rank(&path), path.len())
+}
+
+fn texlive_tree_rank(path: &str) -> u8 {
+    if path.contains("/texmf-config/") {
+        0
+    } else if path.contains("/texmf-var/") {
+        1
+    } else if path.contains("/texmf-dist/") {
+        2
+    } else {
+        3
+    }
 }
 
 fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
@@ -303,6 +441,16 @@ fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
             }
         }
     }
+    if format == KPSE_FMT_FORMAT {
+        for dir in format_search_dirs() {
+            for candidate in &candidates {
+                if let Some(found) = check_direct_path(&dir.join(candidate)) {
+                    return Some(found);
+                }
+            }
+        }
+        return None;
+    }
     for dir in explicit_search_dirs() {
         for candidate in &candidates {
             if let Some(found) = check_direct_path(&dir.join(candidate)) {
@@ -311,7 +459,7 @@ fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
         }
     }
     for candidate in &candidates {
-        if let Some(found) = find_in_index(candidate) {
+        if let Some(found) = find_in_index(candidate, format) {
             return Some(found);
         }
     }
@@ -400,6 +548,31 @@ pub unsafe extern "C" fn kpse_var_value(var: const_string) -> string {
         "file_line_error_style" => Some("f"),
         "parse_first_line" => Some("f"),
         "output_comment" => Some(""),
+        "main_memory" => Some("5000000"),
+        "extra_mem_top" => Some("0"),
+        "extra_mem_bot" => Some("0"),
+        "pool_size" => Some("6250000"),
+        "string_vacancies" => Some("90000"),
+        "pool_free" => Some("47500"),
+        "max_strings" => Some("500000"),
+        "strings_free" => Some("100"),
+        "font_mem_size" => Some("8000000"),
+        "font_max" => Some("9000"),
+        "trie_size" => Some("1100000"),
+        "hyph_size" => Some("8191"),
+        "buf_size" => Some("200000"),
+        "nest_size" => Some("1000"),
+        "max_in_open" => Some("15"),
+        "param_size" => Some("20000"),
+        "save_size" => Some("200000"),
+        "stack_size" => Some("10000"),
+        "dvi_buf_size" => Some("16384"),
+        "error_line" => Some("79"),
+        "half_error_line" => Some("50"),
+        "max_print_line" => Some("79"),
+        "hash_extra" => Some("600000"),
+        "expand_depth" => Some("10000"),
+        "pk_dpi" => Some("72"),
         "TEXMFOUTPUT" => None,
         _ => None,
     };
