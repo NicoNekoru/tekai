@@ -30,10 +30,12 @@ scripts/pdftex_port.py smoke
 ```
 
 That command builds TeX Live's pdfTeX from `third_party/texlive-source`, builds
-this Rust archive, links `pdftex-rust-full`, and verifies a deterministic
-INITEX fixture against canonical C pdfTeX by byte-comparing the PDF and log. It
-also runs a `-synctex=1` fixture to prove the Rust no-op SyncTeX boundary keeps
-the final PDF byte-identical while omitting the sidecar.
+the Cargo-owned `target/release/pdftex-rust` executable, and verifies a
+deterministic INITEX fixture against canonical C pdfTeX by byte-comparing the
+PDF and log. It also runs a `-synctex=1` fixture to prove the Rust no-op SyncTeX
+boundary keeps the final PDF byte-identical while omitting the sidecar. The old
+TeX Live `libtool` link remains available for debugging with
+`scripts/pdftex_port.py smoke --legacy-libtool`.
 
 To regenerate the Rust source from the TeX Live submodule:
 

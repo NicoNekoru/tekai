@@ -5,10 +5,20 @@ edition = "2021"
 description = "Generated Rust port of the pdfTeX web2c core for texpilot."
 publish = false
 
+[features]
+default = ["c-entrypoint"]
+c-entrypoint = []
+rust-binary = []
+
 [lib]
 name = "pdftex_rust"
 path = "src/lib.rs"
 crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+name = "pdftex-rust"
+path = "src/bin/pdftex-rust.rs"
+required-features = ["rust-binary"]
 
 [dependencies]
 libc = "0.2"

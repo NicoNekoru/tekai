@@ -23,7 +23,8 @@ CRATE_DIR = ROOT / "crates" / "pdftex-rust"
 GENERATED_DIR = CRATE_DIR / "src" / "generated"
 GENERATED_BACKEND_DIR = GENERATED_DIR / "backend"
 RUST_ARCHIVE = ROOT / "target" / "release" / "libpdftex_rust.a"
-RUST_BINARY = WEB2C_DIR / "pdftex-rust-full"
+RUST_BINARY = ROOT / "target" / "release" / "pdftex-rust"
+RUST_LIBTOOL_BINARY = WEB2C_DIR / "pdftex-rust-full"
 SOURCE_DATE_EPOCH = "1783191600"
 PDFTEX_BACKEND_C_SOURCES = [
     TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "avl.c",
@@ -498,11 +499,32 @@ def build_rust_archive() -> None:
         raise SystemExit(f"missing Rust archive: {RUST_ARCHIVE}")
 
 
+def build_rust_executable() -> None:
+    ensure_texlive_build()
+    run(
+        [
+            "cargo",
+            "build",
+            "--release",
+            "-p",
+            "pdftex-rust",
+            "--bin",
+            "pdftex-rust",
+            "--no-default-features",
+            "--features",
+            "rust-binary",
+        ],
+        cwd=ROOT,
+    )
+    if not RUST_BINARY.exists():
+        raise SystemExit(f"missing Rust executable: {RUST_BINARY}")
+
+
 def link_rust_pdftex(force: bool = False) -> None:
     ensure_texlive_build()
     build_rust_archive()
-    if force and RUST_BINARY.exists():
-        RUST_BINARY.unlink()
+    if force and RUST_LIBTOOL_BINARY.exists():
+        RUST_LIBTOOL_BINARY.unlink()
     link_cmd = [
         "/bin/sh",
         "./libtool",
@@ -514,7 +536,7 @@ def link_rust_pdftex(force: bool = False) -> None:
         "-g",
         "-O0",
         "-o",
-        RUST_BINARY.name,
+        RUST_LIBTOOL_BINARY.name,
         str(RUST_ARCHIVE),
         str(BUILD_DIR / "libs" / "libpng" / "libpng.a"),
         str(BUILD_DIR / "libs" / "zlib" / "libz.a"),
@@ -548,12 +570,17 @@ def run_initex_smoke(binary: Path, out_dir: Path, extra_args: list[str] | None =
     ).stdout
 
 
-def smoke(force_link: bool = False) -> None:
-    link_rust_pdftex(force=force_link)
+def smoke(force_link: bool = False, legacy_libtool: bool = False) -> None:
+    if legacy_libtool:
+        link_rust_pdftex(force=force_link)
+        rust_binary = RUST_LIBTOOL_BINARY
+    else:
+        build_rust_executable()
+        rust_binary = RUST_BINARY
     c_dir = PORT_ROOT / "smoke" / "c"
     rust_dir = PORT_ROOT / "smoke" / "rust"
     run_initex_smoke(WEB2C_DIR / "pdftex", c_dir)
-    run_initex_smoke(RUST_BINARY, rust_dir)
+    run_initex_smoke(rust_binary, rust_dir)
     comparisons = {
         "pdf": filecmp.cmp(c_dir / "test.pdf", rust_dir / "test.pdf", shallow=False),
         "log": filecmp.cmp(c_dir / "test.log", rust_dir / "test.log", shallow=False),
@@ -580,7 +607,7 @@ def smoke(force_link: bool = False) -> None:
     synctex_c_dir = PORT_ROOT / "smoke-synctex" / "c"
     synctex_rust_dir = PORT_ROOT / "smoke-synctex" / "rust"
     run_initex_smoke(WEB2C_DIR / "pdftex", synctex_c_dir, extra_args=["-synctex=1"])
-    run_initex_smoke(RUST_BINARY, synctex_rust_dir, extra_args=["-synctex=1"])
+    run_initex_smoke(rust_binary, synctex_rust_dir, extra_args=["-synctex=1"])
     comparisons["synctex_pdf"] = filecmp.cmp(
         synctex_c_dir / "test.pdf",
         synctex_rust_dir / "test.pdf",
@@ -604,11 +631,20 @@ def main() -> None:
     transpile_parser = sub.add_parser("transpile", help="regenerate Rust from web2c C")
     transpile_parser.add_argument("--write-crate", action="store_true")
 
-    link_parser = sub.add_parser("link", help="link pdftex-rust-full")
+    link_parser = sub.add_parser("link", help="link legacy pdftex-rust-full with TeX Live libtool")
     link_parser.add_argument("--force", action="store_true")
 
-    smoke_parser = sub.add_parser("smoke", help="link and byte-compare a deterministic fixture")
-    smoke_parser.add_argument("--force-link", action="store_true")
+    smoke_parser = sub.add_parser("smoke", help="build and byte-compare a deterministic fixture")
+    smoke_parser.add_argument(
+        "--force-link",
+        action="store_true",
+        help="when used with --legacy-libtool, unlink before relinking",
+    )
+    smoke_parser.add_argument(
+        "--legacy-libtool",
+        action="store_true",
+        help="test the old TeX Live libtool-linked executable instead of the Cargo binary",
+    )
 
     args = parser.parse_args()
     if args.command == "build-upstream":
@@ -618,7 +654,7 @@ def main() -> None:
     elif args.command == "link":
         link_rust_pdftex(force=args.force)
     elif args.command == "smoke":
-        smoke(force_link=args.force_link)
+        smoke(force_link=args.force_link, legacy_libtool=args.legacy_libtool)
     else:
         raise AssertionError(args.command)
 

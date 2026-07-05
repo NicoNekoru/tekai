@@ -63,9 +63,7 @@ pub mod utils;
 pub mod web2c;
 pub mod xpdf;
 
-#[cfg(not(test))]
-#[no_mangle]
-pub unsafe extern "C" fn main(
+pub unsafe fn run_from_c_args(
     argc: ::core::ffi::c_int,
     argv: *mut *mut ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
@@ -74,4 +72,13 @@ pub unsafe extern "C" fn main(
         generated::pdftexini::mainbody();
     }
     libc::EXIT_SUCCESS
+}
+
+#[cfg(all(not(test), feature = "c-entrypoint"))]
+#[no_mangle]
+pub unsafe extern "C" fn main(
+    argc: ::core::ffi::c_int,
+    argv: *mut *mut ::core::ffi::c_char,
+) -> ::core::ffi::c_int {
+    unsafe { run_from_c_args(argc, argv) }
 }

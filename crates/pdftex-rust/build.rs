@@ -5,8 +5,18 @@ fn main() {
     let root = manifest_dir.parent().unwrap().parent().unwrap();
     let texlive = root.join("third_party/texlive-source");
     let build = root.join("target/pdftex-port/texlive-build");
+    let web2c = build.join("texk/web2c");
 
     println!("cargo:rerun-if-changed=cpp/xpdf_bridge.cc");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_RUST_BINARY");
+
+    let xpdf_config = build.join("libs/xpdf/aconf.h");
+    if !xpdf_config.exists() {
+        panic!(
+            "missing {}; run `scripts/pdftex_port.py build-upstream` before building pdftex-rust",
+            xpdf_config.display()
+        );
+    }
 
     let mut bridge = cc::Build::new();
     bridge
@@ -20,4 +30,43 @@ fn main() {
         .include(texlive.join("libs/xpdf/xpdf-src/fofi"))
         .include(texlive.join("libs/xpdf/xpdf-src/xpdf"));
     bridge.compile("pdftex_xpdf_bridge");
+
+    if std::env::var_os("CARGO_FEATURE_RUST_BINARY").is_some() {
+        let required = [
+            web2c.join("pdftexd.h"),
+            build.join("libs/libpng/libpng.a"),
+            build.join("libs/zlib/libz.a"),
+            build.join("libs/xpdf/libxpdf.a"),
+            build.join("texk/kpathsea/.libs/libkpathsea.a"),
+        ];
+        for path in required {
+            if !path.exists() {
+                panic!(
+                    "missing {}; run `scripts/pdftex_port.py build-upstream` before building the Cargo pdfTeX binary",
+                    path.display()
+                );
+            }
+        }
+
+        println!(
+            "cargo:rustc-link-search=native={}",
+            build.join("libs/libpng").display()
+        );
+        println!(
+            "cargo:rustc-link-search=native={}",
+            build.join("libs/zlib").display()
+        );
+        println!(
+            "cargo:rustc-link-search=native={}",
+            build.join("libs/xpdf").display()
+        );
+        println!(
+            "cargo:rustc-link-search=native={}",
+            build.join("texk/kpathsea/.libs").display()
+        );
+        println!("cargo:rustc-link-lib=static=png");
+        println!("cargo:rustc-link-lib=static=z");
+        println!("cargo:rustc-link-lib=static=xpdf");
+        println!("cargo:rustc-link-lib=static=kpathsea");
+    }
 }
