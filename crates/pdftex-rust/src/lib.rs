@@ -31,6 +31,16 @@ pub mod generated {
     pub mod backend {
         pub mod avl;
         pub mod avlstuff;
+        pub mod epdf;
+        pub mod mapfile;
+        pub mod pkin;
+        pub mod subfont;
+        pub mod tounicode;
+        pub mod vfpacket;
+        pub mod writeenc;
+        pub mod writefont;
+        pub mod writet3;
+        pub mod writettf;
     }
     pub mod pdftex0;
     pub mod pdftexextra;

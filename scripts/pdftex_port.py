@@ -28,6 +28,16 @@ SOURCE_DATE_EPOCH = "1783191600"
 PDFTEX_BACKEND_C_SOURCES = [
     TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "avl.c",
     TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "avlstuff.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "epdf.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "mapfile.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "pkin.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "subfont.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "tounicode.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "vfpacket.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writeenc.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writefont.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writet3.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writettf.c",
 ]
 
 
@@ -172,7 +182,7 @@ def normalize_generated_rust(path: Path) -> None:
     text = re.sub(r"\bgetc\(", "fgetc(", text)
     text = re.sub(
         r'#\[no_mangle\]\n#\[inline\]\n#\[linkage = "external"\]\n'
-        r"pub unsafe extern \"C\" fn (isascii|__istype|isspace)",
+        r"pub unsafe extern \"C\" fn ([A-Za-z_][A-Za-z0-9_]*)",
         r"unsafe fn \1",
         text,
     )
@@ -209,7 +219,20 @@ def transpile(write_crate: bool) -> None:
         for name in ("pdftexextra.rs", "pdftexini.rs", "pdftex0.rs", "pdftex_pool.rs"):
             shutil.copy2(emitted[name], GENERATED_DIR / name)
         GENERATED_BACKEND_DIR.mkdir(parents=True, exist_ok=True)
-        for name in ("avl.rs", "avlstuff.rs"):
+        for name in (
+            "avl.rs",
+            "avlstuff.rs",
+            "epdf.rs",
+            "mapfile.rs",
+            "pkin.rs",
+            "subfont.rs",
+            "tounicode.rs",
+            "vfpacket.rs",
+            "writeenc.rs",
+            "writefont.rs",
+            "writet3.rs",
+            "writettf.rs",
+        ):
             shutil.copy2(emitted[name], GENERATED_BACKEND_DIR / name)
     print(
         json.dumps(
