@@ -9,7 +9,8 @@ use crate::xpdf::*;
 const MASK_SUPPRESS_PTEX_FILENAME: c_int = 0x02;
 const MASK_SUPPRESS_PTEX_PAGENUMBER: c_int = 0x04;
 const MASK_SUPPRESS_PTEX_INFODICT: c_int = 0x08;
-const REPLACE_TYPE1C: bool = true;
+const REPLACE_EMBEDDED_TYPE1_FONTS: bool = false;
+const REPLACE_TYPE1C: bool = false;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InObjType {
@@ -311,8 +312,11 @@ unsafe fn copy_font_dict(obj: *mut Object, r: *mut InObj) {
         crate::utils::pdf_puts(c"<<\n".as_ptr());
         for i in 0..xpdf_object_dict_get_length(obj) {
             let key = xpdf_object_dict_get_key(obj, i);
-            if libc::strncmp(key, c"FontDescriptor".as_ptr(), c"FontDescriptor".to_bytes().len())
-                == 0
+            if libc::strncmp(
+                key,
+                c"FontDescriptor".as_ptr(),
+                c"FontDescriptor".to_bytes().len(),
+            ) == 0
                 || libc::strncmp(key, c"BaseFont".as_ptr(), c"BaseFont".to_bytes().len()) == 0
                 || libc::strncmp(key, c"Encoding".as_ptr(), c"Encoding".to_bytes().len()) == 0
             {
@@ -400,7 +404,8 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
         let stemv = Obj::new();
         let fetched = xpdf_object_fetch(font_ref, XREF, fontdict.ptr);
         let mut fontmap: *mut FmEntry = ptr::null_mut();
-        let replaceable = fixedinclusioncopyfont == 0
+        let replaceable = REPLACE_EMBEDDED_TYPE1_FONTS
+            && fixedinclusioncopyfont == 0
             && xpdf_object_is_dict(fetched) != 0
             && {
                 xpdf_object_dict_lookup(fontdict.ptr, c"Subtype".as_ptr(), subtype.ptr);
@@ -412,7 +417,11 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
                 xpdf_object_is_name(basefont.ptr) != 0
             }
             && {
-                xpdf_object_dict_lookup_nf(fontdict.ptr, c"FontDescriptor".as_ptr(), fontdesc_ref.ptr);
+                xpdf_object_dict_lookup_nf(
+                    fontdict.ptr,
+                    c"FontDescriptor".as_ptr(),
+                    fontdesc_ref.ptr,
+                );
                 xpdf_object_is_ref(fontdesc_ref.ptr) != 0
             }
             && {
@@ -422,24 +431,22 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
             && {
                 xpdf_object_dict_lookup(fontdesc.ptr, c"FontFile".as_ptr(), fontfile.ptr);
                 xpdf_object_is_stream(fontfile.ptr) != 0
-                    || (REPLACE_TYPE1C
-                        && {
-                            xpdf_object_free_contents(fontfile.ptr);
-                            xpdf_object_dict_lookup(fontdesc.ptr, c"FontFile3".as_ptr(), fontfile.ptr);
-                            xpdf_object_is_stream(fontfile.ptr) != 0
-                                && {
-                                    xpdf_dict_lookup(
-                                        xpdf_object_stream_get_dict(fontfile.ptr),
-                                        c"Subtype".as_ptr(),
-                                        ffsubtype.ptr,
-                                    );
-                                    xpdf_object_is_name(ffsubtype.ptr) != 0
-                                        && libc::strcmp(
-                                            xpdf_object_get_name(ffsubtype.ptr),
-                                            c"Type1C".as_ptr(),
-                                        ) == 0
-                                }
-                        })
+                    || (REPLACE_TYPE1C && {
+                        xpdf_object_free_contents(fontfile.ptr);
+                        xpdf_object_dict_lookup(fontdesc.ptr, c"FontFile3".as_ptr(), fontfile.ptr);
+                        xpdf_object_is_stream(fontfile.ptr) != 0 && {
+                            xpdf_dict_lookup(
+                                xpdf_object_stream_get_dict(fontfile.ptr),
+                                c"Subtype".as_ptr(),
+                                ffsubtype.ptr,
+                            );
+                            xpdf_object_is_name(ffsubtype.ptr) != 0
+                                && libc::strcmp(
+                                    xpdf_object_get_name(ffsubtype.ptr),
+                                    c"Type1C".as_ptr(),
+                                ) == 0
+                        }
+                    })
             }
             && {
                 fontmap = lookup_fontmap(xpdf_object_get_name(basefont.ptr));
@@ -457,9 +464,19 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
             } else {
                 embed_whole_font(fd);
             }
-            add_in_obj(InObjType::FontDesc, xpdf_object_get_ref(fontdesc_ref.ptr), fd, 0);
+            add_in_obj(
+                InObjType::FontDesc,
+                xpdf_object_get_ref(fontdesc_ref.ptr),
+                fd,
+                0,
+            );
             copy_name(tag);
-            let gfont = xpdf_gfx_font_make(XREF, tag, xpdf_object_get_ref(font_ref), xpdf_object_get_dict(fontdict.ptr));
+            let gfont = xpdf_gfx_font_make(
+                XREF,
+                tag,
+                xpdf_object_get_ref(font_ref),
+                xpdf_object_get_dict(fontdict.ptr),
+            );
             let enc = add_encoding(gfont);
             let num = add_in_obj(InObjType::Font, xpdf_object_get_ref(font_ref), fd, enc);
             pdf_printf_args(c" %d 0 R ".as_ptr(), &[PrintfArg::from(num)]);
@@ -646,7 +663,12 @@ unsafe fn copy_object(obj: *mut Object) {
             }
             pdf_printf_args(
                 c"%d 0 R".as_ptr(),
-                &[PrintfArg::from(add_in_obj(InObjType::Other, ref_, ptr::null_mut(), 0))],
+                &[PrintfArg::from(add_in_obj(
+                    InObjType::Other,
+                    ref_,
+                    ptr::null_mut(),
+                    0,
+                ))],
             );
         } else {
             pdftex_fail_args(
@@ -671,7 +693,14 @@ unsafe fn write_refs() {
                     crate::utils::pdf_puts(c"\n".as_ptr());
                     pdfendobj();
                 } else if (*r).type_ != InObjType::FontDesc {
-                    zpdfbeginobj((*r).num, if xpdf_object_is_stream(obj1.ptr) != 0 { 0 } else { 2 });
+                    zpdfbeginobj(
+                        (*r).num,
+                        if xpdf_object_is_stream(obj1.ptr) != 0 {
+                            0
+                        } else {
+                            2
+                        },
+                    );
                     copy_object(obj1.ptr);
                     crate::utils::pdf_puts(c"\n".as_ptr());
                     pdfendobj();
@@ -755,13 +784,21 @@ pub unsafe extern "C" fn read_pdf_info(
         let pdf_doc = find_add_document(image_name);
         epdf_doc = pdf_doc as *mut c_void;
         let found = xpdf_doc_pdf_version((*pdf_doc).doc);
-        let wanted = major_pdf_version_wanted as c_float + minor_pdf_version_wanted as c_float * 0.1;
+        let wanted =
+            major_pdf_version_wanted as c_float + minor_pdf_version_wanted as c_float * 0.1;
         if found > wanted + 0.01 {
-            let msg = c"PDF inclusion: found PDF version <%.1f>, but at most version <%.1f> allowed";
+            let msg =
+                c"PDF inclusion: found PDF version <%.1f>, but at most version <%.1f> allowed";
             if pdf_inclusion_errorlevel > 0 {
-                pdftex_fail_args(msg.as_ptr(), &[PrintfArg::from(found), PrintfArg::from(wanted)]);
+                pdftex_fail_args(
+                    msg.as_ptr(),
+                    &[PrintfArg::from(found), PrintfArg::from(wanted)],
+                );
             } else if pdf_inclusion_errorlevel == 0 {
-                pdftex_warn_args(msg.as_ptr(), &[PrintfArg::from(found), PrintfArg::from(wanted)]);
+                pdftex_warn_args(
+                    msg.as_ptr(),
+                    &[PrintfArg::from(found), PrintfArg::from(wanted)],
+                );
             }
         }
         let catalog = xpdf_doc_catalog((*pdf_doc).doc);
@@ -941,16 +978,16 @@ pub unsafe extern "C" fn write_epdf() {
                 crate::utils::pdf_puts(s.as_ptr());
             }
         }
-        let bbox = stripped_pdf_line(
-            "/BBox [",
-            &[pagebox.x1, pagebox.y1, pagebox.x2, pagebox.y2],
-        );
+        let bbox = stripped_pdf_line("/BBox [", &[pagebox.x1, pagebox.y1, pagebox.x2, pagebox.y2]);
         crate::utils::pdf_puts(bbox.as_ptr());
 
         let dict_obj = Obj::new();
         xpdf_dict_lookup_nf(page_dict, c"Metadata".as_ptr(), dict_obj.ptr);
         if xpdf_object_is_null(dict_obj.ptr) == 0 && xpdf_object_is_ref(dict_obj.ptr) == 0 {
-            pdftex_warn_args(c"PDF inclusion: /Metadata must be indirect object".as_ptr(), &[]);
+            pdftex_warn_args(
+                c"PDF inclusion: /Metadata must be indirect object".as_ptr(),
+                &[],
+            );
         }
         write_page_dict_key(page_dict, c"LastModified");
         write_page_dict_key(page_dict, c"Metadata");

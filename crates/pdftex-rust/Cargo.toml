@@ -23,7 +23,5 @@ required-features = ["rust-binary"]
 [dependencies]
 libc = "0.2"
 libz-rs-sys = { version = "0.6.5", features = ["export-symbols", "gz"] }
+lopdf = { version = "0.35", default-features = false, features = ["nom_parser"] }
 png = "0.17"
-
-[build-dependencies]
-cc = "1.2.65"

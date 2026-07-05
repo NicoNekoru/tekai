@@ -94,6 +94,16 @@ PNG_SMOKE_TEX = """\
 \\end
 """
 
+PDF_SMOKE_TEX = """\
+\\catcode`\\{=1
+\\catcode`\\}=2
+\\pdfoutput=1
+\\pdfcompresslevel=9
+\\pdfximage width 96pt {source.pdf}
+\\shipout\\hbox{\\pdfrefximage\\pdflastximage}
+\\end
+"""
+
 
 def run(
     cmd: list[str],
@@ -541,9 +551,9 @@ def link_rust_pdftex(force: bool = False) -> None:
     link_cmd = [
         "/bin/sh",
         "./libtool",
-        "--tag=CXX",
+        "--tag=CC",
         "--mode=link",
-        "g++",
+        "clang",
         "-Wreturn-type",
         "-Wno-write-strings",
         "-g",
@@ -551,7 +561,6 @@ def link_rust_pdftex(force: bool = False) -> None:
         "-o",
         RUST_LIBTOOL_BINARY.name,
         str(RUST_ARCHIVE),
-        str(BUILD_DIR / "libs" / "xpdf" / "libxpdf.a"),
     ]
     run(link_cmd, cwd=WEB2C_DIR)
 
@@ -614,11 +623,64 @@ def write_png_fixture(path: Path) -> None:
     path.write_bytes(png)
 
 
+def write_pdf_fixture(path: Path) -> None:
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] "
+            b"/Resources << >> /Contents 4 0 R >>"
+        ),
+        b"<< /Length 31 >>\nstream\n0.1 0.4 0.8 rg\n10 10 52 52 re f\nendstream",
+    ]
+    pdf = bytearray(b"%PDF-1.3\n%\xD0\xD4\xC5\xD8\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{index} 0 obj\n".encode())
+        pdf.extend(obj)
+        pdf.extend(b"\nendobj\n")
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode())
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode())
+    pdf.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF\n".encode()
+    )
+    path.write_bytes(pdf)
+
+
 def run_png_smoke(binary: Path, out_dir: Path) -> None:
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True)
     write_png_fixture(out_dir / "image.png")
     (out_dir / "test.tex").write_text(PNG_SMOKE_TEX)
+    env = {
+        "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH,
+        "FORCE_SOURCE_DATE": "1",
+        "TEXINPUTS": ".:",
+    }
+    run(
+        [
+            str(binary),
+            "-ini",
+            "-interaction=nonstopmode",
+            "-jobname=test",
+            "./test.tex",
+        ],
+        cwd=out_dir,
+        env=env,
+        capture=True,
+    ).stdout
+
+
+def run_pdf_smoke(binary: Path, out_dir: Path) -> None:
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+    write_pdf_fixture(out_dir / "source.pdf")
+    (out_dir / "test.tex").write_text(PDF_SMOKE_TEX)
     env = {
         "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH,
         "FORCE_SOURCE_DATE": "1",
@@ -692,6 +754,28 @@ def smoke(force_link: bool = False, legacy_libtool: bool = False) -> None:
         comparisons["png_pixels"] = filecmp.cmp(
             png_c_dir / "render" / "page-1.png",
             png_rust_dir / "render" / "page-1.png",
+            shallow=False,
+        )
+        pdf_c_dir = PORT_ROOT / "smoke-pdf" / "c"
+        pdf_rust_dir = PORT_ROOT / "smoke-pdf" / "rust"
+        run_pdf_smoke(WEB2C_DIR / "pdftex", pdf_c_dir)
+        run_pdf_smoke(rust_binary, pdf_rust_dir)
+        for directory in (pdf_c_dir, pdf_rust_dir):
+            render_dir = directory / "render"
+            render_dir.mkdir()
+            run(
+                [
+                    "pdftoppm",
+                    "-r",
+                    "144",
+                    "-png",
+                    str(directory / "test.pdf"),
+                    str(render_dir / "page"),
+                ]
+            )
+        comparisons["pdf_image_pixels"] = filecmp.cmp(
+            pdf_c_dir / "render" / "page-1.png",
+            pdf_rust_dir / "render" / "page-1.png",
             shallow=False,
         )
     synctex_c_dir = PORT_ROOT / "smoke-synctex" / "c"
