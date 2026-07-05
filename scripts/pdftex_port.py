@@ -36,8 +36,14 @@ PDFTEX_BACKEND_C_SOURCES = [
     TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "vfpacket.c",
     TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writeenc.c",
     TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writefont.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writeimg.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writejbig2.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writejpg.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writepng.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writet1.c",
     TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writet3.c",
     TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writettf.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "writezip.c",
 ]
 
 
@@ -179,6 +185,18 @@ def normalize_generated_rust(path: Path) -> None:
         '}\n\n'
         'extern "C" {',
     )
+    for name in ("png_struct_def", "png_info_def", "internal_state", "re_guts"):
+        declaration = f"    pub type {name};\n"
+        if declaration in text:
+            text = text.replace(declaration, "")
+            struct_decl = (
+                "#[repr(C)]\n"
+                f"pub struct {name} {{\n"
+                "    _unused: [u8; 0],\n"
+                "}\n\n"
+            )
+            if struct_decl not in text:
+                text = text.replace('extern "C" {', f"{struct_decl}extern \"C\" {{", 1)
     text = re.sub(r"\bgetc\(", "fgetc(", text)
     text = re.sub(
         r'#\[no_mangle\]\n#\[inline\]\n#\[linkage = "external"\]\n'
@@ -186,7 +204,92 @@ def normalize_generated_rust(path: Path) -> None:
         r"unsafe fn \1",
         text,
     )
+    if path.name == "writet1.rs":
+        text = normalize_writet1_rust(text)
     path.write_text(text)
+
+
+def normalize_writet1_rust(text: str) -> str:
+    """Replace local C varargs helpers with fixed Rust-callable forms."""
+    text = text.replace(
+        "    fn vsprintf(\n"
+        "        _: *mut ::core::ffi::c_char,\n"
+        "        _: *const ::core::ffi::c_char,\n"
+        "        _: ::core::ffi::VaList,\n"
+        "    ) -> ::core::ffi::c_int;\n",
+        "",
+    )
+    text = re.sub(
+        r'unsafe extern "C" fn t1_printf\([\s\S]*?\n\}',
+        'unsafe extern "C" fn t1_printf(\n'
+        "    mut fmt: *const ::core::ffi::c_char,\n"
+        "    mut code: ::core::ffi::c_int,\n"
+        "    mut glyph: *mut ::core::ffi::c_char,\n"
+        ") {\n"
+        "    sprintf(t1_line_array as *mut ::core::ffi::c_char, fmt, code, glyph);\n"
+        "    t1_puts(t1_line_array);\n"
+        "}",
+        text,
+        count=1,
+    )
+    start = text.index('unsafe extern "C" fn cs_fail(')
+    end = text.index('\nunsafe extern "C" fn append_cs_return', start)
+    fixed_cs_fail = (
+        'unsafe extern "C" fn cs_fail(\n'
+        "    mut cs_name: *const ::core::ffi::c_char,\n"
+        "    mut subr: ::core::ffi::c_int,\n"
+        "    mut fmt: *const ::core::ffi::c_char,\n"
+        "    mut arg1: ::core::ffi::c_int,\n"
+        "    mut arg2: ::core::ffi::c_int,\n"
+        ") {\n"
+        "    let mut buf: [::core::ffi::c_char; 256] = [0; 256];\n"
+        "    sprintf(&raw mut buf as *mut ::core::ffi::c_char, fmt, arg1, arg2);\n"
+        "    if cs_name.is_null() {\n"
+        "        pdftex_fail(\n"
+        '            b"Subr (%i): %s\\0" as *const u8 as *const ::core::ffi::c_char,\n'
+        "            subr,\n"
+        "            &raw mut buf as *mut ::core::ffi::c_char,\n"
+        "        );\n"
+        "    } else {\n"
+        "        pdftex_fail(\n"
+        '            b"CharString (/%s): %s\\0" as *const u8 as *const ::core::ffi::c_char,\n'
+        "            cs_name,\n"
+        "            &raw mut buf as *mut ::core::ffi::c_char,\n"
+        "        );\n"
+        "    };\n"
+        "}"
+    )
+    text = f"{text[:start]}{fixed_cs_fail}{text[end:]}"
+    text = text.replace(
+        "b\"command value out of range: %i\\0\" as *const u8 as *const ::core::ffi::c_char,\n"
+        "                    b,\n"
+        "                );",
+        "b\"command value out of range: %i\\0\" as *const u8 as *const ::core::ffi::c_char,\n"
+        "                    b,\n"
+        "                    0 as ::core::ffi::c_int,\n"
+        "                );",
+    )
+    text = text.replace(
+        "b\"command not valid: %i\\0\" as *const u8 as *const ::core::ffi::c_char,\n"
+        "                        b,\n"
+        "                    );",
+        "b\"command not valid: %i\\0\" as *const u8 as *const ::core::ffi::c_char,\n"
+        "                        b,\n"
+        "                        0 as ::core::ffi::c_int,\n"
+        "                    );",
+    )
+    text = text.replace(
+        "b\"cannot call subr (%i)\\0\" as *const u8\n"
+        "                                        as *const ::core::ffi::c_char,\n"
+        "                                    a1,\n"
+        "                                );",
+        "b\"cannot call subr (%i)\\0\" as *const u8\n"
+        "                                        as *const ::core::ffi::c_char,\n"
+        "                                    a1,\n"
+        "                                    0 as ::core::ffi::c_int,\n"
+        "                                );",
+    )
+    return text
 
 
 def transpile(write_crate: bool) -> None:
@@ -230,8 +333,14 @@ def transpile(write_crate: bool) -> None:
             "vfpacket.rs",
             "writeenc.rs",
             "writefont.rs",
+            "writeimg.rs",
+            "writejbig2.rs",
+            "writejpg.rs",
+            "writepng.rs",
+            "writet1.rs",
             "writet3.rs",
             "writettf.rs",
+            "writezip.rs",
         ):
             shutil.copy2(emitted[name], GENERATED_BACKEND_DIR / name)
     print(

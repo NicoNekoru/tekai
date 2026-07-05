@@ -39,8 +39,14 @@ pub mod generated {
         pub mod vfpacket;
         pub mod writeenc;
         pub mod writefont;
+        pub mod writeimg;
+        pub mod writejbig2;
+        pub mod writejpg;
+        pub mod writepng;
+        pub mod writet1;
         pub mod writet3;
         pub mod writettf;
+        pub mod writezip;
     }
     pub mod pdftex0;
     pub mod pdftexextra;
