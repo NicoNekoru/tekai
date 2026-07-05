@@ -539,7 +539,6 @@ def link_rust_pdftex(force: bool = False) -> None:
         RUST_LIBTOOL_BINARY.name,
         str(RUST_ARCHIVE),
         str(BUILD_DIR / "libs" / "libpng" / "libpng.a"),
-        str(BUILD_DIR / "libs" / "zlib" / "libz.a"),
         str(BUILD_DIR / "libs" / "xpdf" / "libxpdf.a"),
     ]
     run(link_cmd, cwd=WEB2C_DIR)

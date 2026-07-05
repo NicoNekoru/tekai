@@ -64,6 +64,8 @@ pub mod utils;
 pub mod web2c;
 pub mod xpdf;
 
+pub use libz_rs_sys as zlib;
+
 pub unsafe fn run_from_c_args(
     argc: ::core::ffi::c_int,
     argv: *mut *mut ::core::ffi::c_char,

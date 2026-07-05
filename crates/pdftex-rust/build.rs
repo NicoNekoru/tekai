@@ -35,7 +35,6 @@ fn main() {
         let required = [
             web2c.join("pdftexd.h"),
             build.join("libs/libpng/libpng.a"),
-            build.join("libs/zlib/libz.a"),
             build.join("libs/xpdf/libxpdf.a"),
         ];
         for path in required {
@@ -53,14 +52,9 @@ fn main() {
         );
         println!(
             "cargo:rustc-link-search=native={}",
-            build.join("libs/zlib").display()
-        );
-        println!(
-            "cargo:rustc-link-search=native={}",
             build.join("libs/xpdf").display()
         );
         println!("cargo:rustc-link-lib=static=png");
-        println!("cargo:rustc-link-lib=static=z");
         println!("cargo:rustc-link-lib=static=xpdf");
     }
 }
