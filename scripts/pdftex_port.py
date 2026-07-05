@@ -541,7 +541,6 @@ def link_rust_pdftex(force: bool = False) -> None:
         str(BUILD_DIR / "libs" / "libpng" / "libpng.a"),
         str(BUILD_DIR / "libs" / "zlib" / "libz.a"),
         str(BUILD_DIR / "libs" / "xpdf" / "libxpdf.a"),
-        str(BUILD_DIR / "texk" / "kpathsea" / "libkpathsea.la"),
     ]
     run(link_cmd, cwd=WEB2C_DIR)
 

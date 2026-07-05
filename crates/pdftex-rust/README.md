@@ -11,8 +11,8 @@ Live pdfTeX link:
 
 The Rust archive keeps the C ABI (`main`, `maininit`, `mainbody`,
 `maincontrol`, `loadpoolstrings`, and the other web2c symbols), so it can be
-linked against the remaining TeX Live PDF/image/font/kpathsea backend while
-those libraries are ported or replaced.
+linked against the remaining TeX Live PDF/image/font backend while those
+libraries are ported or replaced.
 It also owns the SyncTeX ABI as no-op Rust exports; SyncTeX is sidecar
 compatibility, not final PDF semantics, so the fast path does not link the C
 sidecar writer.
@@ -22,6 +22,10 @@ The web2c support archive `lib/lib.a` is no longer linked: file open/search
 adapters, recorder hooks, configuration bounds, allocation helpers, version/help
 printing, `zround`, `uexit`, Pascal `eof`, and small string/input helpers are
 Rust-owned now.
+The native kpathsea archive is no longer linked either: program setup,
+environment/config lookup, path checks, recorder callbacks, and `kpse_find_file`
+are implemented in Rust, with package/font lookup backed by TeX Live `ls-R`
+databases.
 
 The reproducible path is:
 

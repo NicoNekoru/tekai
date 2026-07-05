@@ -37,7 +37,6 @@ fn main() {
             build.join("libs/libpng/libpng.a"),
             build.join("libs/zlib/libz.a"),
             build.join("libs/xpdf/libxpdf.a"),
-            build.join("texk/kpathsea/.libs/libkpathsea.a"),
         ];
         for path in required {
             if !path.exists() {
@@ -60,13 +59,8 @@ fn main() {
             "cargo:rustc-link-search=native={}",
             build.join("libs/xpdf").display()
         );
-        println!(
-            "cargo:rustc-link-search=native={}",
-            build.join("texk/kpathsea/.libs").display()
-        );
         println!("cargo:rustc-link-lib=static=png");
         println!("cargo:rustc-link-lib=static=z");
         println!("cargo:rustc-link-lib=static=xpdf");
-        println!("cargo:rustc-link-lib=static=kpathsea");
     }
 }

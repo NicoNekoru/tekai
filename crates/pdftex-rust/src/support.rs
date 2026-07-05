@@ -1,7 +1,7 @@
 //! Cold web2c support routines owned by Rust.
 
-use crate::openclose::xmalloc;
-use libc::{c_char, c_double, c_int, FILE};
+use crate::openclose::{xmalloc, xrealloc};
+use libc::{c_char, c_double, c_int, c_long, c_void, off_t, size_t, FILE};
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -27,6 +27,204 @@ unsafe fn copy_bytes_with_nul(bytes: &[u8]) -> *mut c_char {
 
 unsafe fn c_bytes(s: *const c_char) -> &'static [u8] {
     unsafe { CStr::from_ptr(s).to_bytes() }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn concat3(
+    s1: *const c_char,
+    s2: *const c_char,
+    s3: *const c_char,
+) -> *mut c_char {
+    let s1 = unsafe { c_bytes(s1) };
+    let s2 = unsafe { c_bytes(s2) };
+    let s3 = unsafe { c_bytes(s3) };
+    let len = s1.len() + s2.len() + s3.len();
+    let out = unsafe { xmalloc(len + 1) as *mut u8 };
+    unsafe {
+        ptr::copy_nonoverlapping(s1.as_ptr(), out, s1.len());
+        ptr::copy_nonoverlapping(s2.as_ptr(), out.add(s1.len()), s2.len());
+        ptr::copy_nonoverlapping(s3.as_ptr(), out.add(s1.len() + s2.len()), s3.len());
+        *out.add(len) = 0;
+    }
+    out as *mut c_char
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn concat(s1: *const c_char, s2: *const c_char) -> *mut c_char {
+    unsafe { concat3(s1, s2, c"".as_ptr()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn xdirname(name: *const c_char) -> *mut c_char {
+    unsafe {
+        let bytes = c_bytes(name);
+        let slash = bytes.iter().rposition(|&b| b == b'/');
+        match slash {
+            Some(0) => copy_bytes_with_nul(b"/"),
+            Some(pos) => copy_bytes_with_nul(&bytes[..pos]),
+            None => copy_bytes_with_nul(b"."),
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn xgetcwd() -> *mut c_char {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let cwd = CString::new(cwd.to_string_lossy().as_bytes()).expect("cwd contained NUL");
+    unsafe { copy_bytes_with_nul(cwd.as_bytes()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn xputenv(var: *const c_char, value: *const c_char) {
+    unsafe {
+        if var.is_null() || value.is_null() {
+            return;
+        }
+        libc::setenv(var, value, 1);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dir_p(name: *mut c_char) -> c_int {
+    if name.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_dir() as c_int)
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn find_suffix(name: *const c_char) -> *const c_char {
+    unsafe {
+        if name.is_null() {
+            return ptr::null();
+        }
+        let mut dot = ptr::null();
+        let mut p = name;
+        while *p != 0 {
+            if *p == b'/' as c_char {
+                dot = ptr::null();
+            } else if *p == b'.' as c_char {
+                dot = p.add(1);
+            }
+            p = p.add(1);
+        }
+        dot
+    }
+}
+
+unsafe fn fatal_perror(filename: *const c_char) -> ! {
+    unsafe {
+        libc::perror(filename);
+        libc::exit(libc::EXIT_FAILURE);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn xfopen(filename: *const c_char, mode: *const c_char) -> *mut FILE {
+    unsafe {
+        let file = libc::fopen(filename, mode);
+        if file.is_null() {
+            fatal_perror(filename);
+        }
+        file
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn xfclose(fp: *mut FILE, filename: *const c_char) {
+    unsafe {
+        if libc::fclose(fp) == libc::EOF {
+            fatal_perror(filename);
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn xfseek(
+    fp: *mut FILE,
+    offset: c_long,
+    wherefrom: c_int,
+    filename: *const c_char,
+) {
+    unsafe {
+        if libc::fseek(fp, offset, wherefrom) < 0 {
+            fatal_perror(filename);
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn xfseeko(
+    fp: *mut FILE,
+    offset: off_t,
+    wherefrom: c_int,
+    filename: *const c_char,
+) {
+    unsafe {
+        if libc::fseeko(fp, offset, wherefrom) < 0 {
+            fatal_perror(filename);
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn xftell(fp: *mut FILE, filename: *const c_char) -> c_long {
+    unsafe {
+        let offset = libc::ftell(fp);
+        if offset < 0 {
+            fatal_perror(filename);
+        }
+        offset
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn xftello(fp: *mut FILE, filename: *const c_char) -> off_t {
+    unsafe {
+        let offset = libc::ftello(fp);
+        if offset < 0 {
+            fatal_perror(filename);
+        }
+        offset
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn read_line(f: *mut FILE) -> *mut c_char {
+    const BLOCK_SIZE: usize = 75;
+    let mut limit = BLOCK_SIZE;
+    let mut loc = 0usize;
+    let mut line = unsafe { xmalloc(limit) as *mut u8 };
+
+    unsafe {
+        let mut ch = libc::fgetc(f);
+        while ch != libc::EOF && ch != b'\n' as c_int && ch != b'\r' as c_int {
+            if ch != 0 {
+                *line.add(loc) = ch as u8;
+                loc += 1;
+                if loc == limit {
+                    limit += BLOCK_SIZE;
+                    line = xrealloc(line as *mut c_void, limit as size_t) as *mut u8;
+                }
+            }
+            ch = libc::fgetc(f);
+        }
+        if loc == 0 && ch == libc::EOF {
+            libc::free(line as *mut c_void);
+            return ptr::null_mut();
+        }
+        *line.add(loc) = 0;
+        if ch == b'\r' as c_int {
+            let next = libc::fgetc(f);
+            if next != b'\n' as c_int && next != libc::EOF {
+                libc::ungetc(next, f);
+            }
+        }
+    }
+    line as *mut c_char
 }
 
 #[no_mangle]

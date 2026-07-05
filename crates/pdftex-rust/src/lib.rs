@@ -54,6 +54,7 @@ pub mod generated {
     pub mod pdftexini;
 }
 
+pub mod kpathsea;
 pub mod md5;
 pub mod openclose;
 pub mod pdftoepdf;
