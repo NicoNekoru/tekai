@@ -1,0 +1,14 @@
+[package]
+name = "pdftex-rust"
+version = "0.1.0"
+edition = "2021"
+description = "Generated Rust port of the pdfTeX web2c core for texpilot."
+publish = false
+
+[lib]
+name = "pdftex_rust"
+path = "src/lib.rs"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+libc = "0.2"
