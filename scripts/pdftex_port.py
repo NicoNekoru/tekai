@@ -7,6 +7,7 @@ import argparse
 import filecmp
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,9 +21,14 @@ BUILD_DIR = PORT_ROOT / "texlive-build"
 WEB2C_DIR = BUILD_DIR / "texk" / "web2c"
 CRATE_DIR = ROOT / "crates" / "pdftex-rust"
 GENERATED_DIR = CRATE_DIR / "src" / "generated"
+GENERATED_BACKEND_DIR = GENERATED_DIR / "backend"
 RUST_ARCHIVE = ROOT / "target" / "release" / "libpdftex_rust.a"
 RUST_BINARY = WEB2C_DIR / "pdftex-rust-full"
 SOURCE_DATE_EPOCH = "1783191600"
+PDFTEX_BACKEND_C_SOURCES = [
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "avl.c",
+    TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "avlstuff.c",
+]
 
 
 SYNCTEX_PROTOTYPES = """\
@@ -163,6 +169,13 @@ def normalize_generated_rust(path: Path) -> None:
         '}\n\n'
         'extern "C" {',
     )
+    text = re.sub(r"\bgetc\(", "fgetc(", text)
+    text = re.sub(
+        r'#\[no_mangle\]\n#\[inline\]\n#\[linkage = "external"\]\n'
+        r"pub unsafe extern \"C\" fn (isascii|__istype|isspace)",
+        r"unsafe fn \1",
+        text,
+    )
     path.write_text(text)
 
 
@@ -178,6 +191,8 @@ def transpile(write_crate: bool) -> None:
         "--emit-modules",
         "--output-dir",
         str(output_dir),
+        str(TEXLIVE_SOURCE / "texk" / "web2c" / "pdftexdir" / "pdftexextra.c"),
+        *(str(path) for path in PDFTEX_BACKEND_C_SOURCES),
         "pdftexini.c",
         "pdftex0.c",
         "pdftex-pool.c",
@@ -185,12 +200,17 @@ def transpile(write_crate: bool) -> None:
         *c2rust_include_args(),
     ]
     run(cmd, cwd=WEB2C_DIR)
-    for path in (output_dir / "src").glob("*.rs"):
+    emitted: dict[str, Path] = {}
+    for path in (output_dir / "src").rglob("*.rs"):
         normalize_generated_rust(path)
+        emitted[path.name] = path
     if write_crate:
         GENERATED_DIR.mkdir(parents=True, exist_ok=True)
-        for name in ("pdftexini.rs", "pdftex0.rs", "pdftex_pool.rs"):
-            shutil.copy2(output_dir / "src" / name, GENERATED_DIR / name)
+        for name in ("pdftexextra.rs", "pdftexini.rs", "pdftex0.rs", "pdftex_pool.rs"):
+            shutil.copy2(emitted[name], GENERATED_DIR / name)
+        GENERATED_BACKEND_DIR.mkdir(parents=True, exist_ok=True)
+        for name in ("avl.rs", "avlstuff.rs"):
+            shutil.copy2(emitted[name], GENERATED_BACKEND_DIR / name)
     print(
         json.dumps(
             {
@@ -225,7 +245,6 @@ def link_rust_pdftex(force: bool = False) -> None:
         "-O0",
         "-o",
         RUST_BINARY.name,
-        "pdftexdir/pdftex-pdftexextra.o",
         str(RUST_ARCHIVE),
         "libpdftex.a",
         str(BUILD_DIR / "libs" / "libpng" / "libpng.a"),

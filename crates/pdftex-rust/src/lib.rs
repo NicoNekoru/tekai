@@ -22,12 +22,18 @@
     unused_mut,
     unused_parens,
     unused_unsafe,
-    unused_variables
+    unused_variables,
+    useless_ptr_null_checks
 )]
 #![allow(clippy::all)]
 
 pub mod generated {
+    pub mod backend {
+        pub mod avl;
+        pub mod avlstuff;
+    }
     pub mod pdftex0;
+    pub mod pdftexextra;
     pub mod pdftex_pool;
     pub mod pdftexini;
 }
@@ -37,3 +43,16 @@ pub mod openclose;
 pub mod support;
 pub mod synctex;
 pub mod web2c;
+
+#[cfg(not(test))]
+#[no_mangle]
+pub unsafe extern "C" fn main(
+    argc: ::core::ffi::c_int,
+    argv: *mut *mut ::core::ffi::c_char,
+) -> ::core::ffi::c_int {
+    unsafe {
+        generated::pdftexextra::maininit(argc, argv);
+        generated::pdftexini::mainbody();
+    }
+    libc::EXIT_SUCCESS
+}
