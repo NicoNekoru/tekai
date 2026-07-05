@@ -34,7 +34,6 @@ fn main() {
     if std::env::var_os("CARGO_FEATURE_RUST_BINARY").is_some() {
         let required = [
             web2c.join("pdftexd.h"),
-            build.join("libs/libpng/libpng.a"),
             build.join("libs/xpdf/libxpdf.a"),
         ];
         for path in required {
@@ -48,13 +47,8 @@ fn main() {
 
         println!(
             "cargo:rustc-link-search=native={}",
-            build.join("libs/libpng").display()
-        );
-        println!(
-            "cargo:rustc-link-search=native={}",
             build.join("libs/xpdf").display()
         );
-        println!("cargo:rustc-link-lib=static=png");
         println!("cargo:rustc-link-lib=static=xpdf");
     }
 }

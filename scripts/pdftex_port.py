@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import binascii
 import filecmp
 import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 
 
@@ -78,6 +81,16 @@ SMOKE_TEX = """\
 \\catcode`\\}=2
 \\pdfoutput=1
 \\shipout\\vbox{\\hbox{Hi}}
+\\end
+"""
+
+PNG_SMOKE_TEX = """\
+\\catcode`\\{=1
+\\catcode`\\}=2
+\\pdfoutput=1
+\\pdfcompresslevel=9
+\\pdfximage width 96pt {image.png}
+\\shipout\\hbox{\\pdfrefximage\\pdflastximage}
 \\end
 """
 
@@ -538,7 +551,6 @@ def link_rust_pdftex(force: bool = False) -> None:
         "-o",
         RUST_LIBTOOL_BINARY.name,
         str(RUST_ARCHIVE),
-        str(BUILD_DIR / "libs" / "libpng" / "libpng.a"),
         str(BUILD_DIR / "libs" / "xpdf" / "libxpdf.a"),
     ]
     run(link_cmd, cwd=WEB2C_DIR)
@@ -558,6 +570,64 @@ def run_initex_smoke(binary: Path, out_dir: Path, extra_args: list[str] | None =
             str(binary),
             "-ini",
             *(extra_args or []),
+            "-interaction=nonstopmode",
+            "-jobname=test",
+            "./test.tex",
+        ],
+        cwd=out_dir,
+        env=env,
+        capture=True,
+    ).stdout
+
+
+def png_chunk(kind: bytes, data: bytes) -> bytes:
+    payload = kind + data
+    return (
+        struct.pack(">I", len(data))
+        + payload
+        + struct.pack(">I", binascii.crc32(payload) & 0xFFFFFFFF)
+    )
+
+
+def write_png_fixture(path: Path) -> None:
+    width = 4
+    height = 4
+    pixels = [
+        [(0xD9, 0x34, 0x2B, 0xFF), (0x35, 0x7A, 0xB8, 0xCC), (0x2E, 0xAD, 0x5B, 0x88), (0x11, 0x11, 0x11, 0x00)],
+        [(0xF6, 0xC9, 0x45, 0xFF), (0x7E, 0x57, 0xC2, 0xDD), (0x18, 0x91, 0x8C, 0xAA), (0x55, 0x55, 0x55, 0x44)],
+        [(0x2A, 0x2A, 0x2A, 0xFF), (0xF4, 0x84, 0x5F, 0xBB), (0x4C, 0x78, 0xA8, 0x77), (0xF7, 0xF7, 0xF7, 0x33)],
+        [(0x0F, 0x62, 0x3D, 0xEE), (0xD6, 0x2E, 0x7F, 0x99), (0x44, 0x44, 0x44, 0x66), (0xFF, 0xFF, 0xFF, 0x11)],
+    ]
+    raw = bytearray()
+    for row in pixels:
+        raw.append(0)
+        for rgba in row:
+            raw.extend(rgba)
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", ihdr)
+        + png_chunk(b"pHYs", struct.pack(">IIB", 2835, 2835, 1))
+        + png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + png_chunk(b"IEND", b"")
+    )
+    path.write_bytes(png)
+
+
+def run_png_smoke(binary: Path, out_dir: Path) -> None:
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+    write_png_fixture(out_dir / "image.png")
+    (out_dir / "test.tex").write_text(PNG_SMOKE_TEX)
+    env = {
+        "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH,
+        "FORCE_SOURCE_DATE": "1",
+        "TEXINPUTS": ".:",
+    }
+    run(
+        [
+            str(binary),
+            "-ini",
             "-interaction=nonstopmode",
             "-jobname=test",
             "./test.tex",
@@ -600,6 +670,28 @@ def smoke(force_link: bool = False, legacy_libtool: bool = False) -> None:
         comparisons["pixels"] = filecmp.cmp(
             c_dir / "render" / "page-1.png",
             rust_dir / "render" / "page-1.png",
+            shallow=False,
+        )
+        png_c_dir = PORT_ROOT / "smoke-png" / "c"
+        png_rust_dir = PORT_ROOT / "smoke-png" / "rust"
+        run_png_smoke(WEB2C_DIR / "pdftex", png_c_dir)
+        run_png_smoke(rust_binary, png_rust_dir)
+        for directory in (png_c_dir, png_rust_dir):
+            render_dir = directory / "render"
+            render_dir.mkdir()
+            run(
+                [
+                    "pdftoppm",
+                    "-r",
+                    "144",
+                    "-png",
+                    str(directory / "test.pdf"),
+                    str(render_dir / "page"),
+                ]
+            )
+        comparisons["png_pixels"] = filecmp.cmp(
+            png_c_dir / "render" / "page-1.png",
+            png_rust_dir / "render" / "page-1.png",
             shallow=False,
         )
     synctex_c_dir = PORT_ROOT / "smoke-synctex" / "c"

@@ -685,6 +685,7 @@ dependencies = [
  "cc",
  "libc",
  "libz-rs-sys",
+ "png",
 ]
 
 [[package]]
