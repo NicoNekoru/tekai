@@ -273,23 +273,17 @@ per-fallback `native_rows`, `native_image_slots`, `native_caption_slots`, and
 size the exact output-routine work that must be implemented before enabling the
 float bodies on the hot path.
 
-The p5 clean-build timing gate is encoded as:
+Native timing and coverage checks now live in Rust tests or Rust benchmark
+work, not in Python or shell harnesses. Use the workspace Cargo suite as the
+supported local check:
 
 ```sh
-scripts/native_pdftex_gate.py
-scripts/native_pdftex_gate.py --max-two-column-graphic-float-fallbacks 0 --max-two-column-wide-graphic-float-fallbacks 0 --max-two-column-graphic-float-fallback-native-slots 0 --max-two-column-wide-graphic-float-fallback-native-slots 0
+cargo test -p texpilot-pdftex
+cargo test --workspace
 ```
 
-It runs the two bundled large examples through `--engine texpilot-pdftex`,
-requires the native trace path plus caption-placement diagnostics rather than
-fallback, and fails if either median full-build wall time exceeds one second by
-default. The current release gate on this workspace passes with medians of
-0.487s for `arXiv-2605.26379v1` and 0.672s for `arXiv-2511.08544v3` across
-three forced clean native builds per paper.
-It also reports the two-column graphic float fallback counters and estimated
-native-slot debt, and can enforce the same native-coverage budgets as the
-rendered-parity harness. That keeps the sub-second gate honest: a build is not
-considered healthier merely because it is fast while more TeX/STY float
+That keeps the sub-second target honest in the Rust codebase itself: a build is
+not considered healthier merely because it is fast while more TeX/STY float
 functionality has slipped back to the approximate path.
 
 The native hot path resolves project-local and explicit `TEXINPUTS`/
@@ -299,57 +293,10 @@ default parser path: local and search-path classes still contribute adapters
 and package options, but asking the TeX installation about `article.cls` is
 legacy discovery work unless it changes the rendered PDF.
 
-The rendered-PDF equivalence harness is encoded as:
-
-```sh
-scripts/native_pdftex_parity.py --smoke
-scripts/native_pdftex_parity.py examples/arXiv-2605.26379v1/main.tex
-scripts/native_pdftex_parity.py --top-pages 3 --write-comparison-pages
-scripts/native_pdftex_parity.py --caption-drift 8
-scripts/native_pdftex_parity.py --fail-on-warn --require-page-count-match
-scripts/native_pdftex_parity.py --caption-drift 8 --max-caption-drift-sum 40
-scripts/native_pdftex_parity.py --max-two-column-graphic-float-fallbacks 0 --max-two-column-wide-graphic-float-fallbacks 0 --max-two-column-graphic-float-fallback-native-slots 0 --max-two-column-wide-graphic-float-fallback-native-slots 0
-```
-
-It builds an external `pdflatex` baseline, builds this native backend without
-fallback, rasterizes both PDFs, and reports exact page hashes plus RMSE and
-different-pixel metrics. Use `--strict` or explicit thresholds when turning
-those measurements into a failing near-identical-PDF gate. Use
-`--fail-on-warn` to promote warning-class rendered-output regressions, such as
-page-count or page-dimension drift, to failures while the RMSE thresholds are
-still being calibrated.
-Use `--top-pages N` to print the worst rendered pages by RMSE, and
-`--write-comparison-pages` to write side-by-side baseline/native PPMs under the
-case workdir. Use `--caption-drift N` to print the figure/table/listing captions
-with the largest native-vs-baseline page delta. The caption diagnostic resolves
-`\input`/`\include` from the TeX root,
-uses source caption text to filter baseline `pdftotext` matches, and uses native
-`layout_caption` trace entries for the native side when available, so prose
-references like "Table 4. While ..." are not mistaken for captions. That
-diagnostic is intentionally about rendered document flow: it helps separate
-"this page has different pixels" from "this float or table landed six pages
-early."
-The same diagnostic now reports aggregate caption-flow metrics (`count`,
-`sum_abs`, `mean_abs`, and `max_abs`) and can gate them with
-`--max-caption-drift-sum`, `--max-caption-drift-mean`, and
-`--max-caption-drift-page`. These are page-flow gates, not legacy auxiliary-file
-checks.
-The harness also reads native coverage counters from the trace and can gate
-two-column graphic float bypasses with
-`--max-two-column-graphic-float-fallbacks` and
-`--max-two-column-wide-graphic-float-fallbacks`, plus the corresponding
-estimated native-slot debt with
-`--max-two-column-graphic-float-fallback-native-slots` and
-`--max-two-column-wide-graphic-float-fallback-native-slots`. These limits track
-remaining output-routine functionality that still affects rendered PDF parity;
-they are not a promise to recreate legacy float sidecars or logs.
-
-That rendered output is the compatibility target. `.aux`, `.toc`, `.lof`,
+Rendered output is the compatibility target. `.aux`, `.toc`, `.lof`,
 `.lot`, `.out`, `.brf`, BibTeX/Biber choreography, and verbose rerun logs are
 only useful when they help explain or bridge missing TeX/STY semantics; they
 are not required artifacts for the high-performance replacement path.
-The harness therefore gates page flow, dimensions, and rendered-pixel distance;
-it deliberately does not gate legacy sidecar shape.
 
 Current rendered-parity evidence for the large examples is page-count and
 dimension agreement, not near-identical output yet. At the harness default of

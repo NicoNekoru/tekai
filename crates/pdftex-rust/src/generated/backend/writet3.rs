@@ -495,7 +495,7 @@ unsafe extern "C" fn t3_getline() {
                     > t3_line_limit as ::core::ffi::c_uint
                 {
                     crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
-                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet3.c\0"
+                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/backend/writet3.rs\0"
                             as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(60 as ::core::ffi::c_int)]);
                 }
                 let fresh0 = t3_line_ptr;
@@ -546,7 +546,7 @@ unsafe extern "C" fn t3_getline() {
             > 1024 as ::core::ffi::c_int as ::core::ffi::c_uint
         {
             crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
-                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/writet3.c\0"
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/backend/writet3.rs\0"
                     as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(66 as ::core::ffi::c_int)]);
         }
         if t3_line_ptr.offset_from(t3_line_array) as ::core::ffi::c_long > 1 as ::core::ffi::c_long

@@ -353,7 +353,7 @@ unsafe extern "C" fn sfd_getline(mut expect_eof: boolean) {
                     > 256 as ::core::ffi::c_int as ::core::ffi::c_uint
                 {
                     crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
-                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/subfont.c\0"
+                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/backend/subfont.rs\0"
                             as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(95 as ::core::ffi::c_int)]);
                 }
                 let fresh3 = p;
@@ -369,7 +369,7 @@ unsafe extern "C" fn sfd_getline(mut expect_eof: boolean) {
             > 256 as ::core::ffi::c_int as ::core::ffi::c_uint
         {
             crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
-                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/subfont.c\0"
+                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/backend/subfont.rs\0"
                     as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(97 as ::core::ffi::c_int)]);
         }
         if p.offset_from(&raw mut sfd_line as *mut ::core::ffi::c_char) as ::core::ffi::c_long
@@ -589,7 +589,7 @@ pub unsafe extern "C" fn handle_subfont_fm(
         > 256 as ::core::ffi::c_int as ::core::ffi::c_uint
     {
         crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
-                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/pdftexdir/subfont.c\0"
+                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/backend/subfont.rs\0"
                 as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(196 as ::core::ffi::c_int)]);
     }
     strcat(

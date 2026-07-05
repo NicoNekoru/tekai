@@ -5005,7 +5005,7 @@ unsafe extern "C" fn makepdftime(
             off_mins,
         );
         if i as ::core::ffi::c_uint >= 9 as ::core::ffi::c_int as ::core::ffi::c_uint {
-            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/lib/texmfmp.c\0"
+            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
                     as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3413 as ::core::ffi::c_int)]);
         }
     };
@@ -5069,7 +5069,7 @@ pub unsafe extern "C" fn makecstring(mut s: integer) -> *mut ::core::ffi::c_char
     if (l_0 + 1 as ::core::ffi::c_int) as ::core::ffi::c_uint
         > (1024 as ::core::ffi::c_int * 1024 as ::core::ffi::c_int) as ::core::ffi::c_uint
     {
-        crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/lib/texmfmp.c\0"
+        crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
                 as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3494 as ::core::ffi::c_int)]);
     }
     if cstrbuf.is_null() {
@@ -5259,7 +5259,7 @@ pub unsafe extern "C" fn getfilesize(mut s: integer) {
         if i as ::core::ffi::c_uint
             >= ::core::mem::size_of::<[::core::ffi::c_char; 20]>() as ::core::ffi::c_uint
         {
-            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/lib/texmfmp.c\0"
+            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
                     as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3637 as ::core::ffi::c_int)]);
         }
         len = strlen(&raw mut buf as *mut ::core::ffi::c_char);
@@ -5340,7 +5340,7 @@ pub unsafe extern "C" fn getfiledump(
             *strpool.offset(data_ptr as isize) as ::core::ffi::c_uint,
         );
         if i as ::core::ffi::c_uint >= 3 as ::core::ffi::c_int as ::core::ffi::c_uint {
-            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/lib/texmfmp.c\0"
+            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
                     as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3725 as ::core::ffi::c_int)]);
         }
         poolptr += i;
@@ -5373,7 +5373,7 @@ pub unsafe extern "C" fn convertStringToHexString(
         if k_0 as ::core::ffi::c_uint
             >= ::core::mem::size_of::<[::core::ffi::c_char; 3]>() as ::core::ffi::c_uint
         {
-            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"/Users/kai/Documents/LaTeX/third_party/texlive-source/texk/web2c/lib/texmfmp.c\0"
+            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
                     as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3745 as ::core::ffi::c_int)]);
         }
         let fresh3 = j;

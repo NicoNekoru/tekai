@@ -285,6 +285,15 @@ pub enum RunnerArg {
     Latexmk,
 }
 
+impl From<RunnerArg> for Runner {
+    fn from(value: RunnerArg) -> Self {
+        match value {
+            RunnerArg::Direct => Runner::Direct,
+            RunnerArg::Latexmk => Runner::Latexmk,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,14 +377,5 @@ mod tests {
             args.flags.engine,
             EngineArg::TexpilotPdftexCertified
         ));
-    }
-}
-
-impl From<RunnerArg> for Runner {
-    fn from(value: RunnerArg) -> Self {
-        match value {
-            RunnerArg::Direct => Runner::Direct,
-            RunnerArg::Latexmk => Runner::Latexmk,
-        }
     }
 }

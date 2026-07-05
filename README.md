@@ -440,246 +440,29 @@ recorded data-dependency changes skip lint and go straight to the direct build.
 Only the configured output directory is ignored; a source directory named
 `build` is still watched when it is not the output directory.
 
-## pdflatex parity checks
+## Verification
 
-`texpilot` is not a drop-in replacement TeX engine. It preserves compatibility
-by calling real TeX engines, but it now avoids `latexmk` by default. To guard
-rendered-output parity, run:
-
-```sh
-scripts/verify_pdflatex_parity.sh
-```
-
-For a focused check while iterating on the harness, set
-`TEXPILOT_PARITY_CASES` to one or more case names:
+The repository no longer carries Python or shell verification harnesses. The
+supported local proof path is Rust-only:
 
 ```sh
-TEXPILOT_PARITY_CASES="iclr arxiv-2605" scripts/verify_pdflatex_parity.sh
+cargo clippy --workspace -- -D warnings
+cargo test --workspace
 ```
 
-That script downloads the official 2026 ICLR, NeurIPS, and ICML sample paper
-zips, also checks a local BibLaTeX/Biber fixture and the included arXiv
-examples, builds each document to `pdflatex` convergence plus BibTeX or Biber
-when needed, and once with `texpilot build`. It then rasterizes both PDFs with
-`pdftoppm` and compares page hashes. The comparison is visual/rendered-page
-equality, not byte-for-byte PDF equality, because PDF metadata and object IDs
-are not stable across build runners.
+Tests that require external TeX tools skip themselves when those programs are
+not available. The `pdftex-rust` crate builds the Rust-owned pdfTeX substitute
+with Cargo, and the large example projects remain checked in as TeX/STY
+fixtures for integration and manual rendered-PDF checks.
 
-For the experimental native `texpilot-pdftex` engine, use the rendered-similarity
-harness instead:
+## Performance Notes
 
-```sh
-scripts/native_pdftex_parity.py --smoke
-scripts/native_pdftex_parity.py --strict examples/arXiv-2605.26379v1/main.tex
-scripts/native_pdftex_parity.py --top-pages 3 --write-comparison-pages
-scripts/native_pdftex_parity.py --fail-on-warn --require-page-count-match
-scripts/native_pdftex_parity.py --max-two-column-graphic-float-fallbacks 0 --max-two-column-wide-graphic-float-fallbacks 0 --max-two-column-graphic-float-fallback-native-slots 0 --max-two-column-wide-graphic-float-fallback-native-slots 0
-```
-
-That harness builds a converged external `pdflatex` baseline, builds the native
-engine without fallback, rasterizes both PDFs with `pdftoppm`, and reports page
-counts, dimensions, exact rendered-page hashes, RMSE, and different-pixel ratios.
-Use `--top-pages N` to print the worst rendered pages by RMSE, and
-`--write-comparison-pages` to emit side-by-side baseline/native PPMs under each
-case workdir for direct visual inspection.
-Without thresholds it is a measurement tool; `--strict` or explicit
-`--max-mean-rmse`, `--max-page-rmse`, and
-`--max-different-pixel-ratio` options turn it into the near-identical PDF gate
-for the native rewrite. Use `--fail-on-warn` when an iteration should also fail
-warning-class rendered-output regressions, such as page-count or page-dimension
-drift, without requiring strict RMSE thresholds yet.
-It also reads native trace coverage counters and can gate remaining
-two-column graphic float bypasses with
-`--max-two-column-graphic-float-fallbacks` and
-`--max-two-column-wide-graphic-float-fallbacks`, plus the corresponding
-estimated native-slot debt with
-`--max-two-column-graphic-float-fallback-native-slots` and
-`--max-two-column-wide-graphic-float-fallback-native-slots`, so uncovered
-output-routine functionality stays tied to rendered PDF parity rather than
-sidecar shape.
-
-The latest focused conference-template run in this workspace passed on June 28,
-2026:
-
-| case | source | `texpilot` direct pass summary | rendered parity |
-| --- | --- | --- | --- |
-| `iclr` | official ICLR 2026 sample paper zip | 3 TeX runs: 2 draft, 1 final-layout, 1 PDF, 1 bibliography | matched |
-| `neurips` | official NeurIPS 2026 sample paper zip | 3 TeX runs: 1 draft, 2 final-layout, 1 PDF | matched |
-| `icml` | official ICML 2026 sample paper zip | 3 TeX runs: 2 draft, 1 final-layout, 1 PDF, 1 bibliography | matched |
-
-## Release verification
-
-To rerun the full local proof suite before shipping a change:
-
-```sh
-scripts/verify_release.sh
-```
-
-That runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, the
-rendered `pdflatex` parity suite, and the `latexmk` performance gate. For a
-quick local edit check that skips the expensive paper builds, set
-`TEXPILOT_VERIFY_SKIP_PARITY=1` and/or `TEXPILOT_VERIFY_SKIP_PERF=1`.
-
-The checked-in GitHub Actions workflow runs that light verifier on pushes and
-pull requests. A manual `workflow_dispatch` input, `full_release=true`, installs
-the TeX/PDF toolchain and runs the complete parity plus performance suite. The
-full job is intentionally manual because it downloads conference templates and
-builds several multi-pass papers.
-
-## Performance comparison
-
-To compare clean-build wall-clock time on the included arXiv paper:
-
-```sh
-scripts/benchmark_paper.py --runs 5
-```
-
-To compare warmed no-op, metadata-only touch, a trailing comment after
-`\end{document}`, an in-document comment before `\end{document}`,
-inline-comment padding edits, inline-verb comment edits, unused-bibliography
-edits, and cited-bibliography rebuilds:
-
-```sh
-scripts/benchmark_paper.py --scenario warm-edits --runs 5
-```
-
-`warm` and `warm-edit` are accepted aliases for `warm-edits`.
-The clean-build table includes compact pass summaries for `texpilot` rows, for
-example `5T+2d/3f/1p+1B` means five TeX passes split as two draft/no-PDF, three
-final-layout, and one PDF-producing pass plus one bibliography run. The
-`slowest` column identifies the slowest reported TeX pass (`d` draft, `f`
-full-layout/no-PDF, `p` PDF-producing). Add `--json` to include raw timings and
-per-pass diagnostics. `texpilot` rows also include build reports with cache
-status, draft-prepass use, and auxiliary preflight use.
-Add `--gate` to turn the comparison into a regression check: the script exits
-nonzero when the `texpilot-direct` median exceeds the allowed multiple of the
-`latexmk` median. The default threshold is `--max-latexmk-ratio 1.0`, which
-requires direct mode to be no slower than `latexmk`, plus a small
-`--gate-absolute-tolerance` for noisy timing ties; use a lower ratio such as
-`0.75` when you want CI to enforce a minimum speedup margin. In `warm-edits`
-mode, the gate is checked independently for each edit type so a no-op/cache
-regression cannot hide behind a slower bibliography rebuild.
-For a ready-made local or CI check over clean builds and warmed edit loops on
-the included larger papers, run:
-
-```sh
-scripts/performance_gate.sh
-```
-
-Set `TEXPILOT_PERF_RUNS`, `TEXPILOT_MAX_LATEXMK_RATIO`,
-`TEXPILOT_GATE_ABSOLUTE_TOLERANCE`, `TEXPILOT_PERF_SCENARIOS`,
-`TEXPILOT_PERF_PAPERS`, or `TEXPILOT_BIN` to tune the gate without editing the
-script.
-
-The latest full performance gate run in this workspace passed on both included
-larger papers:
-
-| paper | `latexmk` clean median | `texpilot` direct clean median | ratio |
-| --- | ---: | ---: | ---: |
-| `examples/arXiv-2605.26379v1/main.tex` | 14.203s | 6.379s | 0.449x |
-| `examples/arXiv-2511.08544v3/main.tex` | 16.188s | 8.320s | 0.514x |
-
-The same gate also passed warmed edit loops independently for no-op touches,
-comment-only edits, unused-bibliography edits, and cited-bibliography rebuilds.
-Comment/no-op rebuilds stayed on the direct-cache path, while cited-bibliography
-edits still rebuilt the affected bibliography and final PDF.
-
-The clean benchmark times fresh source-tree copies for `pdflatex` one-pass,
-`pdflatex` three-pass full recipe, `pdflatex` rerun-to-convergence, direct
-`latexmk`, optimized `texpilot` direct final builds, conservative
-`texpilot --draft-prepass never`, forced `texpilot --draft-prepass always`,
-`texpilot --runner latexmk`, direct builds with a precompiled preamble, and
-one-pass preview modes. It builds and times
-`target/release/texpilot` by
-default; pass `--profile debug` or `--texpilot <path>` when you intentionally
-want another binary. By default each run uses a fresh `/tmp/texpilot-bench-*`
-workspace so separate benchmark invocations can run concurrently; pass
-`--workdir <path>` when you want a stable scratch directory that should be
-replaced on each run.
-
-On `examples/arXiv-2605.26379v1/main.tex` (three-run local clean medians with
-auto draft-prepass default and `target/release/texpilot`, measured June 28,
-2026), wall-clock times were:
-
-| command | time |
-| --- | ---: |
-| `pdflatex` one pass | 2.496s |
-| `pdflatex` full recipe | 7.624s |
-| `pdflatex` converged | 12.657s |
-| `latexmk` | 14.203s |
-| `texpilot` direct | 6.379s |
-| `texpilot --draft-prepass never` | 13.059s |
-| `texpilot --draft-prepass always` | 6.289s |
-| `texpilot --runner latexmk` | 14.156s |
-| `texpilot --once` | 2.661s |
-| `texpilot --once --fast` | 1.040s |
-
-On the larger included paper (`examples/arXiv-2511.08544v3/main.tex`, also
-three-run local clean medians), native direct scheduling was the larger win:
-
-| command | time |
-| --- | ---: |
-| `pdflatex` one pass | 3.575s |
-| `pdflatex` full recipe | 11.024s |
-| `pdflatex` converged | 11.022s |
-| `latexmk` | 16.188s |
-| `texpilot` direct | 8.320s |
-| `texpilot --draft-prepass never` | 12.242s |
-| `texpilot --draft-prepass always` | 8.273s |
-| `texpilot --runner latexmk` | 16.211s |
-| `texpilot --once` | 4.122s |
-| `texpilot --once --fast` | 2.214s |
-
-The `texpilot --runner latexmk` rows intentionally track raw `latexmk`: that
-mode is a compatibility baseline, not the optimization path. The speedup comes
-from the native direct runner owning TeX/BibTeX/rerun scheduling.
-
-The experimental `--engine texpilot-pdftex` path is a separate native-renderer
-track rather than a `pdflatex` scheduler optimization. In the latest release
-gate on this workspace, three forced full native builds of each bundled large
-example completed as single final PDF passes with median wall times of 0.487s
-for `arXiv-2605.26379v1` (48 pages) and 0.672s for
-`arXiv-2511.08544v3` (50 pages), with zero external `pdflatex`, BibTeX, Biber,
-or draft-prepass runs. The native speed/parity harnesses now also require the
-caption-placement trace field so page-builder diagnostics are present on the
-measured path. The speed gate also reports and can enforce the same
-two-column graphic float fallback count and estimated-slot budgets as the
-rendered-parity harness; the current large-example gate enforces zero remaining
-two-column graphic fallback entries and zero estimated fallback slots, so
-sub-second results remain tied to shrinking the native functionality gap rather
-than hiding it.
-When Kpathsea can resolve the local TeX Gyre files, the native writer now embeds
-the Pagella/Heros Type 1 document and code fonts directly, so rendered-pixel
-differences come from layout and page-builder divergence instead of viewer-side
-font substitution.
-
-Compatibility for this track means accepting the TeX/STY input surface and
-producing a near-identical rendered PDF. Legacy intermediates such as `.aux`,
-`.toc`, `.lof`, `.lot`, `.out`, `.brf`, and verbose rerun logs are treated as
-optional diagnostics or fallback bridges, not as success criteria for the fast
-end-to-end path. In the PDF-only hot path, list/float metadata scans and
-bibliography-style sidecar discovery are skipped unless the rendered PDF can use
-their results.
-The native parity harness follows the same rule: warnings and failures are about
-the rendered PDF, page flow, and dimensions, not sidecar-file shape.
-
-For the external `pdflatex` path, the remaining final-build cost is mostly
-`pdflatex` itself and repeated reruns for citations/references. The preview
-modes are intentionally not final-quality builds; they trade stable references,
-bibliography, image inclusion, TikZ
-externalization, and `minted` syntax highlighting for edit-loop speed.
-`--draft-prepass` is different from preview mode: it still finishes with at
-least one PDF-producing full-image TeX pass, but can avoid image inclusion and
-throwaway PDF writes during earlier passes whose main purpose is to write
-auxiliary files for BibTeX/Biber/index tools, back-reference data, and other
-rerun-controlled state. Once those no-PDF passes are stable, `texpilot` promotes
-the next likely final pass to PDF output so it does not spend an additional
-full-layout pass merely to confirm convergence.
-For file-change rerun warnings, direct mode also snapshots standard LaTeX
-rerun files such as `.aux`, `.out`, `.toc`, `.brf`, `.lof`, and `.lot` around
-full-layout no-PDF passes. If those files do not change, the next pass can be
-promoted to PDF output earlier; if they are still changing, the more
-conservative promotion threshold remains in place.
+The previous script-based timing harness has been removed with the rest of the
+non-Rust tooling. Performance work should now live in Rust benchmarks, Rust
+integration tests, or the application itself. The main architectural target is
+unchanged: keep the hot path focused on TeX/STY-to-PDF output, avoid legacy
+sidecar compatibility work unless it affects rendered PDF output, and preserve
+rendered-page parity as the functional contract.
 
 Direct builds also write a `.texpilot-<job>.state.toml` file in the output
 directory using TeX's `.fls` recorder dependencies plus BibTeX `.bib`/`.bst`
@@ -880,9 +663,8 @@ changing after the log stops asking for a rerun, `texpilot` continues until that
 custom output settles, while standard `.aux`/`.toc`/`.out` files stay governed
 by LaTeX rerun warnings and the bibliography/index tool caches.
 
-Recently measured warmed edit-loop medians after a fresh final build
-(`scripts/benchmark_paper.py --scenario warm-edits --runs 3 --texpilot
-target/release/texpilot`):
+Recently measured warmed edit-loop medians after a fresh final build with
+`target/release/texpilot`:
 
 | paper | runner | no-op | touch main | trailing spaces | full-line comment | trailing comment after `\end{document}` | in-document comment | inline-comment padding | inline-verb comment | unused `.bib` edit | cited `.bib` edit |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

@@ -1,4 +1,0 @@
-[submodule "third_party/texlive-source"]
-	path = third_party/texlive-source
-	url = https://github.com/TeX-Live/texlive-source.git
-	branch = trunk

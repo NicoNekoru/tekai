@@ -4157,8 +4157,7 @@ fn parse_supported_document(
             )?;
             if !heading.is_empty() {
                 let heading = paragraph_heading_text(&heading);
-                let run_in_source =
-                    remaining.trim_start_matches(|ch: char| matches!(ch, ' ' | '\t' | '\r' | '\n'));
+                let run_in_source = remaining.trim_start_matches([' ', '\t', '\r', '\n']);
                 let (paragraph, after_paragraph) = if starts_with_blank_line(remaining) {
                     ("", remaining)
                 } else {
@@ -6538,12 +6537,11 @@ fn listing_reference_name_from_definition_control(source: &str, control: &str) -
     while let Some(index) = find_control(cursor, control) {
         let rest = &cursor[index + marker_len..];
         let rest = rest.trim_start();
-        if let Some(after_name) = rest.strip_prefix("\\lstlistingname") {
-            if let Some((payload, _)) = take_braced(after_name) {
-                if let Some(name) = normalize_reference_name(payload) {
-                    last_name = Some(name);
-                }
-            }
+        if let Some(after_name) = rest.strip_prefix("\\lstlistingname")
+            && let Some((payload, _)) = take_braced(after_name)
+            && let Some(name) = normalize_reference_name(payload)
+        {
+            last_name = Some(name);
         }
         cursor = rest;
     }
@@ -6734,9 +6732,7 @@ fn consume_environment_open_args<'a>(env: &str, source: &'a str) -> &'a str {
 
 fn float_prefers_top(source_after_env: &str) -> bool {
     let (placement, _) = take_optional_bracketed(source_after_env);
-    placement.map_or(true, |placement| {
-        placement.contains('t') || placement.contains('p')
-    })
+    placement.is_none_or(|placement| placement.contains('t') || placement.contains('p'))
 }
 
 fn float_prefers_bottom(source_after_env: &str) -> bool {
@@ -7613,6 +7609,12 @@ struct GraphicsCacheKey {
     pdf_page_number: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct GraphicReferenceCacheKey {
+    payload: String,
+    pdf_page_number: u32,
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedGraphicReference {
     key: GraphicsCacheKey,
@@ -7642,6 +7644,7 @@ struct CachedGraphicAsset {
 
 #[derive(Debug, Default)]
 struct GraphicsCache {
+    references: HashMap<GraphicReferenceCacheKey, ResolvedGraphicReference>,
     assets: HashMap<GraphicsCacheKey, CachedGraphicAsset>,
     dimensions: HashMap<GraphicsCacheKey, CachedGraphicDimensions>,
 }
@@ -7752,7 +7755,7 @@ fn collect_graphic_references_for_prewarm(
     source: &str,
     root_dir: &Path,
     graphics: &GraphicsConfig,
-    cache: &GraphicsCache,
+    cache: &mut GraphicsCache,
 ) -> Vec<ResolvedGraphicReference> {
     let mut references = Vec::new();
     let mut seen = HashSet::new();
@@ -7766,7 +7769,7 @@ fn collect_graphic_references_for_prewarm(
             continue;
         };
         if let Ok(reference) =
-            resolve_graphic_reference(root_dir, payload.trim(), options, graphics)
+            resolve_cached_graphic_reference(cache, root_dir, payload.trim(), options, graphics)
             && supported_graphic_extension(&reference.extension)
             && !cache.assets.contains_key(&reference.key)
             && seen.insert(reference.key.clone())
@@ -7780,33 +7783,25 @@ fn collect_graphic_references_for_prewarm(
 
 fn load_cached_graphic_asset(
     cache: &mut GraphicsCache,
-    root_dir: &Path,
-    payload: &str,
-    options: Option<&str>,
-    graphics: &GraphicsConfig,
+    reference: &ResolvedGraphicReference,
 ) -> Result<Option<CachedGraphicAsset>, String> {
-    let reference = resolve_graphic_reference(root_dir, payload, options, graphics)?;
     if !supported_graphic_extension(&reference.extension) {
         return Ok(None);
     }
     if let Some(asset) = cache.assets.get(&reference.key) {
         return Ok(Some(asset.clone()));
     }
-    let Some(asset) = decode_graphic_asset(&reference)? else {
+    let Some(asset) = decode_graphic_asset(reference)? else {
         return Ok(None);
     };
-    cache.insert_asset(reference.key, asset.clone());
+    cache.insert_asset(reference.key.clone(), asset.clone());
     Ok(Some(asset))
 }
 
 fn load_cached_graphic_dimensions(
     cache: &mut GraphicsCache,
-    root_dir: &Path,
-    payload: &str,
-    options: Option<&str>,
-    graphics: &GraphicsConfig,
+    reference: &ResolvedGraphicReference,
 ) -> Result<Option<CachedGraphicDimensions>, String> {
-    let reference = resolve_graphic_reference(root_dir, payload, options, graphics)?;
     if !supported_graphic_extension(&reference.extension) {
         return Ok(None);
     }
@@ -7815,14 +7810,38 @@ fn load_cached_graphic_dimensions(
     }
     if let Some(asset) = cache.assets.get(&reference.key) {
         let dimensions = cached_dimensions_from_asset(asset);
-        cache.dimensions.insert(reference.key, dimensions.clone());
+        cache
+            .dimensions
+            .insert(reference.key.clone(), dimensions.clone());
         return Ok(Some(dimensions));
     }
-    let Some(dimensions) = read_graphic_dimensions(&reference)? else {
+    let Some(dimensions) = read_graphic_dimensions(reference)? else {
         return Ok(None);
     };
-    cache.dimensions.insert(reference.key, dimensions.clone());
+    cache
+        .dimensions
+        .insert(reference.key.clone(), dimensions.clone());
     Ok(Some(dimensions))
+}
+
+fn resolve_cached_graphic_reference(
+    cache: &mut GraphicsCache,
+    root_dir: &Path,
+    payload: &str,
+    options: Option<&str>,
+    graphics: &GraphicsConfig,
+) -> Result<ResolvedGraphicReference, String> {
+    let key = GraphicReferenceCacheKey {
+        payload: payload.trim().to_string(),
+        pdf_page_number: options.and_then(graphics_page_number).unwrap_or(1),
+    };
+    if let Some(reference) = cache.references.get(&key) {
+        return Ok(reference.clone());
+    }
+
+    let reference = resolve_graphic_reference(root_dir, &key.payload, options, graphics)?;
+    cache.references.insert(key, reference.clone());
+    Ok(reference)
 }
 
 fn resolve_graphic_reference(
@@ -8121,13 +8140,10 @@ fn parse_includegraphics<'a>(
     let (options, source) = take_optional_bracketed(source);
     let (payload, remaining) = take_braced(source)
         .ok_or_else(|| "native backend requires braced \\includegraphics paths".to_string())?;
-    let Some(asset) =
-        load_cached_graphic_asset(graphics_cache, root_dir, payload.trim(), options, graphics)?
-    else {
-        return Ok((
-            GraphicElement::Placeholder(resolve_graphics_path(root_dir, payload.trim(), graphics)?),
-            remaining,
-        ));
+    let reference =
+        resolve_cached_graphic_reference(graphics_cache, root_dir, payload, options, graphics)?;
+    let Some(asset) = load_cached_graphic_asset(graphics_cache, &reference)? else {
+        return Ok((GraphicElement::Placeholder(reference.path), remaining));
     };
     Ok((
         GraphicElement::Image(image_asset_from_cached(&asset, options, layout)),
@@ -8146,14 +8162,10 @@ fn parse_includegraphics_measurement<'a>(
     let (options, source) = take_optional_bracketed(source);
     let (payload, remaining) = take_braced(source)
         .ok_or_else(|| "native backend requires braced \\includegraphics paths".to_string())?;
-    let image = load_cached_graphic_dimensions(
-        graphics_cache,
-        root_dir,
-        payload.trim(),
-        options,
-        graphics,
-    )?
-    .map(|dimensions| measurement_image_asset_from_cached(&dimensions, options, layout));
+    let reference =
+        resolve_cached_graphic_reference(graphics_cache, root_dir, payload, options, graphics)?;
+    let image = load_cached_graphic_dimensions(graphics_cache, &reference)?
+        .map(|dimensions| measurement_image_asset_from_cached(&dimensions, options, layout));
     Ok((image, remaining))
 }
 
@@ -10643,11 +10655,11 @@ fn append_bibliography_lines(
 
 fn rendered_bibliography_entry(citations: &CitationRegistry, entry: &CitationEntry) -> String {
     let mut text = format!("[{}] {}", entry.number, entry.text);
-    if citations.visible_backrefs {
-        if let Some(suffix) = bibliography_backref_suffix(citations, &entry.key) {
-            text.push(' ');
-            text.push_str(&suffix);
-        }
+    if citations.visible_backrefs
+        && let Some(suffix) = bibliography_backref_suffix(citations, &entry.key)
+    {
+        text.push(' ');
+        text.push_str(&suffix);
     }
     text
 }
@@ -12999,7 +13011,7 @@ fn clean_inline_text_collecting(
                         } else {
                             out.push_str(&name);
                             let remaining = clean_inline_text_collecting(
-                                &rest, macros, labels, citations, footnotes,
+                                rest, macros, labels, citations, footnotes,
                             )?;
                             append_cleaned_remaining(&mut out, &remaining);
                         }
@@ -13481,7 +13493,7 @@ fn clean_inline_text_collecting(
                             append_cleaned_remaining(&mut out, &remaining);
                         } else {
                             let remaining = clean_inline_text_collecting(
-                                &rest, macros, labels, citations, footnotes,
+                                rest, macros, labels, citations, footnotes,
                             )?;
                             append_cleaned_remaining(&mut out, &remaining);
                         }
@@ -15236,7 +15248,7 @@ fn write_pdf(
     )));
 
     let page_streams = page_streams_from_placements(document, page_count, placements);
-    for page_index in 0..page_count {
+    for (page_index, stream) in page_streams.iter().enumerate().take(page_count) {
         let page_object = 3 + page_index * 2;
         let content_object = page_object + 1;
         let xobjects = if document.images.is_empty() {
@@ -15256,7 +15268,6 @@ fn write_pdf(
             heading_font_object,
             symbol_font_object
         )));
-        let stream = &page_streams[page_index];
         objects.push(pdf_object(format!(
             "<< /Length {} >>\nstream\n{}endstream",
             stream.len(),
@@ -20012,6 +20023,40 @@ Native SyncTeX output.
     #[test]
     fn native_jpeg_dimension_parser_reads_sof_dimensions() {
         assert_eq!(jpeg_dimensions(tiny_jpeg_bytes()), Some((2, 1)));
+    }
+
+    #[test]
+    fn native_graphics_cache_reuses_resolved_references() {
+        let root = temp_dir("graphics-resolution-cache");
+        let figure = root.join("figure.jpg");
+        fs::write(&figure, tiny_jpeg_bytes()).unwrap();
+
+        let graphics = GraphicsConfig::default();
+        let layout = DocumentLayout::default();
+        let mut cache = GraphicsCache::default();
+
+        let (first, _) = parse_includegraphics(
+            "[width=2cm]{figure.jpg}",
+            &root,
+            &graphics,
+            &mut cache,
+            &layout,
+        )
+        .unwrap();
+        let (second, _) = parse_includegraphics(
+            "[height=1cm]{figure.jpg}",
+            &root,
+            &graphics,
+            &mut cache,
+            &layout,
+        )
+        .unwrap();
+
+        assert!(matches!(first, GraphicElement::Image(_)));
+        assert!(matches!(second, GraphicElement::Image(_)));
+        assert_eq!(cache.references.len(), 1);
+        assert_eq!(cache.assets.len(), 1);
+        assert_eq!(cache.dimensions.len(), 1);
     }
 
     #[test]

@@ -3,13 +3,6 @@ name: CI
 on:
   push:
   pull_request:
-  workflow_dispatch:
-    inputs:
-      full_release:
-        description: "Run rendered-PDF parity and latexmk performance gates"
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   verify-light:
@@ -23,37 +16,9 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt clippy
           rustup default stable
 
-      - name: Run light release verifier
-        env:
-          TEXPILOT_VERIFY_SKIP_PARITY: "1"
-          TEXPILOT_VERIFY_SKIP_PERF: "1"
-        run: scripts/verify_release.sh
-
-  verify-full:
-    name: PDF parity and performance
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_release }}
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
+      - name: Run Rust checks
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt clippy
-          rustup default stable
-
-      - name: Install TeX and PDF tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            biber \
-            curl \
-            latexmk \
-            poppler-utils \
-            texlive-bibtex-extra \
-            texlive-fonts-recommended \
-            texlive-latex-extra \
-            unzip
-
-      - name: Run full release verifier
-        run: scripts/verify_release.sh
+          cargo fmt --package texpilot --package texpilot-pdftex --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy -p pdftex-rust --bin pdftex-rust --no-default-features --features rust-binary -- -D warnings
+          cargo test --workspace

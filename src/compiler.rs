@@ -1922,9 +1922,9 @@ fn tikz_externalize_refs_stripped(source: &str) -> Vec<TikzExternalizeRef> {
             continue;
         }
 
-        let payload_start = skip_tex_whitespace(&source, after_command);
+        let payload_start = skip_tex_whitespace(source, after_command);
         let (options, end) = if source[payload_start..].starts_with('[') {
-            match bracketed_tex_argument_payload_at(&source, payload_start) {
+            match bracketed_tex_argument_payload_at(source, payload_start) {
                 Some((options, options_end)) => (options, options_end),
                 None => (String::new(), after_command),
             }
@@ -2918,10 +2918,10 @@ fn pgfplots_addplot_table_payloads_stripped(source: &str) -> Vec<String> {
             continue;
         }
 
-        let mut table_start = skip_tex_whitespace(&source, after_command);
+        let mut table_start = skip_tex_whitespace(source, after_command);
         while source[table_start..].starts_with('[') {
-            if let Some(argument_end) = bracketed_tex_argument_end(&source, table_start) {
-                table_start = skip_tex_whitespace(&source, argument_end);
+            if let Some(argument_end) = bracketed_tex_argument_end(source, table_start) {
+                table_start = skip_tex_whitespace(source, argument_end);
             } else {
                 break;
             }
@@ -2936,16 +2936,15 @@ fn pgfplots_addplot_table_payloads_stripped(source: &str) -> Vec<String> {
             continue;
         }
 
-        let mut payload_start = skip_tex_whitespace(&source, table_start + "table".len());
+        let mut payload_start = skip_tex_whitespace(source, table_start + "table".len());
         while source[payload_start..].starts_with('[') {
-            if let Some(argument_end) = bracketed_tex_argument_end(&source, payload_start) {
-                payload_start = skip_tex_whitespace(&source, argument_end);
+            if let Some(argument_end) = bracketed_tex_argument_end(source, payload_start) {
+                payload_start = skip_tex_whitespace(source, argument_end);
             } else {
                 break;
             }
         }
-        let Some((payload, payload_end)) = balanced_braced_payload_at(&source, payload_start)
-        else {
+        let Some((payload, payload_end)) = balanced_braced_payload_at(source, payload_start) else {
             cursor = table_start + "table".len();
             continue;
         };
@@ -3199,13 +3198,13 @@ fn tex_two_arg_path_refs_stripped(source: &str, command: &str) -> Vec<TexTwoArgP
             continue;
         }
 
-        let first_start = skip_tex_whitespace(&source, after_command);
-        let Some((directory, first_end)) = balanced_braced_payload_at(&source, first_start) else {
+        let first_start = skip_tex_whitespace(source, after_command);
+        let Some((directory, first_end)) = balanced_braced_payload_at(source, first_start) else {
             cursor = after_command;
             continue;
         };
-        let second_start = skip_tex_whitespace(&source, first_end);
-        let Some((file, second_end)) = balanced_braced_payload_at(&source, second_start) else {
+        let second_start = skip_tex_whitespace(source, first_end);
+        let Some((file, second_end)) = balanced_braced_payload_at(source, second_start) else {
             cursor = first_end;
             continue;
         };
@@ -3276,9 +3275,9 @@ fn tex_input_payloads_stripped(source: &str) -> Vec<String> {
             continue;
         }
 
-        let payload_start = skip_tex_whitespace(&source, after_command);
+        let payload_start = skip_tex_whitespace(source, after_command);
         if source[payload_start..].starts_with('{') {
-            let Some((payload, payload_end)) = balanced_braced_payload_at(&source, payload_start)
+            let Some((payload, payload_end)) = balanced_braced_payload_at(source, payload_start)
             else {
                 break;
             };
@@ -3289,7 +3288,7 @@ fn tex_input_payloads_stripped(source: &str) -> Vec<String> {
             continue;
         }
 
-        let Some((payload, payload_end)) = unbraced_input_payload(&source, payload_start) else {
+        let Some((payload, payload_end)) = unbraced_input_payload(source, payload_start) else {
             cursor = after_command;
             continue;
         };
@@ -6843,19 +6842,18 @@ fn includegraphics_payloads_stripped(source: &str) -> Vec<String> {
             continue;
         }
 
-        let mut payload_start = skip_tex_whitespace(&source, after_command);
+        let mut payload_start = skip_tex_whitespace(source, after_command);
         if source[payload_start..].starts_with('*') {
-            payload_start = skip_tex_whitespace(&source, payload_start + 1);
+            payload_start = skip_tex_whitespace(source, payload_start + 1);
         }
         while source[payload_start..].starts_with('[') {
-            if let Some(argument_end) = bracketed_tex_argument_end(&source, payload_start) {
-                payload_start = skip_tex_whitespace(&source, argument_end);
+            if let Some(argument_end) = bracketed_tex_argument_end(source, payload_start) {
+                payload_start = skip_tex_whitespace(source, argument_end);
             } else {
                 break;
             };
         }
-        let Some((payload, payload_end)) = balanced_braced_payload_at(&source, payload_start)
-        else {
+        let Some((payload, payload_end)) = balanced_braced_payload_at(source, payload_start) else {
             cursor = after_command;
             continue;
         };
@@ -6897,10 +6895,10 @@ fn animategraphics_refs_stripped(source: &str) -> Vec<AnimateGraphicsRef> {
             continue;
         }
 
-        let mut argument_start = skip_tex_whitespace(&source, after_command);
+        let mut argument_start = skip_tex_whitespace(source, after_command);
         while source[argument_start..].starts_with('[') {
-            if let Some(argument_end) = bracketed_tex_argument_end(&source, argument_start) {
-                argument_start = skip_tex_whitespace(&source, argument_end);
+            if let Some(argument_end) = bracketed_tex_argument_end(source, argument_start) {
+                argument_start = skip_tex_whitespace(source, argument_end);
             } else {
                 cursor = after_command;
                 continue 'scan;
@@ -6910,14 +6908,14 @@ fn animategraphics_refs_stripped(source: &str) -> Vec<AnimateGraphicsRef> {
         let mut arguments = Vec::with_capacity(4);
         let mut argument_end = after_command;
         for _ in 0..4 {
-            let Some((payload, payload_end)) = balanced_braced_payload_at(&source, argument_start)
+            let Some((payload, payload_end)) = balanced_braced_payload_at(source, argument_start)
             else {
                 arguments.clear();
                 break;
             };
             arguments.push(payload.trim().to_string());
             argument_end = payload_end;
-            argument_start = skip_tex_whitespace(&source, payload_end);
+            argument_start = skip_tex_whitespace(source, payload_end);
         }
 
         if arguments.len() == 4 && !arguments[1].is_empty() {
@@ -7006,12 +7004,12 @@ fn includesvg_refs_stripped(source: &str) -> Vec<IncludeSvgRef> {
             continue;
         }
 
-        let mut payload_start = skip_tex_whitespace(&source, after_command);
+        let mut payload_start = skip_tex_whitespace(source, after_command);
         let options = if source[payload_start..].starts_with('[') {
             if let Some((options, options_end)) =
-                bracketed_tex_argument_payload_at(&source, payload_start)
+                bracketed_tex_argument_payload_at(source, payload_start)
             {
-                payload_start = skip_tex_whitespace(&source, options_end);
+                payload_start = skip_tex_whitespace(source, options_end);
                 options
             } else {
                 cursor = after_command;
@@ -7020,8 +7018,7 @@ fn includesvg_refs_stripped(source: &str) -> Vec<IncludeSvgRef> {
         } else {
             String::new()
         };
-        let Some((payload, payload_end)) = balanced_braced_payload_at(&source, payload_start)
-        else {
+        let Some((payload, payload_end)) = balanced_braced_payload_at(source, payload_start) else {
             cursor = after_command;
             continue;
         };
@@ -7212,16 +7209,15 @@ fn tex_command_optional_braced_payloads_stripped(source: &str, command: &str) ->
             continue;
         }
 
-        let mut payload_start = skip_tex_whitespace(&source, after_command);
+        let mut payload_start = skip_tex_whitespace(source, after_command);
         while source[payload_start..].starts_with('[') {
-            if let Some(argument_end) = bracketed_tex_argument_end(&source, payload_start) {
-                payload_start = skip_tex_whitespace(&source, argument_end);
+            if let Some(argument_end) = bracketed_tex_argument_end(source, payload_start) {
+                payload_start = skip_tex_whitespace(source, argument_end);
             } else {
                 break;
             }
         }
-        let Some((payload, payload_end)) = balanced_braced_payload_at(&source, payload_start)
-        else {
+        let Some((payload, payload_end)) = balanced_braced_payload_at(source, payload_start) else {
             cursor = after_command;
             continue;
         };
@@ -7249,19 +7245,18 @@ fn tex_command_optional_star_braced_payloads_stripped(source: &str, command: &st
             continue;
         }
 
-        let mut payload_start = skip_tex_whitespace(&source, after_command);
+        let mut payload_start = skip_tex_whitespace(source, after_command);
         if source[payload_start..].starts_with('*') {
-            payload_start = skip_tex_whitespace(&source, payload_start + 1);
+            payload_start = skip_tex_whitespace(source, payload_start + 1);
         }
         while source[payload_start..].starts_with('[') {
-            if let Some(argument_end) = bracketed_tex_argument_end(&source, payload_start) {
-                payload_start = skip_tex_whitespace(&source, argument_end);
+            if let Some(argument_end) = bracketed_tex_argument_end(source, payload_start) {
+                payload_start = skip_tex_whitespace(source, argument_end);
             } else {
                 break;
             }
         }
-        let Some((payload, payload_end)) = balanced_braced_payload_at(&source, payload_start)
-        else {
+        let Some((payload, payload_end)) = balanced_braced_payload_at(source, payload_start) else {
             cursor = after_command;
             continue;
         };
@@ -7297,10 +7292,10 @@ fn tex_command_optional_nth_braced_payloads_stripped(
             continue;
         }
 
-        let mut payload_start = skip_tex_whitespace(&source, after_command);
+        let mut payload_start = skip_tex_whitespace(source, after_command);
         while source[payload_start..].starts_with('[') {
-            if let Some(argument_end) = bracketed_tex_argument_end(&source, payload_start) {
-                payload_start = skip_tex_whitespace(&source, argument_end);
+            if let Some(argument_end) = bracketed_tex_argument_end(source, payload_start) {
+                payload_start = skip_tex_whitespace(source, argument_end);
             } else {
                 break;
             }
@@ -7308,7 +7303,7 @@ fn tex_command_optional_nth_braced_payloads_stripped(
         let mut payload_end = after_command;
         let mut found = None;
         for index in 1..=nth {
-            let Some((payload, end)) = balanced_braced_payload_at(&source, payload_start) else {
+            let Some((payload, end)) = balanced_braced_payload_at(source, payload_start) else {
                 found = None;
                 break;
             };
@@ -7317,7 +7312,7 @@ fn tex_command_optional_nth_braced_payloads_stripped(
                 found = Some(payload);
                 break;
             }
-            payload_start = skip_tex_whitespace(&source, end);
+            payload_start = skip_tex_whitespace(source, end);
         }
         if let Some(payload) = found
             && !payload.is_empty()
@@ -7344,9 +7339,8 @@ fn tex_command_balanced_payload_refs_stripped(source: &str, command: &str) -> Ve
             cursor = after_command;
             continue;
         }
-        let payload_start = skip_tex_whitespace(&source, after_command);
-        let Some((payload, payload_end)) = balanced_braced_payload_at(&source, payload_start)
-        else {
+        let payload_start = skip_tex_whitespace(source, after_command);
+        let Some((payload, payload_end)) = balanced_braced_payload_at(source, payload_start) else {
             cursor = after_command;
             continue;
         };
@@ -8926,10 +8920,10 @@ fn bibtex_aux_signature_from_source(source: &str, job: &BibtexJob) -> String {
 
 fn canonical_bibtex_aux_control_line(line: &str) -> String {
     for prefix in [r"\bibdata", r"\bibstyle"] {
-        if let Some(payload) = braced_payload(line, prefix) {
-            if let Some(payload) = normalized_bibtex_comma_payload(payload) {
-                return format!("{prefix}{{{payload}}}");
-            }
+        if let Some(payload) = braced_payload(line, prefix)
+            && let Some(payload) = normalized_bibtex_comma_payload(payload)
+        {
+            return format!("{prefix}{{{payload}}}");
         }
     }
     line.trim().to_string()

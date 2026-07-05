@@ -1,8 +1,10 @@
 # pdftex-rust
 
-This crate is the generated Rust port of the pdfTeX web2c core. It replaces the
-generated C entry/wrapper object and the generated TeX core objects in the TeX
-Live pdfTeX link:
+This crate is the Rust-owned pdfTeX engine used by the workspace. It contains
+the generated Rust port of the pdfTeX web2c core plus Rust replacements for the
+runtime boundaries that previously pulled in native TeX Live support code. The
+checked-in Rust sources replace the generated C entry/wrapper object and the
+generated TeX core objects from the historical TeX Live pdfTeX link:
 
 - `pdftex-pdftexextra.o`
 - `pdftex-pdftexini.o`
@@ -10,9 +12,9 @@ Live pdfTeX link:
 - `pdftex-pdftex-pool.o`
 
 The Rust archive keeps the C ABI (`main`, `maininit`, `mainbody`,
-`maincontrol`, `loadpoolstrings`, and the other web2c symbols), so it can be
-linked against the remaining TeX Live PDF/image/font backend while those
-libraries are ported or replaced.
+`maincontrol`, `loadpoolstrings`, and the other web2c symbols) for the generated
+core boundary, but the shipped executable is built by Cargo and does not require
+the TeX Live source tree.
 It also owns the SyncTeX ABI as no-op Rust exports; SyncTeX is sidecar
 compatibility, not final PDF semantics, so the fast path does not link the C
 sidecar writer.
@@ -24,27 +26,24 @@ printing, `zround`, `uexit`, Pascal `eof`, and small string/input helpers are
 Rust-owned now.
 The native kpathsea archive is no longer linked either: program setup,
 environment/config lookup, path checks, recorder callbacks, and `kpse_find_file`
-are implemented in Rust, with package/font lookup backed by TeX Live `ls-R`
-databases.
+are implemented in Rust, with package/font lookup backed by installed TeX Live
+`ls-R` databases. The engine also owns the zlib/libpng/PDF inclusion facades and
+uses Rust-owned format files instead of loading system `.fmt` binaries.
 
-The reproducible path is:
-
-```sh
-scripts/pdftex_port.py smoke
-```
-
-That command builds TeX Live's pdfTeX from `third_party/texlive-source`, builds
-the Cargo-owned `target/release/pdftex-rust` executable, and verifies a
-deterministic INITEX fixture against canonical C pdfTeX by byte-comparing the
-PDF and log. It also runs a `-synctex=1` fixture to prove the Rust no-op SyncTeX
-boundary keeps the final PDF byte-identical while omitting the sidecar. The old
-TeX Live `libtool` link remains available for debugging with
-`scripts/pdftex_port.py smoke --legacy-libtool`.
-
-To regenerate the Rust source from the TeX Live submodule:
+Build the standalone executable with:
 
 ```sh
-scripts/pdftex_port.py transpile --write-crate
+cargo build --release -p pdftex-rust --bin pdftex-rust --no-default-features --features rust-binary
 ```
 
-This requires `c2rust` built against a compatible LLVM, currently LLVM 16.
+The crate's Rust tests and the workspace integration tests are now the supported
+verification path:
+
+```sh
+cargo test -p pdftex-rust
+cargo test --workspace
+```
+
+The old C2Rust regeneration harness and TeX Live source submodule have been
+removed from the repository. Future port work should happen in Rust in this
+crate rather than by reintroducing checked-in C or script-based build steps.
