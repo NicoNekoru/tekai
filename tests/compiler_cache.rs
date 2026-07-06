@@ -1,7 +1,11 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+
+static AUX_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 const AUX_DOC: &str = r#"\documentclass{article}
 \begin{document}
@@ -73,6 +77,57 @@ fn scheduler_policy_changes_do_not_invalidate_settled_final_cache() {
     .expect("draft-prepass cache check failed");
     assert!(auto_prepass.skipped, "{auto_prepass:#?}");
     assert_eq!(auto_prepass.tex_runs, 0, "{auto_prepass:#?}");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn fresh_output_dir_restores_settled_pdf_artifact_from_shared_cache() {
+    if !command_available("pdflatex") {
+        eprintln!("skipping shared artifact cache test; pdflatex is not available");
+        return;
+    }
+
+    let _env_lock = AUX_CACHE_TEST_LOCK
+        .lock()
+        .expect("aux cache test lock poisoned");
+    let root = unique_temp_dir("texpilot-shared-artifact-cache-test");
+    fs::create_dir_all(&root).expect("failed to create test directory");
+    let _cache_guard = EnvVarGuard::set(
+        "TEXPILOT_AUX_CACHE",
+        root.join("cache").display().to_string(),
+    );
+    let main = root.join("main.tex");
+    let first_out = root.join("first-out");
+    let fresh_out = root.join("fresh-out");
+    let force_out = root.join("force-out");
+    fs::write(&main, AUX_DOC).expect("failed to write test document");
+
+    let first = build(&options(&main, &first_out)).expect("initial build failed");
+    assert!(!first.skipped, "{first:#?}");
+    assert!(first.tex_runs > 0, "{first:#?}");
+    let first_pdf = fs::read(first_out.join("main.pdf")).expect("failed to read first pdf");
+
+    let restored = build(&options(&main, &fresh_out)).expect("fresh output cache restore failed");
+    assert!(restored.skipped, "{restored:#?}");
+    assert_eq!(restored.tex_runs, 0, "{restored:#?}");
+    assert_eq!(
+        fs::read(fresh_out.join("main.pdf")).expect("failed to read restored pdf"),
+        first_pdf
+    );
+    assert!(fresh_out.join(".texpilot-main.state.toml").exists());
+
+    let local_cached = build(&options(&main, &fresh_out)).expect("local cache check failed");
+    assert!(local_cached.skipped, "{local_cached:#?}");
+    assert_eq!(local_cached.tex_runs, 0, "{local_cached:#?}");
+
+    let forced = build(&BuildOptions {
+        force: true,
+        ..options(&main, &force_out)
+    })
+    .expect("forced build failed");
+    assert!(!forced.skipped, "{forced:#?}");
+    assert!(forced.tex_runs > 0, "{forced:#?}");
 
     let _ = fs::remove_dir_all(root);
 }
@@ -516,4 +571,31 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
             .as_nanos()
     );
     std::env::temp_dir().join(unique)
+}
+
+struct EnvVarGuard {
+    name: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(name: &'static str, value: String) -> Self {
+        let previous = std::env::var_os(name);
+        unsafe {
+            std::env::set_var(name, value);
+        }
+        Self { name, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.name, previous);
+            } else {
+                std::env::remove_var(self.name);
+            }
+        }
+    }
 }

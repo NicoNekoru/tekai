@@ -19,6 +19,7 @@ const INDEX_STATE_VERSION: u32 = 10;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
 const EXTERNAL_TOOL_STATE_VERSION: u32 = 1;
 const PREAMBLE_FORMAT_STATE_VERSION: u32 = 1;
+const SETTLED_AUX_CACHE_STATE_VERSION: u32 = 3;
 
 #[cfg(windows)]
 const KPATHSEA_PATH_SEPARATOR: &str = ";";
@@ -175,6 +176,31 @@ struct PreambleFormatState {
     version: u32,
     mode_key: String,
     inputs: Vec<FileFingerprint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SettledAuxCacheState {
+    version: u32,
+    mode_key: String,
+    inputs: Vec<FileFingerprint>,
+    #[serde(default)]
+    out_dir: String,
+    #[serde(default)]
+    accept_stale_final_pdf: bool,
+    files: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SettledAuxCacheFile {
+    relative: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct RestoredSettledAuxCache {
+    state: BuildState,
+    accept_stale_final_pdf: bool,
+    restored_pdf: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, Hash, PartialEq)]
@@ -671,12 +697,29 @@ fn texpilot_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let mode_key = direct_mode_key(options, &main);
 
     let started = Instant::now();
-    let previous_build_state = read_build_state_if_exists(&state_path)?;
-    let compatible_previous_build_state = previous_build_state.as_ref().filter(|state| {
-        pdf_path.exists() && build_state_is_compatible(state, &mode_key, &pdf_path)
-    });
+    let mut previous_build_state = read_build_state_if_exists(&state_path)?;
+    if !options.force
+        && !pdf_path.exists()
+        && let Some(restored) =
+            restore_settled_aux_cache_if_fresh(&doc_dir, &out_dir, &main, &mode_key, &pdf_path)?
+    {
+        if restored.restored_pdf {
+            previous_build_state = Some(write_build_state_from_fingerprints(
+                &state_path,
+                &mode_key,
+                &pdf_path,
+                restored.state.inputs,
+            )?);
+        } else {
+            previous_build_state = Some(restored.state);
+        }
+    }
+    let compatible_previous_build_state = previous_build_state
+        .as_ref()
+        .filter(|state| build_state_is_compatible(state, &mode_key, &pdf_path));
     let mut build_state_input_freshness = HashMap::new();
     if !options.force
+        && pdf_path.exists()
         && let Some(state) = compatible_previous_build_state
         && build_state_inputs_are_fresh(state, &mut build_state_input_freshness)?
     {
@@ -869,12 +912,31 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let mode_key = direct_mode_key(options, &main);
 
     let started = Instant::now();
-    let previous_build_state = read_build_state_if_exists(&state_path)?;
-    let compatible_previous_build_state = previous_build_state.as_ref().filter(|state| {
-        pdf_path.exists() && build_state_is_compatible(state, &mode_key, &pdf_path)
-    });
+    let mut previous_build_state = read_build_state_if_exists(&state_path)?;
+    let mut restored_aux_cache_accepts_stale_final_pdf = false;
+    if !options.force
+        && !pdf_path.exists()
+        && let Some(restored) =
+            restore_settled_aux_cache_if_fresh(&doc_dir, &out_dir, &main, &mode_key, &pdf_path)?
+    {
+        restored_aux_cache_accepts_stale_final_pdf = restored.accept_stale_final_pdf;
+        if restored.restored_pdf {
+            previous_build_state = Some(write_build_state_from_fingerprints(
+                &state_path,
+                &mode_key,
+                &pdf_path,
+                restored.state.inputs,
+            )?);
+        } else {
+            previous_build_state = Some(restored.state);
+        }
+    }
+    let compatible_previous_build_state = previous_build_state
+        .as_ref()
+        .filter(|state| build_state_is_compatible(state, &mode_key, &pdf_path));
     let mut build_state_input_freshness = HashMap::new();
     if !options.force
+        && pdf_path.exists()
         && let Some(state) = compatible_previous_build_state
         && build_state_inputs_are_fresh(state, &mut build_state_input_freshness)?
     {
@@ -912,7 +974,9 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let mut last_generated_outputs: Option<Vec<GeneratedOutputFingerprint>> = None;
     let mut stable_full_layout_no_pdf_rerun_passes = 0_usize;
     let mut stable_standard_file_churn_no_pdf_rerun_passes = 0_usize;
-    let mut accept_stale_final_pdf_after_draft = false;
+    let mut accept_stale_final_pdf_after_draft = restored_aux_cache_accepts_stale_final_pdf;
+    let mut settled_aux_cache_snapshot_for_pdf: Option<Vec<SettledAuxCacheFile>> = None;
+    let mut settled_aux_cache_accepts_stale_final_pdf = false;
     let aux_session_cache = AuxToolSessionCache::default();
     let includeonly = aux_session_cache.root_includeonly_filter(&main)?;
     let source_cache = aux_session_cache.source_read_cache();
@@ -1117,6 +1181,12 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         } else {
             None
         };
+        let sidecar_cache_before_pdf =
+            if !draft_graphics && !suppress_pdf_output && accept_stale_final_pdf_after_draft {
+                Some(capture_settled_aux_cache_files(&out_dir)?)
+            } else {
+                None
+            };
         let tex_started = Instant::now();
         let preamble_override = if !draft_graphics && !force_pgf_list_and_make {
             match pending_preamble_format.take() {
@@ -1305,19 +1375,28 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
             continue;
         }
 
-        if !generated_outputs_changed
-            && !generated_inputs_unread
-            && (!needs_rerun
-                || can_accept_final_pdf_with_stale_rerun_warnings(
-                    draft_graphics,
-                    suppress_pdf_output,
-                    generated_outputs_changed,
-                    generated_inputs_unread,
-                    standard_rerun_outputs_changed,
-                    &rerun_reasons,
-                    accept_stale_final_pdf_after_draft,
-                ))
-        {
+        let final_outputs_stable = !generated_outputs_changed && !generated_inputs_unread;
+        let final_pdf_settled = final_outputs_stable && !needs_rerun;
+        let final_pdf_accepted_stale = final_outputs_stable
+            && needs_rerun
+            && can_accept_final_pdf_with_stale_rerun_warnings(
+                draft_graphics,
+                suppress_pdf_output,
+                generated_outputs_changed,
+                generated_inputs_unread,
+                standard_rerun_outputs_changed,
+                &rerun_reasons,
+                accept_stale_final_pdf_after_draft,
+            );
+        if final_pdf_settled || final_pdf_accepted_stale {
+            if final_pdf_accepted_stale {
+                settled_aux_cache_snapshot_for_pdf = sidecar_cache_before_pdf;
+                settled_aux_cache_accepts_stale_final_pdf =
+                    settled_aux_cache_snapshot_for_pdf.is_some();
+            } else {
+                settled_aux_cache_snapshot_for_pdf = None;
+                settled_aux_cache_accepts_stale_final_pdf = false;
+            }
             break true;
         }
         accept_stale_final_pdf_after_draft = false;
@@ -1345,7 +1424,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         refresh_biber_state_if_available(&doc_dir, &out_dir, &job_name)?;
         refresh_index_states_if_available(&doc_dir, &out_dir, &job_name)?;
     }
-    write_build_state(
+    let final_build_state = write_build_state(
         &state_path,
         &mode_key,
         &pdf_path,
@@ -1353,6 +1432,21 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         previous_build_state.as_ref(),
         &preamble_format_inputs,
     )?;
+    if !options.once
+        && (!settled_aux_cache_accepts_stale_final_pdf
+            || settled_aux_cache_snapshot_for_pdf.is_some())
+    {
+        save_settled_aux_cache(
+            &doc_dir,
+            &out_dir,
+            &main,
+            &mode_key,
+            &final_build_state,
+            (!options.synctex).then_some(pdf_path.as_path()),
+            settled_aux_cache_snapshot_for_pdf.as_deref(),
+            settled_aux_cache_accepts_stale_final_pdf,
+        )?;
+    }
     Ok(BuildReport {
         elapsed,
         pdf_path: Some(pdf_path),
@@ -1623,10 +1717,28 @@ fn prepare_preamble_format(
     options: &BuildOptions,
     mode: TexRunMode,
 ) -> Result<Option<PreambleFormatPreparation>> {
-    let Some(format_kind) = preamble_format_kind_for_run(options, mode) else {
+    if let Some(format_kind) = preamble_format_kind_for_run(options, mode) {
+        return prepare_preamble_format_for_kind(
+            doc_dir,
+            file_name,
+            out_dir,
+            main,
+            options,
+            format_kind,
+        );
+    }
+    let Some(format_kind) = opportunistic_preamble_format_kind_for_run(options, mode) else {
         return Ok(None);
     };
-    prepare_preamble_format_for_kind(doc_dir, file_name, out_dir, main, options, format_kind)
+    prepare_preamble_format_for_kind_with_policy(
+        doc_dir,
+        file_name,
+        out_dir,
+        main,
+        options,
+        format_kind,
+        false,
+    )
 }
 
 fn prepare_preamble_format_for_kind(
@@ -1636,6 +1748,26 @@ fn prepare_preamble_format_for_kind(
     main: &Path,
     options: &BuildOptions,
     format_kind: PreambleFormatKind,
+) -> Result<Option<PreambleFormatPreparation>> {
+    prepare_preamble_format_for_kind_with_policy(
+        doc_dir,
+        file_name,
+        out_dir,
+        main,
+        options,
+        format_kind,
+        true,
+    )
+}
+
+fn prepare_preamble_format_for_kind_with_policy(
+    doc_dir: &Path,
+    file_name: &OsString,
+    out_dir: &Path,
+    main: &Path,
+    options: &BuildOptions,
+    format_kind: PreambleFormatKind,
+    build_if_missing: bool,
 ) -> Result<Option<PreambleFormatPreparation>> {
     let mode_key = preamble_format_mode_key(doc_dir, main, options, format_kind)?;
     let format_name = format!(
@@ -1667,6 +1799,10 @@ fn prepare_preamble_format_for_kind(
             built: false,
             inputs: state.inputs,
         }));
+    }
+
+    if !build_if_missing {
+        return Ok(None);
     }
 
     let previous_inputs = read_preamble_format_state_if_exists(&state_path)?
@@ -1751,7 +1887,19 @@ fn preamble_format_cache_dir(doc_dir: &Path, main: &Path) -> PathBuf {
     let root = std::env::var_os("TEXPILOT_FORMAT_CACHE")
         .map(PathBuf::from)
         .unwrap_or_else(default_preamble_format_cache_root);
-    let doc_key = format!(
+    root.join(document_cache_key(doc_dir, main))
+}
+
+fn settled_aux_cache_dir(doc_dir: &Path, main: &Path, mode_key: &str) -> PathBuf {
+    let root = std::env::var_os("TEXPILOT_AUX_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_settled_aux_cache_root);
+    root.join(document_cache_key(doc_dir, main))
+        .join(format!("{:016x}", content_hash(mode_key.as_bytes())))
+}
+
+fn document_cache_key(doc_dir: &Path, main: &Path) -> String {
+    format!(
         "{:016x}",
         content_hash(
             format!(
@@ -1761,13 +1909,20 @@ fn preamble_format_cache_dir(doc_dir: &Path, main: &Path) -> PathBuf {
             )
             .as_bytes()
         )
-    );
-    root.join(doc_key)
+    )
 }
 
 fn default_preamble_format_cache_root() -> PathBuf {
+    default_texpilot_cache_root("formats")
+}
+
+fn default_settled_aux_cache_root() -> PathBuf {
+    default_texpilot_cache_root("settled-aux")
+}
+
+fn default_texpilot_cache_root(kind: &str) -> PathBuf {
     if let Some(value) = std::env::var_os("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
-        return PathBuf::from(value).join("texpilot").join("formats");
+        return PathBuf::from(value).join("texpilot").join(kind);
     }
     if cfg!(target_os = "macos")
         && let Some(home) = home_dir()
@@ -1776,19 +1931,305 @@ fn default_preamble_format_cache_root() -> PathBuf {
             .join("Library")
             .join("Caches")
             .join("texpilot")
-            .join("formats");
+            .join(kind);
     }
     if cfg!(windows)
         && let Some(value) = std::env::var_os("LOCALAPPDATA")
             .or_else(|| std::env::var_os("APPDATA"))
             .filter(|value| !value.is_empty())
     {
-        return PathBuf::from(value).join("texpilot").join("formats");
+        return PathBuf::from(value).join("texpilot").join(kind);
     }
     if let Some(home) = home_dir() {
-        return home.join(".cache").join("texpilot").join("formats");
+        return home.join(".cache").join("texpilot").join(kind);
     }
-    std::env::temp_dir().join("texpilot").join("formats")
+    std::env::temp_dir().join("texpilot").join(kind)
+}
+
+fn restore_settled_aux_cache_if_fresh(
+    doc_dir: &Path,
+    out_dir: &Path,
+    main: &Path,
+    mode_key: &str,
+    pdf_path: &Path,
+) -> Result<Option<RestoredSettledAuxCache>> {
+    let cache_dir = settled_aux_cache_dir(doc_dir, main, mode_key);
+    let state_path = cache_dir.join("state.toml");
+    let Some(source) = read_optional_text_file(&state_path, "settled aux cache state")? else {
+        return Ok(None);
+    };
+    let cache_state: SettledAuxCacheState = toml::from_str(&source).with_context(|| {
+        format!(
+            "failed to parse settled aux cache state {}",
+            state_path.display()
+        )
+    })?;
+    if cache_state.version != SETTLED_AUX_CACHE_STATE_VERSION || cache_state.mode_key != mode_key {
+        return Ok(None);
+    }
+    let restored_state = BuildState {
+        version: BUILD_STATE_VERSION,
+        mode_key: mode_key.to_string(),
+        pdf_path: pdf_path.display().to_string(),
+        inputs: cache_state.inputs,
+    };
+    let mut freshness = HashMap::new();
+    if !build_state_inputs_are_fresh(&restored_state, &mut freshness)? {
+        return Ok(None);
+    }
+
+    let files_dir = cache_dir.join("files");
+    let mut files = Vec::with_capacity(cache_state.files.len());
+    let cached_out_dir = cache_state.out_dir;
+    let restored_out_dir = out_dir.display().to_string();
+    let mut restored_pdf = false;
+    for file in cache_state.files {
+        let relative = PathBuf::from(&file);
+        if !safe_relative_path(&relative) {
+            return Ok(None);
+        }
+        let cached = files_dir.join(&relative);
+        if !cached.is_file() {
+            return Ok(None);
+        }
+        let destination = out_dir.join(&relative);
+        let restores_pdf = destination == pdf_path;
+        let rewrite_output_paths = is_aux_tool_state_cache_file(&relative);
+        files.push((cached, destination, rewrite_output_paths, restores_pdf));
+    }
+
+    for (cached, destination, rewrite_output_paths, restores_pdf) in files {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create restored aux sidecar directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+        if restores_pdf {
+            restored_pdf = true;
+        }
+        if rewrite_output_paths && !cached_out_dir.is_empty() {
+            let source = fs::read_to_string(&cached).with_context(|| {
+                format!("failed to read cached aux tool state {}", cached.display())
+            })?;
+            let source = source.replace(&cached_out_dir, &restored_out_dir);
+            fs::write(&destination, source).with_context(|| {
+                format!(
+                    "failed to restore cached aux tool state {} to {}",
+                    cached.display(),
+                    destination.display()
+                )
+            })?;
+        } else {
+            fs::copy(&cached, &destination).with_context(|| {
+                format!(
+                    "failed to restore cached aux sidecar {} to {}",
+                    cached.display(),
+                    destination.display()
+                )
+            })?;
+        }
+    }
+    Ok(Some(RestoredSettledAuxCache {
+        state: restored_state,
+        accept_stale_final_pdf: cache_state.accept_stale_final_pdf,
+        restored_pdf,
+    }))
+}
+
+fn save_settled_aux_cache(
+    doc_dir: &Path,
+    out_dir: &Path,
+    main: &Path,
+    mode_key: &str,
+    build_state: &BuildState,
+    pdf_path: Option<&Path>,
+    sidecars: Option<&[SettledAuxCacheFile]>,
+    accept_stale_final_pdf: bool,
+) -> Result<()> {
+    let mut cache_files = if let Some(sidecars) = sidecars {
+        sidecars.to_vec()
+    } else {
+        capture_settled_aux_cache_files(out_dir)?
+    };
+    if let Some(pdf_path) = pdf_path
+        && let Some(pdf_artifact) = capture_settled_cache_file(out_dir, pdf_path)?
+    {
+        cache_files.push(pdf_artifact);
+    }
+    if cache_files.is_empty() {
+        return Ok(());
+    }
+
+    let cache_dir = settled_aux_cache_dir(doc_dir, main, mode_key);
+    let files_dir = cache_dir.join("files");
+    let stale_files_dir = cache_dir.join("files.stale");
+    let state_path = cache_dir.join("state.toml");
+    let tmp_state_path = cache_dir.join("state.toml.tmp");
+    fs::create_dir_all(&cache_dir).with_context(|| {
+        format!(
+            "failed to create settled aux cache directory {}",
+            cache_dir.display()
+        )
+    })?;
+    let _ = fs::remove_dir_all(&stale_files_dir);
+    if files_dir.exists() {
+        let _ = fs::rename(&files_dir, &stale_files_dir);
+    }
+    fs::create_dir_all(&files_dir).with_context(|| {
+        format!(
+            "failed to create settled aux cache files directory {}",
+            files_dir.display()
+        )
+    })?;
+
+    let mut files = Vec::new();
+    for sidecar in &cache_files {
+        let relative = Path::new(&sidecar.relative);
+        if !safe_relative_path(relative) {
+            continue;
+        }
+        let destination = files_dir.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create settled aux cache sidecar directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+        fs::write(&destination, &sidecar.bytes).with_context(|| {
+            format!(
+                "failed to cache aux sidecar {} to {}",
+                sidecar.relative,
+                destination.display()
+            )
+        })?;
+        files.push(sidecar.relative.clone());
+    }
+    files.sort();
+    files.dedup();
+
+    let cache_state = SettledAuxCacheState {
+        version: SETTLED_AUX_CACHE_STATE_VERSION,
+        mode_key: mode_key.to_string(),
+        inputs: build_state.inputs.clone(),
+        out_dir: out_dir.display().to_string(),
+        accept_stale_final_pdf,
+        files,
+    };
+    let source =
+        toml::to_string(&cache_state).context("failed to serialize settled aux cache state")?;
+    fs::write(&tmp_state_path, source).with_context(|| {
+        format!(
+            "failed to write settled aux cache state {}",
+            tmp_state_path.display()
+        )
+    })?;
+    fs::rename(&tmp_state_path, &state_path).with_context(|| {
+        format!(
+            "failed to publish settled aux cache state {}",
+            state_path.display()
+        )
+    })?;
+    let _ = fs::remove_dir_all(stale_files_dir);
+    Ok(())
+}
+
+fn capture_settled_aux_cache_files(out_dir: &Path) -> Result<Vec<SettledAuxCacheFile>> {
+    let mut sidecars = Vec::new();
+    for path in settled_aux_cache_file_paths(out_dir)? {
+        if let Some(sidecar) = capture_settled_cache_file(out_dir, &path)? {
+            sidecars.push(sidecar);
+        }
+    }
+    sidecars.sort_by(|left, right| left.relative.cmp(&right.relative));
+    sidecars.dedup_by(|left, right| left.relative == right.relative);
+    Ok(sidecars)
+}
+
+fn capture_settled_cache_file(out_dir: &Path, path: &Path) -> Result<Option<SettledAuxCacheFile>> {
+    let Ok(relative) = path.strip_prefix(out_dir) else {
+        return Ok(None);
+    };
+    if !safe_relative_path(relative) {
+        return Ok(None);
+    }
+    let bytes = fs::read(path)
+        .with_context(|| format!("failed to read aux cache file {}", path.display()))?;
+    Ok(Some(SettledAuxCacheFile {
+        relative: cache_relative_path(relative),
+        bytes,
+    }))
+}
+
+fn settled_aux_cache_file_paths(out_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    collect_settled_aux_cache_file_paths(out_dir, &mut paths)?;
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn collect_settled_aux_cache_file_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let entry = entry.with_context(|| format!("failed to read {}", dir.display()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("failed to inspect {}", path.display()))?;
+        if file_type.is_dir() {
+            collect_settled_aux_cache_file_paths(&path, paths)?;
+        } else if file_type.is_file() && is_settled_aux_cache_sidecar(&path) {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_settled_aux_cache_sidecar(path: &Path) -> bool {
+    is_aux_tool_state_cache_file(path)
+        || path_extension_is_any(
+            path,
+            &[
+                "aux", "out", "toc", "lof", "lot", "lol", "brf", "nav", "snm", "vrb", "thm", "bbl",
+                "ind", "gls", "acr", "nls", "maf", "mtc", "mtc0",
+            ],
+        )
+}
+
+fn is_aux_tool_state_cache_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.starts_with(".texpilot-")
+        && [
+            ".bibstate.toml",
+            ".biberstate.toml",
+            ".indexstate.toml",
+            ".splitindexstate.toml",
+            ".epspdfstate.toml",
+            ".svgstate.toml",
+            ".asystate.toml",
+            ".pythontexstate.toml",
+            ".mpoststate.toml",
+            ".gnuplotstate.toml",
+            ".bib2glsstate.toml",
+        ]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+}
+
+fn cache_relative_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -10285,7 +10726,7 @@ fn write_build_state(
     direct: DirectContext<'_>,
     previous_build_state: Option<&BuildState>,
     extra_inputs: &[FileFingerprint],
-) -> Result<()> {
+) -> Result<BuildState> {
     let fls_path = direct.out_dir.join(format!("{}.fls", direct.job_name));
     let previous = previous_build_input_map(previous_build_state);
     let mut inputs = recorded_inputs(
@@ -10316,7 +10757,7 @@ fn write_build_state_from_fingerprints(
     mode_key: &str,
     pdf_path: &Path,
     mut inputs: Vec<FileFingerprint>,
-) -> Result<()> {
+) -> Result<BuildState> {
     inputs.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
@@ -10331,7 +10772,8 @@ fn write_build_state_from_fingerprints(
     };
     let source = toml::to_string(&state).context("failed to serialize build state")?;
     fs::write(state_path, source)
-        .with_context(|| format!("failed to write build state {}", state_path.display()))
+        .with_context(|| format!("failed to write build state {}", state_path.display()))?;
+    Ok(state)
 }
 
 fn previous_bib_input_map(state_path: &Path) -> Result<HashMap<String, FileFingerprint>> {
@@ -10397,7 +10839,7 @@ fn write_native_build_state(
     main: &Path,
     input_paths: &[PathBuf],
     previous_build_state: Option<&BuildState>,
-) -> Result<()> {
+) -> Result<BuildState> {
     let previous = previous_build_input_map(previous_build_state);
     let inputs = native_input_fingerprints(input_paths, doc_dir, out_dir, main, &previous)?;
     write_build_state_from_fingerprints(state_path, mode_key, pdf_path, inputs)
@@ -14375,10 +14817,145 @@ mod tests {
     }
 
     #[test]
+    fn settled_aux_cache_restores_fresh_small_sidecars() {
+        let _env_lock = TEXINPUTS_TEST_LOCK
+            .lock()
+            .expect("TEXINPUTS test lock poisoned");
+        let root = unique_temp_dir("texpilot-settled-aux-cache");
+        let out_dir = root.join("out");
+        let fresh_out_dir = root.join("fresh-out");
+        let cache_root = root.join("cache");
+        fs::create_dir_all(out_dir.join("sections")).expect("failed to create output dirs");
+        fs::create_dir_all(&fresh_out_dir).expect("failed to create fresh output dir");
+        let _cache_guard = EnvVarGuard::set("TEXPILOT_AUX_CACHE", cache_root.display().to_string());
+
+        let main = root.join("main.tex");
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}Hi\\end{document}\n",
+        )
+        .expect("failed to write main source");
+        fs::write(out_dir.join("main.aux"), "\\relax\n").expect("failed to write aux");
+        fs::write(out_dir.join("main.bbl"), "\\begin{thebibliography}{1}\n")
+            .expect("failed to write bbl");
+        fs::write(out_dir.join("sections").join("intro.aux"), "\\relax\n")
+            .expect("failed to write nested aux");
+        fs::write(
+            out_dir.join(".texpilot-main.bibstate.toml"),
+            format!(
+                "version = 10\nsignature = \"test\"\nbbl_path = \"{}\"\n",
+                out_dir.join("main.bbl").display()
+            ),
+        )
+        .expect("failed to write bib state");
+        fs::write(out_dir.join(".texpilot-main.state.toml"), "not cached\n")
+            .expect("failed to write build state");
+        fs::write(out_dir.join("main.log"), "not cached\n").expect("failed to write log");
+        fs::write(out_dir.join("main.pdf"), "%PDF cached artifact\n").expect("failed to write pdf");
+
+        let main = main.canonicalize().expect("failed to canonicalize main");
+        let options = test_build_options(&main, &out_dir, DraftPrepass::Never);
+        let mode_key = direct_mode_key(&options, &main);
+        let fingerprint = fingerprint_path_reusing(&main, None)
+            .expect("failed to fingerprint main")
+            .expect("missing main fingerprint");
+        let state = BuildState {
+            version: BUILD_STATE_VERSION,
+            mode_key: mode_key.clone(),
+            pdf_path: out_dir.join("main.pdf").display().to_string(),
+            inputs: vec![fingerprint],
+        };
+
+        save_settled_aux_cache(
+            &root,
+            &out_dir,
+            &main,
+            &mode_key,
+            &state,
+            Some(&out_dir.join("main.pdf")),
+            None,
+            false,
+        )
+        .expect("failed to save settled aux cache");
+        let restored = restore_settled_aux_cache_if_fresh(
+            &root,
+            &fresh_out_dir,
+            &main,
+            &mode_key,
+            &fresh_out_dir.join("main.pdf"),
+        )
+        .expect("failed to restore settled aux cache")
+        .expect("settled aux cache should restore");
+
+        assert_eq!(
+            restored.state.pdf_path,
+            fresh_out_dir.join("main.pdf").display().to_string()
+        );
+        assert!(!restored.accept_stale_final_pdf);
+        assert!(restored.restored_pdf);
+        assert_eq!(
+            fs::read_to_string(fresh_out_dir.join("main.aux")).expect("missing restored aux"),
+            "\\relax\n"
+        );
+        assert_eq!(
+            fs::read_to_string(fresh_out_dir.join("main.pdf")).expect("missing restored pdf"),
+            "%PDF cached artifact\n"
+        );
+        assert_eq!(
+            fs::read_to_string(fresh_out_dir.join("main.bbl")).expect("missing restored bbl"),
+            "\\begin{thebibliography}{1}\n"
+        );
+        assert_eq!(
+            fs::read_to_string(fresh_out_dir.join("sections").join("intro.aux"))
+                .expect("missing restored nested aux"),
+            "\\relax\n"
+        );
+        assert_eq!(
+            fs::read_to_string(fresh_out_dir.join(".texpilot-main.bibstate.toml"))
+                .expect("missing restored bib state"),
+            format!(
+                "version = 10\nsignature = \"test\"\nbbl_path = \"{}\"\n",
+                fresh_out_dir.join("main.bbl").display()
+            )
+        );
+        assert!(!fresh_out_dir.join("main.log").exists());
+        assert!(!fresh_out_dir.join(".texpilot-main.state.toml").exists());
+
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}Bye\\end{document}\n",
+        )
+        .expect("failed to edit main source");
+        let stale_out_dir = root.join("stale-out");
+        fs::create_dir_all(&stale_out_dir).expect("failed to create stale output dir");
+        assert!(
+            restore_settled_aux_cache_if_fresh(
+                &root,
+                &stale_out_dir,
+                &main,
+                &mode_key,
+                &stale_out_dir.join("main.pdf"),
+            )
+            .expect("failed to test stale settled aux cache")
+            .is_none()
+        );
+        assert!(!stale_out_dir.join("main.pdf").exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn generated_file_extension_classifiers_are_case_insensitive() {
         assert!(is_tex_source_extension(Path::new("chapter.TEX")));
         assert!(path_extension_is_any(Path::new("main.AUX"), &["aux"]));
         assert!(is_standard_rerun_output(Path::new("main.BRF")));
+        assert!(is_settled_aux_cache_sidecar(Path::new("main.BBL")));
+        assert!(is_settled_aux_cache_sidecar(Path::new(
+            ".texpilot-main.bibstate.toml"
+        )));
+        assert!(!is_settled_aux_cache_sidecar(Path::new(
+            ".texpilot-main.state.toml"
+        )));
         assert_eq!(
             makeindex_input_kind(Path::new("people.IDX")),
             Some(MakeIndexKind::Index)
