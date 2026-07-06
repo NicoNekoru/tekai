@@ -269,13 +269,18 @@ fn dict_get(dict: &Dict, index: c_int, deref: bool) -> LoObject {
     if index < 0 {
         return LoObject::Null;
     }
-    let Some((_, value)) = dict.dict.iter().nth(index as usize) else {
+    let Some(key) = dict.keys.get(index as usize) else {
         return LoObject::Null;
     };
+    let value = dict
+        .dict
+        .get(key.as_bytes())
+        .cloned()
+        .unwrap_or(LoObject::Null);
     if deref {
-        deref_object(dict.doc, value)
+        deref_object(dict.doc, &value)
     } else {
-        value.clone()
+        value
     }
 }
 
