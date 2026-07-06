@@ -1159,9 +1159,12 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
                 suppress_pdf_output: false,
                 force_pgf_list_and_make,
             };
-            if let Some(format_kind) =
-                preamble_format_background_kind_for_run(options, &doc_dir, final_preamble_mode)?
-            {
+            if let Some(format_kind) = preamble_format_background_kind_for_run(
+                options,
+                &doc_dir,
+                &main,
+                final_preamble_mode,
+            )? {
                 pending_preamble_format = Some(spawn_preamble_format_build(
                     &doc_dir,
                     &file_name,
@@ -1730,6 +1733,9 @@ fn prepare_preamble_format(
     let Some(format_kind) = opportunistic_preamble_format_kind_for_run(options, mode) else {
         return Ok(None);
     };
+    if !automatic_preamble_format_is_safe_for_root(main)? {
+        return Ok(None);
+    }
     prepare_preamble_format_for_kind_with_policy(
         doc_dir,
         file_name,
@@ -1884,18 +1890,28 @@ fn prepare_preamble_format_for_kind_with_policy(
 }
 
 fn preamble_format_cache_dir(doc_dir: &Path, main: &Path) -> PathBuf {
-    let root = std::env::var_os("TEXPILOT_FORMAT_CACHE")
-        .map(PathBuf::from)
-        .unwrap_or_else(default_preamble_format_cache_root);
+    let root = cache_root_from_env("TEXPILOT_FORMAT_CACHE", default_preamble_format_cache_root);
     root.join(document_cache_key(doc_dir, main))
 }
 
 fn settled_aux_cache_dir(doc_dir: &Path, main: &Path, mode_key: &str) -> PathBuf {
-    let root = std::env::var_os("TEXPILOT_AUX_CACHE")
-        .map(PathBuf::from)
-        .unwrap_or_else(default_settled_aux_cache_root);
+    let root = cache_root_from_env("TEXPILOT_AUX_CACHE", default_settled_aux_cache_root);
     root.join(document_cache_key(doc_dir, main))
         .join(format!("{:016x}", content_hash(mode_key.as_bytes())))
+}
+
+fn cache_root_from_env(var: &str, default: fn() -> PathBuf) -> PathBuf {
+    let Some(value) = std::env::var_os(var).filter(|value| !value.is_empty()) else {
+        return default();
+    };
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
 }
 
 fn document_cache_key(doc_dir: &Path, main: &Path) -> String {
@@ -2268,6 +2284,7 @@ fn preamble_format_kind_for_run(
 fn preamble_format_background_kind_for_run(
     options: &BuildOptions,
     doc_dir: &Path,
+    main: &Path,
     mode: TexRunMode,
 ) -> Result<Option<PreambleFormatKind>> {
     if let Some(kind) = preamble_format_kind_for_run(options, mode) {
@@ -2276,6 +2293,9 @@ fn preamble_format_background_kind_for_run(
     let Some(kind) = opportunistic_preamble_format_kind_for_run(options, mode) else {
         return Ok(None);
     };
+    if !automatic_preamble_format_is_safe_for_root(main)? {
+        return Ok(None);
+    }
     if resolve_kpathsea_input(doc_dir, "mylatexformat", "ltx")?.is_none() {
         return Ok(None);
     }
@@ -2297,6 +2317,29 @@ fn opportunistic_preamble_format_kind_for_run(
         return None;
     }
     Some(PreambleFormatKind::Final)
+}
+
+fn automatic_preamble_format_is_safe_for_root(main: &Path) -> Result<bool> {
+    let source = fs::read_to_string(main)
+        .with_context(|| format!("failed to read TeX source {}", main.display()))?;
+    Ok(!preamble_contains_input_like_dependency(&source))
+}
+
+fn preamble_contains_input_like_dependency(source: &str) -> bool {
+    let stripped = tex_comment_stripped_source(source);
+    let preamble = source_before_begin_document(&stripped);
+    !tex_include_source_dependencies_stripped(preamble).is_empty()
+        || !tex_input_like_source_dependencies_stripped(preamble).is_empty()
+}
+
+fn source_before_begin_document(source: &str) -> &str {
+    for line in source.split_inclusive('\n') {
+        if let Some(end) = begin_document_end_offset_bytes(line.as_bytes()) {
+            let begin = line.as_ptr() as usize - source.as_ptr() as usize;
+            return &source[..begin + end];
+        }
+    }
+    source
 }
 
 fn preamble_format_source(doc_dir: &Path, file_name: &OsStr, kind: PreambleFormatKind) -> String {
@@ -12808,6 +12851,31 @@ mod tests {
     }
 
     #[test]
+    fn automatic_preamble_format_allows_plain_metadata_preamble() {
+        let source = "\\documentclass{article}\n\
+             \\title{A title}\n\
+             \\author{An author}\n\
+             \\begin{document}\n\
+             \\maketitle\n\
+             Text.\n\
+             \\end{document}\n";
+
+        assert!(!preamble_contains_input_like_dependency(source));
+    }
+
+    #[test]
+    fn automatic_preamble_format_rejects_predocument_inputs() {
+        let source = "\\documentclass{article}\n\
+             \\newcommand{\\paperabstract}{\\input{abstract}}\n\
+             \\input{macros}\n\
+             \\begin{document}\n\
+             Text.\n\
+             \\end{document}\n";
+
+        assert!(preamble_contains_input_like_dependency(source));
+    }
+
+    #[test]
     fn preamble_format_cache_dir_is_stable_for_document() {
         let root = unique_temp_dir("texpilot-preamble-cache-dir");
         fs::create_dir_all(&root).expect("failed to create temp root");
@@ -12827,6 +12895,55 @@ mod tests {
         assert!(first.starts_with(&cache_root), "{first:?}");
         assert_ne!(first, cache_root);
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn relative_format_cache_env_is_anchored_to_cwd() {
+        let _env_lock = TEXINPUTS_TEST_LOCK
+            .lock()
+            .expect("TEXINPUTS test lock poisoned");
+        let cwd = std::env::current_dir().expect("failed to read cwd");
+        let root = unique_temp_dir("texpilot-relative-format-cache");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let main = root.join("main.tex");
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}x\\end{document}\n",
+        )
+        .expect("failed to write source");
+        let relative_cache = PathBuf::from("target").join("texpilot-relative-format-cache-test");
+        let _guard = EnvVarGuard::set(
+            "TEXPILOT_FORMAT_CACHE",
+            relative_cache.display().to_string(),
+        );
+
+        let dir = preamble_format_cache_dir(&root, &main);
+
+        assert!(dir.starts_with(cwd.join(&relative_cache)), "{dir:?}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn relative_aux_cache_env_is_anchored_to_cwd() {
+        let _env_lock = TEXINPUTS_TEST_LOCK
+            .lock()
+            .expect("TEXINPUTS test lock poisoned");
+        let cwd = std::env::current_dir().expect("failed to read cwd");
+        let root = unique_temp_dir("texpilot-relative-aux-cache");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let main = root.join("main.tex");
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}x\\end{document}\n",
+        )
+        .expect("failed to write source");
+        let relative_cache = PathBuf::from("target").join("texpilot-relative-aux-cache-test");
+        let _guard = EnvVarGuard::set("TEXPILOT_AUX_CACHE", relative_cache.display().to_string());
+
+        let dir = settled_aux_cache_dir(&root, &main, "mode");
+
+        assert!(dir.starts_with(cwd.join(&relative_cache)), "{dir:?}");
         let _ = fs::remove_dir_all(root);
     }
 
