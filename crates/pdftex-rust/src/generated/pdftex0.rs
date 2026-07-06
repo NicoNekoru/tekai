@@ -1219,7 +1219,7 @@ pub const maxint: ::core::ffi::c_int = INTEGER_MAX;
 pub const nil: *mut ::core::ffi::c_void = NULL;
 pub const mintrieop: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const suppdfmemsize: ::core::ffi::c_long = 10000000 as ::core::ffi::c_long;
-pub const pdfopbufsize: ::core::ffi::c_int = 16384 as ::core::ffi::c_int;
+pub const pdfopbufsize: ::core::ffi::c_int = 262144 as ::core::ffi::c_int;
 pub const suppdfosbufsize: ::core::ffi::c_long = 5000000 as ::core::ffi::c_long;
 pub const pdfosmaxobjs: ::core::ffi::c_int = 100 as ::core::ffi::c_int;
 pub const supobjtabsize: ::core::ffi::c_long = 8388607 as ::core::ffi::c_long;
@@ -4043,21 +4043,13 @@ pub unsafe extern "C" fn zpdfprintchar(mut f_0: internalfontnumber, mut c_0: int
 }
 #[no_mangle]
 pub unsafe extern "C" fn zpdfprint(mut s: strnumber) {
-    let mut j: poolpointer = 0;
-    let mut c_0: integer = 0;
-    j = *strstart.offset(s as isize);
-    while j < *strstart.offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize) {
-        c_0 = *strpool.offset(j as isize) as integer;
-        if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
-            zpdfosgetosbuf(1 as ::core::ffi::c_int);
-        } else if pdfosmode == 0 && 1 as ::core::ffi::c_int > pdfbufsize {
-            zoverflow(1018 as ::core::ffi::c_int, 16384 as ::core::ffi::c_int);
-        } else if pdfosmode == 0 && 1 as integer + pdfptr > pdfbufsize {
-            pdfflush();
-        }
-        *pdfbuf.offset(pdfptr as isize) = c_0 as eightbits;
-        pdfptr += 1;
-        j += 1;
+    let start = *strstart.offset(s as isize);
+    let end = *strstart.offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize);
+    if end > start {
+        crate::utils::pdf_write_bytes_untracked(
+            strpool.offset(start as isize) as *const u8,
+            (end - start) as usize,
+        );
     }
 }
 #[no_mangle]

@@ -439,7 +439,8 @@ pub unsafe fn pdf_out(byte: u8) {
     }
 }
 
-pub unsafe fn pdf_write_bytes(mut src: *const u8, mut len: usize) {
+#[inline(always)]
+unsafe fn pdf_write_bytes_impl<const TRACK_LAST_BYTE: bool>(mut src: *const u8, mut len: usize) {
     unsafe {
         while len > 0 {
             if pdfptr as usize >= pdfbufsize as usize {
@@ -457,10 +458,24 @@ pub unsafe fn pdf_write_bytes(mut src: *const u8, mut len: usize) {
             let chunk = len.min(available);
             ptr::copy_nonoverlapping(src, pdfbuf.add(pdfptr as usize), chunk);
             pdfptr += chunk as Integer;
-            pdflastbyte = *src.add(chunk - 1);
+            if TRACK_LAST_BYTE {
+                pdflastbyte = *src.add(chunk - 1);
+            }
             src = src.add(chunk);
             len -= chunk;
         }
+    }
+}
+
+pub unsafe fn pdf_write_bytes(src: *const u8, len: usize) {
+    unsafe {
+        pdf_write_bytes_impl::<true>(src, len);
+    }
+}
+
+pub unsafe fn pdf_write_bytes_untracked(src: *const u8, len: usize) {
+    unsafe {
+        pdf_write_bytes_impl::<false>(src, len);
     }
 }
 

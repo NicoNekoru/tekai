@@ -1000,7 +1000,7 @@ pub const suphyphsize: ::core::ffi::c_long = 65535 as ::core::ffi::c_long;
 pub const infhyphsize: ::core::ffi::c_int = 610 as ::core::ffi::c_int;
 pub const infpdfmemsize: ::core::ffi::c_int = 10000 as ::core::ffi::c_int;
 pub const suppdfmemsize: ::core::ffi::c_long = 10000000 as ::core::ffi::c_long;
-pub const pdfopbufsize: ::core::ffi::c_int = 16384 as ::core::ffi::c_int;
+pub const pdfopbufsize: ::core::ffi::c_int = 262144 as ::core::ffi::c_int;
 pub const infpdfosbufsize: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const infobjtabsize: ::core::ffi::c_int = 1000 as ::core::ffi::c_int;
 pub const supobjtabsize: ::core::ffi::c_long = 8388607 as ::core::ffi::c_long;
@@ -13170,7 +13170,7 @@ pub unsafe extern "C" fn mainbody() {
             .wrapping_mul(::core::mem::size_of::<destnameentry>() as size_t),
     ) as *mut destnameentry;
     pdfopbuf = xmalloc(
-        ((16384 as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as size_t)
+        ((pdfopbufsize + 1 as ::core::ffi::c_int) as size_t)
             .wrapping_mul(::core::mem::size_of::<eightbits>() as size_t),
     ) as *mut eightbits;
     pdfosbuf = xmalloc(
