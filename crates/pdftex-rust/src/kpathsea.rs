@@ -342,18 +342,29 @@ fn parse_ls_r(root: &Path, by_name: &mut HashMap<String, Vec<PathBuf>>) {
         return;
     };
     let mut current_dir = root.to_path_buf();
+    let mut current_dir_is_runtime = true;
     for line in text.lines() {
         if line.is_empty() || line.starts_with('%') {
             continue;
         }
         if let Some(dir) = line.strip_suffix(':') {
             let dir = dir.strip_prefix("./").unwrap_or(dir);
-            current_dir = root.join(dir);
+            current_dir_is_runtime = is_runtime_ls_r_dir(dir);
+            if current_dir_is_runtime {
+                current_dir = root.join(dir);
+            }
+            continue;
+        }
+        if !current_dir_is_runtime {
             continue;
         }
         let path = current_dir.join(line);
         by_name.entry(line.to_owned()).or_default().push(path);
     }
+}
+
+fn is_runtime_ls_r_dir(dir: &str) -> bool {
+    !dir.split('/').any(|part| part == "doc" || part == "source")
 }
 
 fn find_in_index(candidate: &str, format: c_uint) -> Option<PathBuf> {
