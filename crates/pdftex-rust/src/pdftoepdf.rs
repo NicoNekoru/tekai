@@ -898,7 +898,11 @@ pub unsafe extern "C" fn write_epdf() {
         xpdf_xref_fetch(XREF, page_ref.num, page_ref.gen, page_obj.ptr);
         let page_dict = xpdf_object_get_dict(page_obj.ptr);
         let rotate = xpdf_page_rotate(page);
-        let suppress_ptex_info = getpdfsuppressptexinfo();
+        // PTEX metadata is not rendered; skip it on the native fast path.
+        let suppress_ptex_info = getpdfsuppressptexinfo()
+            | MASK_SUPPRESS_PTEX_FILENAME
+            | MASK_SUPPRESS_PTEX_PAGENUMBER
+            | MASK_SUPPRESS_PTEX_INFODICT;
         let sep = if getptexuseunderscore() != 0 {
             c"_".as_ptr()
         } else {
