@@ -1089,7 +1089,9 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         };
         draft_prepass_used |= draft_graphics;
         let pass_started = Instant::now();
-        let standard_rerun_outputs_before = if full_layout_no_pdf {
+        let track_standard_rerun_outputs =
+            full_layout_no_pdf || (!draft_graphics && !suppress_pdf_output);
+        let standard_rerun_outputs_before = if track_standard_rerun_outputs {
             Some(standard_rerun_output_snapshot(&out_dir)?)
         } else {
             None
@@ -1265,7 +1267,18 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
             continue;
         }
 
-        if !generated_outputs_changed && !generated_inputs_unread && !needs_rerun {
+        if !generated_outputs_changed
+            && !generated_inputs_unread
+            && (!needs_rerun
+                || can_accept_final_pdf_with_stale_rerun_warnings(
+                    draft_graphics,
+                    suppress_pdf_output,
+                    generated_outputs_changed,
+                    generated_inputs_unread,
+                    standard_rerun_outputs_changed,
+                    &rerun_reasons,
+                ))
+        {
             break true;
         }
 
@@ -1638,7 +1651,9 @@ fn preamble_format_kind_for_run(
     options: &BuildOptions,
     mode: TexRunMode,
 ) -> Option<PreambleFormatKind> {
-    if !options.precompile_preamble || !matches!(options.engine, Engine::PdfLatex) {
+    if !options.precompile_preamble
+        || !matches!(options.engine, Engine::PdfLatex | Engine::TexpilotPdftex)
+    {
         return None;
     }
     if options.fast {
@@ -1818,6 +1833,29 @@ fn full_layout_pdf_promotion_threshold(
     } else {
         2
     }
+}
+
+fn can_accept_final_pdf_with_stale_rerun_warnings(
+    draft_graphics: bool,
+    suppress_pdf_output: bool,
+    generated_outputs_changed: bool,
+    generated_inputs_unread: bool,
+    standard_rerun_outputs_changed: bool,
+    rerun_reasons: &[String],
+) -> bool {
+    !draft_graphics
+        && !suppress_pdf_output
+        && !generated_outputs_changed
+        && !generated_inputs_unread
+        && !standard_rerun_outputs_changed
+        && !rerun_reasons.is_empty()
+        && rerun_reasons
+            .iter()
+            .all(|reason| is_stale_standard_rerun_reason(reason))
+}
+
+fn is_stale_standard_rerun_reason(reason: &str) -> bool {
+    matches!(reason, "file-changed" | "rerun-to-get-cross-references")
 }
 
 #[derive(Debug, Clone, Default)]
@@ -14105,6 +14143,48 @@ mod tests {
         assert_eq!(full_layout_pdf_promotion_threshold(true, 0, false), 2);
         assert_eq!(full_layout_pdf_promotion_threshold(true, 0, true), 1);
         assert_eq!(full_layout_pdf_promotion_threshold(true, 1, false), 1);
+    }
+
+    #[test]
+    fn final_pdf_accepts_only_stale_standard_rerun_warnings() {
+        let standard_reasons = vec![
+            "file-changed".to_string(),
+            "rerun-to-get-cross-references".to_string(),
+        ];
+        assert!(can_accept_final_pdf_with_stale_rerun_warnings(
+            false,
+            false,
+            false,
+            false,
+            false,
+            &standard_reasons
+        ));
+        assert!(!can_accept_final_pdf_with_stale_rerun_warnings(
+            false,
+            false,
+            true,
+            false,
+            false,
+            &standard_reasons
+        ));
+        assert!(!can_accept_final_pdf_with_stale_rerun_warnings(
+            false,
+            false,
+            false,
+            false,
+            true,
+            &standard_reasons
+        ));
+
+        let citation_reasons = vec!["citations-changed".to_string()];
+        assert!(!can_accept_final_pdf_with_stale_rerun_warnings(
+            false,
+            false,
+            false,
+            false,
+            false,
+            &citation_reasons
+        ));
     }
 
     #[test]
