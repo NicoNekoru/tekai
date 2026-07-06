@@ -13757,8 +13757,9 @@ pub unsafe extern "C" fn getnext() {
                     match current_block {
                         958128786106592581 => {}
                         _ => {
-                            curcmd = (*eqtb.offset(curcs as isize)).hh.u.B0 as eightbits;
-                            curchr = (*eqtb.offset(curcs as isize)).hh.v.RH;
+                            let curcs_eqtb = eqtb.offset(curcs as isize);
+                            curcmd = (*curcs_eqtb).hh.u.B0 as eightbits;
+                            curchr = (*curcs_eqtb).hh.v.RH;
                             if curcmd as ::core::ffi::c_int >= 116 as ::core::ffi::c_int {
                                 checkoutervalidity();
                             }
@@ -13787,12 +13788,15 @@ pub unsafe extern "C" fn getnext() {
                 }
             }
         } else if curinput.locfield as ::core::ffi::c_long != -(268435455 as ::core::ffi::c_long) {
-            t = (*mem.offset(curinput.locfield as isize)).hh.v.LH;
-            curinput.locfield = (*mem.offset(curinput.locfield as isize)).hh.v.RH;
+            let loc = curinput.locfield;
+            let loc_mem = mem.offset(loc as isize);
+            t = (*loc_mem).hh.v.LH;
+            curinput.locfield = (*loc_mem).hh.v.RH;
             if t >= 4095 as ::core::ffi::c_int {
                 curcs = (t as ::core::ffi::c_int - 4095 as ::core::ffi::c_int) as halfword;
-                curcmd = (*eqtb.offset(curcs as isize)).hh.u.B0 as eightbits;
-                curchr = (*eqtb.offset(curcs as isize)).hh.v.RH;
+                let curcs_eqtb = eqtb.offset(curcs as isize);
+                curcmd = (*curcs_eqtb).hh.u.B0 as eightbits;
+                curchr = (*curcs_eqtb).hh.v.RH;
                 if curcmd as ::core::ffi::c_int >= 116 as ::core::ffi::c_int {
                     if curcmd as ::core::ffi::c_int == 119 as ::core::ffi::c_int {
                         curcs = ((*mem.offset(curinput.locfield as isize)).hh.v.LH
@@ -13800,8 +13804,9 @@ pub unsafe extern "C" fn getnext() {
                             - 4095 as ::core::ffi::c_int)
                             as halfword;
                         curinput.locfield = -(268435455 as ::core::ffi::c_long) as halfword;
-                        curcmd = (*eqtb.offset(curcs as isize)).hh.u.B0 as eightbits;
-                        curchr = (*eqtb.offset(curcs as isize)).hh.v.RH;
+                        let curcs_eqtb = eqtb.offset(curcs as isize);
+                        curcmd = (*curcs_eqtb).hh.u.B0 as eightbits;
+                        curchr = (*curcs_eqtb).hh.v.RH;
                         if curcmd as ::core::ffi::c_int > 103 as ::core::ffi::c_int {
                             curcmd = 0 as eightbits;
                             curchr = 257 as ::core::ffi::c_int as halfword;
