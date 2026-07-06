@@ -1,6 +1,7 @@
 use std::ffi::{c_char, c_double, c_int, c_uint, c_void};
 use std::io::Cursor;
 use std::ptr;
+use std::sync::Arc;
 
 const PNG_LIBPNG_VER_STRING: &[u8] = b"1.6.58\0";
 
@@ -50,11 +51,35 @@ struct PngInfo {
     state: *mut PngState,
 }
 
+#[derive(Clone)]
 struct DecodedImage {
     data: Vec<u8>,
     rowbytes: usize,
     bit_depth: u8,
     color_type: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct FileIdentity {
+    dev: libc::dev_t,
+    ino: libc::ino_t,
+    size: libc::off_t,
+    mtime_sec: libc::time_t,
+    mtime_nsec: libc::c_long,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct PngDecodeCacheKey {
+    file: FileIdentity,
+    strip_16: bool,
+    trns_to_alpha: bool,
+    strip_alpha: bool,
+    gamma: Option<(u64, u64)>,
+}
+
+thread_local! {
+    static PNG_DECODE_CACHE: std::cell::RefCell<std::collections::HashMap<PngDecodeCacheKey, Arc<DecodedImage>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 struct PngState {
@@ -76,7 +101,7 @@ struct PngState {
     trns_to_alpha: bool,
     strip_alpha: bool,
     gamma: Option<(f64, f64)>,
-    decoded: Option<DecodedImage>,
+    decoded: Option<Arc<DecodedImage>>,
     row_cursor: usize,
     jmp: Box<JmpBuf>,
 }
@@ -160,6 +185,15 @@ impl PngState {
         if self.decoded.is_some() {
             return Ok(());
         }
+        let cache_key = self.decode_cache_key();
+        if let Some(key) = cache_key {
+            if let Some(decoded) = PNG_DECODE_CACHE.with(|cache| cache.borrow().get(&key).cloned())
+            {
+                self.decoded = Some(decoded);
+                self.row_cursor = 0;
+                return Ok(());
+            }
+        }
         if self.data.is_empty() {
             self.data = unsafe { read_file(self.file)? };
         }
@@ -205,14 +239,32 @@ impl PngState {
             apply_gamma(&mut data, color_type, bit_depth, screen_gamma, file_gamma);
         }
 
-        self.decoded = Some(DecodedImage {
+        let decoded = Arc::new(DecodedImage {
             data,
             rowbytes,
             bit_depth,
             color_type,
         });
+        if let Some(key) = cache_key {
+            PNG_DECODE_CACHE.with(|cache| {
+                cache.borrow_mut().insert(key, Arc::clone(&decoded));
+            });
+        }
+        self.decoded = Some(decoded);
         self.row_cursor = 0;
         Ok(())
+    }
+
+    fn decode_cache_key(&self) -> Option<PngDecodeCacheKey> {
+        Some(PngDecodeCacheKey {
+            file: file_identity(self.file)?,
+            strip_16: self.strip_16,
+            trns_to_alpha: self.trns_to_alpha,
+            strip_alpha: self.strip_alpha,
+            gamma: self
+                .gamma
+                .map(|(screen_gamma, file_gamma)| (screen_gamma.to_bits(), file_gamma.to_bits())),
+        })
     }
 }
 
@@ -642,6 +694,36 @@ unsafe fn read_file(fp: *mut libc::FILE) -> Result<Vec<u8>, String> {
     }
     let _ = libc::fseeko(fp, 0, libc::SEEK_SET);
     Ok(data)
+}
+
+fn file_identity(fp: *mut libc::FILE) -> Option<FileIdentity> {
+    if fp.is_null() {
+        return None;
+    }
+    let fd = unsafe { libc::fileno(fp) };
+    if fd < 0 {
+        return None;
+    }
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let stat = unsafe { stat.assume_init() };
+    Some(FileIdentity {
+        dev: stat.st_dev,
+        ino: stat.st_ino,
+        size: stat.st_size,
+        mtime_sec: stat_mtime_sec(&stat),
+        mtime_nsec: stat_mtime_nsec(&stat),
+    })
+}
+
+fn stat_mtime_sec(stat: &libc::stat) -> libc::time_t {
+    stat.st_mtime
+}
+
+fn stat_mtime_nsec(stat: &libc::stat) -> libc::c_long {
+    stat.st_mtime_nsec
 }
 
 unsafe fn read_exact_file(fp: *mut libc::FILE, buf: &mut [u8]) -> Result<(), String> {

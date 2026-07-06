@@ -2503,6 +2503,15 @@ static mut SMALL_NODE_CACHE_HEADS: [halfword; SMALL_NODE_CACHE_MAX_SIZE + 1] =
     [0; SMALL_NODE_CACHE_MAX_SIZE + 1];
 static mut SMALL_NODE_CACHE_COUNTS: [integer; SMALL_NODE_CACHE_MAX_SIZE + 1] =
     [0; SMALL_NODE_CACHE_MAX_SIZE + 1];
+#[derive(Copy, Clone)]
+struct ExpandFontCacheEntry {
+    f: internalfontnumber,
+    e: integer,
+    k: internalfontnumber,
+}
+const EXPAND_FONT_CACHE_SIZE: usize = 2048;
+static mut EXPAND_FONT_CACHE: [ExpandFontCacheEntry; EXPAND_FONT_CACHE_SIZE] =
+    [ExpandFontCacheEntry { f: 0, e: 0, k: 0 }; EXPAND_FONT_CACHE_SIZE];
 #[inline(always)]
 fn small_node_cache_index(s: integer) -> Option<usize> {
     if (2 as ::core::ffi::c_int..=SMALL_NODE_CACHE_MAX_SIZE as ::core::ffi::c_int).contains(&s) {
@@ -2510,6 +2519,10 @@ fn small_node_cache_index(s: integer) -> Option<usize> {
     } else {
         None
     }
+}
+#[inline(always)]
+fn expand_font_cache_index(font: internalfontnumber, e: integer) -> usize {
+    ((font as u32).wrapping_mul(131) ^ e as u32) as usize & (EXPAND_FONT_CACHE_SIZE - 1)
 }
 #[no_mangle]
 pub unsafe extern "C" fn zstreqstr(mut s: strnumber, mut t: strnumber) -> boolean {
@@ -29026,9 +29039,19 @@ pub unsafe extern "C" fn zgetexpandfont(
 ) -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     let mut k: internalfontnumber = 0;
+    let cache_index = expand_font_cache_index(f_0, e);
+    let cached = EXPAND_FONT_CACHE[cache_index];
+    if cached.f == f_0
+        && cached.e == e
+        && cached.k != 0 as ::core::ffi::c_int
+        && *pdffontexpandratio.offset(cached.k as isize) == e
+    {
+        return cached.k;
+    }
     k = *pdffontelink.offset(f_0 as isize);
     while k != 0 as ::core::ffi::c_int {
         if *pdffontexpandratio.offset(k as isize) == e {
+            EXPAND_FONT_CACHE[cache_index] = ExpandFontCacheEntry { f: f_0, e, k };
             Result = k;
             return Result;
         }
@@ -29037,6 +29060,7 @@ pub unsafe extern "C" fn zgetexpandfont(
     k = zloadexpandfont(f_0, e);
     *pdffontelink.offset(k as isize) = *pdffontelink.offset(f_0 as isize);
     *pdffontelink.offset(f_0 as isize) = k;
+    EXPAND_FONT_CACHE[cache_index] = ExpandFontCacheEntry { f: f_0, e, k };
     Result = k;
     return Result;
 }
