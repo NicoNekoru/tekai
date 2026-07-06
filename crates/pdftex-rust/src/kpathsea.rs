@@ -13,7 +13,9 @@ use crate::generated::pdftexextra::{
 use libc::{c_char, c_double, c_int, c_uint, c_void, size_t};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::{CStr, OsStr};
+use std::ffi::{CStr, OsStr, OsString};
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -249,6 +251,60 @@ fn check_direct_path(path: &Path) -> Option<PathBuf> {
         return Some(path.to_path_buf());
     }
     None
+}
+
+fn raw_format_companion(path: &Path) -> PathBuf {
+    let mut raw = OsString::from(path.as_os_str());
+    raw.push(".raw");
+    PathBuf::from(raw)
+}
+
+fn check_format_path(path: &Path) -> Option<PathBuf> {
+    if path.extension() == Some(OsStr::new("fmt")) {
+        let raw = raw_format_companion(path);
+        if let Some(found) = check_direct_path(&raw) {
+            return Some(found);
+        }
+        if materialize_raw_format_companion(path, &raw).is_ok() {
+            if let Some(found) = check_direct_path(&raw) {
+                return Some(found);
+            }
+        }
+    }
+    check_direct_path(path)
+}
+
+fn materialize_raw_format_companion(path: &Path, raw: &Path) -> io::Result<()> {
+    if !path_is_readable(path) || !format_file_is_gzip(path)? {
+        return Ok(());
+    }
+    let tmp = raw_format_temp(raw);
+    let result = (|| {
+        let input = File::open(path)?;
+        let mut decoder = flate2::read::GzDecoder::new(input);
+        let mut output = File::create(&tmp)?;
+        io::copy(&mut decoder, &mut output)?;
+        output.flush()?;
+        drop(output);
+        std::fs::rename(&tmp, raw)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn raw_format_temp(raw: &Path) -> PathBuf {
+    let mut tmp = OsString::from(raw.as_os_str());
+    tmp.push(".tmp");
+    PathBuf::from(tmp)
+}
+
+fn format_file_is_gzip(path: &Path) -> io::Result<bool> {
+    let mut header = [0u8; 2];
+    let mut file = File::open(path)?;
+    let bytes = file.read(&mut header)?;
+    Ok(bytes == 2 && header == [0x1f, 0x8b])
 }
 
 fn explicit_search_dirs() -> &'static [PathBuf] {
@@ -521,7 +577,11 @@ fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
     if let Some(found) = with_candidate_names(name, format, |candidate| {
         let path = Path::new(candidate);
         if path.is_absolute() || candidate.contains('/') {
-            return check_direct_path(path);
+            return if format == KPSE_FMT_FORMAT {
+                check_format_path(path)
+            } else {
+                check_direct_path(path)
+            };
         }
         None
     }) {
@@ -531,7 +591,7 @@ fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
     if format == KPSE_FMT_FORMAT {
         for dir in format_search_dirs() {
             if let Some(found) = with_candidate_names(name, format, |candidate| {
-                check_direct_path(&dir.join(candidate))
+                check_format_path(&dir.join(candidate))
             }) {
                 return Some(found);
             }
@@ -758,4 +818,56 @@ pub unsafe extern "C" fn kpse_bitmap_tolerance(actual: c_double, expected: c_dou
 #[no_mangle]
 pub unsafe extern "C" fn kpse_magstep_fix(dpi: c_int, _: c_int, _: const_string) -> c_int {
     dpi
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::Compression;
+    use std::fs;
+
+    #[test]
+    fn format_lookup_prefers_raw_companion() {
+        let root = std::env::temp_dir().join(format!(
+            "pdftex-rust-format-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("failed to create test format dir");
+        let fmt = root.join("pdflatex.fmt");
+        let raw = root.join("pdflatex.fmt.raw");
+        fs::write(&fmt, b"gzip-compatible").expect("failed to write fmt");
+        fs::write(&raw, b"raw").expect("failed to write raw fmt");
+
+        assert_eq!(check_format_path(&fmt), Some(raw));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn format_lookup_materializes_raw_companion_from_gzip() {
+        let root = std::env::temp_dir().join(format!(
+            "pdftex-rust-format-materialize-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("failed to create test format dir");
+        let fmt = root.join("pdflatex.fmt");
+        let raw = root.join("pdflatex.fmt.raw");
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), Compression::fast());
+        encoder
+            .write_all(b"raw-format-bytes")
+            .expect("failed to encode test fmt");
+        fs::write(&fmt, encoder.finish().expect("failed to finish gzip"))
+            .expect("failed to write fmt");
+
+        assert_eq!(check_format_path(&fmt), Some(raw.clone()));
+        assert_eq!(
+            fs::read(&raw).expect("failed to read materialized raw fmt"),
+            b"raw-format-bytes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

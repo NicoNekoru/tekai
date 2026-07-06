@@ -21,6 +21,7 @@ path = "src/bin/pdftex-rust.rs"
 required-features = ["rust-binary"]
 
 [dependencies]
+flate2 = "1.1"
 libc = "0.2"
 libz-rs-sys = { version = "0.6.5", features = ["export-symbols", "gz"] }
 lopdf = { version = "0.35", default-features = false, features = ["nom_parser"] }

@@ -5,7 +5,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -58,6 +58,29 @@ const BIBER_GLOB_FINGERPRINT_PATH_PREFIX: &str = "texpilot-biber-glob:";
 const BIBER_GLOB_MATCHES_HASH_PREFIX: &str = "biber-glob-matches:";
 const BIBER_CONFIG_FINGERPRINT_PATH_PREFIX: &str = "texpilot-biber-config:";
 const BIBER_CONFIG_CHOICE_HASH_PREFIX: &str = "biber-config-choice:";
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct KpathseaResolutionKey {
+    doc_dir: PathBuf,
+    candidate: String,
+    extension: String,
+}
+
+static KPATHSEA_RESOLUTION_CACHE: OnceLock<Mutex<HashMap<KpathseaResolutionKey, Option<PathBuf>>>> =
+    OnceLock::new();
+static TEXLIVE_LS_R_ROOTS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+
+fn clear_kpathsea_resolution_cache() {
+    if let Some(cache) = KPATHSEA_RESOLUTION_CACHE.get()
+        && let Ok(mut cache) = cache.lock()
+    {
+        cache.clear();
+    }
+}
+
+fn kpathsea_resolution_cache() -> &'static Mutex<HashMap<KpathseaResolutionKey, Option<PathBuf>>> {
+    KPATHSEA_RESOLUTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Engine {
     PdfLatex,
@@ -561,6 +584,7 @@ impl IndexCommandProgram {
 }
 
 pub fn build(options: &BuildOptions) -> Result<BuildReport> {
+    clear_kpathsea_resolution_cache();
     match options.runner {
         Runner::Direct if is_certified_texpilot_pdftex_engine(options.engine) => {
             texpilot_pdftex_direct_build(options)
@@ -571,6 +595,7 @@ pub fn build(options: &BuildOptions) -> Result<BuildReport> {
 }
 
 pub fn build_dependency_paths(options: &BuildOptions) -> Result<Vec<PathBuf>> {
+    clear_kpathsea_resolution_cache();
     if options.runner != Runner::Direct || options.engine == Engine::Tectonic {
         return Ok(Vec::new());
     }
@@ -10658,6 +10683,24 @@ fn resolve_kpathsea_input(doc_dir: &Path, name: &str, extension: &str) -> Result
         return Ok(Some(local));
     }
 
+    let cache_key = KpathseaResolutionKey {
+        doc_dir: doc_dir.to_path_buf(),
+        candidate: candidate.clone(),
+        extension: extension.to_string(),
+    };
+    if let Ok(cache) = kpathsea_resolution_cache().lock()
+        && let Some(cached) = cache.get(&cache_key)
+    {
+        return Ok(cached.clone());
+    }
+
+    if let Some(resolved) = resolve_texlive_ls_r_input(&candidate, extension) {
+        if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
+            cache.insert(cache_key, Some(resolved.clone()));
+        }
+        return Ok(Some(resolved));
+    }
+
     let mut command = Command::new("kpsewhich");
     command.current_dir(doc_dir);
     for (variable, value) in kpathsea_env_overrides_for_extension(extension, doc_dir) {
@@ -10667,15 +10710,20 @@ fn resolve_kpathsea_input(doc_dir: &Path, name: &str, extension: &str) -> Result
         .arg(&candidate)
         .output()
         .with_context(|| format!("failed to launch kpsewhich for {candidate}"))?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        Ok(None)
+    let resolved = if !output.status.success() {
+        None
     } else {
-        Ok(Some(PathBuf::from(path)))
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(path))
+        }
+    };
+    if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
+        cache.insert(cache_key, resolved.clone());
     }
+    Ok(resolved)
 }
 
 fn tex_rerun_reasons(log_path: &Path) -> Result<Vec<String>> {
@@ -12368,6 +12416,171 @@ fn kpathsea_env_overrides_for_extension(
             ("INDEXSTYLE", kpathsea_env("INDEXSTYLE", doc_dir)),
         ],
         _ => vec![("TEXINPUTS", kpathsea_env("TEXINPUTS", doc_dir))],
+    }
+}
+
+fn resolve_texlive_ls_r_input(candidate: &str, extension: &str) -> Option<PathBuf> {
+    let path = Path::new(candidate);
+    if path.is_absolute() {
+        return None;
+    }
+
+    let basename = path.file_name()?.to_string_lossy();
+    let roots = texlive_ls_r_roots();
+    let mut best: Option<(PathBuf, (u8, u8, usize))> = None;
+    for root in roots {
+        let Some(found) = find_candidate_in_ls_r(root, candidate, &basename, extension) else {
+            continue;
+        };
+        let rank = texlive_ls_r_rank(&found, extension);
+        if best.as_ref().is_none_or(|(_, best_rank)| rank < *best_rank) {
+            best = Some((found, rank));
+        }
+    }
+    best.map(|(path, _)| path)
+}
+
+fn texlive_ls_r_roots() -> &'static [PathBuf] {
+    TEXLIVE_LS_R_ROOTS
+        .get_or_init(|| {
+            let mut roots = Vec::new();
+            for key in ["TEXMFCONFIG", "TEXMFVAR", "TEXMFDIST"] {
+                if let Some(value) = std::env::var_os(key).filter(|value| !value.is_empty()) {
+                    roots.push(PathBuf::from(value));
+                }
+            }
+            if !roots.iter().any(|root| root.join("ls-R").exists())
+                && let Some(root) = latest_texlive_root()
+            {
+                roots.push(root.join("texmf-config"));
+                roots.push(root.join("texmf-var"));
+                roots.push(root.join("texmf-dist"));
+            }
+            roots
+        })
+        .as_slice()
+}
+
+fn latest_texlive_root() -> Option<PathBuf> {
+    let base = Path::new("/usr/local/texlive");
+    let mut versions = fs::read_dir(base)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.join("texmf-dist/ls-R").exists())
+        .collect::<Vec<_>>();
+    versions.sort();
+    versions.pop()
+}
+
+fn find_candidate_in_ls_r(
+    root: &Path,
+    candidate: &str,
+    basename: &str,
+    extension: &str,
+) -> Option<PathBuf> {
+    let source = fs::read_to_string(root.join("ls-R")).ok()?;
+    let mut current_dir = root.to_path_buf();
+    let mut current_dir_is_runtime = true;
+    let mut best: Option<(PathBuf, (u8, u8, usize))> = None;
+    for line in source.lines() {
+        if line.is_empty() || line.starts_with('%') {
+            continue;
+        }
+        if let Some(dir) = line.strip_suffix(':') {
+            let dir = dir.strip_prefix("./").unwrap_or(dir);
+            current_dir_is_runtime = texlive_ls_r_dir_is_runtime(dir);
+            if current_dir_is_runtime {
+                current_dir = root.join(dir);
+            }
+            continue;
+        }
+        if !current_dir_is_runtime || line != basename {
+            continue;
+        }
+        let path = current_dir.join(line);
+        if !texlive_ls_r_path_matches_candidate(&path, candidate) || !path.is_file() {
+            continue;
+        }
+        let rank = texlive_ls_r_rank(&path, extension);
+        if best.as_ref().is_none_or(|(_, best_rank)| rank < *best_rank) {
+            best = Some((path, rank));
+        }
+    }
+    best.map(|(path, _)| path)
+}
+
+fn texlive_ls_r_dir_is_runtime(dir: &str) -> bool {
+    !dir.split('/').any(|part| part == "doc" || part == "source")
+}
+
+fn texlive_ls_r_path_matches_candidate(path: &Path, candidate: &str) -> bool {
+    if !candidate.contains('/') {
+        return true;
+    }
+    path.to_string_lossy().ends_with(candidate)
+}
+
+fn texlive_ls_r_rank(path: &Path, extension: &str) -> (u8, u8, usize) {
+    let path = path.to_string_lossy();
+    let format_rank = match extension {
+        "bib" | "bst" => {
+            if path.contains("/bibtex/") {
+                0
+            } else {
+                80
+            }
+        }
+        "ist" => {
+            if path.contains("/makeindex/") {
+                0
+            } else if path.contains("/tex/") {
+                1
+            } else {
+                80
+            }
+        }
+        "tfm" | "gf" | "pk" | "pfb" | "pfa" | "vf" | "ttf" | "ttc" | "otf" => {
+            if path.contains("/fonts/") { 0 } else { 80 }
+        }
+        "map" => {
+            if path.contains("/fonts/map/") {
+                0
+            } else if path.contains("/web2c/") {
+                1
+            } else if path.contains("/tex/") {
+                2
+            } else {
+                80
+            }
+        }
+        _ => {
+            if path.contains("/tex/latex/") {
+                0
+            } else if path.contains("/tex/generic/") {
+                1
+            } else if path.contains("/tex/plain/") {
+                2
+            } else if path.contains("/tex/") {
+                3
+            } else if path.contains("/web2c/") {
+                4
+            } else {
+                80
+            }
+        }
+    };
+    (format_rank, texlive_ls_r_tree_rank(&path), path.len())
+}
+
+fn texlive_ls_r_tree_rank(path: &str) -> u8 {
+    if path.contains("/texmf-config/") {
+        0
+    } else if path.contains("/texmf-var/") {
+        1
+    } else if path.contains("/texmf-dist/") {
+        2
+    } else {
+        3
     }
 }
 
