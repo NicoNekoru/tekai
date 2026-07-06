@@ -911,6 +911,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let mut last_generated_outputs: Option<Vec<GeneratedOutputFingerprint>> = None;
     let mut stable_full_layout_no_pdf_rerun_passes = 0_usize;
     let mut stable_standard_file_churn_no_pdf_rerun_passes = 0_usize;
+    let mut accept_stale_final_pdf_after_draft = false;
     let aux_session_cache = AuxToolSessionCache::default();
     let includeonly = aux_session_cache.root_includeonly_filter(&main)?;
     let source_cache = aux_session_cache.source_read_cache();
@@ -1224,14 +1225,13 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
                 // Draft logs can keep asking for reruns for backref/outfile churn that the
                 // final full-image pass will resolve. Switch once generated inputs settle.
                 draft_graphics_phase = false;
-                let remaining_pass_budget = options.max_runs.saturating_sub(tex_runs);
-                full_layout_no_pdf_phase = can_suppress_pdf_output
-                    && remaining_pass_budget >= 3
-                    && should_settle_full_layout_no_pdf_after_draft(
+                accept_stale_final_pdf_after_draft =
+                    should_accept_stale_final_pdf_after_stable_draft(
                         source_features.as_ref(),
                         &rerun_reasons,
                         source_bibtex_preflight_used,
                     );
+                full_layout_no_pdf_phase = false;
                 stable_full_layout_no_pdf_rerun_passes = 0;
                 stable_standard_file_churn_no_pdf_rerun_passes = 0;
                 last_generated_outputs = None;
@@ -1277,10 +1277,12 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
                     generated_inputs_unread,
                     standard_rerun_outputs_changed,
                     &rerun_reasons,
+                    accept_stale_final_pdf_after_draft,
                 ))
         {
             break true;
         }
+        accept_stale_final_pdf_after_draft = false;
 
         if tex_runs >= options.max_runs {
             break false;
@@ -1810,7 +1812,7 @@ fn should_start_full_layout_no_pdf_phase(
     source_features.is_some_and(|features| features.has_multipass_signal && !features.has_graphics)
 }
 
-fn should_settle_full_layout_no_pdf_after_draft(
+fn should_accept_stale_final_pdf_after_stable_draft(
     source_features: Option<&SourceFeatures>,
     rerun_reasons: &[String],
     source_bibtex_preflight_used: bool,
@@ -1842,12 +1844,13 @@ fn can_accept_final_pdf_with_stale_rerun_warnings(
     generated_inputs_unread: bool,
     standard_rerun_outputs_changed: bool,
     rerun_reasons: &[String],
+    accept_stale_after_stable_draft: bool,
 ) -> bool {
     !draft_graphics
         && !suppress_pdf_output
         && !generated_outputs_changed
         && !generated_inputs_unread
-        && !standard_rerun_outputs_changed
+        && (!standard_rerun_outputs_changed || accept_stale_after_stable_draft)
         && !rerun_reasons.is_empty()
         && rerun_reasons
             .iter()
@@ -14097,7 +14100,7 @@ mod tests {
     }
 
     #[test]
-    fn full_layout_no_pdf_after_draft_is_reserved_for_file_churn() {
+    fn stale_final_pdf_after_draft_is_reserved_for_file_churn() {
         let plain_features = SourceFeatures {
             has_graphics: true,
             has_multipass_signal: true,
@@ -14108,19 +14111,19 @@ mod tests {
             "citations-changed".to_string(),
             "rerun-to-get-cross-references".to_string(),
         ];
-        assert!(!should_settle_full_layout_no_pdf_after_draft(
+        assert!(!should_accept_stale_final_pdf_after_stable_draft(
             Some(&plain_features),
             &citation_only_reasons,
             false
         ));
 
         let file_changed_reasons = vec!["file-changed".to_string()];
-        assert!(should_settle_full_layout_no_pdf_after_draft(
+        assert!(should_accept_stale_final_pdf_after_stable_draft(
             Some(&plain_features),
             &file_changed_reasons,
             false
         ));
-        assert!(!should_settle_full_layout_no_pdf_after_draft(
+        assert!(!should_accept_stale_final_pdf_after_stable_draft(
             Some(&plain_features),
             &file_changed_reasons,
             true
@@ -14130,7 +14133,7 @@ mod tests {
             has_backref_signal: true,
             ..plain_features
         };
-        assert!(should_settle_full_layout_no_pdf_after_draft(
+        assert!(should_accept_stale_final_pdf_after_stable_draft(
             Some(&backref_features),
             &citation_only_reasons,
             true
@@ -14157,7 +14160,8 @@ mod tests {
             false,
             false,
             false,
-            &standard_reasons
+            &standard_reasons,
+            false,
         ));
         assert!(!can_accept_final_pdf_with_stale_rerun_warnings(
             false,
@@ -14165,7 +14169,8 @@ mod tests {
             true,
             false,
             false,
-            &standard_reasons
+            &standard_reasons,
+            false,
         ));
         assert!(!can_accept_final_pdf_with_stale_rerun_warnings(
             false,
@@ -14173,7 +14178,17 @@ mod tests {
             false,
             false,
             true,
-            &standard_reasons
+            &standard_reasons,
+            false,
+        ));
+        assert!(can_accept_final_pdf_with_stale_rerun_warnings(
+            false,
+            false,
+            false,
+            false,
+            true,
+            &standard_reasons,
+            true,
         ));
 
         let citation_reasons = vec!["citations-changed".to_string()];
@@ -14183,7 +14198,8 @@ mod tests {
             false,
             false,
             false,
-            &citation_reasons
+            &citation_reasons,
+            true,
         ));
     }
 

@@ -83,20 +83,21 @@ fn direct_runner_promotes_after_stale_file_change_warning_without_standard_file_
     })
     .expect("stale file-change warning should settle within the promoted PDF pass");
 
-    assert_eq!(first.tex_runs, 3, "{first:#?}");
+    assert_eq!(first.tex_runs, 2, "{first:#?}");
     assert_eq!(first.draft_tex_runs, 1, "{first:#?}");
-    assert_eq!(first.final_tex_runs, 2, "{first:#?}");
+    assert_eq!(first.final_tex_runs, 1, "{first:#?}");
     assert_eq!(first.pdf_tex_runs, 1, "{first:#?}");
-    assert_eq!(first.passes.len(), 3, "{first:#?}");
+    assert_eq!(first.passes.len(), 2, "{first:#?}");
     assert!(first.passes[0].draft, "{first:#?}");
     assert!(!first.passes[1].draft, "{first:#?}");
-    assert!(!first.passes[1].pdf_output, "{first:#?}");
-    assert_eq!(
-        first.passes[1].rerun_reasons,
-        ["file-changed"],
+    assert!(first.passes[1].pdf_output, "{first:#?}");
+    assert!(
+        first.passes[0]
+            .rerun_reasons
+            .iter()
+            .any(|reason| reason == "file-changed"),
         "{first:#?}"
     );
-    assert!(first.passes[2].pdf_output, "{first:#?}");
     assert!(out_dir.join("main.pdf").exists());
 
     let _ = fs::remove_dir_all(root);

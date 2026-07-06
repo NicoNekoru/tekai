@@ -776,7 +776,7 @@ fn auto_draft_prepass_switches_to_final_after_backref_outputs_stabilize() {
     })
     .expect("auto backref build should settle without exhausting draft reruns");
     assert_eq!(first.bibliography_runs, 1, "{first:#?}");
-    assert_eq!(first.tex_runs, 3, "{first:#?}");
+    assert_eq!(first.tex_runs, 2, "{first:#?}");
     assert!(first.draft_tex_runs > 0, "{first:#?}");
     assert!(first.final_tex_runs > 0, "{first:#?}");
     assert_eq!(first.pdf_tex_runs, 1, "{first:#?}");
