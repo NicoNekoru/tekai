@@ -128,11 +128,11 @@ static CNF_OVERRIDES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new()
 static FILE_INDEX: OnceLock<FileIndex> = OnceLock::new();
 static EXPLICIT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 static FORMAT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
-static INDEX_READABLE_CACHE: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
 
 thread_local! {
     static INDEX_LOOKUP_CACHE: RefCell<HashMap<c_uint, HashMap<String, Option<PathBuf>>>> =
         RefCell::new(HashMap::new());
+    static INDEX_READABLE_CACHE: RefCell<HashMap<PathBuf, bool>> = RefCell::new(HashMap::new());
 }
 
 struct FileIndex {
@@ -232,14 +232,15 @@ fn path_is_readable(path: &Path) -> bool {
 }
 
 fn indexed_path_is_readable(path: &Path) -> bool {
-    let cache = INDEX_READABLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache = cache.lock().expect("kpathsea readability cache poisoned");
-    if let Some(readable) = cache.get(path) {
-        return *readable;
-    }
-    let readable = path_is_readable(path);
-    cache.insert(path.to_path_buf(), readable);
-    readable
+    INDEX_READABLE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(readable) = cache.get(path) {
+            return *readable;
+        }
+        let readable = path_is_readable(path);
+        cache.insert(path.to_path_buf(), readable);
+        readable
+    })
 }
 
 fn check_direct_path(path: &Path) -> Option<PathBuf> {
