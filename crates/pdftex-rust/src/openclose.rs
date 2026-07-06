@@ -121,7 +121,6 @@ unsafe fn record_name(prefix: *const c_char, name: *const c_char) {
         }
         if !RECORDER_FILE.is_null() {
             libc::fprintf(RECORDER_FILE, c"%s %s\n".as_ptr(), prefix, name);
-            libc::fflush(RECORDER_FILE);
         }
     }
 }

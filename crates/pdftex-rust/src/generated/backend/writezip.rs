@@ -129,6 +129,7 @@ pub const Z_FINISH: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
 pub const Z_OK: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const Z_STREAM_END: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const ZIP_BUF_SIZE: ::core::ffi::c_int = 32768 as ::core::ffi::c_int;
+const TEXPILOT_MAX_FAST_COMPRESS_LEVEL: ::core::ffi::c_int = 1;
 static mut zipbuf: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 static mut c_stream: z_stream = z_stream_s {
@@ -152,6 +153,9 @@ pub unsafe extern "C" fn writezip(mut finish: boolean) {
     let mut err: ::core::ffi::c_int = 0;
     static mut level_old: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     let mut level: ::core::ffi::c_int = getpdfcompresslevel() as ::core::ffi::c_int;
+    if level > TEXPILOT_MAX_FAST_COMPRESS_LEVEL {
+        level = TEXPILOT_MAX_FAST_COMPRESS_LEVEL;
+    }
     if !(level > 0 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"writezip\0" as *const u8 as *const ::core::ffi::c_char,

@@ -125,6 +125,8 @@ extern "C" {
 
 static CNF_OVERRIDES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static FILE_INDEX: OnceLock<FileIndex> = OnceLock::new();
+static EXPLICIT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+static FORMAT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 
 struct FileIndex {
     by_name: HashMap<String, Vec<PathBuf>>,
@@ -166,17 +168,6 @@ fn basename(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-fn candidate_names(name: &str, format: c_uint) -> Vec<String> {
-    let mut names = vec![name.to_owned()];
-    if Path::new(name).extension().is_some() {
-        return names;
-    }
-    for suffix in format_suffixes(format) {
-        names.push(format!("{name}{suffix}"));
-    }
-    names
-}
-
 fn format_suffixes(format: c_uint) -> &'static [&'static str] {
     match format {
         KPSE_GF_FORMAT => &[".gf"],
@@ -197,6 +188,36 @@ fn format_suffixes(format: c_uint) -> &'static [&'static str] {
     }
 }
 
+fn with_candidate_names<T>(
+    name: &str,
+    format: c_uint,
+    mut visit: impl FnMut(&str) -> Option<T>,
+) -> Option<T> {
+    if let Some(found) = visit(name) {
+        return Some(found);
+    }
+    if Path::new(name).extension().is_some() {
+        return None;
+    }
+
+    let suffixes = format_suffixes(format);
+    let max_suffix_len = suffixes
+        .iter()
+        .map(|suffix| suffix.len())
+        .max()
+        .unwrap_or(0);
+    let mut candidate = String::with_capacity(name.len() + max_suffix_len);
+    for suffix in suffixes {
+        candidate.clear();
+        candidate.push_str(name);
+        candidate.push_str(suffix);
+        if let Some(found) = visit(&candidate) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn path_is_readable(path: &Path) -> bool {
     std::fs::metadata(path)
         .map(|metadata| metadata.is_file())
@@ -210,7 +231,13 @@ fn check_direct_path(path: &Path) -> Option<PathBuf> {
     None
 }
 
-fn explicit_search_dirs() -> Vec<PathBuf> {
+fn explicit_search_dirs() -> &'static [PathBuf] {
+    EXPLICIT_SEARCH_DIRS
+        .get_or_init(build_explicit_search_dirs)
+        .as_slice()
+}
+
+fn build_explicit_search_dirs() -> Vec<PathBuf> {
     let mut dirs = vec![PathBuf::from(".")];
     if let Some(texinputs) = std::env::var_os("TEXINPUTS") {
         for item in std::env::split_paths(&texinputs) {
@@ -223,7 +250,13 @@ fn explicit_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn format_search_dirs() -> Vec<PathBuf> {
+fn format_search_dirs() -> &'static [PathBuf] {
+    FORMAT_SEARCH_DIRS
+        .get_or_init(build_format_search_dirs)
+        .as_slice()
+}
+
+fn build_format_search_dirs() -> Vec<PathBuf> {
     let mut dirs = vec![PathBuf::from(".")];
     for key in ["PDFTEX_RUST_FORMATS", "TEXFORMATS"] {
         if let Some(paths) = std::env::var_os(key) {
@@ -432,38 +465,35 @@ fn texlive_tree_rank(path: &str) -> u8 {
 }
 
 fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
-    let candidates = candidate_names(name, format);
-    for candidate in &candidates {
+    if let Some(found) = with_candidate_names(name, format, |candidate| {
         let path = Path::new(candidate);
         if path.is_absolute() || candidate.contains('/') {
-            if let Some(found) = check_direct_path(path) {
-                return Some(found);
-            }
+            return check_direct_path(path);
         }
+        None
+    }) {
+        return Some(found);
     }
+
     if format == KPSE_FMT_FORMAT {
         for dir in format_search_dirs() {
-            for candidate in &candidates {
-                if let Some(found) = check_direct_path(&dir.join(candidate)) {
-                    return Some(found);
-                }
+            if let Some(found) = with_candidate_names(name, format, |candidate| {
+                check_direct_path(&dir.join(candidate))
+            }) {
+                return Some(found);
             }
         }
         return None;
     }
+
     for dir in explicit_search_dirs() {
-        for candidate in &candidates {
-            if let Some(found) = check_direct_path(&dir.join(candidate)) {
-                return Some(found);
-            }
-        }
-    }
-    for candidate in &candidates {
-        if let Some(found) = find_in_index(candidate, format) {
+        if let Some(found) = with_candidate_names(name, format, |candidate| {
+            check_direct_path(&dir.join(candidate))
+        }) {
             return Some(found);
         }
     }
-    None
+    with_candidate_names(name, format, |candidate| find_in_index(candidate, format))
 }
 
 #[no_mangle]

@@ -9,6 +9,11 @@ use std::{mem, ptr, slice};
 
 use crate::md5::{md5_append, md5_finish, md5_init, Md5State};
 
+#[cfg(unix)]
+extern "C" {
+    fn getc_unlocked(stream: *mut FILE) -> c_int;
+}
+
 const PRINTF_BUF_SIZE: usize = 1024;
 const MAX_PSTRING_LEN: usize = 1024;
 const SMALL_ARRAY_SIZE: usize = 256;
@@ -777,7 +782,15 @@ pub unsafe extern "C" fn xfflush(stream: *mut FILE) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn xgetc(stream: *mut FILE) -> c_int {
-    unsafe { libc::fgetc(stream) }
+    #[cfg(unix)]
+    unsafe {
+        getc_unlocked(stream)
+    }
+
+    #[cfg(not(unix))]
+    unsafe {
+        libc::fgetc(stream)
+    }
 }
 
 #[no_mangle]
