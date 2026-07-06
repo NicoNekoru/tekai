@@ -3301,12 +3301,7 @@ fn source_features_in_stripped_source_with_graphics_count(
 ) -> SourceFeatures {
     let mut features = SourceFeatures::default();
     for line in scan_source.lines() {
-        features.has_graphics |= tex_command_present(line, "includegraphics");
-        features.has_graphics |= tex_command_present(line, "includesvg");
-        features.has_graphics |= tex_command_present(line, "includepdf");
-        features.has_graphics |= tex_command_present(line, "includepdfmerge");
-        features.has_multipass_signal |= has_multipass_signal(line);
-        features.has_backref_signal |= has_backref_signal(line);
+        scan_source_feature_line(line, &mut features);
     }
     if graphics_count > 0 {
         features.graphic_command_count += graphics_count;
@@ -3325,74 +3320,76 @@ impl SourceFeatures {
     }
 }
 
-fn has_backref_signal(line: &str) -> bool {
-    line.contains("pagebackref")
-        || tex_command_present(line, "backref")
-        || tex_command_present(line, "backrefalt")
-}
-
-fn has_multipass_signal(line: &str) -> bool {
-    const MULTIPASS_COMMANDS: &[&str] = &[
-        "addbibresource",
-        "autocite",
-        "autoref",
-        "bibliography",
-        "Cref",
-        "cite",
-        "citealp",
-        "citeauthor",
-        "citep",
-        "citet",
-        "citeyear",
-        "cref",
-        "eqref",
-        "footcite",
-        "gls",
-        "include",
-        "label",
-        "listoffigures",
-        "listoftables",
-        "makeglossaries",
-        "makeindex",
-        "nameref",
-        "nomenclature",
-        "pageref",
-        "parencite",
-        "printbibliography",
-        "printglossary",
-        "printindex",
-        "ref",
-        "supercite",
-        "tableofcontents",
-        "textcite",
-    ];
-    MULTIPASS_COMMANDS
-        .iter()
-        .copied()
-        .any(|command| tex_command_present(line, command))
-}
-
-fn tex_command_present(line: &str, command: &str) -> bool {
-    let mut cursor = 0;
-    while let Some(offset) = line[cursor..].find('\\') {
-        let command_start = cursor + offset;
-        let name_start = command_start + '\\'.len_utf8();
-        if !line[name_start..].starts_with(command) {
-            cursor = name_start;
-            continue;
-        }
-        let after_command = name_start + command.len();
-        if line[after_command..]
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphabetic())
-        {
-            cursor = after_command;
-            continue;
-        }
-        return true;
+fn scan_source_feature_line(line: &str, features: &mut SourceFeatures) {
+    if !features.has_backref_signal && line.contains("pagebackref") {
+        features.has_backref_signal = true;
     }
-    false
+
+    let bytes = line.as_bytes();
+    let mut cursor = 0;
+    while let Some(offset) = bytes[cursor..].iter().position(|byte| *byte == b'\\') {
+        let name_start = cursor + offset + 1;
+        let mut name_end = name_start;
+        while bytes
+            .get(name_end)
+            .is_some_and(|byte| byte.is_ascii_alphabetic())
+        {
+            name_end += 1;
+        }
+        if name_end > name_start {
+            let command = &bytes[name_start..name_end];
+            features.has_graphics |= source_feature_graphics_command(command);
+            features.has_multipass_signal |= source_feature_multipass_command(command);
+            features.has_backref_signal |=
+                matches!(command, b"backref" | b"backrefalt");
+        }
+        cursor = name_end.max(name_start);
+    }
+}
+
+fn source_feature_graphics_command(command: &[u8]) -> bool {
+    matches!(
+        command,
+        b"includegraphics" | b"includesvg" | b"includepdf" | b"includepdfmerge"
+    )
+}
+
+fn source_feature_multipass_command(command: &[u8]) -> bool {
+    matches!(
+        command,
+        b"addbibresource"
+            | b"autocite"
+            | b"autoref"
+            | b"bibliography"
+            | b"Cref"
+            | b"cite"
+            | b"citealp"
+            | b"citeauthor"
+            | b"citep"
+            | b"citet"
+            | b"citeyear"
+            | b"cref"
+            | b"eqref"
+            | b"footcite"
+            | b"gls"
+            | b"include"
+            | b"label"
+            | b"listoffigures"
+            | b"listoftables"
+            | b"makeglossaries"
+            | b"makeindex"
+            | b"nameref"
+            | b"nomenclature"
+            | b"pageref"
+            | b"parencite"
+            | b"printbibliography"
+            | b"printglossary"
+            | b"printindex"
+            | b"ref"
+            | b"supercite"
+            | b"tableofcontents"
+            | b"textcite"
+    )
 }
 
 #[cfg(test)]
@@ -11003,6 +11000,7 @@ fn native_input_fingerprints(
     previous: &HashMap<String, FileFingerprint>,
 ) -> Result<Vec<FileFingerprint>> {
     let main = main.canonicalize().ok();
+    let out_dir_canonical = out_dir.canonicalize().ok();
     let mut inputs = Vec::new();
     for path in input_paths {
         let path = if path.is_absolute() {
@@ -11010,10 +11008,13 @@ fn native_input_fingerprints(
         } else {
             doc_dir.join(path)
         };
-        if path_is_under(&path, out_dir) {
+        if path_is_under_cached_directory(&path, out_dir, out_dir_canonical.as_deref()) {
             continue;
         }
-        let fingerprint = if main.as_ref().is_some_and(|main| path_matches(&path, main)) {
+        let fingerprint = if main
+            .as_ref()
+            .is_some_and(|main| path_matches_canonical(&path, main))
+        {
             fingerprint_effective_tex_path_reusing(&path, Some(previous), EffectiveTexMode::Root)?
         } else if is_tex_like_source_input(&path) {
             fingerprint_effective_tex_path_reusing(&path, Some(previous), EffectiveTexMode::Input)?
@@ -11222,15 +11223,19 @@ fn recorded_inputs_with_root_mode(
         .with_context(|| format!("failed to read recorder file {}", fls_path.display()))?;
     let mut inputs = Vec::new();
     let main = main.canonicalize().ok();
+    let out_dir_canonical = out_dir.canonicalize().ok();
     for line in source.lines() {
         let Some(raw_path) = line.strip_prefix("INPUT ") else {
             continue;
         };
         let path = resolve_recorded_path(raw_path, doc_dir);
-        if path_is_under(&path, out_dir) {
+        if path_is_under_cached_directory(&path, out_dir, out_dir_canonical.as_deref()) {
             continue;
         }
-        let fingerprint = if main.as_ref().is_some_and(|main| path_matches(&path, main)) {
+        let fingerprint = if main
+            .as_ref()
+            .is_some_and(|main| path_matches_canonical(&path, main))
+        {
             fingerprint_effective_tex_path_reusing(&path, Some(previous), root_mode)?
         } else if is_tex_like_source_input(&path) {
             fingerprint_effective_tex_path_reusing(&path, Some(previous), EffectiveTexMode::Input)?
@@ -11626,14 +11631,11 @@ fn canonical_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn path_matches(path: &Path, other: &Path) -> bool {
+fn path_matches_canonical(path: &Path, canonical_other: &Path) -> bool {
     let Ok(path) = path.canonicalize() else {
         return false;
     };
-    let Ok(other) = other.canonicalize() else {
-        return false;
-    };
-    path == other
+    path == canonical_other
 }
 
 fn content_hash(bytes: &[u8]) -> u64 {
@@ -11662,6 +11664,20 @@ fn path_is_under(path: &Path, directory: &Path) -> bool {
         return path.starts_with(directory);
     };
     path.starts_with(directory)
+}
+
+fn path_is_under_cached_directory(
+    path: &Path,
+    directory: &Path,
+    canonical_directory: Option<&Path>,
+) -> bool {
+    let Ok(path) = path.canonicalize() else {
+        return path.starts_with(directory);
+    };
+    let Some(canonical_directory) = canonical_directory else {
+        return path.starts_with(directory);
+    };
+    path.starts_with(canonical_directory)
 }
 
 fn same_existing_path(left: &Path, right: &Path) -> bool {
