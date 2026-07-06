@@ -521,8 +521,11 @@ pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
     if read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file)
         != 0xffd8 as ::core::ffi::c_uint
     {
-        crate::utils::pdftex_fail_args(b"reading JPEG image failed (no JPEG header found)\0" as *const u8
-                as *const ::core::ffi::c_char, &[]);
+        crate::utils::pdftex_fail_args(
+            b"reading JPEG image failed (no JPEG header found)\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[],
+        );
     }
     appmk = read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file)
         as ::core::ffi::c_ushort;
@@ -609,26 +612,38 @@ pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
     );
     loop {
         if feof((*(*image_array.offset(img as isize)).image_struct.jpg).file) != 0 {
-            crate::utils::pdftex_fail_args(b"reading JPEG image failed (premature file end)\0" as *const u8
-                    as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"reading JPEG image failed (premature file end)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         if fgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file)
             != 0xff as ::core::ffi::c_int
         {
-            crate::utils::pdftex_fail_args(b"reading JPEG image failed (no marker found)\0" as *const u8
-                    as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"reading JPEG image failed (no marker found)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         let mut current_block_62: u64;
         match xgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file) {
             197 | 198 | 199 | 201 | 202 | 203 | 205 | 206 | 207 => {
-                crate::utils::pdftex_fail_args(b"unsupported type of compression\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+                crate::utils::pdftex_fail_args(
+                    b"unsupported type of compression\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[],
+                );
             }
             194 => {
                 if fixedpdfmajorversion == 1 as ::core::ffi::c_int
                     && fixedpdfminorversion <= 2 as ::core::ffi::c_int
                 {
-                    crate::utils::pdftex_fail_args(b"cannot use progressive DCT with PDF-1.2\0" as *const u8
-                            as *const ::core::ffi::c_char, &[]);
+                    crate::utils::pdftex_fail_args(
+                        b"cannot use progressive DCT with PDF-1.2\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                        &[],
+                    );
                 }
                 current_block_62 = 3812095161210007121;
             }
@@ -682,8 +697,13 @@ pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
                         (*image_array.offset(img as isize)).color_type = IMAGE_COLOR_C;
                     }
                     _ => {
-                        crate::utils::pdftex_fail_args(b"Unsupported color space %i\0" as *const u8
-                                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*(*image_array.offset(img as isize)).image_struct.jpg).color_space)]);
+                        crate::utils::pdftex_fail_args(
+                            b"Unsupported color space %i\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[crate::utils::PrintfArg::from(
+                                (*(*image_array.offset(img as isize)).image_struct.jpg).color_space,
+                            )],
+                        );
                     }
                 }
                 return;
@@ -696,12 +716,30 @@ pub unsafe extern "C" fn write_jpg(mut img: integer) {
     let mut l: ::core::ffi::c_ulong = 0;
     let mut f: *mut FILE = ::core::ptr::null_mut::<FILE>();
     pdf_puts(b"/Type /XObject\n/Subtype /Image\n\0" as *const u8 as *const ::core::ffi::c_char);
-    crate::utils::pdf_printf_args(b"/Width %i\n/Height %i\n/BitsPerComponent %i\n/Length %i\n\0" as *const u8
-            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*image_array.offset(img as isize)).width), crate::utils::PrintfArg::from((*image_array.offset(img as isize)).height), crate::utils::PrintfArg::from((*(*image_array.offset(img as isize)).image_struct.jpg).bits_per_component
-            as ::core::ffi::c_int), crate::utils::PrintfArg::from((*(*image_array.offset(img as isize)).image_struct.jpg).length as ::core::ffi::c_int)]);
+    crate::utils::pdf_printf_args(
+        b"/Width %i\n/Height %i\n/BitsPerComponent %i\n/Length %i\n\0" as *const u8
+            as *const ::core::ffi::c_char,
+        &[
+            crate::utils::PrintfArg::from((*image_array.offset(img as isize)).width),
+            crate::utils::PrintfArg::from((*image_array.offset(img as isize)).height),
+            crate::utils::PrintfArg::from(
+                (*(*image_array.offset(img as isize)).image_struct.jpg).bits_per_component
+                    as ::core::ffi::c_int,
+            ),
+            crate::utils::PrintfArg::from(
+                (*(*image_array.offset(img as isize)).image_struct.jpg).length
+                    as ::core::ffi::c_int,
+            ),
+        ],
+    );
     pdf_puts(b"/ColorSpace \0" as *const u8 as *const ::core::ffi::c_char);
     if (*image_array.offset(img as isize)).colorspace_ref != 0 as ::core::ffi::c_int {
-        crate::utils::pdf_printf_args(b"%i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*image_array.offset(img as isize)).colorspace_ref)]);
+        crate::utils::pdf_printf_args(
+            b"%i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                (*image_array.offset(img as isize)).colorspace_ref,
+            )],
+        );
     } else {
         match (*(*image_array.offset(img as isize)).image_struct.jpg).color_space {
             JPG_GRAY => {
@@ -717,7 +755,12 @@ pub unsafe extern "C" fn write_jpg(mut img: integer) {
                 );
             }
             _ => {
-                crate::utils::pdftex_fail_args(b"Unsupported color space %i\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*(*image_array.offset(img as isize)).image_struct.jpg).color_space)]);
+                crate::utils::pdftex_fail_args(
+                    b"Unsupported color space %i\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(
+                        (*(*image_array.offset(img as isize)).image_struct.jpg).color_space,
+                    )],
+                );
             }
         }
     }
@@ -731,7 +774,10 @@ pub unsafe extern "C" fn write_jpg(mut img: integer) {
             } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                 > pdfbufsize as ::core::ffi::c_uint
             {
-                crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+                crate::utils::pdftex_fail_args(
+                    b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[],
+                );
             } else {
                 pdfflush();
             }

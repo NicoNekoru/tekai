@@ -29,8 +29,7 @@ type Boolean = c_int;
 type InternalFontNumber = c_int;
 type SizeT = usize;
 type Address = *mut c_void;
-type AvlComparisonFunc =
-    unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int;
+type AvlComparisonFunc = unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int;
 
 #[derive(Clone, Copy)]
 pub enum PrintfArg {
@@ -547,7 +546,9 @@ fn format_one(spec: &[u8], conversion: u8, arg: PrintfArg) -> Vec<u8> {
     let mut c_spec = Vec::with_capacity(spec.len() + 1);
     c_spec.extend_from_slice(spec);
     c_spec.push(0);
-    let long_spec = spec.iter().any(|&b| b == b'l' || b == b'z' || b == b't' || b == b'j');
+    let long_spec = spec
+        .iter()
+        .any(|&b| b == b'l' || b == b'z' || b == b't' || b == b'j');
     let long_long_spec = spec.windows(2).any(|w| w == b"ll");
     unsafe {
         match conversion {
@@ -789,11 +790,7 @@ pub unsafe extern "C" fn writestreamlength(length: LongInteger, offset: LongInte
             if libc::fseeko(pdffile, offset, libc::SEEK_SET) != 0 {
                 pdftex_fail_args(c"fseeko() failed".as_ptr(), &[]);
             }
-            libc::fprintf(
-                pdffile,
-                c"%lli".as_ptr(),
-                length as c_longlong,
-            );
+            libc::fprintf(pdffile, c"%lli".as_ptr(), length as c_longlong);
             if libc::fseeko(pdffile, pdfgone + pdfptr as LongInteger, libc::SEEK_SET) != 0 {
                 pdftex_fail_args(c"fseeko() failed".as_ptr(), &[]);
             }
@@ -802,10 +799,7 @@ pub unsafe extern "C" fn writestreamlength(length: LongInteger, offset: LongInte
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn convertStringToPDFString(
-    input: *const c_char,
-    len: c_int,
-) -> *mut c_char {
+pub unsafe extern "C" fn convertStringToPDFString(input: *const c_char, len: c_int) -> *mut c_char {
     unsafe {
         let out = &raw mut PSTRING_BUF as *mut c_char;
         let mut j = 0usize;
@@ -813,7 +807,10 @@ pub unsafe extern "C" fn convertStringToPDFString(
             if j + 4 >= MAX_PSTRING_LEN {
                 pdftex_fail_args(
                     c"buffer overflow at file %s, line %d".as_ptr(),
-                    &[PrintfArg::from(c"utils.rs".as_ptr()), PrintfArg::from(line!() as c_int)],
+                    &[
+                        PrintfArg::from(c"utils.rs".as_ptr()),
+                        PrintfArg::from(line!() as c_int),
+                    ],
                 );
             }
             let ch = *input.add(i) as u8;
@@ -885,7 +882,10 @@ pub unsafe extern "C" fn escapename(input: PoolPointer) {
             pos += 1;
             let escape = (1..=32).contains(&ch)
                 || ch >= 127
-                || matches!(ch, b'#' | b'%' | b'(' | b')' | b'/' | b'<' | b'>' | b'[' | b']' | b'{' | b'}');
+                || matches!(
+                    ch,
+                    b'#' | b'%' | b'(' | b')' | b'/' | b'<' | b'>' | b'[' | b']' | b'{' | b'}'
+                );
             if ch == 0 {
                 continue;
             }
@@ -975,11 +975,18 @@ pub unsafe extern "C" fn printID(filename: StrNumber) {
         let start = &raw mut start_time_str as *mut c_char;
         md5_append(state_ptr, start as *const u8, c_str_len(start) as c_int);
         let file_name = makecstring(filename);
-        md5_append(state_ptr, file_name as *const u8, c_str_len(file_name) as c_int);
+        md5_append(
+            state_ptr,
+            file_name as *const u8,
+            c_str_len(file_name) as c_int,
+        );
         let mut digest = [0u8; 16];
         md5_finish(state_ptr, digest.as_mut_ptr());
         let id = CString::new(hex_string(&digest)).expect("hex has no nul");
-        pdf_printf_args(c"/ID [<%s> <%s>]".as_ptr(), &[PrintfArg::from(id.as_ptr()), PrintfArg::from(id.as_ptr())]);
+        pdf_printf_args(
+            c"/ID [<%s> <%s>]".as_ptr(),
+            &[PrintfArg::from(id.as_ptr()), PrintfArg::from(id.as_ptr())],
+        );
     }
 }
 
@@ -999,7 +1006,10 @@ pub unsafe extern "C" fn printIDalt(toks: Integer) {
         let mut digest = [0u8; 16];
         md5_finish(state_ptr, digest.as_mut_ptr());
         let id = CString::new(hex_string(&digest)).expect("hex has no nul");
-        pdf_printf_args(c"/ID [<%s> <%s>]".as_ptr(), &[PrintfArg::from(id.as_ptr()), PrintfArg::from(id.as_ptr())]);
+        pdf_printf_args(
+            c"/ID [<%s> <%s>]".as_ptr(),
+            &[PrintfArg::from(id.as_ptr()), PrintfArg::from(id.as_ptr())],
+        );
     }
 }
 
@@ -1116,12 +1126,7 @@ pub unsafe extern "C" fn extxnoverd(x: Scaled, n: Scaled, d: Scaled) -> Scaled {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn matchstrings(
-    s: StrNumber,
-    t: StrNumber,
-    subcount: c_int,
-    icase: Boolean,
-) {
+pub unsafe extern "C" fn matchstrings(s: StrNumber, t: StrNumber, subcount: c_int, icase: Boolean) {
     unsafe {
         if !check_pool_room(10) {
             return;
@@ -1294,10 +1299,8 @@ unsafe fn grow_i32_array(
         } else if (*ptr_value).offset_from(*array) as usize + n > *limit {
             last_ptr_index = (*ptr_value).offset_from(*array) as usize;
             *limit = (*limit * 2).max(last_ptr_index + n);
-            *array = libc::realloc(
-                *array as *mut c_void,
-                *limit * mem::size_of::<Integer>(),
-            ) as *mut Integer;
+            *array = libc::realloc(*array as *mut c_void, *limit * mem::size_of::<Integer>())
+                as *mut Integer;
             if (*array).is_null() {
                 pdftex_fail_args(c"vf_e_fnts_array exceeds size limit".as_ptr(), &[]);
             }
@@ -1651,7 +1654,11 @@ pub unsafe extern "C" fn checkpdfsave(cur_h: c_int, cur_v: c_int) {
         POS_STACK.push(PosEntry {
             pos_h: cur_h,
             pos_v: cur_v,
-            matrix_stack: if PAGE_MODE != 0 { MATRIX_STACK.len() } else { 0 },
+            matrix_stack: if PAGE_MODE != 0 {
+                MATRIX_STACK.len()
+            } else {
+                0
+            },
         });
     }
 }
@@ -1660,7 +1667,10 @@ pub unsafe extern "C" fn checkpdfsave(cur_h: c_int, cur_v: c_int) {
 pub unsafe extern "C" fn checkpdfrestore(cur_h: c_int, cur_v: c_int) {
     unsafe {
         let Some(pos) = POS_STACK.pop() else {
-            pdftex_warn_args(c"%s".as_ptr(), &[PrintfArg::from(c"\\pdfrestore: missing \\pdfsave".as_ptr())]);
+            pdftex_warn_args(
+                c"%s".as_ptr(),
+                &[PrintfArg::from(c"\\pdfrestore: missing \\pdfsave".as_ptr())],
+            );
             return;
         };
         let diff_h = cur_h - pos.pos_h;
@@ -1668,7 +1678,10 @@ pub unsafe extern "C" fn checkpdfrestore(cur_h: c_int, cur_v: c_int) {
         if diff_h != 0 || diff_v != 0 {
             pdftex_warn_args(
                 c"Misplaced \\pdfrestore by (%usp, %usp)".as_ptr(),
-                &[PrintfArg::from(diff_h as c_uint), PrintfArg::from(diff_v as c_uint)],
+                &[
+                    PrintfArg::from(diff_h as c_uint),
+                    PrintfArg::from(diff_v as c_uint),
+                ],
             );
         }
         if PAGE_MODE != 0 {
@@ -1696,7 +1709,11 @@ pub unsafe extern "C" fn pdfshipoutend(shipping_page: Boolean) {
                 c"%u unmatched \\pdfsave after %s shipout".as_ptr(),
                 &[
                     PrintfArg::from(POS_STACK.len() as c_uint),
-                    PrintfArg::from(if shipping_page != 0 { c"page".as_ptr() } else { c"form".as_ptr() }),
+                    PrintfArg::from(if shipping_page != 0 {
+                        c"page".as_ptr()
+                    } else {
+                        c"form".as_ptr()
+                    }),
                 ],
             );
         }
@@ -1713,14 +1730,21 @@ pub unsafe extern "C" fn pdfsetmatrix(input: PoolPointer, cur_h: Scaled, cur_v: 
         let bytes = slice::from_raw_parts(strpool.add(input as usize), len);
         let text = String::from_utf8_lossy(bytes);
         let mut parts = text.split_whitespace();
-        let (Some(a), Some(b), Some(c), Some(d), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next(), parts.next())
-        else {
+        let (Some(a), Some(b), Some(c), Some(d), None) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
             return 0;
         };
-        let (Ok(a), Ok(b), Ok(c), Ok(d)) =
-            (a.parse::<f64>(), b.parse::<f64>(), c.parse::<f64>(), d.parse::<f64>())
-        else {
+        let (Ok(a), Ok(b), Ok(c), Ok(d)) = (
+            a.parse::<f64>(),
+            b.parse::<f64>(),
+            c.parse::<f64>(),
+            d.parse::<f64>(),
+        ) else {
             return 0;
         };
         let x = MatrixEntry {
@@ -1769,12 +1793,7 @@ unsafe fn do_matrixtransform(x: Scaled, y: Scaled) -> (Scaled, Scaled) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn matrixtransformrect(
-    llx: Scaled,
-    lly: Scaled,
-    urx: Scaled,
-    ury: Scaled,
-) {
+pub unsafe extern "C" fn matrixtransformrect(llx: Scaled, lly: Scaled, urx: Scaled, ury: Scaled) {
     unsafe {
         if PAGE_MODE != 0 && !MATRIX_STACK.is_empty() {
             LAST_LLX = llx;
@@ -1945,7 +1964,10 @@ mod tests {
 
     #[test]
     fn printf_helper_formats_pdf_real_values() {
-        let out = format_printf(c"%.1f %.6g".as_ptr(), &[PrintfArg::from(1.75), PrintfArg::from(0.5)]);
+        let out = format_printf(
+            c"%.1f %.6g".as_ptr(),
+            &[PrintfArg::from(1.75), PrintfArg::from(0.5)],
+        );
         assert_eq!(String::from_utf8(out).unwrap(), "1.8 0.5");
     }
 }

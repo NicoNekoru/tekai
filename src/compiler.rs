@@ -536,7 +536,7 @@ impl IndexCommandProgram {
 
 pub fn build(options: &BuildOptions) -> Result<BuildReport> {
     match options.runner {
-        Runner::Direct if is_texpilot_pdftex_engine(options.engine) => {
+        Runner::Direct if is_certified_texpilot_pdftex_engine(options.engine) => {
             texpilot_pdftex_direct_build(options)
         }
         Runner::Direct if options.engine != Engine::Tectonic => direct_build(options),
@@ -963,7 +963,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         options,
         aux_session_cache: &aux_session_cache,
     };
-    let source_bibtex_preflight_runs = run_source_bibtex_preflight_if_possible(
+    let source_bibtex_preflight = run_source_bibtex_preflight_if_possible(
         &doc_dir,
         &out_dir,
         &job_name,
@@ -974,8 +974,9 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         &aux_session_cache,
         compatible_build_state,
     )?;
-    let source_bibtex_preflight_used = source_bibtex_preflight_runs > 0;
-    bibliography_runs += source_bibtex_preflight_runs;
+    let source_bibtex_preflight_used =
+        source_bibtex_preflight.bibliography_runs > 0 || source_bibtex_preflight.bibcite_seeded;
+    bibliography_runs += source_bibtex_preflight.bibliography_runs;
     let aux_preflight_used = !options.force
         && !options.once
         && can_preflight_aux_tools(
@@ -1068,6 +1069,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
                 >= full_layout_pdf_promotion_threshold(
                     draft_prepass_used,
                     stable_standard_file_churn_no_pdf_rerun_passes,
+                    source_bibtex_preflight.bibcite_seeded,
                 );
         let full_layout_no_pdf = !promote_full_layout_pdf
             && !draft_graphics
@@ -1362,6 +1364,9 @@ fn run_tex_direct(
     }
 
     let mut command = tex_direct_base_command(doc_dir, job_name, out_dir, options, mode);
+    if options.engine == Engine::TexpilotPdftex {
+        command.arg("-fmt=pdflatex");
+    }
     add_tex_direct_input(&mut command, doc_dir, file_name, options, mode);
 
     if options.print_command {
@@ -1434,7 +1439,7 @@ fn tex_direct_base_command(
     options: &BuildOptions,
     mode: TexRunMode,
 ) -> Command {
-    let mut command = Command::new(engine_program(options.engine));
+    let mut command = tex_engine_command(options.engine);
     command.current_dir(doc_dir);
     command.env("TEXINPUTS", texinputs_env(doc_dir, out_dir));
     command
@@ -1544,7 +1549,7 @@ fn prepare_preamble_format(
     let _ = fs::remove_file(&format_path);
     let _ = fs::remove_file(&fls_path);
     ensure_preamble_format_sidecar_inputs(&format_dir, &format_name)?;
-    let mut command = Command::new(engine_program(options.engine));
+    let mut command = tex_engine_command(options.engine);
     command.current_dir(doc_dir);
     command.env(
         "TEXINPUTS",
@@ -1804,8 +1809,11 @@ fn should_settle_full_layout_no_pdf_after_draft(
 fn full_layout_pdf_promotion_threshold(
     draft_prepass_used: bool,
     stable_standard_file_churn_no_pdf_rerun_passes: usize,
+    bibcite_preflight_seeded: bool,
 ) -> usize {
     if !draft_prepass_used || stable_standard_file_churn_no_pdf_rerun_passes > 0 {
+        1
+    } else if bibcite_preflight_seeded {
         1
     } else {
         2
@@ -3628,6 +3636,12 @@ struct SourceBibtexPreflight {
     unsupported: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+struct SourceBibtexPreflightReport {
+    bibliography_runs: usize,
+    bibcite_seeded: bool,
+}
+
 fn run_source_bibtex_preflight_if_possible(
     doc_dir: &Path,
     out_dir: &Path,
@@ -3638,18 +3652,18 @@ fn run_source_bibtex_preflight_if_possible(
     source_cache: &TexSourceReadCache,
     aux_session_cache: &AuxToolSessionCache,
     compatible_build_state: bool,
-) -> Result<usize> {
+) -> Result<SourceBibtexPreflightReport> {
     if options.once
         || options.fast
         || compatible_build_state
         || !matches!(options.bib_mode, BibMode::Auto | BibMode::BibTex)
     {
-        return Ok(0);
+        return Ok(SourceBibtexPreflightReport::default());
     }
 
     let aux_path = out_dir.join(format!("{job_name}.aux"));
     if aux_path.exists() {
-        return Ok(0);
+        return Ok(SourceBibtexPreflightReport::default());
     }
 
     let mut visited = HashSet::new();
@@ -3664,7 +3678,7 @@ fn run_source_bibtex_preflight_if_possible(
         true,
     )?;
     if preflight.unsupported || !source_bibtex_preflight_is_runnable(&preflight.events) {
-        return Ok(0);
+        return Ok(SourceBibtexPreflightReport::default());
     }
 
     let aux_source = source_bibtex_preflight_aux_source(&preflight.events);
@@ -3675,7 +3689,7 @@ fn run_source_bibtex_preflight_if_possible(
         )
     })?;
     let job = bibtex_job(out_dir, &aux_path, None);
-    if run_bibtex_job_if_stale(
+    let bibliography_runs = if run_bibtex_job_if_stale(
         doc_dir,
         out_dir,
         &aux_path,
@@ -3683,10 +3697,16 @@ fn run_source_bibtex_preflight_if_possible(
         options,
         aux_session_cache,
     )? {
-        Ok(1)
+        1
     } else {
-        Ok(0)
-    }
+        0
+    };
+    let bibcite_seeded =
+        seed_natbib_bibcite_preflight_if_possible(&aux_path, &job.bbl_path, &preflight.events)?;
+    Ok(SourceBibtexPreflightReport {
+        bibliography_runs,
+        bibcite_seeded,
+    })
 }
 
 fn source_bibtex_preflight_is_runnable(events: &[SourceBibtexEvent]) -> bool {
@@ -3717,6 +3737,155 @@ fn source_bibtex_preflight_aux_source(events: &[SourceBibtexEvent]) -> String {
         }
     }
     source
+}
+
+fn seed_natbib_bibcite_preflight_if_possible(
+    aux_path: &Path,
+    bbl_path: &Path,
+    events: &[SourceBibtexEvent],
+) -> Result<bool> {
+    if !source_bibtex_preflight_uses_natbib_style(events) || !bbl_path.exists() {
+        return Ok(false);
+    }
+    let aux_source = fs::read_to_string(aux_path)
+        .with_context(|| format!("failed to read aux file {}", aux_path.display()))?;
+    if aux_source.contains(r"\bibcite") {
+        return Ok(false);
+    }
+    let Some(citation_keys) = bibtex_citation_keys(&aux_source) else {
+        return Ok(false);
+    };
+    if citation_keys.is_empty() {
+        return Ok(false);
+    }
+
+    let bbl_source = fs::read_to_string(bbl_path)
+        .with_context(|| format!("failed to read bibliography file {}", bbl_path.display()))?;
+    let seeds = natbib_bibcite_seeds_from_bbl(&bbl_source);
+    if seeds.is_empty() {
+        return Ok(false);
+    }
+    let seed_keys = seeds
+        .iter()
+        .map(|seed| seed.key.as_str())
+        .collect::<HashSet<_>>();
+    if citation_keys
+        .iter()
+        .any(|citation| !seed_keys.contains(citation.as_str()))
+    {
+        return Ok(false);
+    }
+
+    let mut seeded_aux = aux_source;
+    if !seeded_aux.ends_with('\n') {
+        seeded_aux.push('\n');
+    }
+    for seed in seeds {
+        seeded_aux.push_str(&seed.line);
+        seeded_aux.push('\n');
+    }
+    fs::write(aux_path, seeded_aux).with_context(|| {
+        format!(
+            "failed to write source BibTeX preflight aux {}",
+            aux_path.display()
+        )
+    })?;
+    Ok(true)
+}
+
+fn source_bibtex_preflight_uses_natbib_style(events: &[SourceBibtexEvent]) -> bool {
+    events.iter().any(|event| {
+        let SourceBibtexEvent::BibStyle(style) = event else {
+            return false;
+        };
+        style
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(style)
+            .trim_end_matches(".bst")
+            .to_ascii_lowercase()
+            .ends_with("nat")
+    })
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct NatbibBibciteSeed {
+    key: String,
+    line: String,
+}
+
+fn natbib_bibcite_seeds_from_bbl(source: &str) -> Vec<NatbibBibciteSeed> {
+    let mut seeds = Vec::new();
+    let mut cursor = 0;
+    let mut number = 1_usize;
+    while let Some(offset) = source[cursor..].find(r"\bibitem") {
+        let item_start = cursor + offset;
+        let mut after_command = item_start + r"\bibitem".len();
+        after_command = skip_tex_whitespace(source, after_command);
+        let Some((label, after_label)) = bracketed_tex_argument_payload_at(source, after_command)
+        else {
+            return Vec::new();
+        };
+        let after_label = skip_tex_whitespace(source, after_label);
+        let Some((key, end)) = balanced_braced_payload_at(source, after_label) else {
+            return Vec::new();
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            return Vec::new();
+        }
+        let Some((short_author, year, long_author)) = parse_natbib_bibitem_label(&label) else {
+            return Vec::new();
+        };
+        seeds.push(NatbibBibciteSeed {
+            key: key.to_string(),
+            line: natbib_bibcite_seed_line(key, number, &short_author, &year, &long_author),
+        });
+        number += 1;
+        cursor = end;
+    }
+    seeds
+}
+
+fn parse_natbib_bibitem_label(label: &str) -> Option<(String, String, String)> {
+    let open = label.find('(')?;
+    let close = label[open + 1..].find(')')? + open + 1;
+    let short_author = label[..open].trim();
+    let year = label[open + 1..close].trim();
+    let long_author = label[close + 1..].trim();
+    if short_author.is_empty() || year.is_empty() {
+        return None;
+    }
+    Some((
+        short_author.to_string(),
+        year.to_string(),
+        long_author.to_string(),
+    ))
+}
+
+fn natbib_bibcite_seed_line(
+    key: &str,
+    number: usize,
+    short_author: &str,
+    year: &str,
+    long_author: &str,
+) -> String {
+    let mut line = String::new();
+    line.push_str(r"\bibcite{");
+    line.push_str(key);
+    line.push_str("}{");
+    line.push('{');
+    let _ = write!(&mut line, "{number}");
+    line.push('}');
+    line.push('{');
+    line.push_str(year);
+    line.push('}');
+    line.push_str("{{");
+    line.push_str(short_author);
+    line.push_str("}}{{");
+    line.push_str(long_author);
+    line.push_str("}}}");
+    line
 }
 
 fn collect_ordered_source_bibtex_preflight(
@@ -11368,8 +11537,43 @@ fn engine_program(engine: Engine) -> &'static str {
         Engine::XeLatex => "xelatex",
         Engine::LuaLatex => "lualatex",
         Engine::Tectonic => "tectonic",
-        Engine::TexpilotPdftex | Engine::TexpilotPdftexCertified => "pdflatex",
+        Engine::TexpilotPdftex => "pdftex-rust",
+        Engine::TexpilotPdftexCertified => "pdflatex",
     }
+}
+
+fn tex_engine_command(engine: Engine) -> Command {
+    Command::new(engine_program_path(engine))
+}
+
+fn engine_program_path(engine: Engine) -> PathBuf {
+    if engine != Engine::TexpilotPdftex {
+        return PathBuf::from(engine_program(engine));
+    }
+
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(bin_dir) = current_exe.parent()
+    {
+        let binary_name = if cfg!(windows) {
+            "pdftex-rust.exe"
+        } else {
+            "pdftex-rust"
+        };
+
+        for dir in bin_dir.ancestors() {
+            for candidate in [
+                dir.join(binary_name),
+                dir.join("debug").join(binary_name),
+                dir.join("release").join(binary_name),
+            ] {
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    PathBuf::from(engine_program(engine))
 }
 
 fn uses_pdftex_graphics_pipeline(engine: Engine) -> bool {
@@ -12165,6 +12369,32 @@ mod tests {
                 OrderedSourceBibtexEvent::BibStyle("plainnat".to_string()),
                 OrderedSourceBibtexEvent::BibData("refs,more".to_string()),
                 OrderedSourceBibtexEvent::Unsupported
+            ]
+        );
+    }
+
+    #[test]
+    fn natbib_bibcite_seeds_parse_optional_bbl_labels() {
+        let bbl = "\\begin{thebibliography}{2}\n\
+            \\bibitem[LeCun(2022)]{lecun2022}\n\
+            Yann LeCun.\n\
+            \\bibitem[Bardes et~al.(2021)Bardes, Ponce, and LeCun]{bardes2022}\n\
+            Adrien Bardes, Jean Ponce, and Yann LeCun.\n\
+            \\end{thebibliography}\n";
+
+        let seeds = natbib_bibcite_seeds_from_bbl(bbl);
+
+        assert_eq!(
+            seeds,
+            [
+                NatbibBibciteSeed {
+                    key: "lecun2022".to_string(),
+                    line: "\\bibcite{lecun2022}{{1}{2022}{{LeCun}}{{}}}".to_string()
+                },
+                NatbibBibciteSeed {
+                    key: "bardes2022".to_string(),
+                    line: "\\bibcite{bardes2022}{{2}{2021}{{Bardes et~al.}}{{Bardes, Ponce, and LeCun}}}".to_string()
+                }
             ]
         );
     }
@@ -13871,9 +14101,10 @@ mod tests {
 
     #[test]
     fn full_layout_pdf_promotion_uses_stable_standard_file_churn_signal() {
-        assert_eq!(full_layout_pdf_promotion_threshold(false, 0), 1);
-        assert_eq!(full_layout_pdf_promotion_threshold(true, 0), 2);
-        assert_eq!(full_layout_pdf_promotion_threshold(true, 1), 1);
+        assert_eq!(full_layout_pdf_promotion_threshold(false, 0, false), 1);
+        assert_eq!(full_layout_pdf_promotion_threshold(true, 0, false), 2);
+        assert_eq!(full_layout_pdf_promotion_threshold(true, 0, true), 1);
+        assert_eq!(full_layout_pdf_promotion_threshold(true, 1, false), 1);
     }
 
     #[test]

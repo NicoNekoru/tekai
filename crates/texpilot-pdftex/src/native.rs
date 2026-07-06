@@ -2182,10 +2182,7 @@ impl DocumentLayout {
     }
 
     fn line_break_metric_for_font(self, font: PdfTextFont) -> PdfFontMetric {
-        match font {
-            PdfTextFont::Text => PdfFontMetric::TimesRoman,
-            _ => self.metric_for_font(font),
-        }
+        self.metric_for_font(font)
     }
 }
 
@@ -15486,6 +15483,18 @@ fn simple_type1_font_resource(base_font: &str) -> PdfFontResource {
 
 fn type1_font_files(base_font: &str) -> Option<Type1FontFiles> {
     match base_font {
+        "NimbusRomNo9L-Regu" => Some(Type1FontFiles {
+            pfb: "utmr8a.pfb",
+            metrics: NIMBUS_ROMAN_TYPE1_METRICS,
+        }),
+        "NimbusRomNo9L-ReguItal" => Some(Type1FontFiles {
+            pfb: "utmri8a.pfb",
+            metrics: NIMBUS_ROMAN_ITALIC_TYPE1_METRICS,
+        }),
+        "NimbusRomNo9L-Medi" => Some(Type1FontFiles {
+            pfb: "utmb8a.pfb",
+            metrics: NIMBUS_ROMAN_BOLD_TYPE1_METRICS,
+        }),
         "TeXGyrePagellaX-Regular" => Some(Type1FontFiles {
             pfb: "TeXGyrePagellaX-Regular.pfb",
             metrics: PAGELLA_TYPE1_METRICS,
@@ -18137,6 +18146,42 @@ const PDF_ASCII_GLYPH_NAMES: [&str; 95] = [
     "asciitilde",
 ];
 
+const NIMBUS_ROMAN_TYPE1_METRICS: Type1Metrics = Type1Metrics {
+    font_bbox: [-168, -281, 1000, 924],
+    italic_angle: 0.0,
+    ascender: 683,
+    descender: -217,
+    cap_height: 662,
+    x_height: 450,
+    fixed_pitch: false,
+    bold: false,
+    widths: &TIMES_ROMAN_WIDTHS,
+};
+
+const NIMBUS_ROMAN_ITALIC_TYPE1_METRICS: Type1Metrics = Type1Metrics {
+    font_bbox: [-169, -270, 1010, 924],
+    italic_angle: -15.0,
+    ascender: 683,
+    descender: -205,
+    cap_height: 653,
+    x_height: 432,
+    fixed_pitch: false,
+    bold: false,
+    widths: &TIMES_ITALIC_WIDTHS,
+};
+
+const NIMBUS_ROMAN_BOLD_TYPE1_METRICS: Type1Metrics = Type1Metrics {
+    font_bbox: [-168, -341, 1000, 960],
+    italic_angle: 0.0,
+    ascender: 676,
+    descender: -205,
+    cap_height: 676,
+    x_height: 461,
+    fixed_pitch: false,
+    bold: true,
+    widths: &TIMES_BOLD_WIDTHS,
+};
+
 const PAGELLA_TYPE1_METRICS: Type1Metrics = Type1Metrics {
     font_bbox: [-514, -283, 1284, 1098],
     italic_angle: 0.0,
@@ -18478,12 +18523,12 @@ mod tests {
     }
 
     #[test]
-    fn icml_line_breaking_keeps_calibrated_body_metric() {
+    fn icml_line_breaking_uses_active_body_metric() {
         let layout = DocumentLayout::icml_two_column();
 
         assert_eq!(
             layout.line_break_metric_for_font(PdfTextFont::Text),
-            PdfFontMetric::TimesRoman
+            PdfFontMetric::Pagella
         );
     }
 
@@ -18620,6 +18665,34 @@ This is a tiny native document.
         assert!(pdf_text.contains("/BaseFont /TeXGyrePagellaX-Regular"));
         assert!(pdf_text.contains("/BaseFont /TeXGyreHeros-Regular"));
         assert!(pdf_text.contains("/BaseFont /TeXGyreHeros-Bold"));
+        assert!(pdf_text.contains("/FontFile"));
+        assert!(pdf_text.contains("/Differences [32 /space /exclam"));
+    }
+
+    #[test]
+    fn native_neurips_pdf_embeds_nimbus_type1_fonts_when_available() {
+        if resolve_tex_font_file("utmr8a.pfb").unwrap().is_none() {
+            return;
+        }
+        let root = temp_dir("embedded-nimbus-fonts");
+        let pdf = root.join("main.pdf");
+        let document = simple_test_document(
+            DocumentLayout::neurips_single_column(),
+            vec![
+                Line::Text("Native Nimbus text should use an embedded font.".to_string()),
+                Line::Heading("Embedded Nimbus heading".to_string()),
+            ],
+        );
+        let placements = line_placements(&document);
+        let page_count = page_count_from_placements(&placements, &document.lines);
+
+        write_pdf(&pdf, &document, page_count, &placements).unwrap();
+        let pdf_bytes = fs::read(&pdf).unwrap();
+        let pdf_text = String::from_utf8_lossy(&pdf_bytes);
+
+        assert!(pdf_text.contains("/BaseFont /NimbusRomNo9L-Regu"));
+        assert!(pdf_text.contains("/BaseFont /NimbusRomNo9L-ReguItal"));
+        assert!(pdf_text.contains("/BaseFont /NimbusRomNo9L-Medi"));
         assert!(pdf_text.contains("/FontFile"));
         assert!(pdf_text.contains("/Differences [32 /space /exclam"));
     }

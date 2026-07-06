@@ -21,6 +21,7 @@ fn main() {
         .collect::<Vec<_>>();
     argv.push(std::ptr::null_mut());
 
-    let code = unsafe { pdftex_rust::run_from_c_args(args.len() as libc::c_int, argv.as_mut_ptr()) };
+    let code =
+        unsafe { pdftex_rust::run_from_c_args(args.len() as libc::c_int, argv.as_mut_ptr()) };
     std::process::exit(code);
 }

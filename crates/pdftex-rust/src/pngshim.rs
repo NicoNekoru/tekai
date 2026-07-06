@@ -147,7 +147,13 @@ impl PngState {
         self.decoded
             .as_ref()
             .map(|decoded| decoded.rowbytes)
-            .unwrap_or_else(|| rowbytes(self.width, self.output_color_type(), self.output_bit_depth()))
+            .unwrap_or_else(|| {
+                rowbytes(
+                    self.width,
+                    self.output_color_type(),
+                    self.output_bit_depth(),
+                )
+            })
     }
 
     fn ensure_decoded(&mut self) -> Result<(), String> {
@@ -167,7 +173,9 @@ impl PngState {
 
         let mut reader = decoder.read_info().map_err(|err| err.to_string())?;
         let mut data = vec![0; reader.output_buffer_size()];
-        let output = reader.next_frame(&mut data).map_err(|err| err.to_string())?;
+        let output = reader
+            .next_frame(&mut data)
+            .map_err(|err| err.to_string())?;
         data.truncate(output.buffer_size());
 
         let mut color_type = color_type_to_u8(output.color_type);
@@ -175,7 +183,14 @@ impl PngState {
         let mut rowbytes = output.line_size;
 
         if self.strip_alpha {
-            let stripped = strip_alpha(&data, self.width, self.height, color_type, bit_depth, rowbytes);
+            let stripped = strip_alpha(
+                &data,
+                self.width,
+                self.height,
+                color_type,
+                bit_depth,
+                rowbytes,
+            );
             if let Some((new_data, new_color_type, new_rowbytes)) = stripped {
                 data = new_data;
                 color_type = new_color_type;
@@ -266,10 +281,7 @@ pub unsafe extern "C" fn png_init_io(png_ptr: *mut png_struct_def, fp: *mut libc
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn png_read_info(
-    png_ptr: *mut png_struct_def,
-    _info_ptr: *mut png_info_def,
-) {
+pub unsafe extern "C" fn png_read_info(png_ptr: *mut png_struct_def, _info_ptr: *mut png_info_def) {
     let Some(state) = state(png_ptr) else {
         return;
     };
@@ -389,10 +401,7 @@ pub unsafe extern "C" fn png_read_row(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn png_read_image(
-    png_ptr: *mut png_struct_def,
-    image: *mut *mut u8,
-) {
+pub unsafe extern "C" fn png_read_image(png_ptr: *mut png_struct_def, image: *mut *mut u8) {
     let Some(state) = state(png_ptr) else {
         return;
     };
@@ -641,7 +650,10 @@ fn parse_metadata(data: &[u8]) -> Result<Metadata, String> {
         valid: 0,
         x_pixels_per_meter: 0,
         y_pixels_per_meter: 0,
-        gamma_scaled: info.gama_chunk.map(|gamma| gamma.into_scaled() as i32).unwrap_or(0),
+        gamma_scaled: info
+            .gama_chunk
+            .map(|gamma| gamma.into_scaled() as i32)
+            .unwrap_or(0),
         palette: info
             .palette
             .as_ref()
@@ -693,7 +705,10 @@ fn scan_extra_chunk_flags(data: &[u8], metadata: &mut Metadata) {
         return;
     }
     let mut offset = 8usize;
-    while offset.checked_add(12).map_or(false, |end| end <= data.len()) {
+    while offset
+        .checked_add(12)
+        .map_or(false, |end| end <= data.len())
+    {
         let len = u32::from_be_bytes([
             data[offset],
             data[offset + 1],
@@ -844,13 +859,7 @@ fn strip_alpha(
     Some((out, new_color_type, new_rowbytes))
 }
 
-fn apply_gamma(
-    data: &mut [u8],
-    color_type: u8,
-    bit_depth: u8,
-    screen_gamma: f64,
-    file_gamma: f64,
-) {
+fn apply_gamma(data: &mut [u8], color_type: u8, bit_depth: u8, screen_gamma: f64, file_gamma: f64) {
     let exponent = screen_gamma * file_gamma;
     if !exponent.is_finite() || exponent <= 0.0 || (exponent - 1.0).abs() < f64::EPSILON {
         return;

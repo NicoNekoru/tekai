@@ -364,8 +364,14 @@ pub unsafe extern "C" fn deftounicode(mut glyph: strnumber, mut unistr: strnumbe
             &raw mut notdef as *mut ::core::ffi::c_char,
         ) == 0 as ::core::ffi::c_int
     {
-        crate::utils::pdftex_warn_args(b"ToUnicode: invalid parameter(s): `%s' => `%s'\0" as *const u8
-                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(&raw mut buf as *mut ::core::ffi::c_char), crate::utils::PrintfArg::from(p)]);
+        crate::utils::pdftex_warn_args(
+            b"ToUnicode: invalid parameter(s): `%s' => `%s'\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(&raw mut buf as *mut ::core::ffi::c_char),
+                crate::utils::PrintfArg::from(p),
+            ],
+        );
         return;
     }
     if glyph_unicode_tree.is_null() {
@@ -445,8 +451,11 @@ pub unsafe extern "C" fn deftounicode(mut glyph: strnumber, mut unistr: strnumbe
         } else {
         };
         if sscan_result > 0x10ffff as ::core::ffi::c_ulong {
-            crate::utils::pdftex_warn_args(b"ToUnicode: value out of range [0,10FFFF]: %lX\0" as *const u8
-                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(sscan_result)]);
+            crate::utils::pdftex_warn_args(
+                b"ToUnicode: value out of range [0,10FFFF]: %lX\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(sscan_result)],
+            );
             (*gu).code = UNI_UNDEF as integer;
         } else {
             (*gu).code = sscan_result as integer;
@@ -818,8 +827,11 @@ pub unsafe extern "C" fn write_tounicode(
     let mut bfrange_count: ::core::ffi::c_int = 0;
     let mut subrange_count: ::core::ffi::c_int = 0;
     if glyph_unicode_tree.is_null() {
-        crate::utils::pdftex_warn_args(b"no GlyphToUnicode entry has been inserted yet!\0" as *const u8
-                as *const ::core::ffi::c_char, &[]);
+        crate::utils::pdftex_warn_args(
+            b"no GlyphToUnicode entry has been inserted yet!\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[],
+        );
         fixedgentounicode = 0 as ::core::ffi::c_int as integer;
         return 0 as integer;
     }
@@ -852,7 +864,10 @@ pub unsafe extern "C" fn write_tounicode(
         {
             *p = 0 as ::core::ffi::c_char;
         } else {
-            crate::utils::pdftex_warn_args(b"Dubious encoding file name: `%s'\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(encname)]);
+            crate::utils::pdftex_warn_args(
+                b"Dubious encoding file name: `%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(encname)],
+            );
         }
     } else {
         if !(strlen(tfmname)
@@ -936,7 +951,10 @@ pub unsafe extern "C" fn write_tounicode(
             subrange_count = bfrange_count;
         }
         bfrange_count -= subrange_count;
-        crate::utils::pdf_printf_args(b"%i beginbfrange\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(subrange_count)]);
+        crate::utils::pdf_printf_args(
+            b"%i beginbfrange\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(subrange_count)],
+        );
         j = 0 as ::core::ffi::c_int;
         while j < subrange_count {
             while range_size[i as usize] as ::core::ffi::c_int <= 1 as ::core::ffi::c_int
@@ -953,11 +971,25 @@ pub unsafe extern "C" fn write_tounicode(
                 );
             } else {
             };
-            crate::utils::pdf_printf_args(b"<%02X> <%02X> <%s>\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(i + range_size[i as usize] as ::core::ffi::c_int - 1 as ::core::ffi::c_int), crate::utils::PrintfArg::from(utf16be_str(gtab[i as usize].code as ::core::ffi::c_long))]);
+            crate::utils::pdf_printf_args(
+                b"<%02X> <%02X> <%s>\n\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(i),
+                    crate::utils::PrintfArg::from(
+                        i + range_size[i as usize] as ::core::ffi::c_int - 1 as ::core::ffi::c_int,
+                    ),
+                    crate::utils::PrintfArg::from(utf16be_str(
+                        gtab[i as usize].code as ::core::ffi::c_long,
+                    )),
+                ],
+            );
             i += range_size[i as usize] as ::core::ffi::c_int;
             j += 1;
         }
-        crate::utils::pdf_printf_args(b"endbfrange\n\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+        crate::utils::pdf_printf_args(
+            b"endbfrange\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        );
         if !(bfrange_count > 0 as ::core::ffi::c_int) {
             break;
         }
@@ -970,7 +1002,10 @@ pub unsafe extern "C" fn write_tounicode(
             subrange_count = bfchar_count;
         }
         bfchar_count -= subrange_count;
-        crate::utils::pdf_printf_args(b"%i beginbfchar\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(subrange_count)]);
+        crate::utils::pdf_printf_args(
+            b"%i beginbfchar\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(subrange_count)],
+        );
         j = 0 as ::core::ffi::c_int;
         while j < subrange_count {
             while i < 256 as ::core::ffi::c_int {
@@ -1010,14 +1045,31 @@ pub unsafe extern "C" fn write_tounicode(
                     );
                 } else {
                 };
-                crate::utils::pdf_printf_args(b"<%02X> <%s>\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(gtab[i as usize].unicode_seq)]);
+                crate::utils::pdf_printf_args(
+                    b"<%02X> <%s>\n\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(i),
+                        crate::utils::PrintfArg::from(gtab[i as usize].unicode_seq),
+                    ],
+                );
             } else {
-                crate::utils::pdf_printf_args(b"<%02X> <%s>\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(utf16be_str(gtab[i as usize].code as ::core::ffi::c_long))]);
+                crate::utils::pdf_printf_args(
+                    b"<%02X> <%s>\n\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(i),
+                        crate::utils::PrintfArg::from(utf16be_str(
+                            gtab[i as usize].code as ::core::ffi::c_long,
+                        )),
+                    ],
+                );
             }
             i += 1;
             j += 1;
         }
-        crate::utils::pdf_printf_args(b"endbfchar\n\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+        crate::utils::pdf_printf_args(
+            b"endbfchar\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        );
         if !(bfchar_count > 0 as ::core::ffi::c_int) {
             break;
         }
@@ -1202,7 +1254,10 @@ pub unsafe extern "C" fn undumptounicode() {
             (*gu).name = ::core::ptr::null_mut::<::core::ffi::c_char>();
         }
         if (*gu).name.is_null() {
-            crate::utils::pdftex_fail_args(b"undumpcharptr(gu->name) got NULL\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"undumpcharptr(gu->name) got NULL\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         do_undump(
             &raw mut (*gu).code as *mut ::core::ffi::c_char,
@@ -1232,8 +1287,11 @@ pub unsafe extern "C" fn undumptounicode() {
                 (*gu).unicode_seq = ::core::ptr::null_mut::<::core::ffi::c_char>();
             }
             if (*gu).unicode_seq.is_null() {
-                crate::utils::pdftex_fail_args(b"undumpcharptr(gu->unicode_seq) got NULL\0" as *const u8
-                        as *const ::core::ffi::c_char, &[]);
+                crate::utils::pdftex_fail_args(
+                    b"undumpcharptr(gu->unicode_seq) got NULL\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[],
+                );
             }
         }
         result = avl_probe(glyph_unicode_tree, gu as *mut ::core::ffi::c_void);

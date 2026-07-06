@@ -469,8 +469,11 @@ unsafe extern "C" fn t3_getline() {
                         + 1 as ::core::ffi::c_long) as size_t;
                 }
                 if t3_line_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-                    crate::utils::pdftex_fail_args(b"t3_line_array exceeds size limit\0" as *const u8
-                            as *const ::core::ffi::c_char, &[]);
+                    crate::utils::pdftex_fail_args(
+                        b"t3_line_array exceeds size limit\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                        &[],
+                    );
                 }
                 t3_line_array = xrealloc(
                     t3_line_array as address,
@@ -494,9 +497,17 @@ unsafe extern "C" fn t3_getline() {
                     + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
                     > t3_line_limit as ::core::ffi::c_uint
                 {
-                    crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
-                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/backend/writet3.rs\0"
-                            as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(60 as ::core::ffi::c_int)]);
+                    crate::utils::pdftex_fail_args(
+                        b"buffer overflow at file %s, line %d\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                        &[
+                            crate::utils::PrintfArg::from(
+                                b"pdftex-rust/generated/backend/writet3.rs\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                            ),
+                            crate::utils::PrintfArg::from(60 as ::core::ffi::c_int),
+                        ],
+                    );
                 }
                 let fresh0 = t3_line_ptr;
                 t3_line_ptr = t3_line_ptr.offset(1);
@@ -532,8 +543,11 @@ unsafe extern "C" fn t3_getline() {
                     + 2 as ::core::ffi::c_long) as size_t;
             }
             if t3_line_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-                crate::utils::pdftex_fail_args(b"t3_line_array exceeds size limit\0" as *const u8
-                        as *const ::core::ffi::c_char, &[]);
+                crate::utils::pdftex_fail_args(
+                    b"t3_line_array exceeds size limit\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[],
+                );
             }
             t3_line_array = xrealloc(
                 t3_line_array as address,
@@ -545,9 +559,16 @@ unsafe extern "C" fn t3_getline() {
             + 2 as ::core::ffi::c_long) as ::core::ffi::c_uint
             > 1024 as ::core::ffi::c_int as ::core::ffi::c_uint
         {
-            crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8
-                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/backend/writet3.rs\0"
-                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(66 as ::core::ffi::c_int)]);
+            crate::utils::pdftex_fail_args(
+                b"buffer overflow at file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b"pdftex-rust/generated/backend/writet3.rs\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(66 as ::core::ffi::c_int),
+                ],
+            );
         }
         if t3_line_ptr.offset_from(t3_line_array) as ::core::ffi::c_long > 1 as ::core::ffi::c_long
             && *t3_line_ptr.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
@@ -585,7 +606,10 @@ unsafe extern "C" fn t3_putline() {
             } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                 > pdfbufsize as ::core::ffi::c_uint
             {
-                crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+                crate::utils::pdftex_fail_args(
+                    b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[],
+                );
             } else {
                 pdfflush();
             }
@@ -665,7 +689,10 @@ unsafe extern "C" fn t3_write_glyph(mut f: internalfontnumber) {
             if *p as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
                 *p = 0 as ::core::ffi::c_char;
             }
-            crate::utils::pdftex_fail_args(b"invalid glyph preamble: `%s'\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t3_line_array)]);
+            crate::utils::pdftex_fail_args(
+                b"invalid glyph preamble: `%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(t3_line_array)],
+            );
         }
         if glyph_index < *fontbc.offset(f as isize) as ::core::ffi::c_int
             || glyph_index > *fontec.offset(f as isize) as ::core::ffi::c_int
@@ -687,7 +714,10 @@ unsafe extern "C" fn t3_write_glyph(mut f: internalfontnumber) {
         ) == 0 as ::core::ffi::c_int)
         {
             if feof(t3_file) != 0 {
-                crate::utils::pdftex_fail_args(b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+                crate::utils::pdftex_fail_args(
+                    b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[],
+                );
             }
             t3_getline();
         }
@@ -717,7 +747,18 @@ unsafe extern "C" fn t3_write_glyph(mut f: internalfontnumber) {
     }
     pdfbeginstream();
     t3_getline();
-    crate::utils::pdf_printf_args(b"%i 0 %i %i %i %i d1\nq\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t3_char_widths[glyph_index as usize] as ::core::ffi::c_int), crate::utils::PrintfArg::from(llx), crate::utils::PrintfArg::from(lly), crate::utils::PrintfArg::from(urx), crate::utils::PrintfArg::from(ury)]);
+    crate::utils::pdf_printf_args(
+        b"%i 0 %i %i %i %i d1\nq\n\0" as *const u8 as *const ::core::ffi::c_char,
+        &[
+            crate::utils::PrintfArg::from(
+                t3_char_widths[glyph_index as usize] as ::core::ffi::c_int,
+            ),
+            crate::utils::PrintfArg::from(llx),
+            crate::utils::PrintfArg::from(lly),
+            crate::utils::PrintfArg::from(urx),
+            crate::utils::PrintfArg::from(ury),
+        ],
+    );
     while !(strncmp(
         t3_line_array,
         &raw mut t3_end_glyph_str as *mut ::core::ffi::c_char,
@@ -725,7 +766,10 @@ unsafe extern "C" fn t3_write_glyph(mut f: internalfontnumber) {
     ) == 0 as ::core::ffi::c_int)
     {
         if feof(t3_file) != 0 {
-            crate::utils::pdftex_fail_args(b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"unexpected end of file\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         if strncmp(
             t3_line_array,
@@ -822,13 +866,22 @@ unsafe extern "C" fn writepk(mut f: internalfontnumber) -> boolean {
             dpi as ::core::ffi::c_float as ::core::ffi::c_double,
         ) == 0
     {
-        crate::utils::pdftex_fail_args(b"Font %s at %i not found\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cur_file_name), crate::utils::PrintfArg::from(dpi)]);
+        crate::utils::pdftex_fail_args(
+            b"Font %s at %i not found\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(cur_file_name),
+                crate::utils::PrintfArg::from(dpi),
+            ],
+        );
     }
     t3_file = xfopen(name as const_string, FOPEN_RBIN_MODE.as_ptr());
     recorder_record_input(name as const_string);
     t3_image_used = true_0 as boolean;
     is_pk_font = true_0 as boolean;
-    crate::utils::tex_printf_args(b" <%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(name)]);
+    crate::utils::tex_printf_args(
+        b" <%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[crate::utils::PrintfArg::from(name)],
+    );
     cd.rastersize = 256 as ::core::ffi::c_int as integer;
     cd.raster = xmalloc(
         (cd.rastersize as size_t).wrapping_mul(::core::mem::size_of::<halfword>() as size_t),
@@ -884,10 +937,32 @@ unsafe extern "C" fn writepk(mut f: internalfontnumber) -> boolean {
             t3_char_widths[cd.charcode as usize] as integer,
             2 as ::core::ffi::c_int,
         );
-        crate::utils::pdf_printf_args(b" 0 %i %i %i %i d1\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(llx), crate::utils::PrintfArg::from(lly), crate::utils::PrintfArg::from(urx), crate::utils::PrintfArg::from(ury)]);
+        crate::utils::pdf_printf_args(
+            b" 0 %i %i %i %i d1\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(llx),
+                crate::utils::PrintfArg::from(lly),
+                crate::utils::PrintfArg::from(urx),
+                crate::utils::PrintfArg::from(ury),
+            ],
+        );
         if !(is_null_glyph != 0) {
-            crate::utils::pdf_printf_args(b"q\n%i 0 0 %i %i %i cm\nBI\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cd.cwidth), crate::utils::PrintfArg::from(cd.cheight), crate::utils::PrintfArg::from(llx), crate::utils::PrintfArg::from(lly)]);
-            crate::utils::pdf_printf_args(b"/W %i\n/H %i\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(cd.cwidth), crate::utils::PrintfArg::from(cd.cheight)]);
+            crate::utils::pdf_printf_args(
+                b"q\n%i 0 0 %i %i %i cm\nBI\n\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(cd.cwidth),
+                    crate::utils::PrintfArg::from(cd.cheight),
+                    crate::utils::PrintfArg::from(llx),
+                    crate::utils::PrintfArg::from(lly),
+                ],
+            );
+            crate::utils::pdf_printf_args(
+                b"/W %i\n/H %i\n\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(cd.cwidth),
+                    crate::utils::PrintfArg::from(cd.cheight),
+                ],
+            );
             pdf_puts(
                 b"/IM true\n/BPC 1\n/D [1 0]\nID \0" as *const u8 as *const ::core::ffi::c_char,
             );
@@ -908,8 +983,11 @@ unsafe extern "C" fn writepk(mut f: internalfontnumber) -> boolean {
                         } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                             > pdfbufsize as ::core::ffi::c_uint
                         {
-                            crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                    as *const ::core::ffi::c_char, &[]);
+                            crate::utils::pdftex_fail_args(
+                                b"PDF output buffer overflowed\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                                &[],
+                            );
                         } else {
                             pdfflush();
                         }
@@ -926,8 +1004,11 @@ unsafe extern "C" fn writepk(mut f: internalfontnumber) -> boolean {
                         } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                             > pdfbufsize as ::core::ffi::c_uint
                         {
-                            crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                    as *const ::core::ffi::c_char, &[]);
+                            crate::utils::pdftex_fail_args(
+                                b"PDF output buffer overflowed\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                                &[],
+                            );
                         } else {
                             pdfflush();
                         }
@@ -947,8 +1028,11 @@ unsafe extern "C" fn writepk(mut f: internalfontnumber) -> boolean {
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        crate::utils::pdftex_fail_args(
+                            b"PDF output buffer overflowed\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     } else {
                         pdfflush();
                     }
@@ -965,8 +1049,11 @@ unsafe extern "C" fn writepk(mut f: internalfontnumber) -> boolean {
                         } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                             > pdfbufsize as ::core::ffi::c_uint
                         {
-                            crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                    as *const ::core::ffi::c_char, &[]);
+                            crate::utils::pdftex_fail_args(
+                                b"PDF output buffer overflowed\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                                &[],
+                            );
                         } else {
                             pdfflush();
                         }
@@ -1037,8 +1124,15 @@ unsafe extern "C" fn remove_duplicate_glyph_names(
                 } else {
                 };
             } else {
-                crate::utils::pdftex_warn_args(b"%s: duplicate glyph name at position %d: %s\0" as *const u8
-                        as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(encname), crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(*g.offset(i as isize))]);
+                crate::utils::pdftex_warn_args(
+                    b"%s: duplicate glyph name at position %d: %s\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(encname),
+                        crate::utils::PrintfArg::from(i),
+                        crate::utils::PrintfArg::from(*g.offset(i as isize)),
+                    ],
+                );
                 if !(*g.offset(i as isize)).is_null() {
                     free(*g.offset(i as isize) as *mut ::core::ffi::c_void);
                 }
@@ -1112,7 +1206,12 @@ pub unsafe extern "C" fn writet3(
             return;
         }
     } else {
-        crate::utils::tex_printf_args(b"<%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(nameoffile.offset(1 as ::core::ffi::c_int as isize))]);
+        crate::utils::tex_printf_args(
+            b"<%s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                nameoffile.offset(1 as ::core::ffi::c_int as isize),
+            )],
+        );
         t3_getline();
         if !(strncmp(
             t3_line_array,
@@ -1129,7 +1228,10 @@ pub unsafe extern "C" fn writet3(
             || t3_font_scale <= 0 as ::core::ffi::c_int as ::core::ffi::c_float
             || t3_font_scale > 1000 as ::core::ffi::c_int as ::core::ffi::c_float
         {
-            crate::utils::pdftex_fail_args(b"missing or invalid font scale\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"missing or invalid font scale\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         while feof(t3_file) == 0 {
             t3_write_glyph(f);
@@ -1169,7 +1271,10 @@ pub unsafe extern "C" fn writet3(
     }
     zpdfbegindict(objnum, 1 as ::core::ffi::c_int);
     pdf_puts(b"/Type /Font\n/Subtype /Type3\n\0" as *const u8 as *const ::core::ffi::c_char);
-    crate::utils::pdf_printf_args(b"/Name /F%i\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(f)]);
+    crate::utils::pdf_printf_args(
+        b"/Name /F%i\n\0" as *const u8 as *const ::core::ffi::c_char,
+        &[crate::utils::PrintfArg::from(f)],
+    );
     if *pdffontattr.offset(f as isize) != getnullstr() {
         zpdfprint(*pdffontattr.offset(f as isize));
         pdf_puts(b"\n\0" as *const u8 as *const ::core::ffi::c_char);
@@ -1182,22 +1287,56 @@ pub unsafe extern "C" fn writet3(
         zpdfprintreal(pk_font_scale, 5 as ::core::ffi::c_int);
         pdf_puts(b" 0 0]\n\0" as *const u8 as *const ::core::ffi::c_char);
     } else {
-        crate::utils::pdf_printf_args(b"/FontMatrix [%g 0 0 %g 0 0]\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t3_font_scale as ::core::ffi::c_double), crate::utils::PrintfArg::from(t3_font_scale as ::core::ffi::c_double)]);
+        crate::utils::pdf_printf_args(
+            b"/FontMatrix [%g 0 0 %g 0 0]\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(t3_font_scale as ::core::ffi::c_double),
+                crate::utils::PrintfArg::from(t3_font_scale as ::core::ffi::c_double),
+            ],
+        );
     }
-    crate::utils::pdf_printf_args(b"/%s [ %i %i %i %i ]\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(font_key[FONTBBOX1_CODE as usize].pdfname), crate::utils::PrintfArg::from(t3_b0), crate::utils::PrintfArg::from(t3_b1), crate::utils::PrintfArg::from(t3_b2), crate::utils::PrintfArg::from(t3_b3)]);
-    crate::utils::pdf_printf_args(b"/Resources << /ProcSet [ /PDF %s] >>\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(if t3_image_used != 0 {
+    crate::utils::pdf_printf_args(
+        b"/%s [ %i %i %i %i ]\n\0" as *const u8 as *const ::core::ffi::c_char,
+        &[
+            crate::utils::PrintfArg::from(font_key[FONTBBOX1_CODE as usize].pdfname),
+            crate::utils::PrintfArg::from(t3_b0),
+            crate::utils::PrintfArg::from(t3_b1),
+            crate::utils::PrintfArg::from(t3_b2),
+            crate::utils::PrintfArg::from(t3_b3),
+        ],
+    );
+    crate::utils::pdf_printf_args(
+        b"/Resources << /ProcSet [ /PDF %s] >>\n\0" as *const u8 as *const ::core::ffi::c_char,
+        &[crate::utils::PrintfArg::from(if t3_image_used != 0 {
             b"/ImageB \0" as *const u8 as *const ::core::ffi::c_char
         } else {
             b"\0" as *const u8 as *const ::core::ffi::c_char
-        })]);
-    crate::utils::pdf_printf_args(b"/FirstChar %i\n/LastChar %i\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(first_char), crate::utils::PrintfArg::from(last_char)]);
+        })],
+    );
+    crate::utils::pdf_printf_args(
+        b"/FirstChar %i\n/LastChar %i\n\0" as *const u8 as *const ::core::ffi::c_char,
+        &[
+            crate::utils::PrintfArg::from(first_char),
+            crate::utils::PrintfArg::from(last_char),
+        ],
+    );
     wptr = pdfnewobjnum();
     eptr = pdfnewobjnum();
     cptr = pdfnewobjnum();
-    crate::utils::pdf_printf_args(b"/Widths %i 0 R\n/Encoding %i 0 R\n/CharProcs %i 0 R\n\0" as *const u8
-            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(wptr), crate::utils::PrintfArg::from(eptr), crate::utils::PrintfArg::from(cptr)]);
+    crate::utils::pdf_printf_args(
+        b"/Widths %i 0 R\n/Encoding %i 0 R\n/CharProcs %i 0 R\n\0" as *const u8
+            as *const ::core::ffi::c_char,
+        &[
+            crate::utils::PrintfArg::from(wptr),
+            crate::utils::PrintfArg::from(eptr),
+            crate::utils::PrintfArg::from(cptr),
+        ],
+    );
     if tounicode_objnum != 0 as ::core::ffi::c_int {
-        crate::utils::pdf_printf_args(b"/ToUnicode %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(tounicode_objnum)]);
+        crate::utils::pdf_printf_args(
+            b"/ToUnicode %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(tounicode_objnum)],
+        );
     }
     pdfenddict();
     zpdfbeginobj(wptr, 1 as ::core::ffi::c_int);
@@ -1215,16 +1354,29 @@ pub unsafe extern "C" fn writet3(
     } else {
         i = first_char;
         while i <= last_char {
-            crate::utils::pdf_printf_args(b"%i \0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(t3_char_widths[i as usize] as ::core::ffi::c_int)]);
+            crate::utils::pdf_printf_args(
+                b"%i \0" as *const u8 as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(
+                    t3_char_widths[i as usize] as ::core::ffi::c_int,
+                )],
+            );
             i += 1;
         }
     }
     pdf_puts(b"]\n\0" as *const u8 as *const ::core::ffi::c_char);
     pdfendobj();
     zpdfbegindict(eptr, 1 as ::core::ffi::c_int);
-    crate::utils::pdf_printf_args(b"/Type /Encoding\n/Differences [%i\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(first_char)]);
+    crate::utils::pdf_printf_args(
+        b"/Type /Encoding\n/Differences [%i\0" as *const u8 as *const ::core::ffi::c_char,
+        &[crate::utils::PrintfArg::from(first_char)],
+    );
     if t3_char_procs[first_char as usize] == 0 as ::core::ffi::c_int {
-        crate::utils::pdf_printf_args(b"/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(&raw mut notdef as *mut ::core::ffi::c_char)]);
+        crate::utils::pdf_printf_args(
+            b"/%s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                &raw mut notdef as *mut ::core::ffi::c_char,
+            )],
+        );
         is_notdef = true_0 as boolean;
     } else {
         if !glyph_names.is_null()
@@ -1232,9 +1384,17 @@ pub unsafe extern "C" fn writet3(
             && *glyph_names.offset(first_char as isize)
                 != &raw mut notdef as *mut ::core::ffi::c_char
         {
-            crate::utils::pdf_printf_args(b"/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(*glyph_names.offset(first_char as isize))]);
+            crate::utils::pdf_printf_args(
+                b"/%s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(
+                    *glyph_names.offset(first_char as isize),
+                )],
+            );
         } else {
-            crate::utils::pdf_printf_args(b"/a%i\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(first_char)]);
+            crate::utils::pdf_printf_args(
+                b"/a%i\0" as *const u8 as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(first_char)],
+            );
         }
         is_notdef = false_0 as boolean;
     }
@@ -1242,21 +1402,38 @@ pub unsafe extern "C" fn writet3(
     while i <= last_char {
         if t3_char_procs[i as usize] == 0 as ::core::ffi::c_int {
             if is_notdef == 0 {
-                crate::utils::pdf_printf_args(b" %i/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(&raw mut notdef as *mut ::core::ffi::c_char)]);
+                crate::utils::pdf_printf_args(
+                    b" %i/%s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(i),
+                        crate::utils::PrintfArg::from(&raw mut notdef as *mut ::core::ffi::c_char),
+                    ],
+                );
                 is_notdef = true_0 as boolean;
             }
         } else {
             if is_notdef != 0 {
-                crate::utils::pdf_printf_args(b" %i\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i)]);
+                crate::utils::pdf_printf_args(
+                    b" %i\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(i)],
+                );
                 is_notdef = false_0 as boolean;
             }
             if !glyph_names.is_null()
                 && !(*glyph_names.offset(i as isize)).is_null()
                 && *glyph_names.offset(i as isize) != &raw mut notdef as *mut ::core::ffi::c_char
             {
-                crate::utils::pdf_printf_args(b"/%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(*glyph_names.offset(i as isize))]);
+                crate::utils::pdf_printf_args(
+                    b"/%s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(
+                        *glyph_names.offset(i as isize),
+                    )],
+                );
             } else {
-                crate::utils::pdf_printf_args(b"/a%i\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i)]);
+                crate::utils::pdf_printf_args(
+                    b"/a%i\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(i)],
+                );
             }
         }
         i += 1;
@@ -1271,9 +1448,21 @@ pub unsafe extern "C" fn writet3(
                 && !(*glyph_names.offset(i as isize)).is_null()
                 && *glyph_names.offset(i as isize) != &raw mut notdef as *mut ::core::ffi::c_char
             {
-                crate::utils::pdf_printf_args(b"/%s %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(*glyph_names.offset(i as isize)), crate::utils::PrintfArg::from(t3_char_procs[i as usize])]);
+                crate::utils::pdf_printf_args(
+                    b"/%s %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(*glyph_names.offset(i as isize)),
+                        crate::utils::PrintfArg::from(t3_char_procs[i as usize]),
+                    ],
+                );
             } else {
-                crate::utils::pdf_printf_args(b"/a%i %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(t3_char_procs[i as usize])]);
+                crate::utils::pdf_printf_args(
+                    b"/a%i %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(i),
+                        crate::utils::PrintfArg::from(t3_char_procs[i as usize]),
+                    ],
+                );
             }
         }
         i += 1;

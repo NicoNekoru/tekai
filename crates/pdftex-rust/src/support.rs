@@ -254,12 +254,11 @@ pub unsafe extern "C" fn basenamechangesuffix(
         let old_bytes = c_bytes(old_suffix);
         let new_bytes = c_bytes(new_suffix);
 
-        let copy_limit =
-            if old_bytes.len() <= base_bytes.len() && base_bytes.ends_with(old_bytes) {
-                base_bytes.len() - old_bytes.len()
-            } else {
-                base_bytes.len()
-            };
+        let copy_limit = if old_bytes.len() <= base_bytes.len() && base_bytes.ends_with(old_bytes) {
+            base_bytes.len() - old_bytes.len()
+        } else {
+            base_bytes.len()
+        };
 
         let out = xmalloc(copy_limit + new_bytes.len() + 1) as *mut u8;
         ptr::copy_nonoverlapping(base_bytes.as_ptr(), out, copy_limit);
@@ -418,8 +417,15 @@ pub unsafe extern "C" fn printversionandexit(
         libc::printf(c"both the %s copyright and\n".as_ptr(), prog_name_start);
         libc::puts(c"the Lesser GNU General Public License.".as_ptr());
         libc::puts(c"For more information about these matters, see the file".as_ptr());
-        libc::printf(c"named COPYING and the %s source.\n".as_ptr(), prog_name_start);
-        libc::printf(c"Primary author of %s: %s.\n".as_ptr(), prog_name_start, author);
+        libc::printf(
+            c"named COPYING and the %s source.\n".as_ptr(),
+            prog_name_start,
+        );
+        libc::printf(
+            c"Primary author of %s: %s.\n".as_ptr(),
+            prog_name_start,
+            author,
+        );
 
         if !extra_info.is_null() {
             libc::fputs(extra_info, __stdoutp);
@@ -447,8 +453,9 @@ mod tests {
         let name = CString::new("/tmp/cmr10.300pk").unwrap();
         let old_suffix = CString::new("pk").unwrap();
         let new_suffix = CString::new("gf").unwrap();
-        let changed =
-            unsafe { basenamechangesuffix(name.as_ptr(), old_suffix.as_ptr(), new_suffix.as_ptr()) };
+        let changed = unsafe {
+            basenamechangesuffix(name.as_ptr(), old_suffix.as_ptr(), new_suffix.as_ptr())
+        };
         assert_eq!(
             unsafe { CStr::from_ptr(changed) }.to_str().unwrap(),
             "cmr10.300gf"

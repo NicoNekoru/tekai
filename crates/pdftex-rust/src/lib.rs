@@ -49,8 +49,8 @@ pub mod generated {
         pub mod writezip;
     }
     pub mod pdftex0;
-    pub mod pdftexextra;
     pub mod pdftex_pool;
+    pub mod pdftexextra;
     pub mod pdftexini;
 }
 

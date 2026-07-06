@@ -776,10 +776,10 @@ fn auto_draft_prepass_switches_to_final_after_backref_outputs_stabilize() {
     })
     .expect("auto backref build should settle without exhausting draft reruns");
     assert_eq!(first.bibliography_runs, 1, "{first:#?}");
-    assert!(first.tex_runs <= 4, "{first:#?}");
+    assert_eq!(first.tex_runs, 3, "{first:#?}");
     assert!(first.draft_tex_runs > 0, "{first:#?}");
     assert!(first.final_tex_runs > 0, "{first:#?}");
-    assert!(first.pdf_tex_runs > 0, "{first:#?}");
+    assert_eq!(first.pdf_tex_runs, 1, "{first:#?}");
     assert!(first.pdf_tex_runs <= first.final_tex_runs, "{first:#?}");
     assert_eq!(
         first.tex_runs,
@@ -792,6 +792,13 @@ fn auto_draft_prepass_switches_to_final_after_backref_outputs_stabilize() {
     assert_eq!(
         first.passes.iter().filter(|pass| pass.pdf_output).count(),
         first.pdf_tex_runs,
+        "{first:#?}"
+    );
+    assert!(
+        !first.passes[0]
+            .rerun_reasons
+            .iter()
+            .any(|reason| reason == "citations-changed"),
         "{first:#?}"
     );
     assert!(out_dir.join("main.pdf").exists());

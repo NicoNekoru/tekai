@@ -84,7 +84,10 @@ pub unsafe extern "C" fn newvfpacket(mut f: internalfontnumber) -> integer {
                 + 1 as ::core::ffi::c_long) as size_t;
         }
         if vf_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-            crate::utils::pdftex_fail_args(b"vf_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"vf_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         vf_array = xrealloc(
             vf_array as address,
@@ -185,7 +188,10 @@ pub unsafe extern "C" fn pushpacketstate() {
                 + 1 as ::core::ffi::c_long) as size_t;
         }
         if packet_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-            crate::utils::pdftex_fail_args(b"packet_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"packet_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         packet_array = xrealloc(
             packet_array as address,
@@ -200,7 +206,10 @@ pub unsafe extern "C" fn pushpacketstate() {
 #[no_mangle]
 pub unsafe extern "C" fn poppacketstate() {
     if packet_ptr == packet_array {
-        crate::utils::pdftex_fail_args(b"packet stack empty, impossible to pop\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+        crate::utils::pdftex_fail_args(
+            b"packet stack empty, impossible to pop\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        );
     }
     packet_ptr = packet_ptr.offset(-1);
     packet_data_ptr = (*packet_ptr).dataptr;

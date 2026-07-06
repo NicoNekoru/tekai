@@ -346,7 +346,10 @@ unsafe extern "C" fn new_image_entry() -> integer {
                 + 1 as ::core::ffi::c_long) as integer;
         }
         if image_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
-            crate::utils::pdftex_fail_args(b"image_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"image_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         image_array = xrealloc(
             image_array as address,
@@ -449,7 +452,10 @@ pub unsafe extern "C" fn imagecolordepth(mut img: integer) -> integer {
         IMAGE_TYPE_JBIG2 => return 0 as integer,
         IMAGE_TYPE_PDF => return 0 as integer,
         _ => {
-            crate::utils::pdftex_fail_args(b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
     };
 }
@@ -486,7 +492,10 @@ unsafe extern "C" fn checktypebyheader(mut img: integer) {
     while (i as ::core::ffi::c_uint as usize) < MAX_HEADER {
         header[i as usize] = xgetc(file) as ::core::ffi::c_char;
         if feof(file) != 0 {
-            crate::utils::pdftex_fail_args(b"reading image file failed\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"reading image file failed\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         i += 1;
     }
@@ -588,7 +597,10 @@ pub unsafe extern "C" fn readimage(
     let ref mut fresh0 = (*image_array.offset(img as isize)).image_name;
     *fresh0 = cur_file_name;
     if (*image_array.offset(img as isize)).image_name.is_null() {
-        crate::utils::pdftex_fail_args(b"cannot find image file %s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(makecstring(s as integer))]);
+        crate::utils::pdftex_fail_args(
+            b"cannot find image file %s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(makecstring(s as integer))],
+        );
     }
     recorder_record_input(cur_file_name as const_string);
     checktypebyheader(img);
@@ -665,7 +677,10 @@ pub unsafe extern "C" fn readimage(
             read_jbig2_info(img);
         }
         _ => {
-            crate::utils::pdftex_fail_args(b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
     }
     if !dest.is_null() {
@@ -678,7 +693,12 @@ pub unsafe extern "C" fn readimage(
 #[no_mangle]
 pub unsafe extern "C" fn writeimage(mut img: integer) {
     cur_file_name = (*image_array.offset(img as isize)).image_name;
-    crate::utils::tex_printf_args(b" <%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*image_array.offset(img as isize)).image_name)]);
+    crate::utils::tex_printf_args(
+        b" <%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[crate::utils::PrintfArg::from(
+            (*image_array.offset(img as isize)).image_name,
+        )],
+    );
     match (*image_array.offset(img as isize)).image_type {
         IMAGE_TYPE_PNG => {
             write_png(img);
@@ -698,7 +718,10 @@ pub unsafe extern "C" fn writeimage(mut img: integer) {
             write_epdf();
         }
         _ => {
-            crate::utils::pdftex_fail_args(b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
     }
     crate::utils::tex_printf_args(b">\0" as *const u8 as *const ::core::ffi::c_char, &[]);
@@ -739,7 +762,10 @@ pub unsafe extern "C" fn deleteimage(mut img: integer) {
         }
         IMAGE_TYPE_JBIG2 => {}
         _ => {
-            crate::utils::pdftex_fail_args(b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
     }
     if !(*image_array.offset(img as isize)).image_name.is_null() {
@@ -989,7 +1015,12 @@ pub unsafe extern "C" fn undumpimagemeta(
         )
         .is_null()
         {
-            crate::utils::pdftex_fail_args(b"cannot find image file %s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*image_array.offset(img as isize)).image_name)]);
+            crate::utils::pdftex_fail_args(
+                b"cannot find image file %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(
+                    (*image_array.offset(img as isize)).image_name,
+                )],
+            );
         }
         match (*image_array.offset(img as isize)).image_type {
             IMAGE_TYPE_PDF => {
@@ -1078,7 +1109,10 @@ pub unsafe extern "C" fn undumpimagemeta(
                 read_jbig2_info(img as integer);
             }
             _ => {
-                crate::utils::pdftex_fail_args(b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+                crate::utils::pdftex_fail_args(
+                    b"unknown type of image\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[],
+                );
             }
         }
         img += 1;

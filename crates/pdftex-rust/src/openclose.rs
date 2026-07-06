@@ -120,12 +120,7 @@ unsafe fn record_name(prefix: *const c_char, name: *const c_char) {
             recorder_start();
         }
         if !RECORDER_FILE.is_null() {
-            libc::fprintf(
-                RECORDER_FILE,
-                c"%s %s\n".as_ptr(),
-                prefix,
-                name,
-            );
+            libc::fprintf(RECORDER_FILE, c"%s %s\n".as_ptr(), prefix, name);
             libc::fflush(RECORDER_FILE);
         }
     }
@@ -277,10 +272,7 @@ pub unsafe extern "C" fn open_input_with_dirname(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn open_output(
-    f_ptr: *mut *mut FILE,
-    fopen_mode: *const c_char,
-) -> c_int {
+pub unsafe extern "C" fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c_char) -> c_int {
     unsafe {
         let original = nameoffile_body();
         let absolute = kpse_absolute_p(original, FALSE) != 0;
@@ -332,11 +324,7 @@ pub unsafe extern "C" fn close_file(f: *mut FILE) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn setupboundvariable(
-    var: *mut c_int,
-    var_name: *const c_char,
-    dflt: c_int,
-) {
+pub unsafe extern "C" fn setupboundvariable(var: *mut c_int, var_name: *const c_char, dflt: c_int) {
     unsafe {
         *var = dflt;
         let expansion = kpse_var_value(var_name);

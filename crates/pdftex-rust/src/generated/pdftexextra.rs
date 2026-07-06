@@ -773,10 +773,7 @@ pub const _CTYPE_S: ::core::ffi::c_long = 0x4000 as ::core::ffi::c_long;
 unsafe fn isascii(mut _c: ::core::ffi::c_int) -> ::core::ffi::c_int {
     return (_c & !(0x7f as ::core::ffi::c_int) == 0 as ::core::ffi::c_int) as ::core::ffi::c_int;
 }
-unsafe fn __istype(
-    mut _c: __darwin_ct_rune_t,
-    mut _f: ::core::ffi::c_ulong,
-) -> ::core::ffi::c_int {
+unsafe fn __istype(mut _c: __darwin_ct_rune_t, mut _f: ::core::ffi::c_ulong) -> ::core::ffi::c_int {
     return if isascii(_c as ::core::ffi::c_int) != 0 {
         (_DefaultRuneLocale.__runetype[_c as usize] as ::core::ffi::c_ulong & _f != 0)
             as ::core::ffi::c_int
@@ -5005,8 +5002,16 @@ unsafe extern "C" fn makepdftime(
             off_mins,
         );
         if i as ::core::ffi::c_uint >= 9 as ::core::ffi::c_int as ::core::ffi::c_uint {
-            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
-                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3413 as ::core::ffi::c_int)]);
+            crate::utils::pdftex_fail_args(
+                b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b"pdftex-rust/generated/texmfmp.rs\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(3413 as ::core::ffi::c_int),
+                ],
+            );
         }
     };
 }
@@ -5069,8 +5074,16 @@ pub unsafe extern "C" fn makecstring(mut s: integer) -> *mut ::core::ffi::c_char
     if (l_0 + 1 as ::core::ffi::c_int) as ::core::ffi::c_uint
         > (1024 as ::core::ffi::c_int * 1024 as ::core::ffi::c_int) as ::core::ffi::c_uint
     {
-        crate::utils::pdftex_fail_args(b"buffer overflow at file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
-                as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3494 as ::core::ffi::c_int)]);
+        crate::utils::pdftex_fail_args(
+            b"buffer overflow at file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(
+                    b"pdftex-rust/generated/texmfmp.rs\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                ),
+                crate::utils::PrintfArg::from(3494 as ::core::ffi::c_int),
+            ],
+        );
     }
     if cstrbuf.is_null() {
         allocsize = l_0 + 1 as ::core::ffi::c_int;
@@ -5259,8 +5272,16 @@ pub unsafe extern "C" fn getfilesize(mut s: integer) {
         if i as ::core::ffi::c_uint
             >= ::core::mem::size_of::<[::core::ffi::c_char; 20]>() as ::core::ffi::c_uint
         {
-            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
-                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3637 as ::core::ffi::c_int)]);
+            crate::utils::pdftex_fail_args(
+                b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b"pdftex-rust/generated/texmfmp.rs\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(3637 as ::core::ffi::c_int),
+                ],
+            );
         }
         len = strlen(&raw mut buf as *mut ::core::ffi::c_char);
         if (poolptr as size_t).wrapping_add(len) as ::core::ffi::c_uint
@@ -5340,8 +5361,16 @@ pub unsafe extern "C" fn getfiledump(
             *strpool.offset(data_ptr as isize) as ::core::ffi::c_uint,
         );
         if i as ::core::ffi::c_uint >= 3 as ::core::ffi::c_int as ::core::ffi::c_uint {
-            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
-                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3725 as ::core::ffi::c_int)]);
+            crate::utils::pdftex_fail_args(
+                b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b"pdftex-rust/generated/texmfmp.rs\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(3725 as ::core::ffi::c_int),
+                ],
+            );
         }
         poolptr += i;
         data_ptr += 1;
@@ -5373,8 +5402,16 @@ pub unsafe extern "C" fn convertStringToHexString(
         if k_0 as ::core::ffi::c_uint
             >= ::core::mem::size_of::<[::core::ffi::c_char; 3]>() as ::core::ffi::c_uint
         {
-            crate::utils::pdftex_fail_args(b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"pdftex-rust/generated/texmfmp.rs\0"
-                    as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(3745 as ::core::ffi::c_int)]);
+            crate::utils::pdftex_fail_args(
+                b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b"pdftex-rust/generated/texmfmp.rs\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(3745 as ::core::ffi::c_int),
+                ],
+            );
         }
         let fresh3 = j;
         j = j + 1;

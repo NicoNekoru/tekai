@@ -350,10 +350,16 @@ unsafe extern "C" fn ygetc(mut stream: *mut FILE) -> ::core::ffi::c_int {
     let mut c: ::core::ffi::c_int = fgetc(stream);
     if c < 0 as ::core::ffi::c_int {
         if c == EOF {
-            crate::utils::pdftex_fail_args(b"fgetc() failed; premature end of JBIG2 image file\0" as *const u8
-                    as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"fgetc() failed; premature end of JBIG2 image file\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
         } else {
-            crate::utils::pdftex_fail_args(b"fgetc() failed (can't happen)\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"fgetc() failed (can't happen)\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
     }
     return c;
@@ -643,8 +649,11 @@ unsafe extern "C" fn readfilehdr(mut fip: *mut FILEINFO) {
     i = 0 as ::core::ffi::c_uint;
     while i < 8 as ::core::ffi::c_uint {
         if ygetc((*fip).file) != jbig2_id[i as usize] as ::core::ffi::c_int {
-            crate::utils::pdftex_fail_args(b"readfilehdr(): reading JBIG2 image file failed: ID string missing\0" as *const u8
-                    as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"readfilehdr(): reading JBIG2 image file failed: ID string missing\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         i = i.wrapping_add(1);
     }
@@ -751,7 +760,10 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
             } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                 > pdfbufsize as ::core::ffi::c_uint
             {
-                crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+                crate::utils::pdftex_fail_args(
+                    b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[],
+                );
             } else {
                 pdfflush();
             }
@@ -774,8 +786,11 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        crate::utils::pdftex_fail_args(
+                            b"PDF output buffer overflowed\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     } else {
                         pdfflush();
                     }
@@ -794,8 +809,11 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        crate::utils::pdftex_fail_args(
+                            b"PDF output buffer overflowed\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     } else {
                         pdfflush();
                     }
@@ -813,8 +831,11 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        crate::utils::pdftex_fail_args(
+                            b"PDF output buffer overflowed\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     } else {
                         pdfflush();
                     }
@@ -834,8 +855,11 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        crate::utils::pdftex_fail_args(
+                            b"PDF output buffer overflowed\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     } else {
                         pdfflush();
                     }
@@ -853,8 +877,11 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        crate::utils::pdftex_fail_args(
+                            b"PDF output buffer overflowed\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     } else {
                         pdfflush();
                     }
@@ -872,8 +899,11 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        crate::utils::pdftex_fail_args(
+                            b"PDF output buffer overflowed\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     } else {
                         pdfflush();
                     }
@@ -891,8 +921,11 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        crate::utils::pdftex_fail_args(
+                            b"PDF output buffer overflowed\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     } else {
                         pdfflush();
                     }
@@ -922,8 +955,11 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
                 } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                     > pdfbufsize as ::core::ffi::c_uint
                 {
-                    crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                            as *const ::core::ffi::c_char, &[]);
+                    crate::utils::pdftex_fail_args(
+                        b"PDF output buffer overflowed\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                        &[],
+                    );
                 } else {
                     pdfflush();
                 }
@@ -940,7 +976,10 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
             zpdfosgetosbuf(1 as ::core::ffi::c_int);
         } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint
         {
-            crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         } else {
             pdfflush();
         }
@@ -960,7 +999,10 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
             } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                 > pdfbufsize as ::core::ffi::c_uint
             {
-                crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+                crate::utils::pdftex_fail_args(
+                    b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[],
+                );
             } else {
                 pdfflush();
             }
@@ -1038,8 +1080,11 @@ unsafe extern "C" fn checkseghdrflags(mut sip: *mut SEGINFO) {
         }
         0 | 4 | 6 | 7 | 16 | 20 | 22 | 23 | 36 | 38 | 39 | 40 | 42 | 43 | 52 | 53 | 62 => {}
         _ => {
-            crate::utils::pdftex_fail_args(b"checkseghdrflags(): unknown segment type in JBIG2 image file\0" as *const u8
-                    as *const ::core::ffi::c_char, &[]);
+            crate::utils::pdftex_fail_args(
+                b"checkseghdrflags(): unknown segment type in JBIG2 image file\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
         }
     };
 }
@@ -1227,19 +1272,33 @@ unsafe extern "C" fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_u
         };
         pdf_puts(b"/Type /XObject\n\0" as *const u8 as *const ::core::ffi::c_char);
         pdf_puts(b"/Subtype /Image\n\0" as *const u8 as *const ::core::ffi::c_char);
-        crate::utils::pdf_printf_args(b"/Width %i\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*pip).width)]);
-        crate::utils::pdf_printf_args(b"/Height %i\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*pip).height)]);
+        crate::utils::pdf_printf_args(
+            b"/Width %i\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from((*pip).width)],
+        );
+        crate::utils::pdf_printf_args(
+            b"/Height %i\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from((*pip).height)],
+        );
         pdf_puts(b"/ColorSpace /DeviceGray\n\0" as *const u8 as *const ::core::ffi::c_char);
         pdf_puts(b"/BitsPerComponent 1\n\0" as *const u8 as *const ::core::ffi::c_char);
-        crate::utils::pdf_printf_args(b"/Length %ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(getstreamlen((*pip).segments.first, true_0) as ::core::ffi::c_long)]);
+        crate::utils::pdf_printf_args(
+            b"/Length %ld\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                getstreamlen((*pip).segments.first, true_0) as ::core::ffi::c_long,
+            )],
+        );
         pdf_puts(b"/Filter [/JBIG2Decode]\n\0" as *const u8 as *const ::core::ffi::c_char);
         if !(*fip).page0.last.is_null() {
             if (*fip).pdfpage0objnum == 0 as ::core::ffi::c_ulong {
                 zpdfcreateobj(0 as ::core::ffi::c_int, 0 as ::core::ffi::c_int);
                 (*fip).pdfpage0objnum = objptr as ::core::ffi::c_ulong;
             }
-            crate::utils::pdf_printf_args(b"/DecodeParms [<< /JBIG2Globals %lu 0 R >>]\n\0" as *const u8
-                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*fip).pdfpage0objnum)]);
+            crate::utils::pdf_printf_args(
+                b"/DecodeParms [<< /JBIG2Globals %lu 0 R >>]\n\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from((*fip).pdfpage0objnum)],
+            );
         }
     } else {
         pip = find_pageinfo(&raw mut (*fip).page0, page);
@@ -1253,7 +1312,12 @@ unsafe extern "C" fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_u
         } else {
         };
         zpdfbegindict((*fip).pdfpage0objnum as integer, 0 as ::core::ffi::c_int);
-        crate::utils::pdf_printf_args(b"/Length %ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(getstreamlen((*pip).segments.first, false_0) as ::core::ffi::c_long)]);
+        crate::utils::pdf_printf_args(
+            b"/Length %ld\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                getstreamlen((*pip).segments.first, false_0) as ::core::ffi::c_long,
+            )],
+        );
     }
     pdf_puts(b">>\n\0" as *const u8 as *const ::core::ffi::c_char);
     pdf_puts(b"stream\n\0" as *const u8 as *const ::core::ffi::c_char);
@@ -1285,8 +1349,11 @@ unsafe extern "C" fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_u
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        crate::utils::pdftex_fail_args(
+                            b"PDF output buffer overflowed\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     } else {
                         pdfflush();
                     }
@@ -1331,8 +1398,13 @@ pub unsafe extern "C" fn read_jbig2_info(mut img: integer) {
     if (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page
         < 1 as ::core::ffi::c_int
     {
-        crate::utils::pdftex_fail_args(b"read_jbig2_info(): page %d not in JBIG2 image file; page must be > 0\0" as *const u8
-                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page)]);
+        crate::utils::pdftex_fail_args(
+            b"read_jbig2_info(): page %d not in JBIG2 image file; page must be > 0\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page,
+            )],
+        );
     }
     if file_tree.is_null() {
         file_tree = avl_create(
@@ -1389,8 +1461,13 @@ pub unsafe extern "C" fn read_jbig2_info(mut img: integer) {
             as ::core::ffi::c_ulong,
     );
     if pip.is_null() {
-        crate::utils::pdftex_fail_args(b"read_jbig2_info(): page %d not found in JBIG2 image file\0" as *const u8
-                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page)]);
+        crate::utils::pdftex_fail_args(
+            b"read_jbig2_info(): page %d not found in JBIG2 image file\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page,
+            )],
+        );
     }
     (*image_array.offset(img as isize)).num_pages = (*fip).numofpages as integer;
     (*image_array.offset(img as isize)).width = (*pip).width as integer;
