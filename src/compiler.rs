@@ -1936,6 +1936,10 @@ fn default_settled_aux_cache_root() -> PathBuf {
     default_texpilot_cache_root("settled-aux")
 }
 
+fn default_bibtex_cache_root() -> PathBuf {
+    default_texpilot_cache_root("bibtex")
+}
+
 fn default_texpilot_cache_root(kind: &str) -> PathBuf {
     if let Some(value) = std::env::var_os("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
         return PathBuf::from(value).join("texpilot").join(kind);
@@ -5640,8 +5644,16 @@ fn run_bibtex_job_if_stale(
         return Ok(false);
     }
 
+    if !options.force
+        && restore_global_bibtex_cache_if_fresh(doc_dir, out_dir, job, &signature, &source)?
+    {
+        aux_session_cache.mark_bibtex_job_fresh(session_key);
+        return Ok(false);
+    }
+
     run_bibtex(doc_dir, out_dir, job, options)?;
     write_bibtex_state_from_source(job, &signature, &source, doc_dir, out_dir)?;
+    save_global_bibtex_cache(doc_dir, out_dir, job, &signature, &source)?;
     aux_session_cache.mark_bibtex_job_fresh(session_key);
     Ok(true)
 }
@@ -5651,6 +5663,101 @@ fn bibtex_session_key(job: &BibtexJob, signature: &str) -> BibtexSessionKey {
         state_path: job.state_path.clone(),
         bbl_path: job.bbl_path.clone(),
         signature: signature.to_string(),
+    }
+}
+
+fn restore_global_bibtex_cache_if_fresh(
+    doc_dir: &Path,
+    out_dir: &Path,
+    job: &BibtexJob,
+    signature: &str,
+    aux_source: &str,
+) -> Result<bool> {
+    let cache = global_bibtex_cache_paths(signature);
+    if !bibtex_cache_is_fresh(&cache.state_path, signature, &cache.bbl_path)? {
+        return Ok(false);
+    }
+    if let Some(parent) = job.bbl_path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create bibliography output directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::copy(&cache.bbl_path, &job.bbl_path).with_context(|| {
+        format!(
+            "failed to restore bibliography cache {} to {}",
+            cache.bbl_path.display(),
+            job.bbl_path.display()
+        )
+    })?;
+    if cache.blg_path.exists() {
+        fs::copy(&cache.blg_path, job.bbl_path.with_extension("blg")).with_context(|| {
+            format!(
+                "failed to restore bibliography log cache {}",
+                cache.blg_path.display()
+            )
+        })?;
+    }
+    write_bibtex_state_from_source(job, signature, aux_source, doc_dir, out_dir)?;
+    Ok(true)
+}
+
+fn save_global_bibtex_cache(
+    doc_dir: &Path,
+    out_dir: &Path,
+    job: &BibtexJob,
+    signature: &str,
+    aux_source: &str,
+) -> Result<()> {
+    if !job.bbl_path.exists() {
+        return Ok(());
+    }
+    let cache = global_bibtex_cache_paths(signature);
+    fs::create_dir_all(&cache.dir).with_context(|| {
+        format!(
+            "failed to create global bibliography cache {}",
+            cache.dir.display()
+        )
+    })?;
+    fs::copy(&job.bbl_path, &cache.bbl_path).with_context(|| {
+        format!(
+            "failed to save bibliography cache {}",
+            cache.bbl_path.display()
+        )
+    })?;
+    let blg_path = job.bbl_path.with_extension("blg");
+    if blg_path.exists() {
+        fs::copy(&blg_path, &cache.blg_path).with_context(|| {
+            format!(
+                "failed to save bibliography log cache {}",
+                cache.blg_path.display()
+            )
+        })?;
+    }
+    let mut cache_job = job.clone();
+    cache_job.bbl_path = cache.bbl_path;
+    cache_job.state_path = cache.state_path;
+    write_bibtex_state_from_source(&cache_job, signature, aux_source, doc_dir, out_dir)
+}
+
+#[derive(Debug, Clone)]
+struct GlobalBibtexCachePaths {
+    dir: PathBuf,
+    bbl_path: PathBuf,
+    blg_path: PathBuf,
+    state_path: PathBuf,
+}
+
+fn global_bibtex_cache_paths(signature: &str) -> GlobalBibtexCachePaths {
+    let root = cache_root_from_env("TEXPILOT_BIBTEX_CACHE", default_bibtex_cache_root);
+    let dir = root.join(format!("{:016x}", content_hash(signature.as_bytes())));
+    GlobalBibtexCachePaths {
+        bbl_path: dir.join("output.bbl"),
+        blg_path: dir.join("output.blg"),
+        state_path: dir.join("state.toml"),
+        dir,
     }
 }
 
@@ -12944,6 +13051,59 @@ mod tests {
         let dir = settled_aux_cache_dir(&root, &main, "mode");
 
         assert!(dir.starts_with(cwd.join(&relative_cache)), "{dir:?}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn global_bibtex_cache_restores_fresh_bbl() {
+        let _env_lock = TEXINPUTS_TEST_LOCK
+            .lock()
+            .expect("TEXINPUTS test lock poisoned");
+        let root = unique_temp_dir("texpilot-global-bibtex-cache");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        fs::write(
+            root.join("refs.bib"),
+            "@book{x, author={A. Author}, title={Cached}, year={2026}}\n",
+        )
+        .expect("failed to write bibliography");
+        let cache_root = root.join("cache");
+        let _guard = EnvVarGuard::set("TEXPILOT_BIBTEX_CACHE", cache_root.display().to_string());
+        let aux_source = "\\relax\n\\citation{x}\n\\bibstyle{plain}\n\\bibdata{refs}\n";
+
+        let source_out = root.join("source-out");
+        fs::create_dir_all(&source_out).expect("failed to create source output");
+        let source_aux = source_out.join("main.aux");
+        fs::write(&source_aux, aux_source).expect("failed to write source aux");
+        let source_job = bibtex_job(&source_out, &source_aux, None);
+        fs::write(
+            &source_job.bbl_path,
+            "\\begin{thebibliography}{1}\n\\bibitem{x} X.\n",
+        )
+        .expect("failed to write source bbl");
+        let signature = bibtex_aux_signature_from_source(aux_source, &source_job);
+        save_global_bibtex_cache(&root, &source_out, &source_job, &signature, aux_source)
+            .expect("failed to save global bibliography cache");
+
+        let restored_out = root.join("restored-out");
+        fs::create_dir_all(&restored_out).expect("failed to create restored output");
+        let restored_aux = restored_out.join("main.aux");
+        fs::write(&restored_aux, aux_source).expect("failed to write restored aux");
+        let restored_job = bibtex_job(&restored_out, &restored_aux, None);
+
+        assert!(
+            restore_global_bibtex_cache_if_fresh(
+                &root,
+                &restored_out,
+                &restored_job,
+                &signature,
+                aux_source,
+            )
+            .expect("failed to restore global bibliography cache")
+        );
+        let restored = fs::read_to_string(&restored_job.bbl_path)
+            .expect("failed to read restored bibliography");
+        assert!(restored.contains("\\bibitem{x} X."), "{restored}");
+
         let _ = fs::remove_dir_all(root);
     }
 
