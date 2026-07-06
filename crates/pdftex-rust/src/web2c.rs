@@ -2,6 +2,23 @@
 
 use libc::{c_double, c_int, FILE};
 
+#[cfg(unix)]
+extern "C" {
+    fn getc_unlocked(stream: *mut FILE) -> c_int;
+}
+
+unsafe fn fast_fgetc(stream: *mut FILE) -> c_int {
+    #[cfg(unix)]
+    {
+        unsafe { getc_unlocked(stream) }
+    }
+
+    #[cfg(not(unix))]
+    {
+        unsafe { libc::fgetc(stream) }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn zround(value: c_double) -> c_int {
     if value > 2_147_483_647.0 {
@@ -31,7 +48,7 @@ pub unsafe extern "C" fn eof(file: *mut FILE) -> c_int {
         return 1;
     }
 
-    let c = unsafe { libc::fgetc(file) };
+    let c = unsafe { fast_fgetc(file) };
     if c == libc::EOF {
         return 1;
     }

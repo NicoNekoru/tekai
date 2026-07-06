@@ -11,6 +11,7 @@ use crate::generated::pdftexextra::{
     str_list_type, string, FILE,
 };
 use libc::{c_char, c_double, c_int, c_uint, c_void, size_t};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::path::{Path, PathBuf};
@@ -127,6 +128,12 @@ static CNF_OVERRIDES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new()
 static FILE_INDEX: OnceLock<FileIndex> = OnceLock::new();
 static EXPLICIT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 static FORMAT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+static INDEX_READABLE_CACHE: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+
+thread_local! {
+    static INDEX_LOOKUP_CACHE: RefCell<HashMap<c_uint, HashMap<String, Option<PathBuf>>>> =
+        RefCell::new(HashMap::new());
+}
 
 struct FileIndex {
     by_name: HashMap<String, Vec<PathBuf>>,
@@ -222,6 +229,17 @@ fn path_is_readable(path: &Path) -> bool {
     std::fs::metadata(path)
         .map(|metadata| metadata.is_file())
         .unwrap_or(false)
+}
+
+fn indexed_path_is_readable(path: &Path) -> bool {
+    let cache = INDEX_READABLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().expect("kpathsea readability cache poisoned");
+    if let Some(readable) = cache.get(path) {
+        return *readable;
+    }
+    let readable = path_is_readable(path);
+    cache.insert(path.to_path_buf(), readable);
+    readable
 }
 
 fn check_direct_path(path: &Path) -> Option<PathBuf> {
@@ -338,6 +356,28 @@ fn parse_ls_r(root: &Path, by_name: &mut HashMap<String, Vec<PathBuf>>) {
 }
 
 fn find_in_index(candidate: &str, format: c_uint) -> Option<PathBuf> {
+    let cached = INDEX_LOOKUP_CACHE.with(|cache| {
+        let cache = cache.borrow();
+        cache
+            .get(&format)
+            .and_then(|by_candidate| by_candidate.get(candidate).cloned())
+    });
+    if let Some(found) = cached {
+        return found;
+    }
+
+    let found = find_in_index_uncached(candidate, format);
+    INDEX_LOOKUP_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .entry(format)
+            .or_default()
+            .insert(candidate.to_owned(), found.clone());
+    });
+    found
+}
+
+fn find_in_index_uncached(candidate: &str, format: c_uint) -> Option<PathBuf> {
     let index = file_index();
     let key = basename(candidate);
     let matches = index.by_name.get(key)?;
@@ -357,8 +397,8 @@ fn best_index_match<'a>(
     format: c_uint,
 ) -> Option<PathBuf> {
     matches
-        .filter(|path| path_is_readable(path))
         .filter(|path| index_path_is_runtime(path, format))
+        .filter(|path| indexed_path_is_readable(path))
         .min_by_key(|path| index_path_rank(path, format))
         .cloned()
 }

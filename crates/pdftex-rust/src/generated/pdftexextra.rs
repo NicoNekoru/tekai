@@ -21,6 +21,8 @@ extern "C" {
     ) -> ::core::ffi::c_ulong;
     fn fseek(_: *mut FILE, _: ::core::ffi::c_long, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
+    #[cfg(unix)]
+    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
     fn setvbuf(
         _: *mut FILE,
         _: *mut ::core::ffi::c_char,
@@ -187,6 +189,19 @@ extern "C" {
     fn md5_init(pms: *mut md5_state_t);
     fn md5_append(pms: *mut md5_state_t, data: *const md5_byte_t, nbytes: ::core::ffi::c_int);
     fn md5_finish(pms: *mut md5_state_t, digest: *mut md5_byte_t);
+}
+
+#[inline(always)]
+unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
+    #[cfg(unix)]
+    {
+        unsafe { getc_unlocked(stream) }
+    }
+
+    #[cfg(not(unix))]
+    {
+        unsafe { fgetc(stream) }
+    }
 }
 pub type __uint8_t = u8;
 pub type __uint16_t = u16;
@@ -4367,7 +4382,7 @@ pub unsafe extern "C" fn input_line(mut f_0: *mut FILE) -> boolean {
         *__error() = 0 as ::core::ffi::c_int;
         while last < bufsize
             && {
-                i = fgetc(f_0);
+                i = fast_fgetc(f_0);
                 i != EOF
             }
             && i != '\n' as i32
@@ -4404,7 +4419,7 @@ pub unsafe extern "C" fn input_line(mut f_0: *mut FILE) -> boolean {
     }
     if i == '\r' as i32 {
         loop {
-            i = fgetc(f_0);
+            i = fast_fgetc(f_0);
             if !(i == EOF && *__error() == EINTR) {
                 break;
             }

@@ -6,6 +6,8 @@ pub struct __sFILEX {
 extern "C" {
     fn feof(_: *mut FILE) -> ::core::ffi::c_int;
     fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
+    #[cfg(unix)]
+    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
     fn sscanf(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -57,6 +59,18 @@ extern "C" {
     fn delete_fm_entry(_: *mut fm_entry);
     fn avl_do_entry(_: *mut fm_entry, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn maketexstring(_: *const ::core::ffi::c_char) -> strnumber;
+}
+#[inline(always)]
+unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
+    #[cfg(unix)]
+    {
+        unsafe { getc_unlocked(stream) }
+    }
+
+    #[cfg(not(unix))]
+    {
+        unsafe { fgetc(stream) }
+    }
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -338,7 +352,7 @@ unsafe extern "C" fn sfd_getline(mut expect_eof: boolean) {
         }
         p = &raw mut sfd_line as *mut ::core::ffi::c_char;
         loop {
-            c = fgetc(sfd_file);
+            c = fast_fgetc(sfd_file);
             if c == 9 as ::core::ffi::c_int {
                 c = 32 as ::core::ffi::c_int;
             }

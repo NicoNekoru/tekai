@@ -15,6 +15,8 @@ pub struct png_info_def {
 
 extern "C" {
     fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
+    #[cfg(unix)]
+    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
     fn free(_: *mut ::core::ffi::c_void);
     fn strcmp(
         __s1: *const ::core::ffi::c_char,
@@ -57,6 +59,18 @@ extern "C" {
     fn pdf_puts(_: *const ::core::ffi::c_char);
     fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
     static mut image_array: *mut image_entry;
+}
+#[inline(always)]
+unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
+    #[cfg(unix)]
+    {
+        unsafe { getc_unlocked(stream) }
+    }
+
+    #[cfg(not(unix))]
+    {
+        unsafe { fgetc(stream) }
+    }
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -347,7 +361,7 @@ unsafe extern "C" fn comp_segment_entry(
         .wrapping_sub((*(pb as *const SEGINFO)).segnum) as ::core::ffi::c_int;
 }
 unsafe extern "C" fn ygetc(mut stream: *mut FILE) -> ::core::ffi::c_int {
-    let mut c: ::core::ffi::c_int = fgetc(stream);
+    let mut c: ::core::ffi::c_int = fast_fgetc(stream);
     if c < 0 as ::core::ffi::c_int {
         if c == EOF {
             crate::utils::pdftex_fail_args(

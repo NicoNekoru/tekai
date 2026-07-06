@@ -42,6 +42,23 @@ extern "C" {
     fn xdirname(name: *const c_char) -> *mut c_char;
 }
 
+#[cfg(unix)]
+extern "C" {
+    fn getc_unlocked(stream: *mut FILE) -> c_int;
+}
+
+unsafe fn fast_fgetc(stream: *mut FILE) -> c_int {
+    #[cfg(unix)]
+    {
+        unsafe { getc_unlocked(stream) }
+    }
+
+    #[cfg(not(unix))]
+    {
+        unsafe { libc::fgetc(stream) }
+    }
+}
+
 fn c_strlen(s: *const c_char) -> usize {
     unsafe { libc::strlen(s) as usize }
 }
@@ -234,11 +251,11 @@ pub unsafe extern "C" fn open_input(
         if !(*f_ptr).is_null() {
             recorder_record_input(nameoffile_body());
             if filefmt == KPSE_TFM_FORMAT {
-                tfmtemp = libc::fgetc(*f_ptr);
+                tfmtemp = fast_fgetc(*f_ptr);
             } else if filefmt == KPSE_OCP_FORMAT {
-                ocptemp = libc::fgetc(*f_ptr);
+                ocptemp = fast_fgetc(*f_ptr);
             } else if filefmt == KPSE_OFM_FORMAT {
-                tfmtemp = libc::fgetc(*f_ptr);
+                tfmtemp = fast_fgetc(*f_ptr);
             }
         }
 

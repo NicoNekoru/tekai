@@ -7,6 +7,11 @@ edition = "2024"
 members = ["crates/texpilot-pdftex", "crates/pdftex-rust"]
 resolver = "3"
 
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }

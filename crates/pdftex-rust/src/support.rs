@@ -16,6 +16,23 @@ extern "C" {
     fn uexit(unix_code: c_int);
 }
 
+#[cfg(unix)]
+extern "C" {
+    fn getc_unlocked(stream: *mut FILE) -> c_int;
+}
+
+unsafe fn fast_fgetc(stream: *mut FILE) -> c_int {
+    #[cfg(unix)]
+    {
+        unsafe { getc_unlocked(stream) }
+    }
+
+    #[cfg(not(unix))]
+    {
+        unsafe { libc::fgetc(stream) }
+    }
+}
+
 unsafe fn copy_bytes_with_nul(bytes: &[u8]) -> *mut c_char {
     let out = unsafe { xmalloc(bytes.len() + 1) as *mut u8 };
     unsafe {
@@ -200,7 +217,7 @@ pub unsafe extern "C" fn read_line(f: *mut FILE) -> *mut c_char {
     let mut line = unsafe { xmalloc(limit) as *mut u8 };
 
     unsafe {
-        let mut ch = libc::fgetc(f);
+        let mut ch = fast_fgetc(f);
         while ch != libc::EOF && ch != b'\n' as c_int && ch != b'\r' as c_int {
             if ch != 0 {
                 *line.add(loc) = ch as u8;
@@ -210,7 +227,7 @@ pub unsafe extern "C" fn read_line(f: *mut FILE) -> *mut c_char {
                     line = xrealloc(line as *mut c_void, limit as size_t) as *mut u8;
                 }
             }
-            ch = libc::fgetc(f);
+            ch = fast_fgetc(f);
         }
         if loc == 0 && ch == libc::EOF {
             libc::free(line as *mut c_void);
@@ -218,7 +235,7 @@ pub unsafe extern "C" fn read_line(f: *mut FILE) -> *mut c_char {
         }
         *line.add(loc) = 0;
         if ch == b'\r' as c_int {
-            let next = libc::fgetc(f);
+            let next = fast_fgetc(f);
             if next != b'\n' as c_int && next != libc::EOF {
                 libc::ungetc(next, f);
             }

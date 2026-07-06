@@ -18,6 +18,8 @@ extern "C" {
         __stream: *mut FILE,
     ) -> ::core::ffi::c_ulong;
     fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
+    #[cfg(unix)]
+    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
     fn perror(_: *const ::core::ffi::c_char);
     fn putc(_: ::core::ffi::c_int, _: *mut FILE) -> ::core::ffi::c_int;
     fn fileno(_: *mut FILE) -> ::core::ffi::c_int;
@@ -800,6 +802,18 @@ extern "C" {
     fn writezip(_: boolean);
     fn avlputobj(_: integer, _: integer);
     fn avlfindobj(_: integer, _: integer, _: integer) -> integer;
+}
+#[inline(always)]
+unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
+    #[cfg(unix)]
+    {
+        unsafe { getc_unlocked(stream) }
+    }
+
+    #[cfg(not(unix))]
+    {
+        unsafe { fgetc(stream) }
+    }
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -1965,6 +1979,20 @@ pub unsafe extern "C" fn zzreadbuffer(mut i: *mut integer) -> ASCIIcode {
         return Result;
     };
 }
+#[inline(always)]
+unsafe fn readbuffer_for_getnext(i: *mut integer, mubyte_enabled: bool) -> ASCIIcode {
+    unsafe {
+        if !mubyte_enabled {
+            mubyteskip = 0 as ::core::ffi::c_int as integer;
+            mubytetoken = 0 as ::core::ffi::c_int as halfword;
+            if mubytekeep > 0 as ::core::ffi::c_int {
+                mubytekeep = 0 as ::core::ffi::c_int as integer;
+            }
+            return *buffer.offset(*i as isize);
+        }
+        zzreadbuffer(i)
+    }
+}
 #[no_mangle]
 pub unsafe extern "C" fn zzprintbuffer(mut i: *mut integer) {
     let mut eqtb: *mut memoryword = zeqtb;
@@ -2394,35 +2422,26 @@ pub unsafe extern "C" fn makestring() -> strnumber {
 }
 #[no_mangle]
 pub unsafe extern "C" fn zstreqbuf(mut s: strnumber, mut k: integer) -> boolean {
-    let mut current_block: u64;
-    let mut Result: boolean = 0;
-    let mut j: poolpointer = 0;
-    let mut result: boolean = 0;
-    j = *strstart.offset(s as isize);
-    loop {
-        if !(j < *strstart.offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize)) {
-            current_block = 6483416627284290920;
-            break;
-        }
-        if *strpool.offset(j as isize) as ::core::ffi::c_int
-            != *buffer.offset(k as isize) as ::core::ffi::c_int
-        {
-            result = false_0 as boolean;
-            current_block = 3301094130943052604;
-            break;
-        } else {
-            j += 1;
-            k += 1;
+    let start = *strstart.offset(s as isize);
+    let end = *strstart.offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize);
+    let len = (end - start) as usize;
+    let pool = ::core::slice::from_raw_parts(strpool.offset(start as isize), len);
+    let input = ::core::slice::from_raw_parts(buffer.offset(k as isize), len);
+    if pool == input {
+        true_0 as boolean
+    } else {
+        false_0 as boolean
+    }
+}
+#[inline(always)]
+fn reduce_tex_hash(mut h: integer, table_size: integer) -> integer {
+    if h >= table_size {
+        h = (h as ::core::ffi::c_int - table_size as ::core::ffi::c_int) as integer;
+        if h >= table_size {
+            h = (h as ::core::ffi::c_int - table_size as ::core::ffi::c_int) as integer;
         }
     }
-    match current_block {
-        6483416627284290920 => {
-            result = true_0 as boolean;
-        }
-        _ => {}
-    }
-    Result = result;
-    return Result;
+    h
 }
 #[no_mangle]
 pub unsafe extern "C" fn zstreqstr(mut s: strnumber, mut t: strnumber) -> boolean {
@@ -10718,9 +10737,7 @@ pub unsafe extern "C" fn zidlookup(mut j: integer, mut l_0: integer) -> halfword
             h = (h as ::core::ffi::c_int
                 + h as ::core::ffi::c_int
                 + *buffer.offset(k as isize) as ::core::ffi::c_int) as integer;
-            while h >= 8501 as ::core::ffi::c_int {
-                h = (h as ::core::ffi::c_int - 8501 as ::core::ffi::c_int) as integer;
-            }
+            h = reduce_tex_hash(h, 8501 as ::core::ffi::c_int);
             let fresh34 = k;
             k = k + 1;
             if !(fresh34 < for_end) {
@@ -10844,9 +10861,7 @@ pub unsafe extern "C" fn zprimlookup(mut s: strnumber) -> halfword {
                     + h as ::core::ffi::c_int
                     + *strpool.offset(k as isize) as ::core::ffi::c_int)
                     as integer;
-                while h >= 1777 as ::core::ffi::c_int {
-                    h = (h as ::core::ffi::c_int - 1777 as ::core::ffi::c_int) as integer;
-                }
+                h = reduce_tex_hash(h, 1777 as ::core::ffi::c_int);
                 let fresh64 = k;
                 k = k + 1;
                 if !(fresh64 < for_end) {
@@ -12850,13 +12865,15 @@ pub unsafe extern "C" fn getnext() {
     let mut c_0: ASCIIcode = 0;
     let mut cc: ASCIIcode = 0;
     let mut d: ::core::ffi::c_uchar = 0;
+    let mubyte_enabled =
+        (*eqtb.offset(29338 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int;
     '_lab20: loop {
         curcs = 0 as ::core::ffi::c_int as halfword;
         if curinput.statefield as ::core::ffi::c_int != 0 as ::core::ffi::c_int {
             '_lab25: loop {
                 if curinput.locfield <= curinput.limitfield {
                     k = curinput.locfield as integer;
-                    curchr = zzreadbuffer(&raw mut k) as halfword;
+                    curchr = readbuffer_for_getnext(&raw mut k, mubyte_enabled) as halfword;
                     curinput.locfield = k as halfword;
                     curinput.locfield += 1;
                     if mubytetoken > 0 as ::core::ffi::c_int {
@@ -13220,14 +13237,14 @@ pub unsafe extern "C" fn getnext() {
                                 mubyteincs = false_0 as boolean;
                                 k = curinput.locfield as integer;
                                 mubyteskeep = mubytekeep;
-                                curchr = zzreadbuffer(&raw mut k) as halfword;
+                                curchr =
+                                    readbuffer_for_getnext(&raw mut k, mubyte_enabled) as halfword;
                                 cat = (*eqtb.offset((27741 as halfword + curchr) as isize))
                                     .hh
                                     .v
                                     .RH
                                     as ::core::ffi::c_uchar;
-                                if (*eqtb.offset(29338 as ::core::ffi::c_int as isize)).u.CINT
-                                    > 0 as ::core::ffi::c_int
+                                if mubyte_enabled
                                     && mubyteincs == 0
                                     && (mubyteskip > 0 as ::core::ffi::c_int
                                         || curchr
@@ -13256,7 +13273,9 @@ pub unsafe extern "C" fn getnext() {
                                         && k <= curinput.limitfield
                                     {
                                         loop {
-                                            curchr = zzreadbuffer(&raw mut k) as halfword;
+                                            curchr =
+                                                readbuffer_for_getnext(&raw mut k, mubyte_enabled)
+                                                    as halfword;
                                             cat = (*eqtb
                                                 .offset((27741 as halfword + curchr) as isize))
                                             .hh
@@ -13266,10 +13285,7 @@ pub unsafe extern "C" fn getnext() {
                                             if mubytetoken > 0 as ::core::ffi::c_int {
                                                 cat = 0 as ::core::ffi::c_uchar;
                                             }
-                                            if (*eqtb.offset(29338 as ::core::ffi::c_int as isize))
-                                                .u
-                                                .CINT
-                                                > 0 as ::core::ffi::c_int
+                                            if mubyte_enabled
                                                 && mubyteincs == 0
                                                 && cat as ::core::ffi::c_int
                                                     == 11 as ::core::ffi::c_int
@@ -13392,11 +13408,7 @@ pub unsafe extern "C" fn getnext() {
                                         first = (first as ::core::ffi::c_int
                                             - d as ::core::ffi::c_int)
                                             as integer;
-                                        if (*eqtb.offset(29338 as ::core::ffi::c_int as isize))
-                                            .u
-                                            .CINT
-                                            > 0 as ::core::ffi::c_int
-                                        {
+                                        if mubyte_enabled {
                                             mubytekeep =
                                                 (k as halfword - curinput.locfield) as integer;
                                         }
@@ -13513,11 +13525,7 @@ pub unsafe extern "C" fn getnext() {
                                         first = (first as ::core::ffi::c_int
                                             - d as ::core::ffi::c_int)
                                             as integer;
-                                        if (*eqtb.offset(29338 as ::core::ffi::c_int as isize))
-                                            .u
-                                            .CINT
-                                            > 0 as ::core::ffi::c_int
-                                        {
+                                        if mubyte_enabled {
                                             mubytekeep =
                                                 (k as halfword - curinput.locfield) as integer;
                                         }
@@ -13563,7 +13571,10 @@ pub unsafe extern "C" fn getnext() {
                                                     }
                                                     while i < k {
                                                         *buffer.offset(j as isize) =
-                                                            zzreadbuffer(&raw mut i);
+                                                            readbuffer_for_getnext(
+                                                                &raw mut i,
+                                                                mubyte_enabled,
+                                                            );
                                                         i += 1;
                                                         j += 1;
                                                     }
@@ -13596,8 +13607,9 @@ pub unsafe extern "C" fn getnext() {
                                         _ => {
                                             mubytekeep = mubyteskeep;
                                             curcs = (257 as ::core::ffi::c_int
-                                                + zzreadbuffer(
+                                                + readbuffer_for_getnext(
                                                     &raw mut curinput.locfield as *mut integer,
+                                                    mubyte_enabled,
                                                 )
                                                     as ::core::ffi::c_int)
                                                 as halfword;
@@ -21483,30 +21495,30 @@ pub unsafe extern "C" fn zreadfontinfo(
             if lf > 127 as ::core::ffi::c_int {
                 current_block = 10566909856556714490;
             } else {
-                tfmtemp = fgetc(tfmfile as *mut FILE);
+                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                 lf = (lf as ::core::ffi::c_int * 256 as ::core::ffi::c_int + tfmtemp) as halfword;
-                tfmtemp = fgetc(tfmfile as *mut FILE);
+                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                 lh = tfmtemp as halfword;
                 if lh > 127 as ::core::ffi::c_int {
                     current_block = 10566909856556714490;
                 } else {
-                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                     lh = (lh as ::core::ffi::c_int * 256 as ::core::ffi::c_int + tfmtemp)
                         as halfword;
-                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                     bc = tfmtemp as halfword;
                     if bc > 127 as ::core::ffi::c_int {
                         current_block = 10566909856556714490;
                     } else {
-                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                         bc = (bc as ::core::ffi::c_int * 256 as ::core::ffi::c_int + tfmtemp)
                             as halfword;
-                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                         ec = tfmtemp as halfword;
                         if ec > 127 as ::core::ffi::c_int {
                             current_block = 10566909856556714490;
                         } else {
-                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                             ec = (ec as ::core::ffi::c_int * 256 as ::core::ffi::c_int + tfmtemp)
                                 as halfword;
                             if bc > ec as ::core::ffi::c_int + 1 as ::core::ffi::c_int
@@ -21518,82 +21530,85 @@ pub unsafe extern "C" fn zreadfontinfo(
                                     bc = 1 as ::core::ffi::c_int as halfword;
                                     ec = 0 as ::core::ffi::c_int as halfword;
                                 }
-                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                 nw = tfmtemp as halfword;
                                 if nw > 127 as ::core::ffi::c_int {
                                     current_block = 10566909856556714490;
                                 } else {
-                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                     nw = (nw as ::core::ffi::c_int * 256 as ::core::ffi::c_int
                                         + tfmtemp)
                                         as halfword;
-                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                     nh = tfmtemp as halfword;
                                     if nh > 127 as ::core::ffi::c_int {
                                         current_block = 10566909856556714490;
                                     } else {
-                                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                         nh = (nh as ::core::ffi::c_int * 256 as ::core::ffi::c_int
                                             + tfmtemp)
                                             as halfword;
-                                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                         nd = tfmtemp as halfword;
                                         if nd > 127 as ::core::ffi::c_int {
                                             current_block = 10566909856556714490;
                                         } else {
-                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                             nd = (nd as ::core::ffi::c_int
                                                 * 256 as ::core::ffi::c_int
                                                 + tfmtemp)
                                                 as halfword;
-                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                             ni = tfmtemp as halfword;
                                             if ni > 127 as ::core::ffi::c_int {
                                                 current_block = 10566909856556714490;
                                             } else {
-                                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                 ni = (ni as ::core::ffi::c_int
                                                     * 256 as ::core::ffi::c_int
                                                     + tfmtemp)
                                                     as halfword;
-                                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                 nl = tfmtemp as halfword;
                                                 if nl > 127 as ::core::ffi::c_int {
                                                     current_block = 10566909856556714490;
                                                 } else {
-                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                     nl = (nl as ::core::ffi::c_int
                                                         * 256 as ::core::ffi::c_int
                                                         + tfmtemp)
                                                         as halfword;
-                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                     nk = tfmtemp as halfword;
                                                     if nk > 127 as ::core::ffi::c_int {
                                                         current_block = 10566909856556714490;
                                                     } else {
-                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                         nk = (nk as ::core::ffi::c_int
                                                             * 256 as ::core::ffi::c_int
                                                             + tfmtemp)
                                                             as halfword;
-                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                         ne = tfmtemp as halfword;
                                                         if ne > 127 as ::core::ffi::c_int {
                                                             current_block = 10566909856556714490;
                                                         } else {
-                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                            tfmtemp =
+                                                                fast_fgetc(tfmfile as *mut FILE);
                                                             ne = (ne as ::core::ffi::c_int
                                                                 * 256 as ::core::ffi::c_int
                                                                 + tfmtemp)
                                                                 as halfword;
-                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                            tfmtemp =
+                                                                fast_fgetc(tfmfile as *mut FILE);
                                                             np = tfmtemp as halfword;
                                                             if np > 127 as ::core::ffi::c_int {
                                                                 current_block =
                                                                     10566909856556714490;
                                                             } else {
-                                                                tfmtemp =
-                                                                    fgetc(tfmfile as *mut FILE);
+                                                                tfmtemp = fast_fgetc(
+                                                                    tfmfile as *mut FILE,
+                                                                );
                                                                 np = (np as ::core::ffi::c_int
                                                                     * 256 as ::core::ffi::c_int
                                                                     + tfmtemp)
@@ -21760,7 +21775,7 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                         {
                                                                             current_block = 10566909856556714490;
                                                                         } else {
-                                                                            tfmtemp = fgetc(
+                                                                            tfmtemp = fast_fgetc(
                                                                                 tfmfile
                                                                                     as *mut FILE,
                                                                             );
@@ -21768,7 +21783,7 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                 as eightbits;
                                                                             qw.u.B0 =
                                                                                 a as quarterword;
-                                                                            tfmtemp = fgetc(
+                                                                            tfmtemp = fast_fgetc(
                                                                                 tfmfile
                                                                                     as *mut FILE,
                                                                             );
@@ -21776,7 +21791,7 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                 as eightbits;
                                                                             qw.u.B1 =
                                                                                 b as quarterword;
-                                                                            tfmtemp = fgetc(
+                                                                            tfmtemp = fast_fgetc(
                                                                                 tfmfile
                                                                                     as *mut FILE,
                                                                             );
@@ -21784,7 +21799,7 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                 as eightbits;
                                                                             qw.u.B2 =
                                                                                 c_0 as quarterword;
-                                                                            tfmtemp = fgetc(
+                                                                            tfmtemp = fast_fgetc(
                                                                                 tfmfile
                                                                                     as *mut FILE,
                                                                             );
@@ -21795,7 +21810,7 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                             *fontcheck.offset(
                                                                                 f_0 as isize,
                                                                             ) = qw;
-                                                                            tfmtemp = fgetc(
+                                                                            tfmtemp = fast_fgetc(
                                                                                 tfmfile
                                                                                     as *mut FILE,
                                                                             );
@@ -21803,13 +21818,13 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                             if z > 127 as ::core::ffi::c_int {
                                                                                 current_block = 10566909856556714490;
                                                                             } else {
-                                                                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                 z = (z as ::core::ffi::c_int * 256 as ::core::ffi::c_int
                                                                                     + tfmtemp) as scaled;
-                                                                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                 z = (z as ::core::ffi::c_int * 256 as ::core::ffi::c_int
                                                                                     + tfmtemp) as scaled;
-                                                                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                 z = (z as ::core::ffi::c_int * 16 as ::core::ffi::c_int
                                                                                     + tfmtemp / 16 as ::core::ffi::c_int) as scaled;
                                                                                 if (z as ::core::ffi::c_long) < 65536 as ::core::ffi::c_long
@@ -21817,10 +21832,10 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                     current_block = 10566909856556714490;
                                                                                 } else {
                                                                                     while lh > 2 as ::core::ffi::c_int {
-                                                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
-                                                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
-                                                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
-                                                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
+                                                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
+                                                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
+                                                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                         lh -= 1;
                                                                                     }
                                                                                     *fontdsize.offset(f_0 as isize) = z;
@@ -21871,16 +21886,16 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                         as ::core::ffi::c_int - 1 as ::core::ffi::c_int) as integer;
                                                                                     if k <= for_end {
                                                                                         loop {
-                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                             a = tfmtemp as eightbits;
                                                                                             qw.u.B0 = a as quarterword;
-                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                             b = tfmtemp as eightbits;
                                                                                             qw.u.B1 = b as quarterword;
-                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                             c_0 = tfmtemp as eightbits;
                                                                                             qw.u.B2 = c_0 as quarterword;
-                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                             d = tfmtemp as eightbits;
                                                                                             qw.u.B3 = d as quarterword;
                                                                                             (*fontinfo.offset(k as isize)).v.QQQQ = qw;
@@ -21984,13 +21999,13 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                                 as ::core::ffi::c_int - 1 as ::core::ffi::c_int) as integer;
                                                                                             if k <= for_end_0 {
                                                                                                 loop {
-                                                                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                     a = tfmtemp as eightbits;
-                                                                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                     b = tfmtemp as eightbits;
-                                                                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                     c_0 = tfmtemp as eightbits;
-                                                                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                     d = tfmtemp as eightbits;
                                                                                                     sw = (((d as ::core::ffi::c_int * z as ::core::ffi::c_int
                                                                                                         / 256 as ::core::ffi::c_int
@@ -22057,16 +22072,16 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                                                 - 1 as ::core::ffi::c_int) as integer;
                                                                                                             if k <= for_end_1 {
                                                                                                                 loop {
-                                                                                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                     a = tfmtemp as eightbits;
                                                                                                                     qw.u.B0 = a as quarterword;
-                                                                                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                     b = tfmtemp as eightbits;
                                                                                                                     qw.u.B1 = b as quarterword;
-                                                                                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                     c_0 = tfmtemp as eightbits;
                                                                                                                     qw.u.B2 = c_0 as quarterword;
-                                                                                                                    tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                    tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                     d = tfmtemp as eightbits;
                                                                                                                     qw.u.B3 = d as quarterword;
                                                                                                                     (*fontinfo.offset(k as isize)).v.QQQQ = qw;
@@ -22177,13 +22192,13 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                                                     as ::core::ffi::c_int - 1 as ::core::ffi::c_int) as integer;
                                                                                                                 if k <= for_end_2 {
                                                                                                                     loop {
-                                                                                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                         a = tfmtemp as eightbits;
-                                                                                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                         b = tfmtemp as eightbits;
-                                                                                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                         c_0 = tfmtemp as eightbits;
-                                                                                                                        tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                        tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                         d = tfmtemp as eightbits;
                                                                                                                         sw = (((d as ::core::ffi::c_int * z as ::core::ffi::c_int
                                                                                                                             / 256 as ::core::ffi::c_int
@@ -22220,16 +22235,16 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                                                             as ::core::ffi::c_int - 1 as ::core::ffi::c_int) as integer;
                                                                                                                         if k <= for_end_3 {
                                                                                                                             loop {
-                                                                                                                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                 a = tfmtemp as eightbits;
                                                                                                                                 qw.u.B0 = a as quarterword;
-                                                                                                                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                 b = tfmtemp as eightbits;
                                                                                                                                 qw.u.B1 = b as quarterword;
-                                                                                                                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                 c_0 = tfmtemp as eightbits;
                                                                                                                                 qw.u.B2 = c_0 as quarterword;
-                                                                                                                                tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                 d = tfmtemp as eightbits;
                                                                                                                                 qw.u.B3 = d as quarterword;
                                                                                                                                 (*fontinfo.offset(k as isize)).v.QQQQ = qw;
@@ -22334,31 +22349,31 @@ pub unsafe extern "C" fn zreadfontinfo(
                                                                                                                                 if k <= for_end_4 {
                                                                                                                                     loop {
                                                                                                                                         if k == 1 as ::core::ffi::c_int {
-                                                                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                             sw = tfmtemp as scaled;
                                                                                                                                             if sw > 127 as ::core::ffi::c_int {
                                                                                                                                                 sw = (sw as ::core::ffi::c_int - 256 as ::core::ffi::c_int)
                                                                                                                                                     as scaled;
                                                                                                                                             }
-                                                                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                             sw = (sw as ::core::ffi::c_int * 256 as ::core::ffi::c_int
                                                                                                                                                 + tfmtemp) as scaled;
-                                                                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                             sw = (sw as ::core::ffi::c_int * 256 as ::core::ffi::c_int
                                                                                                                                                 + tfmtemp) as scaled;
-                                                                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                             (*fontinfo.offset(*parambase.offset(f_0 as isize) as isize))
                                                                                                                                                 .u
                                                                                                                                                 .CINT = (sw as ::core::ffi::c_int * 16 as ::core::ffi::c_int
                                                                                                                                                 + tfmtemp / 16 as ::core::ffi::c_int) as integer;
                                                                                                                                         } else {
-                                                                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                             a = tfmtemp as eightbits;
-                                                                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                             b = tfmtemp as eightbits;
-                                                                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                             c_0 = tfmtemp as eightbits;
-                                                                                                                                            tfmtemp = fgetc(tfmfile as *mut FILE);
+                                                                                                                                            tfmtemp = fast_fgetc(tfmfile as *mut FILE);
                                                                                                                                             d = tfmtemp as eightbits;
                                                                                                                                             sw = (((d as ::core::ffi::c_int * z as ::core::ffi::c_int
                                                                                                                                                 / 256 as ::core::ffi::c_int
@@ -29558,7 +29573,7 @@ pub unsafe extern "C" fn zvferror(mut filename: strnumber, mut msg: strnumber) {
 pub unsafe extern "C" fn vfbyte() -> eightbits {
     let mut Result: eightbits = 0;
     let mut i: integer = 0;
-    i = fgetc(vffile as *mut FILE) as integer;
+    i = fast_fgetc(vffile as *mut FILE) as integer;
     if i < 0 as ::core::ffi::c_int {
         zpdferror(1114 as ::core::ffi::c_int, 1115 as ::core::ffi::c_int);
     }
@@ -30858,7 +30873,7 @@ pub unsafe extern "C" fn zpdfwriteobj(mut n: integer) {
                 } else if pdfosmode == 0 && 1 as integer + pdfptr > pdfbufsize {
                     pdfflush();
                 }
-                *pdfbuf.offset(pdfptr as isize) = fgetc(f_0 as *mut FILE) as eightbits;
+                *pdfbuf.offset(pdfptr as isize) = fast_fgetc(f_0 as *mut FILE) as eightbits;
                 pdfptr += 1;
             }
             if *pdfmem.offset(

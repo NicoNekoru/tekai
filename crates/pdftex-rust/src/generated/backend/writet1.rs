@@ -7,6 +7,8 @@ extern "C" {
     fn atan(_: ::core::ffi::c_double) -> ::core::ffi::c_double;
     fn feof(_: *mut FILE) -> ::core::ffi::c_int;
     fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
+    #[cfg(unix)]
+    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
     fn sprintf(
         _: *mut ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -95,6 +97,18 @@ extern "C" {
     fn fb_offset() -> integer;
     fn fb_putchar(b: eightbits);
     fn make_subset_tag(_: *mut fd_entry);
+}
+#[inline(always)]
+unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
+    #[cfg(unix)]
+    {
+        unsafe { getc_unlocked(stream) }
+    }
+
+    #[cfg(not(unix))]
+    {
+        unsafe { fgetc(stream) }
+    }
 }
 pub type __builtin_va_list = *mut ::core::ffi::c_char;
 pub type __uint32_t = u32;
@@ -882,7 +896,7 @@ unsafe extern "C" fn enc_getline() {
         }
         p = &raw mut enc_line as *mut ::core::ffi::c_char;
         loop {
-            c = fgetc(enc_file);
+            c = fast_fgetc(enc_file);
             if c == 9 as ::core::ffi::c_int {
                 c = 32 as ::core::ffi::c_int;
             }
@@ -1110,7 +1124,7 @@ pub unsafe extern "C" fn load_enc_file(
     return glyph_names;
 }
 unsafe extern "C" fn t1_check_pfa() {
-    let c: ::core::ffi::c_int = fgetc(t1_file) as ::core::ffi::c_int;
+    let c: ::core::ffi::c_int = fast_fgetc(t1_file) as ::core::ffi::c_int;
     t1_pfa = (if c != 128 as ::core::ffi::c_int {
         true_0
     } else {
@@ -1119,7 +1133,7 @@ unsafe extern "C" fn t1_check_pfa() {
     ungetc(c, t1_file);
 }
 unsafe extern "C" fn t1_getbyte() -> ::core::ffi::c_int {
-    let mut c: ::core::ffi::c_int = fgetc(t1_file);
+    let mut c: ::core::ffi::c_int = fast_fgetc(t1_file);
     if t1_pfa != 0 {
         return c;
     }
@@ -1130,21 +1144,21 @@ unsafe extern "C" fn t1_getbyte() -> ::core::ffi::c_int {
                 &[],
             );
         }
-        c = fgetc(t1_file);
+        c = fast_fgetc(t1_file);
         if c == 3 as ::core::ffi::c_int {
             while feof(t1_file) == 0 {
-                fgetc(t1_file);
+                fast_fgetc(t1_file);
             }
             return EOF;
         }
-        t1_block_length = (fgetc(t1_file) & 0xff as ::core::ffi::c_int) as ::core::ffi::c_long;
-        t1_block_length |= ((fgetc(t1_file) & 0xff as ::core::ffi::c_int)
+        t1_block_length = (fast_fgetc(t1_file) & 0xff as ::core::ffi::c_int) as ::core::ffi::c_long;
+        t1_block_length |= ((fast_fgetc(t1_file) & 0xff as ::core::ffi::c_int)
             << 8 as ::core::ffi::c_int) as ::core::ffi::c_long;
-        t1_block_length |= ((fgetc(t1_file) & 0xff as ::core::ffi::c_int)
+        t1_block_length |= ((fast_fgetc(t1_file) & 0xff as ::core::ffi::c_int)
             << 16 as ::core::ffi::c_int) as ::core::ffi::c_long;
-        t1_block_length |= ((fgetc(t1_file) & 0xff as ::core::ffi::c_int)
+        t1_block_length |= ((fast_fgetc(t1_file) & 0xff as ::core::ffi::c_int)
             << 24 as ::core::ffi::c_int) as ::core::ffi::c_long;
-        c = fgetc(t1_file);
+        c = fast_fgetc(t1_file);
     }
     t1_block_length -= 1;
     return c;

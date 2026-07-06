@@ -16,6 +16,8 @@ pub struct png_info_def {
 extern "C" {
     fn feof(_: *mut FILE) -> ::core::ffi::c_int;
     fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
+    #[cfg(unix)]
+    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
     fn fread(
         __ptr: *mut ::core::ffi::c_void,
         __size: size_t,
@@ -52,6 +54,18 @@ extern "C" {
     fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
     fn xgetc(_: *mut FILE) -> ::core::ffi::c_int;
     static mut image_array: *mut image_entry;
+}
+#[inline(always)]
+unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
+    #[cfg(unix)]
+    {
+        unsafe { getc_unlocked(stream) }
+    }
+
+    #[cfg(not(unix))]
+    {
+        unsafe { fgetc(stream) }
+    }
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -232,7 +246,7 @@ unsafe extern "C" fn read2bytes(mut f: *mut FILE) -> ::core::ffi::c_uint {
 }
 unsafe extern "C" fn get_unsigned_byte(mut file: *mut FILE) -> ::core::ffi::c_uchar {
     let mut ch: ::core::ffi::c_int = 0;
-    ch = fgetc(file);
+    ch = fast_fgetc(file);
     return ch as ::core::ffi::c_uchar;
 }
 unsafe extern "C" fn get_unsigned_pair(mut file: *mut FILE) -> ::core::ffi::c_ushort {
@@ -618,7 +632,7 @@ pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
                 &[],
             );
         }
-        if fgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file)
+        if fast_fgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file)
             != 0xff as ::core::ffi::c_int
         {
             crate::utils::pdftex_fail_args(
