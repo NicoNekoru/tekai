@@ -128,7 +128,7 @@ pub const Z_NO_FLUSH: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const Z_FINISH: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
 pub const Z_OK: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const Z_STREAM_END: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
-pub const ZIP_BUF_SIZE: ::core::ffi::c_int = 32768 as ::core::ffi::c_int;
+pub const ZIP_BUF_SIZE: ::core::ffi::c_int = 131072 as ::core::ffi::c_int;
 const TEXPILOT_MAX_FAST_COMPRESS_LEVEL: ::core::ffi::c_int = 1;
 static mut zipbuf: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
@@ -169,7 +169,7 @@ pub unsafe extern "C" fn writezip(mut finish: boolean) {
     if pdfstreamlength == 0 as longinteger {
         if zipbuf.is_null() {
             zipbuf = xmalloc(
-                (32768 as size_t)
+                (ZIP_BUF_SIZE as size_t)
                     .wrapping_mul(::core::mem::size_of::<::core::ffi::c_char>() as size_t),
             ) as *mut ::core::ffi::c_char;
             c_stream.zalloc = None;
