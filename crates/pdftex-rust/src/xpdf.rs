@@ -1,4 +1,4 @@
-use libc::{c_char, c_double, c_float, c_int};
+use libc::{c_char, c_double, c_float, c_int, size_t};
 use lopdf::{
     Dictionary as LoDictionary, Document as LoDocument, Object as LoObject, ObjectId as LoObjectId,
     Stream as LoStream,
@@ -907,6 +907,34 @@ pub unsafe extern "C" fn xpdf_stream_get_char(stream: *mut Stream) -> c_int {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn xpdf_stream_get_remaining_data(
+    stream: *mut Stream,
+    len: *mut size_t,
+) -> *const u8 {
+    let Some(stream) = (unsafe { stream_mut(stream) }) else {
+        if !len.is_null() {
+            unsafe {
+                *len = 0;
+            }
+        }
+        return ptr::null();
+    };
+    let start = stream.pos.min(stream.stream.content.len());
+    let bytes = &stream.stream.content[start..];
+    stream.pos = stream.stream.content.len();
+    if !len.is_null() {
+        unsafe {
+            *len = bytes.len();
+        }
+    }
+    if bytes.is_empty() {
+        ptr::null()
+    } else {
+        bytes.as_ptr()
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn xpdf_stream_get_dict(stream: *mut Stream) -> *mut Dict {
     unsafe { stream_mut(stream) }
         .map(Stream::dict)
@@ -1241,4 +1269,31 @@ pub unsafe extern "C" fn xpdf_gfx_8bit_font_char_name(
     _code: c_int,
 ) -> *mut c_char {
     ptr::null_mut()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::slice;
+
+    #[test]
+    fn stream_remaining_data_returns_tail_and_advances_to_eof() {
+        let lo_stream = LoStream::new(LoDictionary::new(), b"abcd".to_vec());
+        let mut stream = Stream::new(lo_stream, ptr::null_mut());
+        let stream_ptr = &mut stream as *mut Stream;
+
+        assert_eq!(unsafe { xpdf_stream_get_char(stream_ptr) }, b'a' as c_int);
+
+        let mut len = 0;
+        let data = unsafe { xpdf_stream_get_remaining_data(stream_ptr, &mut len) };
+        assert_eq!(len, 3);
+        assert_eq!(unsafe { slice::from_raw_parts(data, len) }, b"bcd");
+        assert_eq!(unsafe { xpdf_stream_get_char(stream_ptr) }, libc::EOF);
+
+        unsafe { xpdf_stream_reset(stream_ptr) };
+        let data = unsafe { xpdf_stream_get_remaining_data(stream_ptr, &mut len) };
+        assert_eq!(len, 4);
+        assert_eq!(unsafe { slice::from_raw_parts(data, len) }, b"abcd");
+        assert_eq!(unsafe { xpdf_stream_get_char(stream_ptr) }, libc::EOF);
+    }
 }

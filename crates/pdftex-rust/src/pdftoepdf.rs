@@ -2,7 +2,9 @@ use libc::{c_char, c_double, c_float, c_int, c_long, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
 
-use crate::utils::{pdf_out, pdf_printf_args, pdftex_fail_args, pdftex_warn_args, tex_printf_args};
+use crate::utils::{
+    pdf_out, pdf_printf_args, pdf_write_bytes, pdftex_fail_args, pdftex_warn_args, tex_printf_args,
+};
 use crate::utils::{FdEntry, FmEntry, PrintfArg};
 use crate::xpdf::*;
 
@@ -342,17 +344,14 @@ unsafe fn copy_font_dict(obj: *mut Object, r: *mut InObj) {
 
 unsafe fn copy_stream(stream: *mut Stream) {
     unsafe {
-        let mut last = 0;
         xpdf_stream_reset(stream);
-        loop {
-            let c = xpdf_stream_get_char(stream);
-            if c == libc::EOF {
-                break;
-            }
-            pdf_out(c as u8);
-            last = c as u8;
+        let mut len: libc::size_t = 0;
+        let data = xpdf_stream_get_remaining_data(stream, &mut len);
+        if data.is_null() || len == 0 {
+            pdflastbyte = 0;
+            return;
         }
-        pdflastbyte = last;
+        pdf_write_bytes(data, len);
     }
 }
 

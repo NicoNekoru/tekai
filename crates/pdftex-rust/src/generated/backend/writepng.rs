@@ -1757,6 +1757,105 @@ unsafe fn try_write_png_rgb_alpha_8_fast(
     *smask_ptr = mask_offset as integer;
     true_0 as boolean
 }
+unsafe fn try_write_opaque_png_rgb_alpha_8_fast(mut img: integer) -> boolean {
+    if png_get_bit_depth(
+        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+        (*image_array.offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+    ) as ::core::ffi::c_int
+        != 8 as ::core::ffi::c_int
+        || png_get_interlace_type(
+            (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+            (*image_array.offset(img as isize))
+                .image_struct
+                .png
+                .info_ptr as png_const_inforp,
+        ) as ::core::ffi::c_int
+            != PNG_INTERLACE_NONE
+    {
+        return false_0 as boolean;
+    }
+
+    let width = png_get_image_width(
+        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+        (*image_array.offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+    ) as usize;
+    let height = png_get_image_height(
+        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+        (*image_array.offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+    ) as usize;
+    let Some(source_rowbytes) = width.checked_mul(4) else {
+        return false_0 as boolean;
+    };
+    let Some(rgb_rowbytes) = width.checked_mul(3) else {
+        return false_0 as boolean;
+    };
+    let Some(expected_len) = source_rowbytes.checked_mul(height) else {
+        return false_0 as boolean;
+    };
+
+    let mut decoded_rowbytes: size_t = 0;
+    let mut decoded_len: size_t = 0;
+    let decoded = crate::pngshim::png_decoded_data(
+        (*image_array.offset(img as isize)).image_struct.png.png_ptr as *mut ::core::ffi::c_void,
+        &mut decoded_rowbytes,
+        &mut decoded_len,
+    );
+    if decoded.is_null() || decoded_rowbytes != source_rowbytes || decoded_len < expected_len {
+        return false_0 as boolean;
+    }
+
+    for y in 0..height {
+        let source = decoded.add(y * decoded_rowbytes);
+        let mut alpha_offset = 3usize;
+        while alpha_offset < source_rowbytes {
+            if *source.add(alpha_offset) != 255 {
+                return false_0 as boolean;
+            }
+            alpha_offset += 4;
+        }
+    }
+
+    let rgb_row = xmalloc(rgb_rowbytes as size_t) as *mut u8;
+    if rgb_row.is_null() {
+        return false_0 as boolean;
+    }
+
+    pdfbeginstream();
+    for y in 0..height {
+        let source = decoded.add(y * decoded_rowbytes);
+        let mut source_offset = 0usize;
+        let mut rgb_offset = 0usize;
+        for _ in 0..width {
+            *rgb_row.add(rgb_offset) = *source.add(source_offset);
+            *rgb_row.add(rgb_offset + 1) = *source.add(source_offset + 1);
+            *rgb_row.add(rgb_offset + 2) = *source.add(source_offset + 2);
+            source_offset += 4;
+            rgb_offset += 3;
+        }
+        crate::utils::pdf_write_bytes(rgb_row, rgb_rowbytes);
+    }
+    pdfendstream();
+
+    free(rgb_row as *mut ::core::ffi::c_void);
+    true_0 as boolean
+}
+unsafe fn write_opaque_smask_bytes(mut len: usize) {
+    let buf = [255u8; 8192];
+    while len > 0 {
+        let chunk = if len > buf.len() { buf.len() } else { len };
+        crate::utils::pdf_write_bytes(buf.as_ptr(), chunk);
+        len -= chunk;
+    }
+}
 
 unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
@@ -1771,6 +1870,7 @@ unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
     let mut smask_ptr: integer = 0 as integer;
     let mut smask_size: integer = 0 as integer;
     let mut bitdepth: ::core::ffi::c_int = 0;
+    let mut opaque_rgb_alpha_fast: boolean = false_0 as boolean;
     if (*image_array.offset(img as isize)).colorspace_ref != 0 as ::core::ffi::c_int {
         crate::utils::pdf_printf_args(
             b"%i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1802,29 +1902,31 @@ unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
             .png
             .info_ptr as png_const_inforp,
     ) as size_t) as integer;
-    smask =
-        xmalloc((smask_size as size_t).wrapping_mul(::core::mem::size_of::<png_byte>() as size_t))
-            as *mut png_byte as png_bytep;
-    pdfbeginstream();
-    let fast_rgb_alpha = png_get_bit_depth(
-        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-        (*image_array.offset(img as isize))
-            .image_struct
-            .png
-            .info_ptr as png_const_inforp,
-    ) as ::core::ffi::c_int
-        == 8 as ::core::ffi::c_int
-        && png_get_interlace_type(
+    opaque_rgb_alpha_fast = try_write_opaque_png_rgb_alpha_8_fast(img);
+    if opaque_rgb_alpha_fast == 0 {
+        smask = xmalloc(
+            (smask_size as size_t).wrapping_mul(::core::mem::size_of::<png_byte>() as size_t),
+        ) as *mut png_byte as png_bytep;
+        pdfbeginstream();
+        let fast_rgb_alpha = png_get_bit_depth(
             (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
             (*image_array.offset(img as isize))
                 .image_struct
                 .png
                 .info_ptr as png_const_inforp,
         ) as ::core::ffi::c_int
-            == PNG_INTERLACE_NONE
-        && try_write_png_rgb_alpha_8_fast(img, smask, &mut smask_ptr) != 0;
-    if fast_rgb_alpha {
-    } else if png_get_interlace_type(
+            == 8 as ::core::ffi::c_int
+            && png_get_interlace_type(
+                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+                (*image_array.offset(img as isize))
+                    .image_struct
+                    .png
+                    .info_ptr as png_const_inforp,
+            ) as ::core::ffi::c_int
+                == PNG_INTERLACE_NONE
+            && try_write_png_rgb_alpha_8_fast(img, smask, &mut smask_ptr) != 0;
+        if fast_rgb_alpha {
+        } else if png_get_interlace_type(
         (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
         (*image_array.offset(img as isize))
             .image_struct
@@ -2197,8 +2299,9 @@ unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
             free(rows as *mut ::core::ffi::c_void);
         }
         rows = ::core::ptr::null_mut::<png_bytep>();
+        }
+        pdfendstream();
     }
-    pdfendstream();
     pdfflush();
     if smask_objnum > 0 as ::core::ffi::c_int {
         bitdepth = png_get_bit_depth(
@@ -2240,7 +2343,11 @@ unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
         pdf_puts(b"/ColorSpace /DeviceGray\n\0" as *const u8 as *const ::core::ffi::c_char);
         pdfbeginstream();
         if bitdepth == 8 as ::core::ffi::c_int {
-            crate::utils::pdf_write_bytes(smask, smask_size as usize);
+            if opaque_rgb_alpha_fast != 0 {
+                write_opaque_smask_bytes(smask_size as usize);
+            } else {
+                crate::utils::pdf_write_bytes(smask, smask_size as usize);
+            }
         } else {
             i = 0 as ::core::ffi::c_int;
             while i < smask_size {

@@ -160,6 +160,9 @@ impl PngState {
         if self.decoded.is_some() {
             return Ok(());
         }
+        if self.data.is_empty() {
+            self.data = unsafe { read_file(self.file)? };
+        }
 
         let mut decoder = png::Decoder::new(Cursor::new(self.data.as_slice()));
         let mut transforms = png::Transformations::IDENTITY;
@@ -285,11 +288,7 @@ pub unsafe extern "C" fn png_read_info(png_ptr: *mut png_struct_def, _info_ptr: 
     let Some(state) = state(png_ptr) else {
         return;
     };
-    let Ok(data) = read_file(state.file) else {
-        return;
-    };
-    state.data = data;
-    if let Ok(metadata) = parse_metadata(&state.data) {
+    if let Ok(metadata) = parse_metadata_from_file(state.file) {
         state.width = metadata.width;
         state.height = metadata.height;
         state.bit_depth = metadata.bit_depth;
@@ -373,7 +372,9 @@ pub unsafe extern "C" fn png_read_update_info(
     _info_ptr: *mut png_info_def,
 ) {
     if let Some(state) = state(png_ptr) {
-        let _ = state.ensure_decoded();
+        if state.strip_16 || state.trns_to_alpha || state.strip_alpha || state.gamma.is_some() {
+            let _ = state.ensure_decoded();
+        }
     }
 }
 
@@ -643,6 +644,35 @@ unsafe fn read_file(fp: *mut libc::FILE) -> Result<Vec<u8>, String> {
     Ok(data)
 }
 
+unsafe fn read_exact_file(fp: *mut libc::FILE, buf: &mut [u8]) -> Result<(), String> {
+    if buf.is_empty() {
+        return Ok(());
+    }
+    let read = unsafe { libc::fread(buf.as_mut_ptr().cast(), 1, buf.len(), fp) };
+    if read == buf.len() {
+        Ok(())
+    } else {
+        Err("short PNG read".to_string())
+    }
+}
+
+unsafe fn skip_file_bytes(fp: *mut libc::FILE, len: usize) -> Result<(), String> {
+    if len == 0 {
+        return Ok(());
+    }
+    if unsafe { libc::fseeko(fp, len as libc::off_t, libc::SEEK_CUR) } == 0 {
+        Ok(())
+    } else {
+        Err("PNG seek failed".to_string())
+    }
+}
+
+unsafe fn read_be_u32_file(fp: *mut libc::FILE) -> Result<u32, String> {
+    let mut buf = [0u8; 4];
+    unsafe { read_exact_file(fp, &mut buf)? };
+    Ok(u32::from_be_bytes(buf))
+}
+
 struct Metadata {
     width: u32,
     height: u32,
@@ -657,157 +687,122 @@ struct Metadata {
     trns: Option<Vec<u8>>,
 }
 
-fn parse_metadata(data: &[u8]) -> Result<Metadata, String> {
-    let decoder = png::Decoder::new(Cursor::new(data));
-    let reader = decoder.read_info().map_err(|err| err.to_string())?;
-    let info = reader.info();
+unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, String> {
+    if fp.is_null() {
+        return Err("null FILE".to_string());
+    }
+    if unsafe { libc::fseeko(fp, 0, libc::SEEK_SET) } != 0 {
+        return Err("seek start failed".to_string());
+    }
+    let mut signature = [0u8; 8];
+    unsafe { read_exact_file(fp, &mut signature)? };
+    if &signature != b"\x89PNG\r\n\x1a\n" {
+        return Err("invalid PNG signature".to_string());
+    }
     let mut metadata = Metadata {
-        width: info.width,
-        height: info.height,
-        bit_depth: bit_depth_to_u8(info.bit_depth),
-        color_type: color_type_to_u8(info.color_type),
-        interlace_type: if info.interlaced {
-            PNG_INTERLACE_ADAM7
-        } else {
-            PNG_INTERLACE_NONE
-        },
+        width: 0,
+        height: 0,
+        bit_depth: 8,
+        color_type: PNG_COLOR_TYPE_RGB,
+        interlace_type: PNG_INTERLACE_NONE,
         valid: 0,
         x_pixels_per_meter: 0,
         y_pixels_per_meter: 0,
-        gamma_scaled: info
-            .gama_chunk
-            .map(|gamma| gamma.into_scaled() as i32)
-            .unwrap_or(0),
-        palette: info
-            .palette
-            .as_ref()
-            .map(|palette| {
-                palette
+        gamma_scaled: 0,
+        palette: Vec::new(),
+        trns: None,
+    };
+
+    loop {
+        let len = unsafe { read_be_u32_file(fp)? } as usize;
+        let mut typ = [0u8; 4];
+        unsafe { read_exact_file(fp, &mut typ)? };
+        match &typ {
+            b"IHDR" if len >= 13 => {
+                let mut chunk = [0u8; 13];
+                unsafe { read_exact_file(fp, &mut chunk)? };
+                metadata.width = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                metadata.height = u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+                metadata.bit_depth = chunk[8];
+                metadata.color_type = chunk[9];
+                metadata.interlace_type = if chunk[12] == PNG_INTERLACE_ADAM7 {
+                    PNG_INTERLACE_ADAM7
+                } else {
+                    PNG_INTERLACE_NONE
+                };
+                unsafe { skip_file_bytes(fp, len - 13)? };
+            }
+            b"gAMA" if len == 4 => {
+                metadata.valid |= PNG_INFO_GAMA;
+                metadata.gamma_scaled = unsafe { read_be_u32_file(fp)? } as i32;
+            }
+            b"pHYs" if len == 9 => {
+                let mut chunk = [0u8; 9];
+                unsafe { read_exact_file(fp, &mut chunk)? };
+                metadata.valid |= PNG_INFO_PHYS;
+                metadata.x_pixels_per_meter =
+                    u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                metadata.y_pixels_per_meter =
+                    u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+            }
+            b"PLTE" => {
+                let mut chunk = vec![0u8; len];
+                unsafe { read_exact_file(fp, &mut chunk)? };
+                metadata.palette = chunk
                     .chunks_exact(3)
                     .map(|rgb| png_color_struct {
                         red: rgb[0],
                         green: rgb[1],
                         blue: rgb[2],
                     })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        trns: info.trns.as_ref().map(|trns| trns.to_vec()),
-    };
-    if metadata.gamma_scaled != 0 {
-        metadata.valid |= PNG_INFO_GAMA;
-    }
-    if info.sbit.is_some() {
-        metadata.valid |= PNG_INFO_SBIT;
-    }
-    if metadata.trns.is_some() {
-        metadata.valid |= PNG_INFO_TRNS;
-    }
-    if let Some(dims) = info.pixel_dims {
-        metadata.valid |= PNG_INFO_PHYS;
-        metadata.x_pixels_per_meter = dims.xppu;
-        metadata.y_pixels_per_meter = dims.yppu;
-    }
-    if info.chrm_chunk.is_some() {
-        metadata.valid |= PNG_INFO_CHRM;
-    }
-    if info.srgb.is_some() {
-        metadata.valid |= PNG_INFO_SRGB;
-    }
-    if info.icc_profile.is_some() {
-        metadata.valid |= PNG_INFO_ICCP;
-    }
-    if info.bkgd.is_some() {
-        metadata.valid |= PNG_INFO_BKGD;
-    }
-    scan_extra_chunk_flags(data, &mut metadata);
-    Ok(metadata)
-}
-
-fn scan_extra_chunk_flags(data: &[u8], metadata: &mut Metadata) {
-    if data.len() < 8 || &data[..8] != b"\x89PNG\r\n\x1a\n" {
-        return;
-    }
-    let mut offset = 8usize;
-    while offset
-        .checked_add(12)
-        .map_or(false, |end| end <= data.len())
-    {
-        let len = u32::from_be_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-        let typ = &data[offset + 4..offset + 8];
-        let Some(chunk_data_start) = offset.checked_add(8) else {
-            break;
-        };
-        let Some(chunk_data_end) = chunk_data_start.checked_add(len) else {
-            break;
-        };
-        let Some(next) = chunk_data_end.checked_add(4) else {
-            break;
-        };
-        if next > data.len() {
-            break;
-        }
-        let chunk_data = &data[chunk_data_start..chunk_data_end];
-        match typ {
-            b"gAMA" if chunk_data.len() == 4 => {
-                metadata.valid |= PNG_INFO_GAMA;
-                metadata.gamma_scaled = u32::from_be_bytes([
-                    chunk_data[0],
-                    chunk_data[1],
-                    chunk_data[2],
-                    chunk_data[3],
-                ]) as i32;
-            }
-            b"pHYs" if chunk_data.len() == 9 => {
-                metadata.valid |= PNG_INFO_PHYS;
-                metadata.x_pixels_per_meter = u32::from_be_bytes([
-                    chunk_data[0],
-                    chunk_data[1],
-                    chunk_data[2],
-                    chunk_data[3],
-                ]);
-                metadata.y_pixels_per_meter = u32::from_be_bytes([
-                    chunk_data[4],
-                    chunk_data[5],
-                    chunk_data[6],
-                    chunk_data[7],
-                ]);
-            }
-            b"PLTE" => {
-                if metadata.palette.is_empty() {
-                    metadata.palette = chunk_data
-                        .chunks_exact(3)
-                        .map(|rgb| png_color_struct {
-                            red: rgb[0],
-                            green: rgb[1],
-                            blue: rgb[2],
-                        })
-                        .collect();
-                }
+                    .collect();
             }
             b"tRNS" => {
                 metadata.valid |= PNG_INFO_TRNS;
-                if metadata.trns.is_none() {
-                    metadata.trns = Some(chunk_data.to_vec());
-                }
+                let mut chunk = vec![0u8; len];
+                unsafe { read_exact_file(fp, &mut chunk)? };
+                metadata.trns = Some(chunk);
             }
-            b"sBIT" => metadata.valid |= PNG_INFO_SBIT,
-            b"cHRM" => metadata.valid |= PNG_INFO_CHRM,
-            b"iCCP" => metadata.valid |= PNG_INFO_ICCP,
-            b"sRGB" => metadata.valid |= PNG_INFO_SRGB,
-            b"bKGD" => metadata.valid |= PNG_INFO_BKGD,
-            b"hIST" => metadata.valid |= PNG_INFO_HIST,
-            b"sPLT" => metadata.valid |= PNG_INFO_SPLT,
-            b"IEND" => break,
-            _ => {}
+            b"sBIT" => {
+                metadata.valid |= PNG_INFO_SBIT;
+                unsafe { skip_file_bytes(fp, len)? };
+            }
+            b"cHRM" => {
+                metadata.valid |= PNG_INFO_CHRM;
+                unsafe { skip_file_bytes(fp, len)? };
+            }
+            b"iCCP" => {
+                metadata.valid |= PNG_INFO_ICCP;
+                unsafe { skip_file_bytes(fp, len)? };
+            }
+            b"sRGB" => {
+                metadata.valid |= PNG_INFO_SRGB;
+                unsafe { skip_file_bytes(fp, len)? };
+            }
+            b"bKGD" => {
+                metadata.valid |= PNG_INFO_BKGD;
+                unsafe { skip_file_bytes(fp, len)? };
+            }
+            b"hIST" => {
+                metadata.valid |= PNG_INFO_HIST;
+                unsafe { skip_file_bytes(fp, len)? };
+            }
+            b"sPLT" => {
+                metadata.valid |= PNG_INFO_SPLT;
+                unsafe { skip_file_bytes(fp, len)? };
+            }
+            b"IDAT" => break,
+            b"IEND" => {
+                unsafe { skip_file_bytes(fp, len)? };
+                unsafe { skip_file_bytes(fp, 4)? };
+                break;
+            }
+            _ => unsafe { skip_file_bytes(fp, len)? },
         }
-        offset = next;
+        unsafe { skip_file_bytes(fp, 4)? };
     }
+    let _ = unsafe { libc::fseeko(fp, 0, libc::SEEK_SET) };
+    Ok(metadata)
 }
 
 fn color_type_to_u8(color_type: png::ColorType) -> u8 {
@@ -827,6 +822,76 @@ fn bit_depth_to_u8(bit_depth: png::BitDepth) -> u8 {
         png::BitDepth::Four => 4,
         png::BitDepth::Eight => 8,
         png::BitDepth::Sixteen => 16,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+    use std::fs;
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn read_update_info_keeps_untransformed_png_lazy() {
+        let mut state = PngState::new();
+        let png_ptr = (&mut state as *mut PngState).cast::<png_struct_def>();
+
+        unsafe {
+            png_read_update_info(png_ptr, ptr::null_mut());
+        }
+
+        assert!(state.decoded.is_none());
+    }
+
+    #[test]
+    fn read_info_stops_at_first_idat() {
+        fn push_chunk(png: &mut Vec<u8>, typ: &[u8; 4], data: &[u8]) {
+            png.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            png.extend_from_slice(typ);
+            png.extend_from_slice(data);
+            png.extend_from_slice(&[0, 0, 0, 0]);
+        }
+
+        let mut png = Vec::from(&b"\x89PNG\r\n\x1a\n"[..]);
+        let mut ihdr = [0u8; 13];
+        ihdr[0..4].copy_from_slice(&1u32.to_be_bytes());
+        ihdr[4..8].copy_from_slice(&1u32.to_be_bytes());
+        ihdr[8] = 8;
+        ihdr[9] = PNG_COLOR_TYPE_RGB;
+        push_chunk(&mut png, b"IHDR", &ihdr);
+        push_chunk(&mut png, b"gAMA", &100000u32.to_be_bytes());
+        push_chunk(&mut png, b"IDAT", &[0u8; 1024]);
+        push_chunk(&mut png, b"pHYs", &[0, 0, 0, 1, 0, 0, 0, 1, 1]);
+        push_chunk(&mut png, b"IEND", &[]);
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "pngshim-read-info-{}-{nanos}.png",
+            std::process::id()
+        ));
+        {
+            let mut file = fs::File::create(&path).unwrap();
+            file.write_all(&png).unwrap();
+        }
+
+        let c_path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let mode = CString::new("rb").unwrap();
+        let fp = unsafe { libc::fopen(c_path.as_ptr(), mode.as_ptr()) };
+        assert!(!fp.is_null());
+        let metadata = unsafe { parse_metadata_from_file(fp) }.unwrap();
+        unsafe { libc::fclose(fp) };
+        fs::remove_file(path).unwrap();
+
+        assert_eq!(metadata.width, 1);
+        assert_eq!(metadata.height, 1);
+        assert_eq!(metadata.valid & PNG_INFO_GAMA, PNG_INFO_GAMA);
+        assert_eq!(metadata.valid & PNG_INFO_PHYS, 0);
     }
 }
 
