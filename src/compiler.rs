@@ -908,6 +908,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let mut preamble_format_used = false;
     let mut preamble_format_built = false;
     let mut preamble_format_inputs = Vec::new();
+    let mut pending_preamble_format: Option<PreambleFormatBuildHandle> = None;
     let mut last_generated_outputs: Option<Vec<GeneratedOutputFingerprint>> = None;
     let mut stable_full_layout_no_pdf_rerun_passes = 0_usize;
     let mut stable_standard_file_churn_no_pdf_rerun_passes = 0_usize;
@@ -1088,6 +1089,25 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
             suppress_pdf_output,
             force_pgf_list_and_make,
         };
+        if draft_graphics && pending_preamble_format.is_none() {
+            let final_preamble_mode = TexRunMode {
+                draft_graphics: false,
+                suppress_pdf_output: false,
+                force_pgf_list_and_make,
+            };
+            if let Some(format_kind) =
+                preamble_format_background_kind_for_run(options, &doc_dir, final_preamble_mode)?
+            {
+                pending_preamble_format = Some(spawn_preamble_format_build(
+                    &doc_dir,
+                    &file_name,
+                    &out_dir,
+                    &main,
+                    options,
+                    format_kind,
+                ));
+            }
+        }
         draft_prepass_used |= draft_graphics;
         let pass_started = Instant::now();
         let track_standard_rerun_outputs =
@@ -1098,8 +1118,26 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
             None
         };
         let tex_started = Instant::now();
+        let preamble_override = if !draft_graphics && !force_pgf_list_and_make {
+            match pending_preamble_format.take() {
+                Some(handle) => match join_preamble_format_build(handle)? {
+                    Some(precompiled) => PreambleFormatOverride::Prepared(precompiled),
+                    None => PreambleFormatOverride::Disabled,
+                },
+                None => PreambleFormatOverride::Auto,
+            }
+        } else {
+            PreambleFormatOverride::Auto
+        };
         let tex_invocation = run_tex_direct(
-            &doc_dir, &file_name, &job_name, &out_dir, &main, options, run_mode,
+            &doc_dir,
+            &file_name,
+            &job_name,
+            &out_dir,
+            &main,
+            options,
+            run_mode,
+            preamble_override,
         )?;
         let tex_elapsed = tex_started.elapsed();
         preamble_format_used |= tex_invocation.preamble_format_used;
@@ -1289,6 +1327,10 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         }
     };
 
+    if let Some(handle) = pending_preamble_format.take() {
+        let _ = join_preamble_format_build(handle);
+    }
+
     if !build_settled {
         bail!(
             "direct runner did not settle after {} TeX run{}; increase --max-runs or use --once for an intentionally incomplete preview",
@@ -1338,14 +1380,20 @@ fn run_tex_direct(
     main: &Path,
     options: &BuildOptions,
     mode: TexRunMode,
+    preamble_override: PreambleFormatOverride,
 ) -> Result<TexInvocationReport> {
     if !tex_run_records_files(options, mode) {
         let _ = fs::remove_file(out_dir.join(format!("{job_name}.fls")));
     }
 
-    if let Some(precompiled) =
-        prepare_preamble_format(doc_dir, file_name, out_dir, main, options, mode)?
-    {
+    let precompiled = match preamble_override {
+        PreambleFormatOverride::Auto => {
+            prepare_preamble_format(doc_dir, file_name, out_dir, main, options, mode)?
+        }
+        PreambleFormatOverride::Prepared(precompiled) => Some(precompiled),
+        PreambleFormatOverride::Disabled => None,
+    };
+    if let Some(precompiled) = precompiled {
         let mut command = tex_direct_base_command(doc_dir, job_name, out_dir, options, mode);
         command.env("TEXFORMATS", texformats_env(&precompiled.format_dir));
         command.arg(format!("-fmt={}", precompiled.format_name));
@@ -1451,6 +1499,47 @@ struct PreambleFormatPreparation {
     inputs: Vec<FileFingerprint>,
 }
 
+enum PreambleFormatOverride {
+    Auto,
+    Prepared(PreambleFormatPreparation),
+    Disabled,
+}
+
+type PreambleFormatBuildHandle = thread::JoinHandle<Result<Option<PreambleFormatPreparation>>>;
+
+fn spawn_preamble_format_build(
+    doc_dir: &Path,
+    file_name: &OsString,
+    out_dir: &Path,
+    main: &Path,
+    options: &BuildOptions,
+    format_kind: PreambleFormatKind,
+) -> PreambleFormatBuildHandle {
+    let doc_dir = doc_dir.to_path_buf();
+    let file_name = file_name.clone();
+    let out_dir = out_dir.to_path_buf();
+    let main = main.to_path_buf();
+    let options = options.clone();
+    thread::spawn(move || {
+        prepare_preamble_format_for_kind(
+            &doc_dir,
+            &file_name,
+            &out_dir,
+            &main,
+            &options,
+            format_kind,
+        )
+    })
+}
+
+fn join_preamble_format_build(
+    handle: PreambleFormatBuildHandle,
+) -> Result<Option<PreambleFormatPreparation>> {
+    handle
+        .join()
+        .map_err(|_| anyhow!("preamble format builder thread panicked"))?
+}
+
 fn tex_direct_base_command(
     doc_dir: &Path,
     job_name: &str,
@@ -1537,13 +1626,23 @@ fn prepare_preamble_format(
     let Some(format_kind) = preamble_format_kind_for_run(options, mode) else {
         return Ok(None);
     };
+    prepare_preamble_format_for_kind(doc_dir, file_name, out_dir, main, options, format_kind)
+}
 
+fn prepare_preamble_format_for_kind(
+    doc_dir: &Path,
+    file_name: &OsString,
+    out_dir: &Path,
+    main: &Path,
+    options: &BuildOptions,
+    format_kind: PreambleFormatKind,
+) -> Result<Option<PreambleFormatPreparation>> {
     let mode_key = preamble_format_mode_key(doc_dir, main, options, format_kind)?;
     let format_name = format!(
         "texpilot-fastfmt-{:016x}",
         content_hash(mode_key.as_bytes())
     );
-    let format_dir = out_dir.join(".texpilot-formats");
+    let format_dir = preamble_format_cache_dir(doc_dir, main);
     fs::create_dir_all(&format_dir).with_context(|| {
         format!(
             "failed to create preamble format cache directory {}",
@@ -1648,6 +1747,50 @@ fn prepare_preamble_format(
     }))
 }
 
+fn preamble_format_cache_dir(doc_dir: &Path, main: &Path) -> PathBuf {
+    let root = std::env::var_os("TEXPILOT_FORMAT_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_preamble_format_cache_root);
+    let doc_key = format!(
+        "{:016x}",
+        content_hash(
+            format!(
+                "{}\n{}",
+                canonical_or_original(doc_dir).display(),
+                canonical_or_original(main).display()
+            )
+            .as_bytes()
+        )
+    );
+    root.join(doc_key)
+}
+
+fn default_preamble_format_cache_root() -> PathBuf {
+    if let Some(value) = std::env::var_os("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
+        return PathBuf::from(value).join("texpilot").join("formats");
+    }
+    if cfg!(target_os = "macos")
+        && let Some(home) = home_dir()
+    {
+        return home
+            .join("Library")
+            .join("Caches")
+            .join("texpilot")
+            .join("formats");
+    }
+    if cfg!(windows)
+        && let Some(value) = std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("APPDATA"))
+            .filter(|value| !value.is_empty())
+    {
+        return PathBuf::from(value).join("texpilot").join("formats");
+    }
+    if let Some(home) = home_dir() {
+        return home.join(".cache").join("texpilot").join("formats");
+    }
+    std::env::temp_dir().join("texpilot").join("formats")
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum PreambleFormatKind {
     Final,
@@ -1676,6 +1819,40 @@ fn preamble_format_kind_for_run(
         return options.once.then_some(PreambleFormatKind::FastPreview);
     }
     if mode.draft_graphics || mode.force_pgf_list_and_make {
+        return None;
+    }
+    Some(PreambleFormatKind::Final)
+}
+
+fn preamble_format_background_kind_for_run(
+    options: &BuildOptions,
+    doc_dir: &Path,
+    mode: TexRunMode,
+) -> Result<Option<PreambleFormatKind>> {
+    if let Some(kind) = preamble_format_kind_for_run(options, mode) {
+        return Ok(Some(kind));
+    }
+    let Some(kind) = opportunistic_preamble_format_kind_for_run(options, mode) else {
+        return Ok(None);
+    };
+    if resolve_kpathsea_input(doc_dir, "mylatexformat", "ltx")?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(kind))
+}
+
+fn opportunistic_preamble_format_kind_for_run(
+    options: &BuildOptions,
+    mode: TexRunMode,
+) -> Option<PreambleFormatKind> {
+    if !matches!(options.engine, Engine::TexpilotPdftex)
+        || options.fast
+        || options.once
+        || options.shell_escape
+        || mode.draft_graphics
+        || mode.suppress_pdf_output
+        || mode.force_pgf_list_and_make
+    {
         return None;
     }
     Some(PreambleFormatKind::Final)
@@ -12147,6 +12324,68 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(final_args.iter().any(|arg| arg == "-recorder"));
+    }
+
+    #[test]
+    fn opportunistic_preamble_format_is_limited_to_texpilot_pdftex_final_runs() {
+        let final_mode = TexRunMode {
+            draft_graphics: false,
+            suppress_pdf_output: false,
+            force_pgf_list_and_make: false,
+        };
+        let draft_mode = TexRunMode {
+            draft_graphics: true,
+            suppress_pdf_output: true,
+            force_pgf_list_and_make: false,
+        };
+        let mut options =
+            test_build_options(Path::new("main.tex"), Path::new("out"), DraftPrepass::Auto);
+        options.engine = Engine::TexpilotPdftex;
+
+        assert_eq!(
+            opportunistic_preamble_format_kind_for_run(&options, final_mode),
+            Some(PreambleFormatKind::Final)
+        );
+        assert_eq!(
+            opportunistic_preamble_format_kind_for_run(&options, draft_mode),
+            None
+        );
+
+        options.engine = Engine::PdfLatex;
+        assert_eq!(
+            opportunistic_preamble_format_kind_for_run(&options, final_mode),
+            None
+        );
+
+        options.engine = Engine::TexpilotPdftex;
+        options.shell_escape = true;
+        assert_eq!(
+            opportunistic_preamble_format_kind_for_run(&options, final_mode),
+            None
+        );
+    }
+
+    #[test]
+    fn preamble_format_cache_dir_is_stable_for_document() {
+        let root = unique_temp_dir("texpilot-preamble-cache-dir");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let main = root.join("main.tex");
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}x\\end{document}\n",
+        )
+        .expect("failed to write source");
+        let cache_root = root.join("cache");
+        let _guard = EnvVarGuard::set("TEXPILOT_FORMAT_CACHE", cache_root.display().to_string());
+
+        let first = preamble_format_cache_dir(&root, &main);
+        let second = preamble_format_cache_dir(&root, &main);
+
+        assert_eq!(first, second);
+        assert!(first.starts_with(&cache_root), "{first:?}");
+        assert_ne!(first, cache_root);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
