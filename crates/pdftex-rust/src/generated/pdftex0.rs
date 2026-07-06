@@ -1983,8 +1983,12 @@ pub unsafe extern "C" fn zzreadbuffer(mut i: *mut integer) -> ASCIIcode {
 unsafe fn readbuffer_for_getnext(i: *mut integer, mubyte_enabled: bool) -> ASCIIcode {
     unsafe {
         if !mubyte_enabled {
-            mubyteskip = 0 as ::core::ffi::c_int as integer;
-            mubytetoken = 0 as ::core::ffi::c_int as halfword;
+            if mubyteskip != 0 as ::core::ffi::c_int {
+                mubyteskip = 0 as ::core::ffi::c_int as integer;
+            }
+            if mubytetoken != 0 as ::core::ffi::c_int {
+                mubytetoken = 0 as ::core::ffi::c_int as halfword;
+            }
             if mubytekeep > 0 as ::core::ffi::c_int {
                 mubytekeep = 0 as ::core::ffi::c_int as integer;
             }
@@ -2442,6 +2446,70 @@ fn reduce_tex_hash(mut h: integer, table_size: integer) -> integer {
         }
     }
     h
+}
+#[derive(Copy, Clone)]
+struct CsLookupCacheEntry {
+    h: integer,
+    len: integer,
+    p: halfword,
+    s: strnumber,
+}
+const CS_LOOKUP_CACHE_SIZE: usize = 4096;
+const CS_LOOKUP_CACHE_WAYS: usize = 2;
+static mut CS_LOOKUP_CACHE: [CsLookupCacheEntry; CS_LOOKUP_CACHE_SIZE * CS_LOOKUP_CACHE_WAYS] =
+    [CsLookupCacheEntry {
+    h: 0,
+    len: 0,
+    p: 0,
+    s: 0,
+}; CS_LOOKUP_CACHE_SIZE * CS_LOOKUP_CACHE_WAYS];
+#[inline(always)]
+fn cs_lookup_cache_index(h: integer, len: integer) -> usize {
+    (((h as u32).wrapping_mul(33) ^ len as u32) as usize & (CS_LOOKUP_CACHE_SIZE - 1))
+        * CS_LOOKUP_CACHE_WAYS
+}
+#[inline(always)]
+unsafe fn cs_lookup_cached_entry(base: usize, h: integer, len: integer, j: integer) -> halfword {
+    unsafe {
+        let mut way = 0usize;
+        while way < CS_LOOKUP_CACHE_WAYS {
+            let cached = CS_LOOKUP_CACHE[base + way];
+            if cached.len == len && cached.h == h && cached.p > 0 as ::core::ffi::c_int {
+                let cached_hash = (*hash.offset(cached.p as isize)).v.RH;
+                if cached_hash == cached.s
+                    && cached_hash > 0 as ::core::ffi::c_int
+                    && zstreqbuf(cached.s, j) != 0
+                {
+                    return cached.p;
+                }
+            }
+            way += 1;
+        }
+        0 as halfword
+    }
+}
+#[inline(always)]
+unsafe fn cs_lookup_store_entry(base: usize, entry: CsLookupCacheEntry) {
+    unsafe {
+        if CS_LOOKUP_CACHE[base].p != entry.p {
+            CS_LOOKUP_CACHE[base + 1] = CS_LOOKUP_CACHE[base];
+        }
+        CS_LOOKUP_CACHE[base] = entry;
+    }
+}
+const SMALL_NODE_CACHE_MAX_SIZE: usize = 9;
+const SMALL_NODE_CACHE_LIMIT: integer = 4096;
+static mut SMALL_NODE_CACHE_HEADS: [halfword; SMALL_NODE_CACHE_MAX_SIZE + 1] =
+    [0; SMALL_NODE_CACHE_MAX_SIZE + 1];
+static mut SMALL_NODE_CACHE_COUNTS: [integer; SMALL_NODE_CACHE_MAX_SIZE + 1] =
+    [0; SMALL_NODE_CACHE_MAX_SIZE + 1];
+#[inline(always)]
+fn small_node_cache_index(s: integer) -> Option<usize> {
+    if (2 as ::core::ffi::c_int..=SMALL_NODE_CACHE_MAX_SIZE as ::core::ffi::c_int).contains(&s) {
+        Some(s as usize)
+    } else {
+        None
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn zstreqstr(mut s: strnumber, mut t: strnumber) -> boolean {
@@ -3415,6 +3483,31 @@ pub unsafe extern "C" fn zgetnode(mut s: integer) -> halfword {
     let mut q: halfword = 0;
     let mut r: integer = 0;
     let mut t: integer = 0;
+    if let Some(cache_index) = small_node_cache_index(s) {
+        p = SMALL_NODE_CACHE_HEADS[cache_index];
+        if p != 0 as ::core::ffi::c_int {
+            SMALL_NODE_CACHE_HEADS[cache_index] = (*mem.offset(p as isize)).hh.v.RH;
+            SMALL_NODE_CACHE_COUNTS[cache_index] -= 1;
+            (*mem.offset(p as isize)).hh.v.RH =
+                -(268435455 as ::core::ffi::c_long) as halfword;
+            varused = varused + s;
+            if s >= 4 as ::core::ffi::c_int {
+                (*mem.offset(
+                    (p as ::core::ffi::c_int + s as ::core::ffi::c_int - 2 as ::core::ffi::c_int)
+                        as isize,
+                ))
+                .u
+                .CINT = curinput.synctextagfield;
+                (*mem.offset(
+                    (p as ::core::ffi::c_int + s as ::core::ffi::c_int - 1 as ::core::ffi::c_int)
+                        as isize,
+                ))
+                .u
+                .CINT = line;
+            }
+            return p;
+        }
+    }
     '_lab20: loop {
         p = rover;
         loop {
@@ -3584,6 +3677,16 @@ pub unsafe extern "C" fn zgetnode(mut s: integer) -> halfword {
 pub unsafe extern "C" fn zfreenode(mut p: halfword, mut s: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
+    if let Some(cache_index) = small_node_cache_index(s as integer) {
+        if SMALL_NODE_CACHE_COUNTS[cache_index] < SMALL_NODE_CACHE_LIMIT {
+            (*mem.offset(p as isize)).hh.v.LH = s;
+            (*mem.offset(p as isize)).hh.v.RH = SMALL_NODE_CACHE_HEADS[cache_index];
+            SMALL_NODE_CACHE_HEADS[cache_index] = p;
+            SMALL_NODE_CACHE_COUNTS[cache_index] += 1;
+            varused = (varused as halfword - s) as integer;
+            return;
+        }
+    }
     (*mem.offset(p as isize)).hh.v.LH = s;
     (*mem.offset(p as isize)).hh.v.RH = 268435455 as ::core::ffi::c_long as halfword;
     q = (*mem.offset((rover as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
@@ -10737,6 +10840,11 @@ pub unsafe extern "C" fn zidlookup(mut j: integer, mut l_0: integer) -> halfword
             }
         }
     }
+    let cache_index = cs_lookup_cache_index(h, l_0);
+    let cached = cs_lookup_cached_entry(cache_index, h, l_0, j);
+    if cached != 0 as ::core::ffi::c_int {
+        return cached;
+    }
     p = (h as ::core::ffi::c_int + 514 as ::core::ffi::c_int) as halfword;
     loop {
         if (*hash.offset(p as isize)).v.RH > 0 as ::core::ffi::c_int {
@@ -10814,6 +10922,17 @@ pub unsafe extern "C" fn zidlookup(mut j: integer, mut l_0: integer) -> halfword
         }
     }
     Result = p;
+    if Result != 26627 as ::core::ffi::c_int {
+        let s = (*hash.offset(Result as isize)).v.RH;
+        if s > 0 as ::core::ffi::c_int {
+            cs_lookup_store_entry(cache_index, CsLookupCacheEntry {
+                h,
+                len: l_0,
+                p: Result,
+                s,
+            });
+        }
+    }
     return Result;
 }
 #[no_mangle]
