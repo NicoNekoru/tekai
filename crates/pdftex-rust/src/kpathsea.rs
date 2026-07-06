@@ -13,7 +13,8 @@ use crate::generated::pdftexextra::{
 use libc::{c_char, c_double, c_int, c_uint, c_void, size_t};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::CStr;
+use std::ffi::{CStr, OsStr};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
@@ -663,14 +664,14 @@ pub unsafe extern "C" fn kpse_var_value(var: const_string) -> string {
 
 #[no_mangle]
 pub unsafe extern "C" fn kpse_absolute_p(filename: const_string, relative_ok: c_int) -> c_int {
-    let Some(name) = c_str_to_string(filename) else {
+    if filename.is_null() {
         return FALSE;
-    };
-    let path = Path::new(&name);
-    if path.is_absolute() || name.starts_with('~') {
+    }
+    let bytes = unsafe { CStr::from_ptr(filename) }.to_bytes();
+    if bytes.starts_with(b"/") || bytes.starts_with(b"~") {
         return TRUE;
     }
-    if relative_ok != 0 && (name.starts_with("./") || name.starts_with("../")) {
+    if relative_ok != 0 && (bytes.starts_with(b"./") || bytes.starts_with(b"../")) {
         return TRUE;
     }
     FALSE
@@ -688,10 +689,11 @@ pub unsafe extern "C" fn kpse_out_name_ok(_: const_string) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn kpse_readable_file(name: string) -> string {
-    let Some(path) = c_str_to_string(name) else {
+    if name.is_null() {
         return ptr::null_mut();
-    };
-    if path_is_readable(Path::new(&path)) {
+    }
+    let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+    if path_is_readable(Path::new(OsStr::from_bytes(bytes))) {
         return unsafe { xstrdup(name as const_string) };
     }
     ptr::null_mut()
