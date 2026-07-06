@@ -439,6 +439,31 @@ pub unsafe fn pdf_out(byte: u8) {
     }
 }
 
+pub unsafe fn pdf_write_bytes(mut src: *const u8, mut len: usize) {
+    unsafe {
+        while len > 0 {
+            if pdfptr as usize >= pdfbufsize as usize {
+                if pdfosmode != 0 {
+                    zpdfosgetosbuf(len.min(pdfbufsize as usize) as Integer);
+                } else {
+                    pdfflush();
+                }
+            }
+
+            let available = (pdfbufsize - pdfptr) as usize;
+            if available == 0 {
+                continue;
+            }
+            let chunk = len.min(available);
+            ptr::copy_nonoverlapping(src, pdfbuf.add(pdfptr as usize), chunk);
+            pdfptr += chunk as Integer;
+            pdflastbyte = *src.add(chunk - 1);
+            src = src.add(chunk);
+            len -= chunk;
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn pdf_puts(s: *const c_char) {
     if s.is_null() {

@@ -161,7 +161,7 @@ impl PngState {
             return Ok(());
         }
 
-        let mut decoder = png::Decoder::new(Cursor::new(self.data.clone()));
+        let mut decoder = png::Decoder::new(Cursor::new(self.data.as_slice()));
         let mut transforms = png::Transformations::IDENTITY;
         if self.strip_16 {
             transforms |= png::Transformations::STRIP_16;
@@ -429,6 +429,30 @@ pub unsafe extern "C" fn png_read_image(png_ptr: *mut png_struct_def, image: *mu
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn png_decoded_data(
+    png_ptr: *mut c_void,
+    rowbytes: *mut usize,
+    len: *mut usize,
+) -> *const u8 {
+    let Some(state) = state(png_ptr.cast::<png_struct_def>()) else {
+        return ptr::null();
+    };
+    if state.ensure_decoded().is_err() {
+        return ptr::null();
+    }
+    let Some(decoded) = state.decoded.as_ref() else {
+        return ptr::null();
+    };
+    if !rowbytes.is_null() {
+        *rowbytes = decoded.rowbytes;
+    }
+    if !len.is_null() {
+        *len = decoded.data.len();
+    }
+    decoded.data.as_ptr()
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn png_get_io_ptr(png_ptr: *const png_struct_def) -> *mut c_void {
     state(png_ptr)
         .map(|state| state.file.cast::<c_void>())
@@ -634,7 +658,7 @@ struct Metadata {
 }
 
 fn parse_metadata(data: &[u8]) -> Result<Metadata, String> {
-    let decoder = png::Decoder::new(Cursor::new(data.to_vec()));
+    let decoder = png::Decoder::new(Cursor::new(data));
     let reader = decoder.read_info().map_err(|err| err.to_string())?;
     let info = reader.info();
     let mut metadata = Metadata {

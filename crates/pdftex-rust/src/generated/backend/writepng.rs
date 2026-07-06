@@ -1429,34 +1429,38 @@ unsafe extern "C" fn write_png_gray_alpha(mut img: integer) {
         );
         pdf_puts(b"/ColorSpace /DeviceGray\n\0" as *const u8 as *const ::core::ffi::c_char);
         pdfbeginstream();
-        i = 0 as ::core::ffi::c_int;
-        while i < smask_size {
-            if i % 8 as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
-                if (8 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
-                {
-                    if pdfosmode != 0 {
-                        zpdfosgetosbuf(8 as ::core::ffi::c_int);
-                    } else if 8 as ::core::ffi::c_int as ::core::ffi::c_uint
+        if bitdepth == 8 as ::core::ffi::c_int {
+            crate::utils::pdf_write_bytes(smask, smask_size as usize);
+        } else {
+            i = 0 as ::core::ffi::c_int;
+            while i < smask_size {
+                if i % 8 as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
+                    if (8 as integer + pdfptr) as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(
-                            b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            &[],
-                        );
-                    } else {
-                        pdfflush();
+                        if pdfosmode != 0 {
+                            zpdfosgetosbuf(8 as ::core::ffi::c_int);
+                        } else if 8 as ::core::ffi::c_int as ::core::ffi::c_uint
+                            > pdfbufsize as ::core::ffi::c_uint
+                        {
+                            crate::utils::pdftex_fail_args(
+                                b"PDF output buffer overflowed\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                                &[],
+                            );
+                        } else {
+                            pdfflush();
+                        }
                     }
                 }
-            }
-            let fresh56 = pdfptr;
-            pdfptr = pdfptr + 1;
-            *pdfbuf.offset(fresh56 as isize) = *smask.offset(i as isize) as eightbits;
-            if bitdepth == 16 as ::core::ffi::c_int {
+                let fresh56 = pdfptr;
+                pdfptr = pdfptr + 1;
+                *pdfbuf.offset(fresh56 as isize) = *smask.offset(i as isize) as eightbits;
+                if bitdepth == 16 as ::core::ffi::c_int {
+                    i += 1;
+                }
                 i += 1;
             }
-            i += 1;
         }
         if !smask.is_null() {
             free(smask as *mut ::core::ffi::c_void);
@@ -1684,6 +1688,76 @@ unsafe extern "C" fn write_png_rgb(mut img: integer) {
     }
     pdfendstream();
 }
+unsafe fn try_write_png_rgb_alpha_8_fast(
+    mut img: integer,
+    mut smask: png_bytep,
+    mut smask_ptr: *mut integer,
+) -> boolean {
+    if smask.is_null() || smask_ptr.is_null() {
+        return false_0 as boolean;
+    }
+    let width = png_get_image_width(
+        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+        (*image_array.offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+    ) as usize;
+    let height = png_get_image_height(
+        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+        (*image_array.offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+    ) as usize;
+    let Some(source_rowbytes) = width.checked_mul(4) else {
+        return false_0 as boolean;
+    };
+    let Some(rgb_rowbytes) = width.checked_mul(3) else {
+        return false_0 as boolean;
+    };
+    let Some(expected_len) = source_rowbytes.checked_mul(height) else {
+        return false_0 as boolean;
+    };
+
+    let mut decoded_rowbytes: size_t = 0;
+    let mut decoded_len: size_t = 0;
+    let decoded = crate::pngshim::png_decoded_data(
+        (*image_array.offset(img as isize)).image_struct.png.png_ptr as *mut ::core::ffi::c_void,
+        &mut decoded_rowbytes,
+        &mut decoded_len,
+    );
+    if decoded.is_null() || decoded_rowbytes != source_rowbytes || decoded_len < expected_len {
+        return false_0 as boolean;
+    }
+
+    let rgb_row = xmalloc(rgb_rowbytes as size_t) as *mut u8;
+    if rgb_row.is_null() {
+        return false_0 as boolean;
+    }
+
+    let mut mask_offset = *smask_ptr as usize;
+    for y in 0..height {
+        let source = decoded.add(y * decoded_rowbytes);
+        let mut source_offset = 0usize;
+        let mut rgb_offset = 0usize;
+        for _ in 0..width {
+            *rgb_row.add(rgb_offset) = *source.add(source_offset);
+            *rgb_row.add(rgb_offset + 1) = *source.add(source_offset + 1);
+            *rgb_row.add(rgb_offset + 2) = *source.add(source_offset + 2);
+            *smask.add(mask_offset) = *source.add(source_offset + 3);
+            source_offset += 4;
+            rgb_offset += 3;
+            mask_offset += 1;
+        }
+        crate::utils::pdf_write_bytes(rgb_row, rgb_rowbytes);
+    }
+
+    free(rgb_row as *mut ::core::ffi::c_void);
+    *smask_ptr = mask_offset as integer;
+    true_0 as boolean
+}
+
 unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
     let mut j: ::core::ffi::c_int = 0;
@@ -1732,7 +1806,25 @@ unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
         xmalloc((smask_size as size_t).wrapping_mul(::core::mem::size_of::<png_byte>() as size_t))
             as *mut png_byte as png_bytep;
     pdfbeginstream();
-    if png_get_interlace_type(
+    let fast_rgb_alpha = png_get_bit_depth(
+        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+        (*image_array.offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+    ) as ::core::ffi::c_int
+        == 8 as ::core::ffi::c_int
+        && png_get_interlace_type(
+            (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+            (*image_array.offset(img as isize))
+                .image_struct
+                .png
+                .info_ptr as png_const_inforp,
+        ) as ::core::ffi::c_int
+            == PNG_INTERLACE_NONE
+        && try_write_png_rgb_alpha_8_fast(img, smask, &mut smask_ptr) != 0;
+    if fast_rgb_alpha {
+    } else if png_get_interlace_type(
         (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
         (*image_array.offset(img as isize))
             .image_struct
@@ -2147,34 +2239,38 @@ unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
         );
         pdf_puts(b"/ColorSpace /DeviceGray\n\0" as *const u8 as *const ::core::ffi::c_char);
         pdfbeginstream();
-        i = 0 as ::core::ffi::c_int;
-        while i < smask_size {
-            if i % 8 as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
-                if (8 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
-                {
-                    if pdfosmode != 0 {
-                        zpdfosgetosbuf(8 as ::core::ffi::c_int);
-                    } else if 8 as ::core::ffi::c_int as ::core::ffi::c_uint
+        if bitdepth == 8 as ::core::ffi::c_int {
+            crate::utils::pdf_write_bytes(smask, smask_size as usize);
+        } else {
+            i = 0 as ::core::ffi::c_int;
+            while i < smask_size {
+                if i % 8 as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
+                    if (8 as integer + pdfptr) as ::core::ffi::c_uint
                         > pdfbufsize as ::core::ffi::c_uint
                     {
-                        crate::utils::pdftex_fail_args(
-                            b"PDF output buffer overflowed\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            &[],
-                        );
-                    } else {
-                        pdfflush();
+                        if pdfosmode != 0 {
+                            zpdfosgetosbuf(8 as ::core::ffi::c_int);
+                        } else if 8 as ::core::ffi::c_int as ::core::ffi::c_uint
+                            > pdfbufsize as ::core::ffi::c_uint
+                        {
+                            crate::utils::pdftex_fail_args(
+                                b"PDF output buffer overflowed\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                                &[],
+                            );
+                        } else {
+                            pdfflush();
+                        }
                     }
                 }
-            }
-            let fresh30 = pdfptr;
-            pdfptr = pdfptr + 1;
-            *pdfbuf.offset(fresh30 as isize) = *smask.offset(i as isize) as eightbits;
-            if bitdepth == 16 as ::core::ffi::c_int {
+                let fresh30 = pdfptr;
+                pdfptr = pdfptr + 1;
+                *pdfbuf.offset(fresh30 as isize) = *smask.offset(i as isize) as eightbits;
+                if bitdepth == 16 as ::core::ffi::c_int {
+                    i += 1;
+                }
                 i += 1;
             }
-            i += 1;
         }
         if !smask.is_null() {
             free(smask as *mut ::core::ffi::c_void);

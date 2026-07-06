@@ -1339,6 +1339,10 @@ fn run_tex_direct(
     options: &BuildOptions,
     mode: TexRunMode,
 ) -> Result<TexInvocationReport> {
+    if !tex_run_records_files(options, mode) {
+        let _ = fs::remove_file(out_dir.join(format!("{job_name}.fls")));
+    }
+
     if let Some(precompiled) =
         prepare_preamble_format(doc_dir, file_name, out_dir, main, options, mode)?
     {
@@ -1460,8 +1464,11 @@ fn tex_direct_base_command(
     command
         .arg("-interaction=nonstopmode")
         .arg("-halt-on-error")
-        .arg("-file-line-error")
-        .arg("-recorder")
+        .arg("-file-line-error");
+    if tex_run_records_files(options, mode) {
+        command.arg("-recorder");
+    }
+    command
         .arg(format!("-jobname={job_name}"))
         .arg(format!("-output-directory={}", out_dir.display()));
 
@@ -1477,6 +1484,13 @@ fn tex_direct_base_command(
         command.arg(output_mode_arg);
     }
     command
+}
+
+fn tex_run_records_files(options: &BuildOptions, mode: TexRunMode) -> bool {
+    !(mode.draft_graphics
+        && mode.suppress_pdf_output
+        && !mode.force_pgf_list_and_make
+        && !options.shell_escape)
 }
 
 fn add_tex_direct_input(
@@ -12083,6 +12097,56 @@ mod tests {
         );
         assert_eq!(nonfinal_output_mode_arg(Engine::XeLatex), Some("-no-pdf"));
         assert_eq!(nonfinal_output_mode_arg(Engine::Tectonic), None);
+    }
+
+    #[test]
+    fn draft_graphics_prepass_skips_recorder_when_no_generated_tools_need_it() {
+        let options =
+            test_build_options(Path::new("main.tex"), Path::new("out"), DraftPrepass::Auto);
+        let draft_mode = TexRunMode {
+            draft_graphics: true,
+            suppress_pdf_output: true,
+            force_pgf_list_and_make: false,
+        };
+        let final_mode = TexRunMode {
+            draft_graphics: false,
+            suppress_pdf_output: false,
+            force_pgf_list_and_make: false,
+        };
+        let pgf_mode = TexRunMode {
+            force_pgf_list_and_make: true,
+            ..draft_mode
+        };
+
+        assert!(!tex_run_records_files(&options, draft_mode));
+        assert!(tex_run_records_files(&options, final_mode));
+        assert!(tex_run_records_files(&options, pgf_mode));
+
+        let draft_command = tex_direct_base_command(
+            Path::new("."),
+            "main",
+            Path::new("out"),
+            &options,
+            draft_mode,
+        );
+        let draft_args = draft_command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(!draft_args.iter().any(|arg| arg == "-recorder"));
+
+        let final_command = tex_direct_base_command(
+            Path::new("."),
+            "main",
+            Path::new("out"),
+            &options,
+            final_mode,
+        );
+        let final_args = final_command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(final_args.iter().any(|arg| arg == "-recorder"));
     }
 
     #[test]
