@@ -12989,6 +12989,7 @@ pub unsafe extern "C" fn getnext() {
     let mut c_0: ASCIIcode = 0;
     let mut cc: ASCIIcode = 0;
     let mut d: ::core::ffi::c_uchar = 0;
+    let catcode_base = eqtb.offset(27741 as ::core::ffi::c_int as isize);
     let mubyte_enabled =
         (*eqtb.offset(29338 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int;
     '_lab20: loop {
@@ -13008,7 +13009,7 @@ pub unsafe extern "C" fn getnext() {
                         break;
                     } else {
                         loop {
-                            curcmd = (*eqtb.offset((27741 as halfword + curchr) as isize))
+                            curcmd = (*catcode_base.offset(curchr as isize))
                                 .hh
                                 .v
                                 .RH as eightbits;
@@ -13363,7 +13364,7 @@ pub unsafe extern "C" fn getnext() {
                                 mubyteskeep = mubytekeep;
                                 curchr =
                                     readbuffer_for_getnext(&raw mut k, mubyte_enabled) as halfword;
-                                cat = (*eqtb.offset((27741 as halfword + curchr) as isize))
+                                cat = (*catcode_base.offset(curchr as isize))
                                     .hh
                                     .v
                                     .RH
@@ -13400,8 +13401,7 @@ pub unsafe extern "C" fn getnext() {
                                             curchr =
                                                 readbuffer_for_getnext(&raw mut k, mubyte_enabled)
                                                     as halfword;
-                                            cat = (*eqtb
-                                                .offset((27741 as halfword + curchr) as isize))
+                                            cat = (*catcode_base.offset(curchr as isize))
                                             .hh
                                             .v
                                             .RH

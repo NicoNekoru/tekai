@@ -10748,6 +10748,45 @@ fn line_requests_tex_rerun(line: &str) -> bool {
 }
 
 fn line_tex_rerun_reason(line: &str) -> Option<&'static str> {
+    if line.contains("Rerun to get") || line.contains("rerun to get") {
+        return Some("rerun-to-get-cross-references");
+    }
+    if line.contains("rerun LaTeX") || line.contains("rerun latex") {
+        return Some("rerun-latex");
+    }
+    if line.contains("rerun LuaLaTeX") || line.contains("rerun lualatex") {
+        return Some("rerun-lualatex");
+    }
+    if line.contains("rerun XeLaTeX") || line.contains("rerun xelatex") {
+        return Some("rerun-xelatex");
+    }
+    if line.contains("Label(s) may have changed") || line.contains("label(s) may have changed") {
+        return Some("labels-changed");
+    }
+    if line.contains("Reference(s) may have changed")
+        || line.contains("reference(s) may have changed")
+    {
+        return Some("references-changed");
+    }
+    if line.contains("Citation(s) may have changed")
+        || line.contains("citation(s) may have changed")
+    {
+        return Some("citations-changed");
+    }
+    if (line.contains("File `") || line.contains("file `"))
+        && (line.contains("' has changed") || line.contains("' Has Changed"))
+    {
+        return Some("file-changed");
+    }
+    if (line.contains("File \"") || line.contains("file \""))
+        && (line.contains("\" has changed") || line.contains("\" Has Changed"))
+    {
+        return Some("file-changed");
+    }
+    if !line_may_contain_rerun_reason_with_unusual_case(line) {
+        return None;
+    }
+
     let lower = line.to_ascii_lowercase();
     if lower.contains("rerun to get") {
         Some("rerun-to-get-cross-references")
@@ -10770,6 +10809,16 @@ fn line_tex_rerun_reason(line: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn line_may_contain_rerun_reason_with_unusual_case(line: &str) -> bool {
+    line.contains("RERUN")
+        || line.contains("ReRun")
+        || line.contains("Rerun")
+        || line.contains("rerun")
+        || line.contains("CHANGED")
+        || line.contains("Changed")
+        || line.contains("changed")
 }
 
 fn configure_output(command: &mut Command, options: &BuildOptions) {
