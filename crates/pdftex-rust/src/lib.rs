@@ -78,7 +78,7 @@ pub unsafe fn run_from_c_args(
     libc::EXIT_SUCCESS
 }
 
-#[cfg(all(not(test), feature = "c-entrypoint"))]
+#[cfg(all(not(test), feature = "c-entrypoint", not(feature = "rust-binary")))]
 #[no_mangle]
 pub unsafe extern "C" fn main(
     argc: ::core::ffi::c_int,

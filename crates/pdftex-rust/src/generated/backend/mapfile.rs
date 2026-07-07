@@ -1423,10 +1423,7 @@ unsafe extern "C" fn fm_scan_line() {
                                     if strncmp(
                                         s,
                                         b"SlantFont\0" as *const u8 as *const ::core::ffi::c_char,
-                                        strlen(
-                                            b"SlantFont\0" as *const u8
-                                                as *const ::core::ffi::c_char,
-                                        ),
+                                        9 as size_t,
                                     ) == 0 as ::core::ffi::c_int
                                     {
                                         d = (d as ::core::ffi::c_double * 1000.0f64)
@@ -1439,18 +1436,11 @@ unsafe extern "C" fn fm_scan_line() {
                                             d as ::core::ffi::c_double - 0.5f64
                                         })
                                             as integer;
-                                        r = s.offset(strlen(
-                                            b"SlantFont\0" as *const u8
-                                                as *const ::core::ffi::c_char,
-                                        )
-                                            as isize);
+                                        r = s.offset(9 as isize);
                                     } else if strncmp(
                                         s,
                                         b"ExtendFont\0" as *const u8 as *const ::core::ffi::c_char,
-                                        strlen(
-                                            b"ExtendFont\0" as *const u8
-                                                as *const ::core::ffi::c_char,
-                                        ),
+                                        10 as size_t,
                                     ) == 0 as ::core::ffi::c_int
                                     {
                                         d = (d as ::core::ffi::c_double * 1000.0f64)
@@ -1466,11 +1456,7 @@ unsafe extern "C" fn fm_scan_line() {
                                         if (*fm).extend == 1000 as ::core::ffi::c_int {
                                             (*fm).extend = 0 as ::core::ffi::c_int as integer;
                                         }
-                                        r = s.offset(strlen(
-                                            b"ExtendFont\0" as *const u8
-                                                as *const ::core::ffi::c_char,
-                                        )
-                                            as isize);
+                                        r = s.offset(10 as isize);
                                     } else {
                                         r = s;
                                         while *r as ::core::ffi::c_int != ' ' as i32
@@ -1582,20 +1568,18 @@ unsafe extern "C" fn fm_scan_line() {
                     if *r as ::core::ffi::c_int == ' ' as i32 {
                         r = r.offset(1);
                     }
-                    if strlen(&raw mut buf as *mut ::core::ffi::c_char) > 4 as size_t
+                    let buf_len = q.offset_from(&raw mut buf as *mut ::core::ffi::c_char) as size_t;
+                    if buf_len > 4 as size_t
                         && strcasecmp(
-                            strchr(
-                                &raw mut buf as *mut ::core::ffi::c_char,
-                                0 as ::core::ffi::c_int,
-                            )
-                            .offset(-(4 as ::core::ffi::c_int as isize)),
+                            (&raw mut buf as *mut ::core::ffi::c_char)
+                                .offset(buf_len as isize - 4 as isize),
                             b".enc\0" as *const u8 as *const ::core::ffi::c_char,
                         ) == 0 as ::core::ffi::c_int
                     {
                         (*fm).encname = add_encname(&raw mut buf as *mut ::core::ffi::c_char);
                         v = 0 as ::core::ffi::c_int;
                         u = v;
-                    } else if strlen(&raw mut buf as *mut ::core::ffi::c_char) > 0 as size_t {
+                    } else if buf_len > 0 as size_t {
                         if a == '<' as i32 || u == '<' as i32 {
                             (*fm).type_0 = ((*fm).type_0 as ::core::ffi::c_int | F_INCLUDED)
                                 as ::core::ffi::c_ushort;
@@ -1633,31 +1617,38 @@ unsafe extern "C" fn fm_scan_line() {
                 (*fm).type_0 =
                     ((*fm).type_0 as ::core::ffi::c_int | F_STDT1FONT) as ::core::ffi::c_ushort;
             }
-            if !(*fm).ff_name.is_null() && strlen((*fm).ff_name) > 3 as size_t {
+            if !(*fm).ff_name.is_null() {
+                let ff_name_len = strlen((*fm).ff_name);
+                if ff_name_len > 3 as size_t {
+                    let ff_suffix = (*fm).ff_name.offset(ff_name_len as isize - 4 as isize);
                 if strcasecmp(
-                    strchr((*fm).ff_name, 0 as ::core::ffi::c_int)
-                        .offset(-(4 as ::core::ffi::c_int as isize)),
+                    ff_suffix,
                     b".ttf\0" as *const u8 as *const ::core::ffi::c_char,
                 ) == 0 as ::core::ffi::c_int
                 {
                     (*fm).type_0 =
                         ((*fm).type_0 as ::core::ffi::c_int | F_TRUETYPE) as ::core::ffi::c_ushort;
                 } else if strcasecmp(
-                    strchr((*fm).ff_name, 0 as ::core::ffi::c_int)
-                        .offset(-(4 as ::core::ffi::c_int as isize)),
+                    ff_suffix,
                     b".ttc\0" as *const u8 as *const ::core::ffi::c_char,
                 ) == 0 as ::core::ffi::c_int
                 {
                     (*fm).type_0 =
                         ((*fm).type_0 as ::core::ffi::c_int | F_TRUETYPE) as ::core::ffi::c_ushort;
                 } else if strcasecmp(
-                    strchr((*fm).ff_name, 0 as ::core::ffi::c_int)
-                        .offset(-(4 as ::core::ffi::c_int as isize)),
+                    ff_suffix,
                     b".otf\0" as *const u8 as *const ::core::ffi::c_char,
                 ) == 0 as ::core::ffi::c_int
                 {
                     (*fm).type_0 =
                         ((*fm).type_0 as ::core::ffi::c_int | F_OTF) as ::core::ffi::c_ushort;
+                } else {
+                    (*fm).type_0 =
+                        ((*fm).type_0 as ::core::ffi::c_int | F_TYPE1) as ::core::ffi::c_ushort;
+                }
+                } else if (*fm).ps_name.is_null() {
+                    (*fm).type_0 =
+                        ((*fm).type_0 as ::core::ffi::c_int | F_PK) as ::core::ffi::c_ushort;
                 } else {
                     (*fm).type_0 =
                         ((*fm).type_0 as ::core::ffi::c_int | F_TYPE1) as ::core::ffi::c_ushort;
