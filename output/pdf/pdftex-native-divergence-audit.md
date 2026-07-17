@@ -3,16 +3,16 @@
 Date: 2026-07-05
 
 Status: historical diagnostic snapshot for the experimental
-`--engine texpilot-pdftex` renderer. The default `pdf-latex` + `direct` path
-uses the exact `pdftex-rust` engine and is not subject to the divergences below.
+`--engine tekai-pdftex` renderer. The default `tekai-engine` + `direct` path
+uses the exact `tekai-engine` engine and is not subject to the divergences below.
 See [`docs/usage.md`](../../docs/usage.md) for the current engine modes.
 
 Compared PDFs:
 
-- arXiv-2605 native: `/tmp/texpilot-pdf-compare/arxiv-2605/native/main.pdf`
-- arXiv-2605 pdfTeX: `/tmp/texpilot-pdf-compare/arxiv-2605/pdftex/main.pdf`
-- arXiv-2511 native: `/tmp/texpilot-pdf-compare/arxiv-2511/native/main.pdf`
-- arXiv-2511 pdfTeX: `/tmp/texpilot-pdf-compare/arxiv-2511/pdftex/main.pdf`
+- arXiv-2605 native: `/tmp/tekai-pdf-compare/arxiv-2605/native/main.pdf`
+- arXiv-2605 pdfTeX: `/tmp/tekai-pdf-compare/arxiv-2605/pdftex/main.pdf`
+- arXiv-2511 native: `/tmp/tekai-pdf-compare/arxiv-2511/native/main.pdf`
+- arXiv-2511 pdfTeX: `/tmp/tekai-pdf-compare/arxiv-2511/pdftex/main.pdf`
 
 Rendered audit artifacts:
 
@@ -29,14 +29,14 @@ This is not a subtle PDF backend issue. The native renderer currently bypasses m
 
 The native renderer hard-codes layout profiles with one text font, one code font, one math font, and one heading font:
 
-- `crates/texpilot-pdftex/src/native.rs:1870-1896` defines `DocumentLayout` font slots.
-- `crates/texpilot-pdftex/src/native.rs:1922-1925` uses Nimbus Roman, Courier, Nimbus italic, and Nimbus bold in the default profile.
-- `crates/texpilot-pdftex/src/native.rs:1952-1955` uses the same simplified Nimbus/Courier stack for the NeurIPS single-column profile.
-- `crates/texpilot-pdftex/src/native.rs:1982-1985` uses Pagella/Heros/Pagella italic/Heros bold for the ICML two-column profile.
-- `crates/texpilot-pdftex/src/native.rs:2148-2188` maps those choices to a tiny internal metric enum. Notably, text line breaking always falls back to `TimesRoman` for text in `line_break_metric_for_font`.
-- `crates/texpilot-pdftex/src/native.rs:15209-15215` emits only those five font resources, including `Symbol`.
-- `crates/texpilot-pdftex/src/native.rs:15453-15481` emits simple Type 1 font dictionaries.
-- `crates/texpilot-pdftex/src/native.rs:15487-15511` only knows embedded Type 1 files for a few TeX Gyre fonts. Other fonts fall back to simple base font resources.
+- `crates/tekai-pdftex/src/native.rs:1870-1896` defines `DocumentLayout` font slots.
+- `crates/tekai-pdftex/src/native.rs:1922-1925` uses Nimbus Roman, Courier, Nimbus italic, and Nimbus bold in the default profile.
+- `crates/tekai-pdftex/src/native.rs:1952-1955` uses the same simplified Nimbus/Courier stack for the NeurIPS single-column profile.
+- `crates/tekai-pdftex/src/native.rs:1982-1985` uses Pagella/Heros/Pagella italic/Heros bold for the ICML two-column profile.
+- `crates/tekai-pdftex/src/native.rs:2148-2188` maps those choices to a tiny internal metric enum. Notably, text line breaking always falls back to `TimesRoman` for text in `line_break_metric_for_font`.
+- `crates/tekai-pdftex/src/native.rs:15209-15215` emits only those five font resources, including `Symbol`.
+- `crates/tekai-pdftex/src/native.rs:15453-15481` emits simple Type 1 font dictionaries.
+- `crates/tekai-pdftex/src/native.rs:15487-15511` only knows embedded Type 1 files for a few TeX Gyre fonts. Other fonts fall back to simple base font resources.
 
 pdfTeX does the opposite. It executes the LaTeX font selection stack, reads font metrics and virtual fonts, consults map files and encodings, subsets embedded fonts, and applies package-level font choices. For arXiv-2511, the style explicitly loads `newpxtext,newpxmath` under pdfTeX (`examples/arXiv-2511.08544v3/simpleicml.sty:48-54`) and enables microtype expansion/protrusion (`simpleicml.sty:82-85`). Our native renderer instead uses TeX Gyre Pagella/Heros plus simplified math text.
 

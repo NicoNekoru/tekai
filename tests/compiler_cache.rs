@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 static AUX_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -23,7 +23,7 @@ fn generated_output_dir_artifacts_do_not_invalidate_noop_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-cache-test");
+    let root = unique_temp_dir("tekai-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -52,7 +52,7 @@ fn scheduler_policy_changes_do_not_invalidate_settled_final_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-scheduler-cache-test");
+    let root = unique_temp_dir("tekai-scheduler-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -91,12 +91,10 @@ fn fresh_output_dir_restores_settled_pdf_artifact_from_shared_cache() {
     let _env_lock = AUX_CACHE_TEST_LOCK
         .lock()
         .expect("aux cache test lock poisoned");
-    let root = unique_temp_dir("texpilot-shared-artifact-cache-test");
+    let root = unique_temp_dir("tekai-shared-artifact-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
-    let _cache_guard = EnvVarGuard::set(
-        "TEXPILOT_AUX_CACHE",
-        root.join("cache").display().to_string(),
-    );
+    let _cache_guard =
+        EnvVarGuard::set("TEKAI_AUX_CACHE", root.join("cache").display().to_string());
     let main = root.join("main.tex");
     let first_out = root.join("first-out");
     let fresh_out = root.join("fresh-out");
@@ -115,7 +113,7 @@ fn fresh_output_dir_restores_settled_pdf_artifact_from_shared_cache() {
         fs::read(fresh_out.join("main.pdf")).expect("failed to read restored pdf"),
         first_pdf
     );
-    assert!(fresh_out.join(".texpilot-main.state.toml").exists());
+    assert!(fresh_out.join(".tekai-main.state.toml").exists());
 
     let local_cached = build(&options(&main, &fresh_out)).expect("local cache check failed");
     assert!(local_cached.skipped, "{local_cached:#?}");
@@ -139,7 +137,7 @@ fn trailing_content_after_end_document_does_not_invalidate_root_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-effective-root-cache-test");
+    let root = unique_temp_dir("tekai-effective-root-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -174,7 +172,7 @@ fn trailing_content_after_endinput_does_not_invalidate_tex_input_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-effective-endinput-cache-test");
+    let root = unique_temp_dir("tekai-effective-endinput-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let section = root.join("section.tex");
@@ -222,7 +220,7 @@ fn physical_trailing_spaces_do_not_invalidate_tex_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-trailing-space-cache-test");
+    let root = unique_temp_dir("tekai-trailing-space-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let section = root.join("section.tex");
@@ -263,7 +261,7 @@ fn column_zero_comment_text_does_not_invalidate_tex_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-full-line-comment-cache-test");
+    let root = unique_temp_dir("tekai-full-line-comment-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let section = root.join("section.tex");
@@ -310,7 +308,7 @@ fn ordinary_comment_text_does_not_invalidate_tex_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-comment-cache-test");
+    let root = unique_temp_dir("tekai-comment-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let section = root.join("section.tex");
@@ -381,7 +379,7 @@ fn verbatim_percent_text_does_invalidate_tex_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-verbatim-percent-cache-test");
+    let root = unique_temp_dir("tekai-verbatim-percent-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -414,7 +412,7 @@ fn inline_verb_does_not_disable_safe_effective_tex_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-inline-verb-cache-test");
+    let root = unique_temp_dir("tekai-inline-verb-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -456,7 +454,7 @@ fn lstinline_does_not_disable_safe_effective_tex_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-lstinline-cache-test");
+    let root = unique_temp_dir("tekai-lstinline-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -498,7 +496,7 @@ fn percent_lines_with_explicit_catcode_do_invalidate_tex_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-percent-catcode-cache-test");
+    let root = unique_temp_dir("tekai-percent-catcode-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");

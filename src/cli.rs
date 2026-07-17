@@ -5,9 +5,15 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use crate::compiler::{BibMode, DraftPrepass, Engine, Runner};
 
 #[derive(Debug, Parser)]
-#[command(name = "texpilot")]
-#[command(about = "Fast LaTeX build orchestration and opinionated TeX linting")]
-#[command(version)]
+#[command(
+    name = "tekai",
+    about = "Fast, fidelity-preserving LaTeX builds and live previews",
+    long_about = "tekai builds, watches, checks, and lints LaTeX projects. Its self-contained engine converges references and auxiliary tools, preserves final PDF rendering, and caches settled builds for fast repeat runs.",
+    version,
+    propagate_version = true,
+    arg_required_else_help = true,
+    after_help = "QUICK START:\n  tekai build main.tex\n  tekai watch main.tex --preview --allow-warnings\n  tekai check main.tex --allow-warnings\n\nProject defaults can be stored in ./tekai.toml. Run `tekai <command> --help` for command-specific examples."
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -15,25 +21,28 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Compile a root TeX document with the direct runner by default.
+    /// Build a root TeX document to a settled final PDF.
     Build(BuildArgs),
-    /// Remove the configured build output directory.
+    /// Safely remove the configured build output directory.
     Clean(CleanArgs),
-    /// Lint TeX sources for math delimiter, indentation, and style issues.
+    /// Lint TeX sources for structural and style issues.
     Lint(LintArgs),
-    /// Run lint first, then compile if lint passes.
+    /// Lint a document tree, then build when lint passes.
     Check(CheckArgs),
-    /// Watch a project and rebuild after TeX-related file changes.
+    /// Watch dependencies and rebuild after relevant changes.
     Watch(WatchArgs),
 }
 
 #[derive(Debug, Args, Clone)]
+#[command(
+    after_help = "EXAMPLES:\n  tekai clean --dry-run\n  tekai clean --out-dir build\n  tekai clean --report-json"
+)]
 pub struct CleanArgs {
-    /// Optional texpilot.toml path.
+    /// Configuration file. Defaults to ./tekai.toml when it exists.
     #[arg(long)]
     pub config: Option<PathBuf>,
 
-    /// Output directory to remove. Defaults to [build].out_dir or build.
+    /// Output directory to remove. Overrides [build].out_dir.
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
 
@@ -51,11 +60,14 @@ pub struct CleanArgs {
 }
 
 #[derive(Debug, Args, Clone)]
+#[command(
+    after_help = "EXAMPLES:\n  tekai build main.tex\n  tekai build main.tex --report-json\n  tekai build main.tex --runner latexmk\n  tekai build main.tex --once --fast"
+)]
 pub struct BuildArgs {
-    /// Root .tex file.
+    /// Root TeX document to compile.
     pub main: PathBuf,
 
-    /// Optional texpilot.toml path.
+    /// Configuration file. Defaults to ./tekai.toml when it exists.
     #[arg(long)]
     pub config: Option<PathBuf>,
 
@@ -68,11 +80,14 @@ pub struct BuildArgs {
 }
 
 #[derive(Debug, Args, Clone)]
+#[command(
+    after_help = "EXAMPLES:\n  tekai check main.tex --allow-warnings\n  tekai check main.tex --report-json --allow-warnings"
+)]
 pub struct CheckArgs {
-    /// Root .tex file.
+    /// Root TeX document to lint and compile.
     pub main: PathBuf,
 
-    /// Optional texpilot.toml path.
+    /// Configuration file. Defaults to ./tekai.toml when it exists.
     #[arg(long)]
     pub config: Option<PathBuf>,
 
@@ -88,11 +103,14 @@ pub struct CheckArgs {
 }
 
 #[derive(Debug, Args, Clone)]
+#[command(
+    after_help = "EXAMPLES:\n  tekai watch main.tex --allow-warnings\n  tekai watch main.tex --preview --allow-warnings\n  tekai watch main.tex --preview --final-after-idle-ms 1500 --allow-warnings"
+)]
 pub struct WatchArgs {
-    /// Root .tex file.
+    /// Root TeX document to rebuild.
     pub main: PathBuf,
 
-    /// Optional texpilot.toml path.
+    /// Configuration file. Defaults to ./tekai.toml when it exists.
     #[arg(long)]
     pub config: Option<PathBuf>,
 
@@ -104,11 +122,11 @@ pub struct WatchArgs {
     #[arg(long)]
     pub no_lint: bool,
 
-    /// Use the fastest edit-loop mode: one TeX pass with images disabled.
+    /// Use the low-latency, non-final edit loop with placeholder content.
     #[arg(long)]
     pub preview: bool,
 
-    /// In preview watch mode, run a final-quality build after this many idle milliseconds.
+    /// Also run an exact final build after the edit stream is idle for MS.
     #[arg(long, value_name = "MS", requires = "preview")]
     pub final_after_idle_ms: Option<u64>,
 
@@ -120,11 +138,14 @@ pub struct WatchArgs {
 }
 
 #[derive(Debug, Args, Clone)]
+#[command(
+    after_help = "EXAMPLES:\n  tekai lint\n  tekai lint paper --allow-warnings\n  tekai lint main.tex --report-json --allow-warnings"
+)]
 pub struct LintArgs {
     /// Files or directories to lint. Defaults to the current directory.
     pub paths: Vec<PathBuf>,
 
-    /// Optional texpilot.toml path.
+    /// Configuration file. Defaults to ./tekai.toml when it exists.
     #[arg(long)]
     pub config: Option<PathBuf>,
 
@@ -138,11 +159,11 @@ pub struct LintArgs {
 
 #[derive(Debug, Args, Clone)]
 pub struct LintFlags {
-    /// Return exit code 1 when warnings are found.
+    /// Return exit code 1 when warnings are found. This is the default.
     #[arg(long)]
     pub fail_on_warnings: bool,
 
-    /// Allow warnings without failing lint/check.
+    /// Return success when only warnings are found.
     #[arg(long, conflicts_with = "fail_on_warnings")]
     pub allow_warnings: bool,
 }
@@ -155,19 +176,19 @@ impl LintFlags {
 
 #[derive(Debug, Args, Clone)]
 pub struct BuildFlags {
-    /// TeX engine to use.
-    #[arg(long, value_enum, default_value_t = EngineArg::PdfLatex)]
+    /// Typesetting engine. tekai-engine is the self-contained exact default.
+    #[arg(long, value_enum, default_value_t = EngineArg::TekaiEngine)]
     pub engine: EngineArg,
 
-    /// Bibliography runner policy.
+    /// Bibliography policy: detect automatically, force a tool, or disable it.
     #[arg(long, value_enum, default_value_t = BibArg::Auto)]
     pub bib: BibArg,
 
-    /// Build orchestrator to use. `direct` avoids latexmk.
+    /// Build scheduler. direct is native; latexmk is the compatibility baseline.
     #[arg(long, value_enum, default_value_t = RunnerArg::Direct)]
     pub runner: RunnerArg,
 
-    /// Output directory for generated files.
+    /// Directory for the PDF, auxiliary files, and build state.
     #[arg(long, default_value = "build")]
     pub out_dir: PathBuf,
 
@@ -175,27 +196,27 @@ pub struct BuildFlags {
     #[arg(long)]
     pub job_name: Option<String>,
 
-    /// Skip image inclusion, TikZ externalization, and minted highlighting.
+    /// Replace expensive external content with placeholders. Output is not final.
     #[arg(long)]
     pub fast: bool,
 
-    /// Alias for --fast: compile with image and highlighting placeholders.
+    /// Alias for --fast.
     #[arg(long)]
     pub no_images: bool,
 
-    /// First-pass no-image policy for faster aux discovery.
+    /// Draft policy for intermediate convergence passes; final output stays exact.
     #[arg(long, value_enum, default_value_t = DraftPrepassArg::Auto)]
     pub draft_prepass: DraftPrepassArg,
 
-    /// Run exactly one TeX pass and skip bibliography/rerun convergence.
+    /// Run one TeX pass without auxiliary tools or convergence. Output may be incomplete.
     #[arg(long)]
     pub once: bool,
 
-    /// Cache a precompiled preamble format for direct pdfLaTeX builds.
+    /// Reuse a compatible precompiled preamble for direct tekai-engine builds.
     #[arg(long)]
     pub precompile_preamble: bool,
 
-    /// Maximum TeX passes for the direct runner.
+    /// Fail after this many unsettled TeX passes.
     #[arg(long, default_value_t = 8)]
     pub max_runs: usize,
 
@@ -207,11 +228,11 @@ pub struct BuildFlags {
     #[arg(long)]
     pub synctex: bool,
 
-    /// Enable shell escape for packages that need it.
+    /// Pass shell escape to TeX. Use only with trusted documents.
     #[arg(long)]
     pub shell_escape: bool,
 
-    /// Print the underlying command before running it.
+    /// Print each engine or auxiliary command before it runs.
     #[arg(long)]
     pub print_command: bool,
 
@@ -222,23 +243,23 @@ pub struct BuildFlags {
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum EngineArg {
-    PdfLatex,
+    TekaiEngine,
     XeLatex,
     LuaLatex,
     Tectonic,
-    TexpilotPdftex,
-    TexpilotPdftexCertified,
+    TekaiPdftex,
+    TekaiPdftexCertified,
 }
 
 impl From<EngineArg> for Engine {
     fn from(value: EngineArg) -> Self {
         match value {
-            EngineArg::PdfLatex => Engine::PdfLatex,
+            EngineArg::TekaiEngine => Engine::PdfLatex,
             EngineArg::XeLatex => Engine::XeLatex,
             EngineArg::LuaLatex => Engine::LuaLatex,
             EngineArg::Tectonic => Engine::Tectonic,
-            EngineArg::TexpilotPdftex => Engine::TexpilotPdftex,
-            EngineArg::TexpilotPdftexCertified => Engine::TexpilotPdftexCertified,
+            EngineArg::TekaiPdftex => Engine::TekaiPdftex,
+            EngineArg::TekaiPdftexCertified => Engine::TekaiPdftexCertified,
         }
     }
 }
@@ -297,10 +318,11 @@ impl From<RunnerArg> for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     #[test]
     fn build_accepts_no_images_alias() {
-        let cli = Cli::try_parse_from(["texpilot", "build", "main.tex", "--no-images"])
+        let cli = Cli::try_parse_from(["tekai", "build", "main.tex", "--no-images"])
             .expect("build --no-images should parse");
         let Command::Build(args) = cli.command else {
             panic!("expected build command");
@@ -312,7 +334,7 @@ mod tests {
 
     #[test]
     fn watch_accepts_no_images_alias_in_build_flags() {
-        let cli = Cli::try_parse_from(["texpilot", "watch", "main.tex", "--no-images"])
+        let cli = Cli::try_parse_from(["tekai", "watch", "main.tex", "--no-images"])
             .expect("watch --no-images should parse");
         let Command::Watch(args) = cli.command else {
             panic!("expected watch command");
@@ -325,7 +347,7 @@ mod tests {
     #[test]
     fn build_accepts_precompile_preamble_flag() {
         let cli = Cli::try_parse_from([
-            "texpilot",
+            "tekai",
             "build",
             "main.tex",
             "--fast",
@@ -343,39 +365,63 @@ mod tests {
     }
 
     #[test]
-    fn build_accepts_experimental_texpilot_pdftex_engine() {
-        let cli = Cli::try_parse_from([
-            "texpilot",
-            "build",
-            "main.tex",
-            "--engine",
-            "texpilot-pdftex",
-        ])
-        .expect("build --engine texpilot-pdftex should parse");
+    fn build_defaults_to_tekai_engine() {
+        let cli = Cli::try_parse_from(["tekai", "build", "main.tex"])
+            .expect("default build should parse");
         let Command::Build(args) = cli.command else {
             panic!("expected build command");
         };
 
-        assert!(matches!(args.flags.engine, EngineArg::TexpilotPdftex));
+        assert!(matches!(args.flags.engine, EngineArg::TekaiEngine));
     }
 
     #[test]
-    fn build_accepts_certified_texpilot_pdftex_engine() {
-        let cli = Cli::try_parse_from([
-            "texpilot",
-            "build",
-            "main.tex",
-            "--engine",
-            "texpilot-pdftex-certified",
-        ])
-        .expect("build --engine texpilot-pdftex-certified should parse");
+    fn build_rejects_legacy_exact_engine_names() {
+        for legacy in ["pdf-latex", "pdflatex"] {
+            assert!(
+                Cli::try_parse_from(["tekai", "build", "main.tex", "--engine", legacy]).is_err(),
+                "legacy engine name {legacy} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn build_accepts_experimental_tekai_pdftex_engine() {
+        let cli = Cli::try_parse_from(["tekai", "build", "main.tex", "--engine", "tekai-pdftex"])
+            .expect("build --engine tekai-pdftex should parse");
         let Command::Build(args) = cli.command else {
             panic!("expected build command");
         };
 
-        assert!(matches!(
-            args.flags.engine,
-            EngineArg::TexpilotPdftexCertified
-        ));
+        assert!(matches!(args.flags.engine, EngineArg::TekaiPdftex));
+    }
+
+    #[test]
+    fn build_accepts_certified_tekai_pdftex_engine() {
+        let cli = Cli::try_parse_from([
+            "tekai",
+            "build",
+            "main.tex",
+            "--engine",
+            "tekai-pdftex-certified",
+        ])
+        .expect("build --engine tekai-pdftex-certified should parse");
+        let Command::Build(args) = cli.command else {
+            panic!("expected build command");
+        };
+
+        assert!(matches!(args.flags.engine, EngineArg::TekaiPdftexCertified));
+    }
+
+    #[test]
+    fn top_level_help_uses_public_name_and_examples() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("self-contained engine"));
+        assert!(help.contains("tekai watch main.tex --preview"));
+        assert!(
+            !help
+                .to_ascii_lowercase()
+                .contains(&["tex", "pilot"].concat())
+        );
     }
 }

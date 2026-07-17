@@ -1,18 +1,32 @@
 # Usage and configuration
 
-This is the user-facing reference for `texpilot`. Run `texpilot <command>
+This is the user-facing reference for `tekai`. Run `tekai <command>
 --help` for the exact flags supported by the installed binary.
 
 ## Running the CLI
 
-For normal use, build once in release mode:
+Install the current release from the public Homebrew tap:
+
+```sh
+brew install NicoNekoru/tap/tekai
+tekai --version
+```
+
+The 0.1.0 release supports macOS. Linux is not currently a supported target.
+
+For development from a checkout:
 
 ```sh
 cargo build --release --locked
-target/release/texpilot --help
+target/release/tekai --help
 ```
 
 Use `cargo run -- <command>` while developing the CLI itself.
+
+`tekai` requires TeX Live or MacTeX for LaTeX packages, fonts, formats, and
+filename databases. Document-specific workflows also require their own tools,
+such as Biber, MakeIndex, Inkscape, or PythonTeX. The Homebrew formula installs
+the CLI but does not choose a TeX distribution for you.
 
 ## Commands
 
@@ -33,12 +47,12 @@ default; `--allow-warnings` is the convenient interactive setting.
 The default command is the exact, converged build path:
 
 ```sh
-texpilot build paper/main.tex
+tekai build paper/main.tex
 ```
 
 Its effective defaults are:
 
-- engine: `pdf-latex`;
+- engine: `tekai-engine`;
 - runner: `direct`;
 - bibliography policy: `auto`;
 - output directory: `build`;
@@ -53,22 +67,22 @@ Useful final-build flags:
 
 ```sh
 # Bypass settled-input caches.
-texpilot build paper/main.tex --force
+tekai build paper/main.tex --force
 
 # Enable SyncTeX or shell escape when the document requires it.
-texpilot build paper/main.tex --synctex
-texpilot build paper/main.tex --shell-escape
+tekai build paper/main.tex --synctex
+tekai build paper/main.tex --shell-escape
 
 # Cache a compatible mylatexformat preamble dump.
-texpilot build paper/main.tex --precompile-preamble
+tekai build paper/main.tex --precompile-preamble
 
 # Select bibliography handling explicitly.
-texpilot build paper/main.tex --bib bibtex
-texpilot build paper/main.tex --bib biber
-texpilot build paper/main.tex --bib none
+tekai build paper/main.tex --bib bibtex
+tekai build paper/main.tex --bib biber
+tekai build paper/main.tex --bib none
 
 # Choose a single-file output job name.
-texpilot build paper/main.tex --job-name camera-ready
+tekai build paper/main.tex --job-name camera-ready
 ```
 
 `--job-name` must be one filename component because PDF, auxiliary, and cache
@@ -80,13 +94,13 @@ Preview flags trade completeness or visible fidelity for latency:
 
 ```sh
 # One TeX pass; no bibliography or reference convergence.
-texpilot build paper/main.tex --once
+tekai build paper/main.tex --once
 
 # Replace expensive graphics/external content with placeholders.
-texpilot build paper/main.tex --fast
+tekai build paper/main.tex --fast
 
 # Fastest standalone preview.
-texpilot build paper/main.tex --once --fast
+tekai build paper/main.tex --once --fast
 ```
 
 `--no-images` is an alias for `--fast`. Preview mode can replace graphics,
@@ -103,13 +117,13 @@ when explicitly controlling that scheduler policy.
 Ordinary watch rebuilds the configured final mode:
 
 ```sh
-texpilot watch paper/main.tex --allow-warnings
+tekai watch paper/main.tex --allow-warnings
 ```
 
 The low-latency edit loop is:
 
 ```sh
-texpilot watch paper/main.tex --preview --allow-warnings
+tekai watch paper/main.tex --preview --allow-warnings
 ```
 
 `--preview` performs an initial whole-document fast build, prewarms a focused
@@ -121,7 +135,7 @@ PDF is intentionally not the final document.
 To get both immediate feedback and an exact settled artifact:
 
 ```sh
-texpilot watch paper/main.tex \
+tekai watch paper/main.tex \
   --preview \
   --final-after-idle-ms 1500 \
   --allow-warnings
@@ -133,32 +147,32 @@ document's parent. Use `--no-lint` only when another tool already owns linting.
 
 Watch mode follows source-scanned and recorder-discovered dependencies,
 including dependencies outside the project root. It ignores the configured
-output directory, `.git`, `target`, and `.texpilot` trees.
+output directory, `.git`, `target`, and `.tekai` trees.
 
 ## Engines and runners
 
 | Selection | Execution and fidelity |
 | --- | --- |
-| `--engine pdf-latex --runner direct` | Embedded `pdftex-rust` plus the native scheduler. This is the default exact path. |
-| `--engine pdf-latex --runner latexmk` | Installed `latexmk` and system pdfLaTeX. Useful as a baseline. |
+| `--engine tekai-engine --runner direct` | Self-contained Tekai engine and scheduler. This is the default exact path. |
+| `--engine tekai-engine --runner latexmk` | Installed `latexmk` and system pdfLaTeX. Useful as a baseline. |
 | `--engine xe-latex` | Installed XeLaTeX; direct scheduling or `latexmk` as selected. |
 | `--engine lua-latex` | Installed LuaLaTeX; direct scheduling or `latexmk` as selected. |
 | `--engine tectonic` | Installed Tectonic. |
-| `--engine texpilot-pdftex` | Experimental approximate native renderer. Unsupported documents fall back to exact pdfTeX. |
-| `--engine texpilot-pdftex-certified` | Native diagnostic run followed by an exact pdfTeX final artifact. |
+| `--engine tekai-pdftex` | Experimental approximate native renderer. Unsupported documents fall back to exact pdfTeX. |
+| `--engine tekai-pdftex-certified` | Native diagnostic run followed by an exact pdfTeX final artifact. |
 
 The experimental native renderer does not yet claim general pixel parity. See
 the [divergence audit](../output/pdf/pdftex-native-divergence-audit.md).
 
 ## Configuration
 
-`build`, `check`, and `watch` load `texpilot.toml` from the current directory by
+`build`, `check`, and `watch` load `tekai.toml` from the current directory by
 default. All commands accept `--config PATH`. Explicit CLI build flags override
 configuration; omitted flags retain configured values.
 
 ```toml
 [build]
-engine = "pdflatex"
+engine = "tekai-engine"
 runner = "direct"
 bib = "auto"
 out_dir = "build"
@@ -197,8 +211,8 @@ max_line_length = 120
 "line/length" = "off"
 ```
 
-Accepted config spellings include `pdflatex`/`pdf-latex`,
-`xelatex`/`xe-latex`, and `lualatex`/`lua-latex`. `bibliography` is retained as
+The exact engine is named `tekai-engine`. Other accepted pairs are
+`xelatex`/`xe-latex` and `lualatex`/`lua-latex`. `bibliography` is retained as
 an alias for `bib`; do not set both. `no_images` is retained as an alias for
 `fast`; if both are present they must agree.
 
@@ -209,7 +223,7 @@ the right place for checked-in Kpathsea roots such as `TEXINPUTS`, `BIBINPUTS`,
 ## Cache and output behavior
 
 Direct builds write artifacts under `out_dir`, including a
-`.texpilot-<job>.state.toml` dependency state. If mode, output, environment,
+`.tekai-<job>.state.toml` dependency state. If mode, output, environment,
 and effective inputs are unchanged, the next build skips TeX.
 
 The cache is TeX-aware:
@@ -225,20 +239,24 @@ Use `--force` to bypass the settled cache. Use `clean --dry-run` before removal
 when checking which directory a config selects:
 
 ```sh
-texpilot clean --dry-run
-texpilot clean
+tekai clean --dry-run
+tekai clean
 ```
 
 `clean` refuses empty paths, files, symlinks, the current directory, and its
 ancestors.
 
+Global reusable caches default to the platform cache directory under `tekai`.
+Advanced users can override individual roots with `TEKAI_FORMAT_CACHE`,
+`TEKAI_AUX_CACHE`, `TEKAI_BIBTEX_CACHE`, and `TEKAI_ENGINE_CACHE`.
+
 ## JSON output
 
 ```sh
-texpilot build paper/main.tex --report-json
-texpilot check paper/main.tex --report-json --allow-warnings
-texpilot lint paper --report-json --allow-warnings
-texpilot clean --dry-run --report-json
+tekai build paper/main.tex --report-json
+tekai check paper/main.tex --report-json --allow-warnings
+tekai lint paper --report-json --allow-warnings
+tekai clean --dry-run --report-json
 ```
 
 Build reports include cache status, PDF path, total/draft/final/PDF-producing
@@ -249,8 +267,8 @@ go to stderr so successful stdout remains parseable JSON.
 ## Linting
 
 ```sh
-texpilot lint paper --allow-warnings
-texpilot check paper/main.tex --allow-warnings
+tekai lint paper --allow-warnings
+tekai check paper/main.tex --allow-warnings
 ```
 
 Rule identifiers currently include:
@@ -265,9 +283,9 @@ Set a rule to `off`, `warn`, or `error` under `[lint.rules]`. Suppress a specifi
 source line when needed:
 
 ```tex
-Text using legacy $x$ syntax. % texpilot-ignore-line math/inline-dollar
+Text using legacy $x$ syntax. % tekai-ignore-line math/inline-dollar
 
-% texpilot-ignore-next-line line/length
+% tekai-ignore-next-line line/length
 This intentionally long generated line is accepted here.
 ```
 
@@ -281,3 +299,19 @@ SVG/EPS, Asymptote, MetaPost, Gnuplot, PythonTeX, minted, and PGF-externalizatio
 workflows. Each workflow still requires its corresponding executable and TeX
 package installation. Tests skip optional integrations when their program is
 not available; real builds report the missing requirement.
+
+## Exit status and troubleshooting
+
+`tekai` returns zero only when the requested operation completes under the
+selected policy. Lint warnings fail by default, unsettled builds fail after
+`--max-runs`, and missing external programs fail when the document needs them.
+
+```sh
+tekai build paper/main.tex --print-command --force
+tekai build paper/main.tex --report-json > build-report.json
+tekai build paper/main.tex --runner latexmk
+```
+
+These commands expose executed tools, record scheduler and cache details, and
+check the compatibility baseline. Use `--shell-escape` only for trusted input
+because it permits TeX packages to run external commands.

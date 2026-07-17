@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const EPS_DOC: &str = r#"\documentclass{article}
 \usepackage{graphicx}
@@ -108,7 +108,7 @@ fn direct_runner_builds_and_caches_eps_conversions() {
     }
 
     let _guard = EPS_TEST_LOCK.lock().expect("EPS test lock poisoned");
-    let root = unique_temp_dir("texpilot-eps-test");
+    let root = unique_temp_dir("tekai-eps-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let eps = root.join("fig.eps");
@@ -169,7 +169,7 @@ fn direct_runner_converts_eps_discovered_through_kpathsea() {
     }
 
     let _guard = EPS_TEST_LOCK.lock().expect("EPS test lock poisoned");
-    let root = unique_temp_dir("texpilot-kpathsea-eps-test");
+    let root = unique_temp_dir("tekai-kpathsea-eps-test");
     let shared_figures = root.join("shared").join("figures");
     fs::create_dir_all(&shared_figures).expect("failed to create shared figure directory");
     let main = root.join("main.tex");
@@ -227,7 +227,7 @@ fn direct_runner_detects_starred_multiline_graphics_commands_for_eps_conversion(
     }
 
     let _guard = EPS_TEST_LOCK.lock().expect("EPS test lock poisoned");
-    let root = unique_temp_dir("texpilot-starred-multiline-eps-test");
+    let root = unique_temp_dir("tekai-starred-multiline-eps-test");
     let figures = root.join("figures");
     fs::create_dir_all(&figures).expect("failed to create figure directory");
     let main = root.join("main.tex");
@@ -281,7 +281,7 @@ fn direct_runner_honors_declared_graphics_extension_order_for_eps() {
     }
 
     let _guard = EPS_TEST_LOCK.lock().expect("EPS test lock poisoned");
-    let root = unique_temp_dir("texpilot-declared-extensions-eps-test");
+    let root = unique_temp_dir("tekai-declared-extensions-eps-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let eps = root.join("fig.eps");
@@ -332,7 +332,7 @@ fn direct_runner_converts_eps_discovered_through_subfile_sources() {
     }
 
     let _guard = EPS_TEST_LOCK.lock().expect("EPS test lock poisoned");
-    let root = unique_temp_dir("texpilot-subfile-eps-test");
+    let root = unique_temp_dir("tekai-subfile-eps-test");
     let sections = root.join("sections");
     fs::create_dir_all(&sections).expect("failed to create section directory");
     let main = root.join("main.tex");
@@ -382,7 +382,7 @@ fn direct_runner_converts_eps_discovered_through_if_file_exists_sources() {
     }
 
     let _guard = EPS_TEST_LOCK.lock().expect("EPS test lock poisoned");
-    let root = unique_temp_dir("texpilot-if-file-exists-eps-test");
+    let root = unique_temp_dir("tekai-if-file-exists-eps-test");
     let sections = root.join("sections");
     fs::create_dir_all(&sections).expect("failed to create section directory");
     let main = root.join("main.tex");
@@ -432,7 +432,7 @@ fn direct_runner_converts_eps_discovered_through_import_sources() {
     }
 
     let _guard = EPS_TEST_LOCK.lock().expect("EPS test lock poisoned");
-    let root = unique_temp_dir("texpilot-import-eps-test");
+    let root = unique_temp_dir("tekai-import-eps-test");
     let sections = root.join("sections");
     fs::create_dir_all(&sections).expect("failed to create section directory");
     let main = root.join("main.tex");
@@ -482,7 +482,7 @@ fn direct_runner_ignores_eps_in_includeonly_excluded_sources() {
     }
 
     let _guard = EPS_TEST_LOCK.lock().expect("EPS test lock poisoned");
-    let root = unique_temp_dir("texpilot-includeonly-eps-test");
+    let root = unique_temp_dir("tekai-includeonly-eps-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let active = root.join("active.tex");

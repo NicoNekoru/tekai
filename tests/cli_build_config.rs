@@ -31,12 +31,12 @@ fn build_uses_configured_fast_preview_defaults() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-cli-build-config-fast");
+    let root = unique_temp_dir("tekai-cli-build-config-fast");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     fs::write(root.join("main.tex"), FINAL_GRAPHICX_MISSING_IMAGE_DOC)
         .expect("failed to write TeX source");
     fs::write(
-        root.join("texpilot.toml"),
+        root.join("tekai.toml"),
         r#"
         [build]
         out_dir = "configured-out"
@@ -47,17 +47,17 @@ fn build_uses_configured_fast_preview_defaults() {
     )
     .expect("failed to write config");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_texpilot"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
         .current_dir(&root)
         .args([
             "build",
             "main.tex",
             "--config",
-            "texpilot.toml",
+            "tekai.toml",
             "--report-json",
         ])
         .output()
-        .expect("failed to run texpilot build");
+        .expect("failed to run tekai build");
 
     assert_success(&output, "configured fast preview build");
     assert!(root.join("configured-out/main.pdf").exists());
@@ -82,7 +82,7 @@ fn build_uses_configured_texinputs_environment() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-cli-build-config-env");
+    let root = unique_temp_dir("tekai-cli-build-config-env");
     let shared = root.join("shared-tex");
     fs::create_dir_all(&shared).expect("failed to create shared tex directory");
     fs::write(root.join("main.tex"), SHARED_PACKAGE_DOC).expect("failed to write TeX source");
@@ -96,7 +96,7 @@ fn build_uses_configured_texinputs_environment() {
     let separator = if cfg!(windows) { ";" } else { ":" };
     let texinputs = format!("{}//{}", shared.display(), separator);
     fs::write(
-        root.join("texpilot.toml"),
+        root.join("tekai.toml"),
         format!(
             r#"
             [build]
@@ -112,17 +112,17 @@ fn build_uses_configured_texinputs_environment() {
     )
     .expect("failed to write config");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_texpilot"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
         .current_dir(&root)
         .args([
             "build",
             "main.tex",
             "--config",
-            "texpilot.toml",
+            "tekai.toml",
             "--report-json",
         ])
         .output()
-        .expect("failed to run texpilot build");
+        .expect("failed to run tekai build");
 
     assert_success(&output, "configured TEXINPUTS build");
     assert!(root.join("configured-out/main.pdf").exists());
@@ -137,11 +137,11 @@ fn explicit_build_flags_override_config_defaults() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-cli-build-config-override");
+    let root = unique_temp_dir("tekai-cli-build-config-override");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     fs::write(root.join("main.tex"), MINIMAL_DOC).expect("failed to write TeX source");
     fs::write(
-        root.join("texpilot.toml"),
+        root.join("tekai.toml"),
         r#"
         [build]
         out_dir = "configured-out"
@@ -151,19 +151,19 @@ fn explicit_build_flags_override_config_defaults() {
     )
     .expect("failed to write config");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_texpilot"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
         .current_dir(&root)
         .args([
             "build",
             "main.tex",
             "--config",
-            "texpilot.toml",
+            "tekai.toml",
             "--out-dir",
             "cli-out",
             "--report-json",
         ])
         .output()
-        .expect("failed to run texpilot build");
+        .expect("failed to run tekai build");
 
     assert_success(&output, "CLI override build");
     assert!(root.join("cli-out/main.pdf").exists());

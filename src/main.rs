@@ -7,19 +7,19 @@ use anyhow::{Context, Result, bail};
 use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use serde::Serialize;
-use texpilot::cli::{BuildArgs, CheckArgs, CleanArgs, Cli, Command, LintArgs, WatchArgs};
-use texpilot::compiler::{
-    BuildOptions, EMBEDDED_PDFTEX_RUNNER_ENV, EMBEDDED_PDFTEX_SUBCOMMAND, build,
+use tekai::cli::{BuildArgs, CheckArgs, CleanArgs, Cli, Command, LintArgs, WatchArgs};
+use tekai::compiler::{
+    BuildOptions, EMBEDDED_ENGINE_RUNNER_ENV, EMBEDDED_ENGINE_SUBCOMMAND, build,
 };
-use texpilot::config::{BuildConfig, load_build_config, load_lint_config, load_project_config};
-use texpilot::lint::{Diagnostic, Severity, format_diagnostic, has_errors, lint_paths};
-use texpilot::watch::{WatchOptions, watch};
+use tekai::config::{BuildConfig, load_build_config, load_lint_config, load_project_config};
+use tekai::lint::{Diagnostic, Severity, format_diagnostic, has_errors, lint_paths};
+use tekai::watch::{WatchOptions, watch};
 
 fn main() -> Result<()> {
-    if std::env::args_os().nth(1).as_deref() == Some(OsStr::new(EMBEDDED_PDFTEX_SUBCOMMAND)) {
-        return run_embedded_pdftex();
+    if std::env::args_os().nth(1).as_deref() == Some(OsStr::new(EMBEDDED_ENGINE_SUBCOMMAND)) {
+        return run_embedded_engine();
     }
-    enable_embedded_pdftex_runner()?;
+    enable_embedded_engine_runner()?;
 
     let matches = Cli::command().get_matches();
     let build_flag_sources = BuildFlagSources::from_root_matches(&matches);
@@ -33,18 +33,18 @@ fn main() -> Result<()> {
     }
 }
 
-fn enable_embedded_pdftex_runner() -> Result<()> {
-    if std::env::var_os(EMBEDDED_PDFTEX_RUNNER_ENV).is_none() {
-        let executable = std::env::current_exe().context("failed to locate texpilot executable")?;
+fn enable_embedded_engine_runner() -> Result<()> {
+    if std::env::var_os(EMBEDDED_ENGINE_RUNNER_ENV).is_none() {
+        let executable = std::env::current_exe().context("failed to locate tekai executable")?;
         // SAFETY: this is initialized before watcher threads or child processes start.
         unsafe {
-            std::env::set_var(EMBEDDED_PDFTEX_RUNNER_ENV, executable);
+            std::env::set_var(EMBEDDED_ENGINE_RUNNER_ENV, executable);
         }
     }
     Ok(())
 }
 
-fn run_embedded_pdftex() -> Result<()> {
+fn run_embedded_engine() -> Result<()> {
     let mut args = Vec::new();
     args.push(CString::new("pdflatex").expect("static pdfTeX program name contains no NUL"));
     for arg in std::env::args_os().skip(2) {
@@ -57,7 +57,7 @@ fn run_embedded_pdftex() -> Result<()> {
     argv.push(std::ptr::null_mut());
 
     let code =
-        unsafe { pdftex_rust::run_from_c_args(args.len() as core::ffi::c_int, argv.as_mut_ptr()) };
+        unsafe { tekai_engine::run_from_c_args(args.len() as core::ffi::c_int, argv.as_mut_ptr()) };
     std::process::exit(code)
 }
 
@@ -289,7 +289,7 @@ fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
     Ok(())
 }
 
-fn print_lint_diagnostics(diagnostics: &[texpilot::lint::Diagnostic], stderr: bool) {
+fn print_lint_diagnostics(diagnostics: &[tekai::lint::Diagnostic], stderr: bool) {
     for diagnostic in diagnostics {
         if stderr {
             eprintln!("{}", format_diagnostic(diagnostic));
@@ -328,7 +328,7 @@ fn run_watch(args: WatchArgs, flag_sources: BuildFlagSources) -> Result<()> {
 
 fn apply_build_env(config: &BuildConfig) {
     for (key, value) in &config.env {
-        // SAFETY: texpilot applies project build environment before starting
+        // SAFETY: tekai applies project build environment before starting
         // watcher threads or launching child TeX/tool processes.
         unsafe {
             std::env::set_var(key, value);
@@ -338,7 +338,7 @@ fn apply_build_env(config: &BuildConfig) {
 
 fn build_options(
     main: PathBuf,
-    flags: texpilot::cli::BuildFlags,
+    flags: tekai::cli::BuildFlags,
     config: &BuildConfig,
     sources: BuildFlagSources,
 ) -> BuildOptions {
@@ -398,7 +398,7 @@ fn apply_build_config(options: &mut BuildOptions, config: &BuildConfig) {
 
 fn apply_build_flags(
     options: &mut BuildOptions,
-    flags: texpilot::cli::BuildFlags,
+    flags: tekai::cli::BuildFlags,
     sources: BuildFlagSources,
 ) {
     if sources.engine {
@@ -448,7 +448,7 @@ fn apply_build_flags(
     }
 }
 
-fn print_build_report(pdf: &std::path::Path, report: &texpilot::compiler::BuildReport) {
+fn print_build_report(pdf: &std::path::Path, report: &tekai::compiler::BuildReport) {
     if report.skipped {
         eprintln!(
             "cached {} in {:.2?} (inputs unchanged)",
@@ -482,7 +482,7 @@ fn print_build_report(pdf: &std::path::Path, report: &texpilot::compiler::BuildR
     }
 }
 
-fn tex_run_detail(report: &texpilot::compiler::BuildReport) -> String {
+fn tex_run_detail(report: &tekai::compiler::BuildReport) -> String {
     if report.draft_tex_runs == 0 && report.final_tex_runs == 0 {
         String::new()
     } else {
@@ -493,7 +493,7 @@ fn tex_run_detail(report: &texpilot::compiler::BuildReport) -> String {
     }
 }
 
-fn build_report_detail(report: &texpilot::compiler::BuildReport) -> String {
+fn build_report_detail(report: &tekai::compiler::BuildReport) -> String {
     let mut details = Vec::new();
     if report.draft_prepass_used {
         details.push("draft prepass");
@@ -552,8 +552,8 @@ struct JsonTexPassReport {
     external_runs: usize,
 }
 
-impl From<&texpilot::compiler::BuildReport> for JsonBuildReport {
-    fn from(report: &texpilot::compiler::BuildReport) -> Self {
+impl From<&tekai::compiler::BuildReport> for JsonBuildReport {
+    fn from(report: &tekai::compiler::BuildReport) -> Self {
         Self {
             pdf_path: report
                 .pdf_path
@@ -596,7 +596,7 @@ impl From<&texpilot::compiler::BuildReport> for JsonBuildReport {
     }
 }
 
-fn print_build_report_json(report: &texpilot::compiler::BuildReport) -> Result<()> {
+fn print_build_report_json(report: &tekai::compiler::BuildReport) -> Result<()> {
     println!(
         "{}",
         serde_json::to_string_pretty(&JsonBuildReport::from(report))?

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const PYTHONTEX_DOC: &str = r#"\documentclass{article}
 \usepackage{pythontex}
@@ -27,7 +27,7 @@ fn direct_runner_builds_and_caches_pythontex_output() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-pythontex-test");
+    let root = unique_temp_dir("tekai-pythontex-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");

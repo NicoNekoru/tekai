@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const FINAL_GRAPHICX_MISSING_IMAGE_DOC: &str = r#"\documentclass{article}
 \usepackage[final]{graphicx}
@@ -117,7 +117,7 @@ fn fast_preview_uses_demo_graphics_even_when_document_requests_final_graphicx() 
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-graphicx-test");
+    let root = unique_temp_dir("tekai-fast-graphicx-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -144,7 +144,7 @@ fn fast_preview_precompile_preamble_reuses_format_after_body_edit() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-precompile-preamble-test");
+    let root = unique_temp_dir("tekai-fast-precompile-preamble-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -196,7 +196,7 @@ fn fast_preview_precompile_preamble_falls_back_for_predocument_inputs() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-unsafe-precompile-preamble-test");
+    let root = unique_temp_dir("tekai-fast-unsafe-precompile-preamble-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let abstract_file = root.join("abstract.tex");
@@ -232,7 +232,7 @@ fn full_build_precompile_preamble_reuses_format_after_body_edit() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-full-precompile-preamble-test");
+    let root = unique_temp_dir("tekai-full-precompile-preamble-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -278,7 +278,7 @@ fn full_build_does_not_opportunistically_build_preamble_format_without_draft_pre
         return;
     }
 
-    let root = unique_temp_dir("texpilot-no-draft-opportunistic-preamble-test");
+    let root = unique_temp_dir("tekai-no-draft-opportunistic-preamble-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -305,7 +305,7 @@ fn fast_preview_replaces_svg_includes_without_image_lookup() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-svg-test");
+    let root = unique_temp_dir("tekai-fast-svg-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -333,7 +333,7 @@ fn fast_preview_replaces_pdfpages_includes_without_pdf_lookup() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-pdfpages-test");
+    let root = unique_temp_dir("tekai-fast-pdfpages-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -362,7 +362,7 @@ fn fast_preview_uses_minted_placeholder_without_highlighting_cache() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-minted-test");
+    let root = unique_temp_dir("tekai-fast-minted-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -392,7 +392,7 @@ fn fast_preview_replaces_inputminted_without_source_lookup() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-inputminted-test");
+    let root = unique_temp_dir("tekai-fast-inputminted-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -422,7 +422,7 @@ fn fast_preview_replaces_animategraphics_without_frame_lookup() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-animate-test");
+    let root = unique_temp_dir("tekai-fast-animate-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -451,7 +451,7 @@ fn fast_preview_replaces_includestandalone_without_subdocument_lookup() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-standalone-test");
+    let root = unique_temp_dir("tekai-fast-standalone-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -480,7 +480,7 @@ fn fast_preview_replaces_includemedia_without_media_lookup() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-media9-test");
+    let root = unique_temp_dir("tekai-fast-media9-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -509,7 +509,7 @@ fn fast_preview_replaces_attachfile2_without_attachment_lookup() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-attachfile2-test");
+    let root = unique_temp_dir("tekai-fast-attachfile2-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -539,7 +539,7 @@ fn fast_preview_replaces_attachfile_without_attachment_lookup() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-attachfile-test");
+    let root = unique_temp_dir("tekai-fast-attachfile-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -572,7 +572,7 @@ fn fast_preview_disables_tikz_externalization_without_shell_escape() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-fast-tikz-external-test");
+    let root = unique_temp_dir("tekai-fast-tikz-external-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -607,7 +607,7 @@ fn draft_prepass_precompile_preamble_builds_format_for_final_pass() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-draft-precompile-preamble-test");
+    let root = unique_temp_dir("tekai-draft-precompile-preamble-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let bibliography = root.join("refs.bib");
@@ -656,7 +656,7 @@ fn draft_prepass_opportunistically_builds_safe_preamble_format_for_final_pass() 
         return;
     }
 
-    let root = unique_temp_dir("texpilot-draft-opportunistic-preamble-test");
+    let root = unique_temp_dir("tekai-draft-opportunistic-preamble-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let bibliography = root.join("refs.bib");

@@ -646,7 +646,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "pdftex-rust"
+name = "tekai-engine"
 version = "0.1.0"
 dependencies = [
  "flate2",
@@ -808,23 +808,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "texpilot"
+name = "tekai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "glob",
  "notify",
- "pdftex-rust",
+ "tekai-engine",
  "serde",
  "serde_json",
- "texpilot-pdftex",
+ "tekai-pdftex",
  "toml",
  "walkdir",
 ]
 
 [[package]]
-name = "texpilot-pdftex"
+name = "tekai-pdftex"
 version = "0.1.0"
 dependencies = [
  "chrono",

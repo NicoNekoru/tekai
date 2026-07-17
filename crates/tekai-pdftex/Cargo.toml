@@ -1,0 +1,19 @@
+[package]
+name = "tekai-pdftex"
+version = "0.1.0"
+edition = "2024"
+description = "Experimental pdfTeX-compatible engine contract and rewrite plan for tekai."
+license = "MIT"
+repository = "https://github.com/NicoNekoru/tekai"
+publish = false
+
+[lib]
+name = "tekai_pdftex"
+path = "src/lib.rs"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+flate2 = "1.0"
+lopdf = { version = "0.35", default-features = false, features = ["nom_parser"] }
+md-5 = "0.10"
+png = "0.17"

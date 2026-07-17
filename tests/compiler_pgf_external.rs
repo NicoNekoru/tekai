@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const PGF_EXTERNAL_DOC: &str = r#"\documentclass{article}
 \usepackage{tikz}
@@ -44,7 +44,7 @@ fn direct_runner_builds_pgf_externalized_figures_from_makefile() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-pgf-external-test");
+    let root = unique_temp_dir("tekai-pgf-external-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -80,7 +80,7 @@ fn direct_runner_forces_pgf_list_and_make_without_shell_escape() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-pgf-default-external-test");
+    let root = unique_temp_dir("tekai-pgf-default-external-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");

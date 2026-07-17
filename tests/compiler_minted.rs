@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const MINTED_DOC: &str = r#"\documentclass{article}
 \usepackage{minted}
@@ -27,7 +27,7 @@ fn direct_runner_reruns_after_cold_minted_cache_generation() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-minted-test");
+    let root = unique_temp_dir("tekai-minted-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{
+use tekai::compiler::{
     BibMode, BuildOptions, DraftPrepass, Engine, Runner, build, build_dependency_paths,
 };
 
@@ -67,7 +67,7 @@ fn direct_runner_builds_and_caches_makeindex_output() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-index-test");
+    let root = unique_temp_dir("tekai-index-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -110,7 +110,7 @@ fn direct_runner_ignores_stale_index_files_not_recorded_by_latest_tex_run() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-stale-index-test");
+    let root = unique_temp_dir("tekai-stale-index-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -150,7 +150,7 @@ fn direct_runner_uses_xindy_requested_by_imakeidx_log_command() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-imakeidx-xindy-test");
+    let root = unique_temp_dir("tekai-imakeidx-xindy-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -183,7 +183,7 @@ fn direct_runner_uses_makeindex_style_requested_by_imakeidx_log_command() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-imakeidx-style-test");
+    let root = unique_temp_dir("tekai-imakeidx-style-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let style = root.join("custom.ist");
@@ -239,7 +239,7 @@ fn direct_runner_splits_splitidx_raw_index_before_makeindex() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-splitidx-test");
+    let root = unique_temp_dir("tekai-splitidx-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");

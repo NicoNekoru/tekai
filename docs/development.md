@@ -6,11 +6,11 @@ The workspace contains three Rust packages:
 
 | Package | Role |
 | --- | --- |
-| `texpilot` | CLI, build scheduler, caches, watcher, linter, and integration tests. |
-| `pdftex-rust` | Faithful Rust-owned pdfTeX port used by the default direct path. |
-| `texpilot-pdftex` | Experimental native replacement renderer and engine-v2 research. |
+| `tekai` | CLI, build scheduler, caches, watcher, linter, and integration tests. |
+| `tekai-engine` | Self-contained exact engine used by the default direct path. |
+| `tekai-pdftex` | Experimental native replacement renderer and engine-v2 research. |
 
-Keep the fidelity boundary explicit. A successful `pdftex-rust` build is
+Keep the fidelity boundary explicit. A successful `tekai-engine` build is
 expected to preserve rendered pdfTeX output. A successful experimental native
 build only proves that the supported subset executed; it does not imply general
 pdfTeX parity.
@@ -22,12 +22,17 @@ Match the CI gates before handing off a change:
 ```sh
 cargo fmt --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo clippy -p pdftex-rust \
-  --bin pdftex-rust \
+cargo clippy -p tekai-engine \
+  --bin tekai-engine \
   --no-default-features \
-  --features rust-binary \
+  --features standalone-binary \
   --locked -- -D warnings
-cargo test --workspace --locked
+cargo build -p tekai-engine \
+  --bin tekai-engine \
+  --no-default-features \
+  --features standalone-binary \
+  --locked
+cargo test --workspace --locked -- --test-threads=1
 cargo build --release --locked
 ```
 
@@ -36,9 +41,9 @@ Focused commands are useful during iteration:
 ```sh
 cargo test --lib watch::tests
 cargo test --test compiler_cache
-cargo test --test compiler_texpilot_pdftex
-cargo test -p pdftex-rust
-cargo test -p texpilot-pdftex
+cargo test --test compiler_tekai_pdftex
+cargo test -p tekai-engine
+cargo test -p tekai-pdftex
 ```
 
 Integration tests that depend on optional external programs skip when those
@@ -69,7 +74,7 @@ compression may legitimately differ.
 
 Keep temporary rendered pages under `tmp/pdfs/` and remove them after the
 inspection. The current checked evidence lives in
-[`output/pdf/pdftex-rust-parity-report.md`](../output/pdf/pdftex-rust-parity-report.md).
+[`output/pdf/tekai-engine-parity-report.md`](../output/pdf/tekai-engine-parity-report.md).
 
 ## Performance measurement
 
@@ -77,8 +82,8 @@ Measure release binaries and realistic papers:
 
 ```sh
 cargo build --release --locked
-target/release/texpilot build examples/arXiv-2605.26379v1/main.tex --report-json
-target/release/texpilot build examples/arXiv-2511.08544v3/main.tex --report-json
+target/release/tekai build examples/arXiv-2605.26379v1/main.tex --report-json
+target/release/tekai build examples/arXiv-2511.08544v3/main.tex --report-json
 ```
 
 Use separate output directories for cold runs, report medians over repeated
@@ -104,13 +109,13 @@ must preserve dependency filtering and structural fallbacks.
   remain conservative.
 - `src/lint.rs` is a scanner, not a LaTeX parser. Avoid claiming general TeX
   semantics from lint-only source analysis.
-- `crates/pdftex-rust/src/generated` is the checked-in Rust engine core. Keep
+- `crates/tekai-engine/src/generated` is the checked-in Rust engine core. Keep
   hot-path changes narrow and validate them on real documents.
-- `crates/texpilot-pdftex/src/native.rs` is experimental. Unsupported behavior
+- `crates/tekai-pdftex/src/native.rs` is experimental. Unsupported behavior
   should be named or fall back, never silently approximated as exact.
 
 The long-term native-engine design is in
-[`crates/texpilot-pdftex/ARCHITECTURE.md`](../crates/texpilot-pdftex/ARCHITECTURE.md).
+[`crates/tekai-pdftex/ARCHITECTURE.md`](../crates/tekai-pdftex/ARCHITECTURE.md).
 
 ## Documentation maintenance
 
@@ -118,6 +123,16 @@ The long-term native-engine design is in
 - Put user-facing command/configuration details in `docs/usage.md`.
 - Put contributor gates and measurement procedure in this document.
 - Keep historical benchmark numbers dated and scoped to their exact commands.
-- Do not describe `texpilot-pdftex` as exact; the default `pdf-latex` path is
+- Do not describe `tekai-pdftex` as exact; the default `tekai-engine` path is
   the parity-preserving embedded engine.
 - Update `--help`, config parsing, tests, and docs together when adding a flag.
+
+## Release checklist
+
+1. Update `CHANGELOG.md` and the package version.
+2. Run the full Rust, help, and rendered-PDF gates above.
+3. Confirm every commit subject is a single printable ASCII line.
+4. Tag `v<version>` on `main` and create the matching GitHub release.
+5. Update `Formula/tekai.rb` in `NicoNekoru/homebrew-tap` with the release URL
+   and SHA-256, then run `brew audit --strict --online` and `brew test`.
+6. Install through the public tap and verify `tekai --version`.

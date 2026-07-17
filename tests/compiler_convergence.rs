@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const SILENT_GENERATED_CHANGE_DOC: &str = r#"\documentclass{article}
 \newwrite\stageout
@@ -72,7 +72,7 @@ fn direct_runner_tracks_generated_output_changes_even_when_log_is_silent() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-convergence-test");
+    let root = unique_temp_dir("tekai-convergence-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -97,7 +97,7 @@ fn direct_runner_promotes_after_stale_file_change_warning_without_standard_file_
         return;
     }
 
-    let root = unique_temp_dir("texpilot-stale-file-change-test");
+    let root = unique_temp_dir("tekai-stale-file-change-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -139,7 +139,7 @@ fn direct_runner_reruns_when_promoted_pdf_changes_standard_sidecars() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-changed-standard-sidecar-test");
+    let root = unique_temp_dir("tekai-changed-standard-sidecar-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");

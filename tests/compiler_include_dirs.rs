@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const MAIN_TEX: &str = r#"\documentclass{article}
 \begin{document}
@@ -27,7 +27,7 @@ fn direct_runner_creates_output_subdirectories_for_included_aux_files() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-include-dir-test");
+    let root = unique_temp_dir("tekai-include-dir-test");
     let section_dir = root.join("sections");
     let out_dir = root.join("out");
     fs::create_dir_all(&section_dir).expect("failed to create section directory");
@@ -57,7 +57,7 @@ fn direct_runner_creates_output_subdirectories_for_multiline_include() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-multiline-include-dir-test");
+    let root = unique_temp_dir("tekai-multiline-include-dir-test");
     let section_dir = root.join("sections");
     let out_dir = root.join("out");
     fs::create_dir_all(&section_dir).expect("failed to create section directory");

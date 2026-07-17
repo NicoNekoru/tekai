@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use texpilot::compiler::{
+use tekai::compiler::{
     BibMode, BuildOptions, DraftPrepass, Engine, Runner, build, build_dependency_paths,
 };
 
@@ -158,7 +158,7 @@ fn direct_runner_builds_bibliographies_from_included_aux_files() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-bib-test");
+    let root = unique_temp_dir("tekai-bib-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let chapter = root.join("chapter.tex");
@@ -209,7 +209,7 @@ fn direct_runner_builds_multiple_included_bibliographies() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-multi-bib-test");
+    let root = unique_temp_dir("tekai-multi-bib-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let chapter_a = root.join("chapter_a.tex");
@@ -248,7 +248,7 @@ fn direct_runner_ignores_stale_bibtex_aux_excluded_by_includeonly() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-includeonly-stale-bib-test");
+    let root = unique_temp_dir("tekai-includeonly-stale-bib-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let chapter_a = root.join("chapter_a.tex");
@@ -296,7 +296,7 @@ fn direct_runner_discovers_recorded_bibtex_aux_not_linked_from_root_aux() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-recorded-hidden-bib-test");
+    let root = unique_temp_dir("tekai-recorded-hidden-bib-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -349,9 +349,9 @@ fn direct_runner_preserves_existing_bibinputs_and_tracks_external_bibs() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-bibinputs-test");
-    let bib_root = unique_temp_dir("texpilot-bibinputs-external");
-    let alternate_bib_root = unique_temp_dir("texpilot-bibinputs-alternate");
+    let root = unique_temp_dir("tekai-bibinputs-test");
+    let bib_root = unique_temp_dir("tekai-bibinputs-external");
+    let alternate_bib_root = unique_temp_dir("tekai-bibinputs-alternate");
     fs::create_dir_all(&root).expect("failed to create test directory");
     fs::create_dir_all(&bib_root).expect("failed to create external bibliography directory");
     fs::create_dir_all(&alternate_bib_root)
@@ -443,7 +443,7 @@ fn direct_runner_honors_biblatex_logreq_bibtex8_command() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-bibtex8-logreq-test");
+    let root = unique_temp_dir("tekai-bibtex8-logreq-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -481,7 +481,7 @@ fn direct_runner_skips_tex_when_bibtex_preflight_output_is_unchanged() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-bib-unchanged-output-test");
+    let root = unique_temp_dir("tekai-bib-unchanged-output-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let chapter = root.join("chapter.tex");
@@ -529,7 +529,7 @@ fn direct_runner_does_not_add_tex_pass_when_post_tex_bibtex_output_is_unchanged(
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-bib-post-tex-unchanged-output-test");
+    let root = unique_temp_dir("tekai-bib-post-tex-unchanged-output-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let chapter = root.join("chapter.tex");
@@ -576,7 +576,7 @@ fn direct_runner_builds_bibliographies_from_included_aux_files_in_subdirectories
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-subdir-bib-test");
+    let root = unique_temp_dir("tekai-subdir-bib-test");
     let sections = root.join("sections");
     fs::create_dir_all(&sections).expect("failed to create section directory");
     let main = root.join("main.tex");
@@ -619,7 +619,7 @@ fn auto_draft_prepass_does_not_add_passes_to_bibliography_edit_rebuilds() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-auto-prepass-bib-test");
+    let root = unique_temp_dir("tekai-auto-prepass-bib-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -676,7 +676,7 @@ fn auto_no_pdf_prepass_converges_text_only_multipass_documents() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-auto-no-pdf-bib-test");
+    let root = unique_temp_dir("tekai-auto-no-pdf-bib-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -728,7 +728,7 @@ fn auto_no_pdf_prepass_does_not_expand_simple_one_pass_documents() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-auto-no-pdf-simple-test");
+    let root = unique_temp_dir("tekai-auto-no-pdf-simple-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -762,10 +762,10 @@ fn auto_draft_prepass_switches_to_final_after_backref_outputs_stabilize() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-auto-prepass-backref-test");
+    let root = unique_temp_dir("tekai-auto-prepass-backref-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let _bib_cache_guard = EnvVarGuard::set(
-        "TEXPILOT_BIBTEX_CACHE",
+        "TEKAI_BIBTEX_CACHE",
         root.join("bib-cache").into_os_string(),
     );
     let main = root.join("main.tex");
@@ -824,7 +824,7 @@ fn forced_build_reuses_bibtex_session_freshness_within_single_build() {
     }
 
     let _env_guard = bibinputs_test_guard();
-    let root = unique_temp_dir("texpilot-force-bibtex-session-cache-test");
+    let root = unique_temp_dir("tekai-force-bibtex-session-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");

@@ -6,18 +6,18 @@ use serde_json::Value;
 
 #[test]
 fn lint_report_json_emits_machine_readable_diagnostics() {
-    let root = unique_temp_dir("texpilot-cli-lint-json");
+    let root = unique_temp_dir("tekai-cli-lint-json");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let source = root.join("paper.tex");
     fs::write(&source, "Text $x$.\n").expect("failed to write TeX source");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_texpilot"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
         .arg("lint")
         .arg("--report-json")
         .arg("--allow-warnings")
         .arg(&source)
         .output()
-        .expect("failed to run texpilot lint");
+        .expect("failed to run tekai lint");
 
     assert!(
         output.status.success(),

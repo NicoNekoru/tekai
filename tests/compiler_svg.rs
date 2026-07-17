@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const SVG_DOC: &str = r#"\documentclass{article}
 \usepackage{svg}
@@ -73,7 +73,7 @@ fn direct_runner_builds_and_caches_svg_conversions() {
     }
 
     let _guard = SVG_TEST_LOCK.lock().expect("SVG test lock poisoned");
-    let root = unique_temp_dir("texpilot-svg-test");
+    let root = unique_temp_dir("tekai-svg-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let svg = root.join("fig.svg");
@@ -143,7 +143,7 @@ fn direct_runner_honors_svgsetup_for_raw_page_exports() {
     }
 
     let _guard = SVG_TEST_LOCK.lock().expect("SVG test lock poisoned");
-    let root = unique_temp_dir("texpilot-svgsetup-test");
+    let root = unique_temp_dir("tekai-svgsetup-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let svg = root.join("fig.svg");
@@ -210,7 +210,7 @@ fn direct_runner_honors_svgsetup_png_exports() {
     }
 
     let _guard = SVG_TEST_LOCK.lock().expect("SVG test lock poisoned");
-    let root = unique_temp_dir("texpilot-svgpng-test");
+    let root = unique_temp_dir("tekai-svgpng-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let svg = root.join("fig.svg");
@@ -289,7 +289,7 @@ fn direct_runner_honors_svgextension_for_source_and_output_suffix() {
     }
 
     let _guard = SVG_TEST_LOCK.lock().expect("SVG test lock poisoned");
-    let root = unique_temp_dir("texpilot-svgextension-test");
+    let root = unique_temp_dir("tekai-svgextension-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let svgz = root.join("fig.svgz");
@@ -360,7 +360,7 @@ fn direct_runner_honors_svgsetup_inkscapename() {
     }
 
     let _guard = SVG_TEST_LOCK.lock().expect("SVG test lock poisoned");
-    let root = unique_temp_dir("texpilot-svgname-test");
+    let root = unique_temp_dir("tekai-svgname-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let svg = root.join("fig.svg");
@@ -427,7 +427,7 @@ fn direct_runner_honors_svgsetup_inkscapeexe_command_name() {
     }
 
     let _guard = SVG_TEST_LOCK.lock().expect("SVG test lock poisoned");
-    let root = unique_temp_dir("texpilot-svgexe-test");
+    let root = unique_temp_dir("tekai-svgexe-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let svg = root.join("fig.svg");

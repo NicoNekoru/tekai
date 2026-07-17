@@ -115,7 +115,7 @@ fn load_raw_config(path: Option<&Path>) -> Result<Option<RawConfig>> {
 }
 
 fn default_config_path() -> Option<PathBuf> {
-    let candidate = std::env::current_dir().ok()?.join("texpilot.toml");
+    let candidate = std::env::current_dir().ok()?.join("tekai.toml");
     candidate.exists().then_some(candidate)
 }
 
@@ -242,17 +242,17 @@ fn validate_env_config(env: &HashMap<String, String>) -> Result<()> {
 
 fn parse_engine(value: &str) -> Result<Engine> {
     match normalize_choice(value).as_str() {
-        "pdflatex" | "pdf-latex" => Ok(Engine::PdfLatex),
+        "tekai-engine" => Ok(Engine::PdfLatex),
         "xelatex" | "xe-latex" => Ok(Engine::XeLatex),
         "lualatex" | "lua-latex" => Ok(Engine::LuaLatex),
         "tectonic" => Ok(Engine::Tectonic),
-        "texpilot-pdftex" | "texpilot_pdftex" => Ok(Engine::TexpilotPdftex),
-        "texpilot-pdftex-certified" | "texpilot_pdftex_certified" | "texpilot-pdftex-oracle" => {
-            Ok(Engine::TexpilotPdftexCertified)
+        "tekai-pdftex" | "tekai_pdftex" => Ok(Engine::TekaiPdftex),
+        "tekai-pdftex-certified" | "tekai_pdftex_certified" | "tekai-pdftex-oracle" => {
+            Ok(Engine::TekaiPdftexCertified)
         }
         _ => {
             anyhow::bail!(
-                "expected one of pdflatex, xelatex, lualatex, tectonic, texpilot-pdftex, texpilot-pdftex-certified"
+                "expected one of tekai-engine, xelatex, lualatex, tectonic, tekai-pdftex, tekai-pdftex-certified"
             )
         }
     }
@@ -416,33 +416,65 @@ mod tests {
     }
 
     #[test]
-    fn apply_build_config_parses_experimental_texpilot_pdftex_engine() {
+    fn apply_build_config_parses_experimental_tekai_pdftex_engine() {
         let raw: RawConfig = toml::from_str(
             r#"
             [build]
-            engine = "texpilot-pdftex"
+            engine = "tekai-pdftex"
             "#,
         )
         .expect("raw config should parse");
 
         let config = apply_build_config(raw.build).expect("build config should apply");
 
-        assert_eq!(config.engine, Some(Engine::TexpilotPdftex));
+        assert_eq!(config.engine, Some(Engine::TekaiPdftex));
     }
 
     #[test]
-    fn apply_build_config_parses_certified_texpilot_pdftex_engine() {
+    fn apply_build_config_parses_tekai_engine() {
         let raw: RawConfig = toml::from_str(
             r#"
             [build]
-            engine = "texpilot-pdftex-certified"
+            engine = "tekai-engine"
+            "#,
+        )
+        .expect("raw config should parse");
+
+        let config = apply_build_config(raw.build).expect("build config should apply");
+        assert_eq!(config.engine, Some(Engine::PdfLatex));
+    }
+
+    #[test]
+    fn apply_build_config_rejects_legacy_exact_engine_names() {
+        for engine in ["pdf-latex", "pdflatex"] {
+            let raw: RawConfig = toml::from_str(&format!(
+                r#"
+                [build]
+                engine = "{engine}"
+                "#,
+            ))
+            .expect("raw config should parse");
+
+            assert!(
+                apply_build_config(raw.build).is_err(),
+                "legacy engine name {engine} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_build_config_parses_certified_tekai_pdftex_engine() {
+        let raw: RawConfig = toml::from_str(
+            r#"
+            [build]
+            engine = "tekai-pdftex-certified"
             "#,
         )
         .expect("raw config should parse");
 
         let config = apply_build_config(raw.build).expect("build config should apply");
 
-        assert_eq!(config.engine, Some(Engine::TexpilotPdftexCertified));
+        assert_eq!(config.engine, Some(Engine::TekaiPdftexCertified));
     }
 
     #[test]

@@ -1,12 +1,20 @@
 [package]
-name = "texpilot"
+name = "tekai"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.87"
 description = "Fast, fidelity-preserving LaTeX builds, live previews, caching, and linting"
-default-run = "texpilot"
+default-run = "tekai"
+license = "MIT"
+repository = "https://github.com/NicoNekoru/tekai"
+homepage = "https://github.com/NicoNekoru/tekai"
+readme = "README.md"
+keywords = ["latex", "tex", "pdftex", "build", "cli"]
+categories = ["command-line-utilities", "development-tools::build-utils"]
+publish = false
 
 [workspace]
-members = ["crates/texpilot-pdftex", "crates/pdftex-rust"]
+members = ["crates/tekai-pdftex", "crates/tekai-engine"]
 resolver = "3"
 
 [profile.release]
@@ -21,7 +29,7 @@ glob = "0.3"
 notify = "8.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-pdftex-rust = { path = "crates/pdftex-rust", default-features = false }
-texpilot-pdftex = { path = "crates/texpilot-pdftex" }
+tekai-engine = { path = "crates/tekai-engine", default-features = false }
+tekai-pdftex = { path = "crates/tekai-pdftex" }
 toml = "0.8"
 walkdir = "2.5"

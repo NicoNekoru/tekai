@@ -449,10 +449,10 @@ fn lint_suppressions(source: &str) -> LintSuppressions {
 
 fn parse_lint_suppression(comment: &str) -> Option<(LintSuppressionTarget, Vec<String>)> {
     let comment = comment.trim_start();
-    if let Some(rest) = comment.strip_prefix("texpilot-ignore-line") {
+    if let Some(rest) = comment.strip_prefix("tekai-ignore-line") {
         return Some((LintSuppressionTarget::Line, parse_suppression_rules(rest)));
     }
-    if let Some(rest) = comment.strip_prefix("texpilot-ignore-next-line") {
+    if let Some(rest) = comment.strip_prefix("tekai-ignore-next-line") {
         return Some((
             LintSuppressionTarget::NextLine,
             parse_suppression_rules(rest),
@@ -476,7 +476,7 @@ fn is_ignored_dir(entry: &DirEntry) -> bool {
     let name = entry.file_name().to_string_lossy();
     matches!(
         name.as_ref(),
-        ".git" | "target" | "build" | ".latexmk" | ".texpilot"
+        ".git" | "target" | "build" | ".latexmk" | ".tekai"
     )
 }
 
@@ -1894,7 +1894,7 @@ mod tests {
     fn suppression_comments_can_target_specific_rules() {
         let diagnostics = lint_source(
             Path::new("sample.tex"),
-            "% texpilot-ignore-next-line math/inline-dollar\n\
+            "% tekai-ignore-next-line math/inline-dollar\n\
              Text $x$ and $$y$$.\n",
             &LintConfig::default(),
         );
@@ -1917,7 +1917,7 @@ mod tests {
     fn suppression_comments_without_rules_suppress_the_target_line() {
         let diagnostics = lint_source(
             Path::new("sample.tex"),
-            "Text $x$ and $$y$$. % texpilot-ignore-line\n",
+            "Text $x$ and $$y$$. % tekai-ignore-line\n",
             &LintConfig::default(),
         );
 
@@ -1928,7 +1928,7 @@ mod tests {
     fn suppression_comments_are_ignored_inside_inline_verbatim() {
         let diagnostics = lint_source(
             Path::new("sample.tex"),
-            r"\verb|% texpilot-ignore-line| then $x$.",
+            r"\verb|% tekai-ignore-line| then $x$.",
             &LintConfig::default(),
         );
 

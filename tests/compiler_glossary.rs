@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const GLOSSARY_DOC: &str = r#"\documentclass{article}
 \usepackage{glossaries}
@@ -36,7 +36,7 @@ fn direct_runner_builds_and_caches_glossary_makeindex_output() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-glossary-test");
+    let root = unique_temp_dir("tekai-glossary-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -84,7 +84,7 @@ fn direct_runner_builds_and_caches_xindy_glossaries_via_makeglossaries() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-xindy-glossary-test");
+    let root = unique_temp_dir("tekai-xindy-glossary-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -140,7 +140,7 @@ fn direct_runner_ignores_stale_xdy_when_current_glossary_uses_makeindex() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-stale-xdy-glossary-test");
+    let root = unique_temp_dir("tekai-stale-xdy-glossary-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");

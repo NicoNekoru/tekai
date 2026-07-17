@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{
+use tekai::compiler::{
     BibMode, BuildOptions, DraftPrepass, Engine, Runner, build, build_dependency_paths,
 };
 
@@ -28,7 +28,7 @@ fn direct_runner_honors_custom_job_name_for_outputs_and_aux_tools() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-jobname-test");
+    let root = unique_temp_dir("tekai-jobname-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -46,7 +46,7 @@ fn direct_runner_honors_custom_job_name_for_outputs_and_aux_tools() {
     assert!(out_dir.join("paper-final.v1.pdf").exists());
     assert!(out_dir.join("paper-final.v1.aux").exists());
     assert!(out_dir.join("paper-final.v1.bbl").exists());
-    assert!(out_dir.join(".texpilot-paper-final.v1.state.toml").exists());
+    assert!(out_dir.join(".tekai-paper-final.v1.state.toml").exists());
     assert!(!out_dir.join("main.pdf").exists());
 
     let dependencies =
@@ -74,7 +74,7 @@ fn default_job_name_preserves_dotted_root_stem() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-dotted-jobname-test");
+    let root = unique_temp_dir("tekai-dotted-jobname-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("paper.v1.tex");
     let out_dir = root.join("out");
@@ -93,9 +93,9 @@ Dotted default job name: \jobname.
     assert!(!first.skipped, "{first:#?}");
     assert!(out_dir.join("paper.v1.pdf").exists());
     assert!(out_dir.join("paper.v1.aux").exists());
-    assert!(out_dir.join(".texpilot-paper.v1.state.toml").exists());
+    assert!(out_dir.join(".tekai-paper.v1.state.toml").exists());
     assert!(!out_dir.join("paper.pdf").exists());
-    assert!(!out_dir.join(".texpilot-paper.state.toml").exists());
+    assert!(!out_dir.join(".tekai-paper.state.toml").exists());
 
     let cached = build(&options).expect("cached dotted root-stem build failed");
     assert!(cached.skipped, "{cached:#?}");
@@ -106,7 +106,7 @@ Dotted default job name: \jobname.
 
 #[test]
 fn custom_job_name_must_be_a_single_filename_component() {
-    let root = unique_temp_dir("texpilot-jobname-invalid-test");
+    let root = unique_temp_dir("tekai-jobname-invalid-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");

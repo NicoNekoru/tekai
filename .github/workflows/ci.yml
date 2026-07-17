@@ -2,23 +2,37 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 jobs:
   verify-light:
     name: Rust checks
-    runs-on: ubuntu-latest
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt clippy
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
+
+      - name: Install TeX
+        run: |
+          brew install ghostscript poppler
+          brew install --cask basictex
+          echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
 
       - name: Run Rust checks
         run: |
+          ci_cache_root="$RUNNER_TEMP/tekai-cache"
+          export TEKAI_FORMAT_CACHE="$ci_cache_root/formats"
+          export TEKAI_AUX_CACHE="$ci_cache_root/aux"
+          export TEKAI_BIBTEX_CACHE="$ci_cache_root/bibtex"
+          export TEKAI_ENGINE_CACHE="$ci_cache_root/engine"
           cargo fmt --all --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo clippy -p pdftex-rust --bin pdftex-rust --no-default-features --features rust-binary --locked -- -D warnings
-          cargo test --workspace --locked
+          cargo clippy -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked -- -D warnings
+          cargo build -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked
+          cargo test --workspace --locked -- --test-threads=1

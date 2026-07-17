@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
-use texpilot::compiler::{
+use tekai::compiler::{
     BibMode, BuildOptions, DraftPrepass, Engine, Runner, build, build_dependency_paths,
 };
 
@@ -46,7 +46,7 @@ fn direct_runner_builds_and_caches_nomenclature_makeindex_output() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-nomenclature-test");
+    let root = unique_temp_dir("tekai-nomenclature-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -96,7 +96,7 @@ fn direct_runner_builds_multiple_makeindex_family_outputs() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-multi-index-test");
+    let root = unique_temp_dir("tekai-multi-index-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
@@ -133,8 +133,8 @@ fn direct_runner_tracks_external_nomenclature_style_from_indexstyle() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-nomenclature-indexstyle-test");
-    let style_root = unique_temp_dir("texpilot-nomenclature-indexstyle-external");
+    let root = unique_temp_dir("tekai-nomenclature-indexstyle-test");
+    let style_root = unique_temp_dir("tekai-nomenclature-indexstyle-external");
     fs::create_dir_all(&root).expect("failed to create test directory");
     fs::create_dir_all(&style_root).expect("failed to create external style directory");
     let main = root.join("main.tex");
@@ -173,7 +173,7 @@ fn direct_runner_tracks_external_nomenclature_style_from_indexstyle() {
     fs::write(
         &style_path,
         format!(
-            "{}\n% texpilot external style cache invalidation marker\n",
+            "{}\n% tekai external style cache invalidation marker\n",
             fs::read_to_string(&style_path).expect("failed to read external style")
         ),
     )

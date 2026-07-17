@@ -1,0 +1,30 @@
+[package]
+name = "tekai-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Self-contained exact TeX engine used by tekai."
+license = "MIT"
+repository = "https://github.com/NicoNekoru/tekai"
+publish = false
+
+[features]
+default = ["c-entrypoint"]
+c-entrypoint = []
+standalone-binary = []
+
+[lib]
+name = "tekai_engine"
+path = "src/lib.rs"
+crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+name = "tekai-engine"
+path = "src/bin/tekai-engine.rs"
+required-features = ["standalone-binary"]
+
+[dependencies]
+flate2 = "1.1"
+libc = "0.2"
+libz-rs-sys = { version = "0.6.5", features = ["export-symbols", "gz"] }
+lopdf = { version = "0.35", default-features = false, features = ["nom_parser"] }
+png = "0.17"

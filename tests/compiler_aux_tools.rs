@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const AUX_TOOLS_DOC: &str = r#"\documentclass{article}
 \usepackage{makeidx}
@@ -33,7 +33,7 @@ fn direct_runner_builds_bibliography_and_index_in_one_aux_round() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-combined-aux-test");
+    let root = unique_temp_dir("tekai-combined-aux-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");

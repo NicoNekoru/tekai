@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const BIB_DOC: &str = r#"\documentclass{article}
 \begin{document}
@@ -26,7 +26,7 @@ fn direct_runner_does_not_cache_unsettled_max_run_builds() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-max-runs-test");
+    let root = unique_temp_dir("tekai-max-runs-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -40,7 +40,7 @@ fn direct_runner_does_not_cache_unsettled_max_run_builds() {
         "{too_few_runs:#}"
     );
     assert!(
-        !out_dir.join(".texpilot-main.state.toml").exists(),
+        !out_dir.join(".tekai-main.state.toml").exists(),
         "unsettled build should not write a successful cache state"
     );
 

@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const BIB2GLS_DOC: &str = r#"\documentclass{article}
 \usepackage[record,style=index]{glossaries-extra}
@@ -27,7 +27,7 @@ fn direct_runner_builds_and_caches_bib2gls_resources() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-bib2gls-test");
+    let root = unique_temp_dir("tekai-bib2gls-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let terms = root.join("terms.bib");

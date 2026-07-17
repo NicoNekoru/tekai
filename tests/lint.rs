@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::lint::{LintConfig, lint_paths, lint_source};
+use tekai::lint::{LintConfig, lint_paths, lint_source};
 
 #[test]
 fn bracket_math_is_accepted() {
@@ -62,7 +62,7 @@ fn indentation_tracks_environments() {
 
 #[test]
 fn lint_paths_descends_into_directories() {
-    let root = unique_temp_dir("texpilot-lint-paths");
+    let root = unique_temp_dir("tekai-lint-paths");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let source = root.join("paper.tex");
     fs::write(
@@ -80,7 +80,7 @@ fn lint_paths_descends_into_directories() {
 
 #[test]
 fn lint_paths_collects_tex_like_extensions_case_insensitively() {
-    let root = unique_temp_dir("texpilot-lint-extension-case");
+    let root = unique_temp_dir("tekai-lint-extension-case");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let source = root.join("PAPER.TEX");
     fs::write(&source, "Text $x$.\n").expect("failed to write TeX source");

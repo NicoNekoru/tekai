@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const GNUPLOTTEX_DOC: &str = r#"\documentclass{article}
 \usepackage[noshell]{gnuplottex}
@@ -29,7 +29,7 @@ fn direct_runner_builds_and_caches_gnuplottex_outputs() {
     let _guard = GNUPLOTTEX_TEST_LOCK
         .lock()
         .expect("gnuplottex test lock poisoned");
-    let root = unique_temp_dir("texpilot-gnuplottex-test");
+    let root = unique_temp_dir("tekai-gnuplottex-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let points = root.join("points.dat");

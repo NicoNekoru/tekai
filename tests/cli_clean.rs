@@ -6,12 +6,12 @@ use serde_json::Value;
 
 #[test]
 fn clean_uses_configured_output_directory() {
-    let root = unique_temp_dir("texpilot-cli-clean-config");
+    let root = unique_temp_dir("tekai-cli-clean-config");
     let out_dir = root.join("configured-out");
     fs::create_dir_all(&out_dir).expect("failed to create output directory");
     fs::write(out_dir.join("main.aux"), "\\relax\n").expect("failed to write generated file");
     fs::write(
-        root.join("texpilot.toml"),
+        root.join("tekai.toml"),
         r#"
         [build]
         out_dir = "configured-out"
@@ -19,11 +19,11 @@ fn clean_uses_configured_output_directory() {
     )
     .expect("failed to write config");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_texpilot"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
         .current_dir(&root)
-        .args(["clean", "--config", "texpilot.toml"])
+        .args(["clean", "--config", "tekai.toml"])
         .output()
-        .expect("failed to run texpilot clean");
+        .expect("failed to run tekai clean");
 
     assert_success(&output, "configured clean");
     assert!(
@@ -36,16 +36,16 @@ fn clean_uses_configured_output_directory() {
 
 #[test]
 fn clean_dry_run_report_json_does_not_remove_output_directory() {
-    let root = unique_temp_dir("texpilot-cli-clean-dry-run");
+    let root = unique_temp_dir("tekai-cli-clean-dry-run");
     let out_dir = root.join("out");
     fs::create_dir_all(&out_dir).expect("failed to create output directory");
     fs::write(out_dir.join("main.log"), "log\n").expect("failed to write generated file");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_texpilot"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
         .current_dir(&root)
         .args(["clean", "--out-dir", "out", "--dry-run", "--report-json"])
         .output()
-        .expect("failed to run texpilot clean");
+        .expect("failed to run tekai clean");
 
     assert_success(&output, "dry-run clean");
     assert!(
@@ -70,14 +70,14 @@ fn clean_dry_run_report_json_does_not_remove_output_directory() {
 
 #[test]
 fn clean_refuses_current_directory() {
-    let root = unique_temp_dir("texpilot-cli-clean-current-dir");
+    let root = unique_temp_dir("tekai-cli-clean-current-dir");
     fs::create_dir_all(&root).expect("failed to create temp directory");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_texpilot"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
         .current_dir(&root)
         .args(["clean", "--out-dir", "."])
         .output()
-        .expect("failed to run texpilot clean");
+        .expect("failed to run tekai clean");
 
     assert!(
         !output.status.success(),

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use texpilot::compiler::{
+use tekai::compiler::{
     BibMode, BuildOptions, DraftPrepass, Engine, Runner, build, build_dependency_paths,
 };
 
@@ -19,7 +19,7 @@ fn direct_build_state_tracks_nonstandard_source_dependencies() {
         return;
     }
 
-    let root = unique_temp_dir("texpilot-dependency-test");
+    let root = unique_temp_dir("tekai-dependency-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let data = root.join("values.dat");

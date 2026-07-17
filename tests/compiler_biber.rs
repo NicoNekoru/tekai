@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
-use texpilot::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
+use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
 const BIBER_DOC: &str = r#"\documentclass{article}
 \usepackage[backend=biber]{biblatex}
@@ -68,7 +68,7 @@ fn direct_runner_builds_and_caches_biber_output() {
     }
 
     let _guard = BIBER_TEST_LOCK.lock().expect("Biber test lock poisoned");
-    let root = unique_temp_dir("texpilot-biber-test");
+    let root = unique_temp_dir("tekai-biber-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -126,7 +126,7 @@ fn direct_runner_auto_runs_current_bibtex_aux_and_biber_control_files() {
     }
 
     let _guard = BIBER_TEST_LOCK.lock().expect("Biber test lock poisoned");
-    let root = unique_temp_dir("texpilot-mixed-bib-backends-test");
+    let root = unique_temp_dir("tekai-mixed-bib-backends-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -169,7 +169,7 @@ fn direct_runner_skips_tex_when_biber_preflight_output_is_unchanged() {
     }
 
     let _guard = BIBER_TEST_LOCK.lock().expect("Biber test lock poisoned");
-    let root = unique_temp_dir("texpilot-biber-unchanged-output-test");
+    let root = unique_temp_dir("tekai-biber-unchanged-output-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -219,7 +219,7 @@ fn direct_runner_auto_prefers_current_bibtex_aux_over_stale_bcf() {
     }
 
     let _guard = BIBER_TEST_LOCK.lock().expect("Biber test lock poisoned");
-    let root = unique_temp_dir("texpilot-biblatex-backend-switch-test");
+    let root = unique_temp_dir("tekai-biblatex-backend-switch-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
@@ -265,7 +265,7 @@ fn direct_runner_ignores_stale_bcf_when_current_tex_run_has_no_biber_control_fil
     }
 
     let _guard = BIBER_TEST_LOCK.lock().expect("Biber test lock poisoned");
-    let root = unique_temp_dir("texpilot-stale-bcf-test");
+    let root = unique_temp_dir("tekai-stale-bcf-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");

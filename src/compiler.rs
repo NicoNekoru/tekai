@@ -54,9 +54,9 @@ const TEX_ROOT_EFFECTIVE_HASH_PREFIX: &str = "tex-root-effective:";
 const TEX_INPUT_EFFECTIVE_HASH_PREFIX: &str = "tex-input-effective:";
 const TEX_PREAMBLE_EFFECTIVE_HASH_PREFIX: &str = "tex-preamble-effective:";
 const BIB_CITED_EFFECTIVE_HASH_PREFIX: &str = "bib-cited-effective:";
-const BIBER_GLOB_FINGERPRINT_PATH_PREFIX: &str = "texpilot-biber-glob:";
+const BIBER_GLOB_FINGERPRINT_PATH_PREFIX: &str = "tekai-biber-glob:";
 const BIBER_GLOB_MATCHES_HASH_PREFIX: &str = "biber-glob-matches:";
-const BIBER_CONFIG_FINGERPRINT_PATH_PREFIX: &str = "texpilot-biber-config:";
+const BIBER_CONFIG_FINGERPRINT_PATH_PREFIX: &str = "tekai-biber-config:";
 const BIBER_CONFIG_CHOICE_HASH_PREFIX: &str = "biber-config-choice:";
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -87,22 +87,19 @@ pub enum Engine {
     XeLatex,
     LuaLatex,
     Tectonic,
-    TexpilotPdftex,
-    TexpilotPdftexCertified,
+    TekaiPdftex,
+    TekaiPdftexCertified,
 }
 
-pub const EMBEDDED_PDFTEX_RUNNER_ENV: &str = "TEXPILOT_EMBEDDED_PDFTEX_RUNNER";
-pub const EMBEDDED_PDFTEX_SUBCOMMAND: &str = "__texpilot-pdftex-rust";
+pub const EMBEDDED_ENGINE_RUNNER_ENV: &str = "TEKAI_EMBEDDED_ENGINE_RUNNER";
+pub const EMBEDDED_ENGINE_SUBCOMMAND: &str = "__tekai-engine";
 
-fn is_texpilot_pdftex_engine(engine: Engine) -> bool {
-    matches!(
-        engine,
-        Engine::TexpilotPdftex | Engine::TexpilotPdftexCertified
-    )
+fn is_tekai_pdftex_engine(engine: Engine) -> bool {
+    matches!(engine, Engine::TekaiPdftex | Engine::TekaiPdftexCertified)
 }
 
-fn is_certified_texpilot_pdftex_engine(engine: Engine) -> bool {
-    matches!(engine, Engine::TexpilotPdftexCertified)
+fn is_certified_tekai_pdftex_engine(engine: Engine) -> bool {
+    matches!(engine, Engine::TekaiPdftexCertified)
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -612,8 +609,8 @@ impl IndexCommandProgram {
 pub fn build(options: &BuildOptions) -> Result<BuildReport> {
     clear_kpathsea_resolution_cache();
     match options.runner {
-        Runner::Direct if is_certified_texpilot_pdftex_engine(options.engine) => {
-            texpilot_pdftex_direct_build(options)
+        Runner::Direct if is_certified_tekai_pdftex_engine(options.engine) => {
+            tekai_pdftex_direct_build(options)
         }
         Runner::Direct if options.engine != Engine::Tectonic => direct_build(options),
         Runner::Direct | Runner::Latexmk => latexmk_or_tectonic_build(options),
@@ -631,7 +628,7 @@ pub fn build_dependency_paths(options: &BuildOptions) -> Result<Vec<PathBuf>> {
         .with_context(|| format!("cannot find root TeX file {}", options.main.display()))?;
     let job_name = build_job_name(options, &main)?;
     let out_dir = absolute_from_cwd(&options.out_dir)?;
-    let state_path = out_dir.join(format!(".texpilot-{job_name}.state.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
     let mut paths = source_seed_dependency_paths(&main)?;
     if !state_path.exists() {
         return Ok(paths);
@@ -676,8 +673,8 @@ fn latexmk_or_tectonic_build(options: &BuildOptions) -> Result<BuildReport> {
     if options.engine == Engine::Tectonic && options.job_name.is_some() {
         bail!("--job-name is not supported with the tectonic engine");
     }
-    if is_texpilot_pdftex_engine(options.engine) {
-        bail!("the experimental texpilot-pdftex engine only supports the direct runner");
+    if is_tekai_pdftex_engine(options.engine) {
+        bail!("the experimental tekai-pdftex engine only supports the direct runner");
     }
 
     let mut command = match options.engine {
@@ -685,8 +682,8 @@ fn latexmk_or_tectonic_build(options: &BuildOptions) -> Result<BuildReport> {
         Engine::PdfLatex | Engine::XeLatex | Engine::LuaLatex => {
             latexmk_command(&doc_dir, &file_name, &job_name, &out_dir, options)
         }
-        Engine::TexpilotPdftex | Engine::TexpilotPdftexCertified => {
-            unreachable!("texpilot-pdftex was rejected above")
+        Engine::TekaiPdftex | Engine::TekaiPdftexCertified => {
+            unreachable!("tekai-pdftex was rejected above")
         }
     };
     if options.engine == Engine::Tectonic && options.fast {
@@ -726,7 +723,7 @@ fn latexmk_or_tectonic_build(options: &BuildOptions) -> Result<BuildReport> {
     })
 }
 
-fn texpilot_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
+fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     if options.max_runs == 0 {
         bail!("--max-runs must be at least 1");
     }
@@ -744,7 +741,7 @@ fn texpilot_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("cannot create output directory {}", out_dir.display()))?;
     let pdf_path = job_output_path(&out_dir, &job_name, "pdf");
-    let state_path = out_dir.join(format!(".texpilot-{job_name}.state.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
     let mode_key = direct_mode_key(options, &main);
 
     let started = Instant::now();
@@ -793,10 +790,8 @@ fn texpilot_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
         });
     }
 
-    if is_certified_texpilot_pdftex_engine(options.engine) {
-        return texpilot_pdftex_certified_direct_build(
-            options, started, &job_name, &out_dir, &main,
-        );
+    if is_certified_tekai_pdftex_engine(options.engine) {
+        return tekai_pdftex_certified_direct_build(options, started, &job_name, &out_dir, &main);
     }
 
     let run_mode = TexRunMode {
@@ -806,8 +801,8 @@ fn texpilot_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     };
     let pass_started = Instant::now();
     let native_started = Instant::now();
-    match run_texpilot_pdftex_native(&job_name, &out_dir, &main, options, run_mode)? {
-        TexpilotPdftexRun::Native { input_paths } => {
+    match run_tekai_pdftex_native(&job_name, &out_dir, &main, options, run_mode)? {
+        TekaiPdftexRun::Native { input_paths } => {
             let native_elapsed = native_started.elapsed();
             write_native_build_state(
                 &state_path,
@@ -852,10 +847,10 @@ fn texpilot_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
                 preamble_format_built: false,
             })
         }
-        TexpilotPdftexRun::Fallback(reason) => {
+        TekaiPdftexRun::Fallback(reason) => {
             if !options.quiet {
                 eprintln!(
-                    "warning: texpilot-pdftex native backend unsupported ({reason}); falling back to pdflatex"
+                    "warning: tekai-pdftex native backend unsupported ({reason}); falling back to pdflatex"
                 );
             }
             let mut fallback_options = options.clone();
@@ -865,7 +860,7 @@ fn texpilot_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     }
 }
 
-fn texpilot_pdftex_certified_direct_build(
+fn tekai_pdftex_certified_direct_build(
     options: &BuildOptions,
     started: Instant,
     job_name: &str,
@@ -878,62 +873,62 @@ fn texpilot_pdftex_certified_direct_build(
         force_pgf_list_and_make: false,
     };
     let native_started = Instant::now();
-    let native_result = run_texpilot_pdftex_native(job_name, out_dir, main, options, run_mode)?;
+    let native_result = run_tekai_pdftex_native(job_name, out_dir, main, options, run_mode)?;
     let native_elapsed = native_started.elapsed();
     if !options.quiet {
         match &native_result {
-            TexpilotPdftexRun::Native { .. } => {
+            TekaiPdftexRun::Native { .. } => {
                 eprintln!(
-                    "warning: certified texpilot-pdftex uses pdfTeX as the final artifact oracle"
+                    "warning: certified tekai-pdftex uses pdfTeX as the final artifact oracle"
                 );
             }
-            TexpilotPdftexRun::Fallback(reason) => {
+            TekaiPdftexRun::Fallback(reason) => {
                 eprintln!(
-                    "warning: texpilot-pdftex native backend unsupported ({reason}); certified final artifact will be generated by pdfTeX"
+                    "warning: tekai-pdftex native backend unsupported ({reason}); certified final artifact will be generated by pdfTeX"
                 );
             }
         }
     }
 
     let mut report = direct_build(options)?;
-    append_texpilot_pdftex_certification_trace(out_dir, job_name, &native_result, native_elapsed)?;
+    append_tekai_pdftex_certification_trace(out_dir, job_name, &native_result, native_elapsed)?;
     report.elapsed = started.elapsed();
     Ok(report)
 }
 
-fn append_texpilot_pdftex_certification_trace(
+fn append_tekai_pdftex_certification_trace(
     out_dir: &Path,
     job_name: &str,
-    native_result: &TexpilotPdftexRun,
+    native_result: &TekaiPdftexRun,
     native_elapsed: Duration,
 ) -> Result<()> {
-    let trace_path = out_dir.join(format!("{job_name}.texpilot-pdftex.trace"));
+    let trace_path = out_dir.join(format!("{job_name}.tekai-pdftex.trace"));
     let mut trace = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&trace_path)
         .with_context(|| {
             format!(
-                "failed to append texpilot-pdftex certification trace {}",
+                "failed to append tekai-pdftex certification trace {}",
                 trace_path.display()
             )
         })?;
     let native_status = match native_result {
-        TexpilotPdftexRun::Native { .. } => "native-produced",
-        TexpilotPdftexRun::Fallback(_) => "native-unsupported",
+        TekaiPdftexRun::Native { .. } => "native-produced",
+        TekaiPdftexRun::Fallback(_) => "native-unsupported",
     };
     writeln!(trace, "certification_policy\tpdftex-final-oracle")
-        .context("failed to write texpilot-pdftex certification policy")?;
+        .context("failed to write tekai-pdftex certification policy")?;
     writeln!(trace, "certification_native_status\t{native_status}")
-        .context("failed to write texpilot-pdftex certification native status")?;
+        .context("failed to write tekai-pdftex certification native status")?;
     writeln!(
         trace,
         "certification_native_ms\t{}",
         native_elapsed.as_millis()
     )
-    .context("failed to write texpilot-pdftex certification timing")?;
+    .context("failed to write tekai-pdftex certification timing")?;
     writeln!(trace, "certification_final_pdf\tpdflatex")
-        .context("failed to write texpilot-pdftex certification final artifact")?;
+        .context("failed to write tekai-pdftex certification final artifact")?;
     Ok(())
 }
 
@@ -959,7 +954,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("cannot create output directory {}", out_dir.display()))?;
     let pdf_path = job_output_path(&out_dir, &job_name, "pdf");
-    let state_path = out_dir.join(format!(".texpilot-{job_name}.state.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
     let mode_key = direct_mode_key(options, &main);
 
     let started = Instant::now();
@@ -1590,7 +1585,7 @@ fn run_tex_direct(
     }
 
     let mut command = tex_direct_base_command(doc_dir, job_name, out_dir, options, mode);
-    if options.engine == Engine::TexpilotPdftex {
+    if options.engine == Engine::TekaiPdftex {
         command.arg("-fmt=pdflatex");
     }
     add_tex_direct_input(&mut command, doc_dir, file_name, options, mode);
@@ -1606,37 +1601,37 @@ fn run_tex_direct(
     Ok(TexInvocationReport::default())
 }
 
-enum TexpilotPdftexRun {
+enum TekaiPdftexRun {
     Native { input_paths: Vec<PathBuf> },
     Fallback(String),
 }
 
-fn run_texpilot_pdftex_native(
+fn run_tekai_pdftex_native(
     job_name: &str,
     out_dir: &Path,
     main: &Path,
     options: &BuildOptions,
     mode: TexRunMode,
-) -> Result<TexpilotPdftexRun> {
-    let run = texpilot_pdftex::run_native_pdf_only(&texpilot_pdftex::NativeEngineOptions {
+) -> Result<TekaiPdftexRun> {
+    let run = tekai_pdftex::run_native_pdf_only(&tekai_pdftex::NativeEngineOptions {
         main: main.to_path_buf(),
         output_dir: out_dir.to_path_buf(),
         job_name: job_name.to_string(),
-        mode: texpilot_pdftex::RunMode {
+        mode: tekai_pdftex::RunMode {
             suppress_pdf_output: mode.suppress_pdf_output,
             draft_graphics: mode.draft_graphics,
         },
         shell_escape: options.shell_escape,
         synctex: options.synctex,
     })
-    .context("failed to run texpilot-pdftex native backend")?;
+    .context("failed to run tekai-pdftex native backend")?;
 
     match run.status {
-        texpilot_pdftex::NativeEngineStatus::Native => Ok(TexpilotPdftexRun::Native {
+        tekai_pdftex::NativeEngineStatus::Native => Ok(TekaiPdftexRun::Native {
             input_paths: run.input_paths,
         }),
-        texpilot_pdftex::NativeEngineStatus::Unsupported(unsupported) => {
-            Ok(TexpilotPdftexRun::Fallback(unsupported.reason))
+        tekai_pdftex::NativeEngineStatus::Unsupported(unsupported) => {
+            Ok(TekaiPdftexRun::Fallback(unsupported.reason))
         }
     }
 }
@@ -1841,10 +1836,7 @@ fn prepare_preamble_format_for_kind_with_policy(
     build_if_missing: bool,
 ) -> Result<Option<PreambleFormatPreparation>> {
     let mode_key = preamble_format_mode_key(doc_dir, main, options, format_kind)?;
-    let format_name = format!(
-        "texpilot-fastfmt-{:016x}",
-        content_hash(mode_key.as_bytes())
-    );
+    let format_name = format!("tekai-fastfmt-{:016x}", content_hash(mode_key.as_bytes()));
     let format_dir = preamble_format_cache_dir(doc_dir, main);
     fs::create_dir_all(&format_dir).with_context(|| {
         format!(
@@ -1955,12 +1947,12 @@ fn prepare_preamble_format_for_kind_with_policy(
 }
 
 fn preamble_format_cache_dir(doc_dir: &Path, main: &Path) -> PathBuf {
-    let root = cache_root_from_env("TEXPILOT_FORMAT_CACHE", default_preamble_format_cache_root);
+    let root = cache_root_from_env("TEKAI_FORMAT_CACHE", default_preamble_format_cache_root);
     root.join(document_cache_key(doc_dir, main))
 }
 
 fn settled_aux_cache_dir(doc_dir: &Path, main: &Path, mode_key: &str) -> PathBuf {
-    let root = cache_root_from_env("TEXPILOT_AUX_CACHE", default_settled_aux_cache_root);
+    let root = cache_root_from_env("TEKAI_AUX_CACHE", default_settled_aux_cache_root);
     root.join(document_cache_key(doc_dir, main))
         .join(format!("{:016x}", content_hash(mode_key.as_bytes())))
 }
@@ -1994,41 +1986,37 @@ fn document_cache_key(doc_dir: &Path, main: &Path) -> String {
 }
 
 fn default_preamble_format_cache_root() -> PathBuf {
-    default_texpilot_cache_root("formats")
+    default_tekai_cache_root("formats")
 }
 
 fn default_settled_aux_cache_root() -> PathBuf {
-    default_texpilot_cache_root("settled-aux")
+    default_tekai_cache_root("settled-aux")
 }
 
 fn default_bibtex_cache_root() -> PathBuf {
-    default_texpilot_cache_root("bibtex")
+    default_tekai_cache_root("bibtex")
 }
 
-fn default_texpilot_cache_root(kind: &str) -> PathBuf {
+fn default_tekai_cache_root(kind: &str) -> PathBuf {
     if let Some(value) = std::env::var_os("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
-        return PathBuf::from(value).join("texpilot").join(kind);
+        return PathBuf::from(value).join("tekai").join(kind);
     }
     if cfg!(target_os = "macos")
         && let Some(home) = home_dir()
     {
-        return home
-            .join("Library")
-            .join("Caches")
-            .join("texpilot")
-            .join(kind);
+        return home.join("Library").join("Caches").join("tekai").join(kind);
     }
     if cfg!(windows)
         && let Some(value) = std::env::var_os("LOCALAPPDATA")
             .or_else(|| std::env::var_os("APPDATA"))
             .filter(|value| !value.is_empty())
     {
-        return PathBuf::from(value).join("texpilot").join(kind);
+        return PathBuf::from(value).join("tekai").join(kind);
     }
     if let Some(home) = home_dir() {
-        return home.join(".cache").join("texpilot").join(kind);
+        return home.join(".cache").join("tekai").join(kind);
     }
-    std::env::temp_dir().join("texpilot").join(kind)
+    std::env::temp_dir().join("tekai").join(kind)
 }
 
 fn restore_settled_aux_cache_if_fresh(
@@ -2292,7 +2280,7 @@ fn is_aux_tool_state_cache_file(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
     };
-    name.starts_with(".texpilot-")
+    name.starts_with(".tekai-")
         && [
             ".bibstate.toml",
             ".biberstate.toml",
@@ -2337,7 +2325,7 @@ fn preamble_format_kind_for_run(
     mode: TexRunMode,
 ) -> Option<PreambleFormatKind> {
     if !options.precompile_preamble
-        || !matches!(options.engine, Engine::PdfLatex | Engine::TexpilotPdftex)
+        || !matches!(options.engine, Engine::PdfLatex | Engine::TekaiPdftex)
     {
         return None;
     }
@@ -2378,7 +2366,7 @@ fn opportunistic_preamble_format_kind_for_run(
     options: &BuildOptions,
     mode: TexRunMode,
 ) -> Option<PreambleFormatKind> {
-    if !matches!(options.engine, Engine::PdfLatex | Engine::TexpilotPdftex)
+    if !matches!(options.engine, Engine::PdfLatex | Engine::TekaiPdftex)
         || options.fast
         || options.once
         || options.shell_escape
@@ -2487,8 +2475,8 @@ fn nonfinal_output_mode_arg(engine: Engine) -> Option<&'static str> {
     match engine {
         Engine::PdfLatex
         | Engine::LuaLatex
-        | Engine::TexpilotPdftex
-        | Engine::TexpilotPdftexCertified => Some("-draftmode"),
+        | Engine::TekaiPdftex
+        | Engine::TekaiPdftexCertified => Some("-draftmode"),
         Engine::XeLatex => Some("-no-pdf"),
         Engine::Tectonic => None,
     }
@@ -2497,7 +2485,7 @@ fn nonfinal_output_mode_arg(engine: Engine) -> Option<&'static str> {
 fn fast_preview_pretex(doc_dir: &Path) -> String {
     let minted_option = fast_minted_package_option(doc_dir);
     format!(
-        r"\PassOptionsToPackage{{demo}}{{graphicx}}\PassOptionsToPackage{{{minted_option}}}{{minted}}\makeatletter\def\texpilot@fastplaceholder{{\begingroup\fbox{{\rule{{2cm}}{{0pt}}\rule{{0pt}}{{1cm}}}}\endgroup}}\AtBeginDocument{{\@ifpackageloaded{{svg}}{{\renewcommand*\includesvg[2][]{{\texpilot@fastplaceholder}}}}{{}}\@ifpackageloaded{{pdfpages}}{{\renewcommand*\includepdf[2][]{{\texpilot@fastplaceholder}}\renewcommand*\includepdfmerge[2][]{{\texpilot@fastplaceholder}}}}{{}}\@ifpackageloaded{{minted}}{{\renewcommand*\inputminted[3][]{{\texpilot@fastplaceholder}}}}{{}}\@ifpackageloaded{{animate}}{{\renewcommand*\animategraphics[5][]{{\texpilot@fastplaceholder}}}}{{}}\@ifpackageloaded{{standalone}}{{\renewcommand*\includestandalone[2][]{{\texpilot@fastplaceholder}}}}{{}}\@ifpackageloaded{{media9}}{{\renewcommand*\includemedia[3][]{{\texpilot@fastplaceholder}}}}{{}}\@ifpackageloaded{{attachfile2}}{{\renewcommand*\attachfile[2][]{{\texpilot@fastplaceholder}}\renewcommand*\textattachfile[3][]{{\texpilot@fastplaceholder}}\renewcommand*\notextattachfile[2][]{{\texpilot@fastplaceholder}}\renewcommand*\noattachfile[1][]{{\texpilot@fastplaceholder}}}}{{}}\@ifpackageloaded{{attachfile}}{{\renewcommand*\attachfile[2][]{{\texpilot@fastplaceholder}}\renewcommand*\textattachfile[3][]{{\texpilot@fastplaceholder}}\renewcommand*\notextattachfile[2][]{{\texpilot@fastplaceholder}}\renewcommand*\noattachfile[1][]{{\texpilot@fastplaceholder}}}}{{}}\@ifundefined{{tikzexternaldisable}}{{}}{{\tikzexternaldisable}}}}\makeatother"
+        r"\PassOptionsToPackage{{demo}}{{graphicx}}\PassOptionsToPackage{{{minted_option}}}{{minted}}\makeatletter\def\tekai@fastplaceholder{{\begingroup\fbox{{\rule{{2cm}}{{0pt}}\rule{{0pt}}{{1cm}}}}\endgroup}}\AtBeginDocument{{\@ifpackageloaded{{svg}}{{\renewcommand*\includesvg[2][]{{\tekai@fastplaceholder}}}}{{}}\@ifpackageloaded{{pdfpages}}{{\renewcommand*\includepdf[2][]{{\tekai@fastplaceholder}}\renewcommand*\includepdfmerge[2][]{{\tekai@fastplaceholder}}}}{{}}\@ifpackageloaded{{minted}}{{\renewcommand*\inputminted[3][]{{\tekai@fastplaceholder}}}}{{}}\@ifpackageloaded{{animate}}{{\renewcommand*\animategraphics[5][]{{\tekai@fastplaceholder}}}}{{}}\@ifpackageloaded{{standalone}}{{\renewcommand*\includestandalone[2][]{{\tekai@fastplaceholder}}}}{{}}\@ifpackageloaded{{media9}}{{\renewcommand*\includemedia[3][]{{\tekai@fastplaceholder}}}}{{}}\@ifpackageloaded{{attachfile2}}{{\renewcommand*\attachfile[2][]{{\tekai@fastplaceholder}}\renewcommand*\textattachfile[3][]{{\tekai@fastplaceholder}}\renewcommand*\notextattachfile[2][]{{\tekai@fastplaceholder}}\renewcommand*\noattachfile[1][]{{\tekai@fastplaceholder}}}}{{}}\@ifpackageloaded{{attachfile}}{{\renewcommand*\attachfile[2][]{{\tekai@fastplaceholder}}\renewcommand*\textattachfile[3][]{{\tekai@fastplaceholder}}\renewcommand*\notextattachfile[2][]{{\tekai@fastplaceholder}}\renewcommand*\noattachfile[1][]{{\tekai@fastplaceholder}}}}{{}}\@ifundefined{{tikzexternaldisable}}{{}}{{\tikzexternaldisable}}}}\makeatother"
     )
 }
 
@@ -5823,7 +5811,7 @@ struct GlobalBibtexCachePaths {
 }
 
 fn global_bibtex_cache_paths(signature: &str) -> GlobalBibtexCachePaths {
-    let root = cache_root_from_env("TEXPILOT_BIBTEX_CACHE", default_bibtex_cache_root);
+    let root = cache_root_from_env("TEKAI_BIBTEX_CACHE", default_bibtex_cache_root);
     let dir = root.join(format!("{:016x}", content_hash(signature.as_bytes())));
     GlobalBibtexCachePaths {
         bbl_path: dir.join("output.bbl"),
@@ -5953,7 +5941,7 @@ fn bibtex_job(
             }
         })
         .collect::<String>();
-    let state_path = out_dir.join(format!(".texpilot-{state_name}.bibstate.toml"));
+    let state_path = out_dir.join(format!(".tekai-{state_name}.bibstate.toml"));
     BibtexJob {
         program: command_spec
             .map(|spec| spec.program)
@@ -6166,7 +6154,7 @@ fn run_biber_if_stale(
     };
     let signature = biber_signature(&bcf_path)?;
     let bbl_path = out_dir.join(format!("{job_name}.bbl"));
-    let state_path = out_dir.join(format!(".texpilot-{job_name}.biberstate.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.biberstate.toml"));
 
     if !options.force && bibtex_cache_is_fresh(&state_path, &signature, &bbl_path)? {
         return Ok(0);
@@ -6186,7 +6174,7 @@ fn refresh_biber_state_if_available(doc_dir: &Path, out_dir: &Path, job_name: &s
         return Ok(());
     }
     let signature = biber_signature(&bcf_path)?;
-    let state_path = out_dir.join(format!(".texpilot-{job_name}.biberstate.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.biberstate.toml"));
     write_biber_state(&state_path, &signature, &bbl_path, &bcf_path, doc_dir)
 }
 
@@ -6887,7 +6875,7 @@ fn splitindex_jobs_from_latest_run(
             continue;
         }
         let state_path = out_dir.join(format!(
-            ".texpilot-{}.splitindexstate.toml",
+            ".tekai-{}.splitindexstate.toml",
             makeindex_state_name(out_dir, &path)
         ));
         jobs.push(SplitIndexJob {
@@ -6973,7 +6961,7 @@ fn makeindex_job(
         .as_deref()
         .is_some_and(|style_path| style_path.starts_with(out_dir));
     let state_path = out_dir.join(format!(
-        ".texpilot-{}.indexstate.toml",
+        ".tekai-{}.indexstate.toml",
         makeindex_state_name(out_dir, &input_path)
     ));
     Ok(MakeIndexJob {
@@ -7129,7 +7117,7 @@ fn makeindex_source_has_entries(source: &str) -> bool {
 
 fn makeindex_signature(source: &str, job: &MakeIndexJob) -> Result<String> {
     let mut signature = String::from(source);
-    signature.push_str("\n%% texpilot index tool\n");
+    signature.push_str("\n%% tekai index tool\n");
     signature.push_str(match job.tool {
         IndexTool::MakeIndex => "makeindex",
         IndexTool::Xindy => job
@@ -7140,7 +7128,7 @@ fn makeindex_signature(source: &str, job: &MakeIndexJob) -> Result<String> {
     });
     signature.push('\n');
     if !job.command_options.is_empty() {
-        signature.push_str("\n%% texpilot makeindex options\n");
+        signature.push_str("\n%% tekai makeindex options\n");
         for option in &job.command_options {
             signature.push_str(option);
             signature.push('\n');
@@ -7149,7 +7137,7 @@ fn makeindex_signature(source: &str, job: &MakeIndexJob) -> Result<String> {
     if let Some(style_path) = &job.style_path {
         let bytes = fs::read(style_path)
             .with_context(|| format!("failed to read index style {}", style_path.display()))?;
-        signature.push_str("\n%% texpilot style ");
+        signature.push_str("\n%% tekai style ");
         signature.push_str(&style_path.display().to_string());
         signature.push('\n');
         signature.push_str(&String::from_utf8_lossy(&bytes));
@@ -7159,7 +7147,7 @@ fn makeindex_signature(source: &str, job: &MakeIndexJob) -> Result<String> {
 
 fn splitindex_signature(source: &str) -> String {
     let mut signature = String::from(source);
-    signature.push_str("\n%% texpilot splitindex command\nsplitindex -m <empty>\n");
+    signature.push_str("\n%% tekai splitindex command\nsplitindex -m <empty>\n");
     signature
 }
 
@@ -7470,7 +7458,7 @@ fn push_eps_conversion_job_for_graphic(
         let state_name = external_tool_state_name(context.out_dir, &output_path);
         let state_path = context
             .out_dir
-            .join(format!(".texpilot-{state_name}.epspdfstate.toml"));
+            .join(format!(".tekai-{state_name}.epspdfstate.toml"));
         jobs.push(EpsConversionJob {
             input_path,
             output_path,
@@ -7586,7 +7574,7 @@ fn svg_conversion_job_from_ref(
         .join(format!("{output_stem}.{}", settings.format));
     let output_tex_path = export_latex.then(|| output_path.with_extension("pdf_tex"));
     let state_name = external_tool_state_name(out_dir, &output_path);
-    let state_path = out_dir.join(format!(".texpilot-{state_name}.svgstate.toml"));
+    let state_path = out_dir.join(format!(".tekai-{state_name}.svgstate.toml"));
     Ok(Some(SvgConversionJob {
         inkscape_executable: settings.inkscape_executable.clone(),
         input_path,
@@ -8116,7 +8104,7 @@ fn svg_setup_refs_stripped(source: &str) -> Vec<SvgSetupRef> {
                 }),
         );
     }
-    refs.sort_by(|left, right| left.command_start.cmp(&right.command_start));
+    refs.sort_by_key(|item| item.command_start);
     refs
 }
 
@@ -8579,7 +8567,7 @@ fn eps_conversion_signature(job: &EpsConversionJob) -> Result<String> {
     let _ = fs::metadata(&job.input_path)
         .with_context(|| format!("failed to stat EPS input {}", job.input_path.display()))?;
     Ok(format!(
-        "%% texpilot EPS conversion\nepstopdf\n{}\n",
+        "%% tekai EPS conversion\nepstopdf\n{}\n",
         job.output_path.display()
     ))
 }
@@ -8587,7 +8575,7 @@ fn eps_conversion_signature(job: &EpsConversionJob) -> Result<String> {
 fn svg_conversion_signature(job: &SvgConversionJob) -> Result<String> {
     let _ = fs::metadata(&job.input_path)
         .with_context(|| format!("failed to stat SVG input {}", job.input_path.display()))?;
-    let mut signature = String::from("%% texpilot SVG conversion\n");
+    let mut signature = String::from("%% tekai SVG conversion\n");
     signature.push_str(&job.inkscape_executable);
     signature.push('\n');
     signature.push_str(match job.area {
@@ -8633,7 +8621,7 @@ fn asymptote_jobs_from_latest_run(
         let output_path = input_path.with_extension("pdf");
         let input_paths = asymptote_input_paths(&input_path, &source);
         let state_name = external_tool_state_name(out_dir, &input_path);
-        let state_path = out_dir.join(format!(".texpilot-{state_name}.asystate.toml"));
+        let state_path = out_dir.join(format!(".tekai-{state_name}.asystate.toml"));
         jobs.push(AsymptoteJob {
             input_path,
             output_path,
@@ -8667,7 +8655,7 @@ fn asymptote_signature(job: &AsymptoteJob) -> Result<String> {
     if let Some(pre_path) = asymptote_preamble_path(&job.input_path) {
         let bytes = fs::read(&pre_path)
             .with_context(|| format!("failed to read Asymptote preamble {}", pre_path.display()))?;
-        signature.push_str("\n%% texpilot asymptote preamble ");
+        signature.push_str("\n%% tekai asymptote preamble ");
         signature.push_str(&pre_path.display().to_string());
         signature.push('\n');
         signature.push_str(&String::from_utf8_lossy(&bytes));
@@ -8865,7 +8853,7 @@ fn pythontex_job(out_dir: &Path, code_path: PathBuf) -> Result<PythontexJob> {
         output_paths.push(pygments_path.clone());
     }
     let state_name = external_tool_state_name(out_dir, &code_path);
-    let state_path = out_dir.join(format!(".texpilot-{state_name}.pythontexstate.toml"));
+    let state_path = out_dir.join(format!(".tekai-{state_name}.pythontexstate.toml"));
     Ok(PythontexJob {
         code_path,
         command_arg,
@@ -9035,7 +9023,7 @@ fn pythontex_signature(job: &PythontexJob) -> Result<String> {
             job.code_path.display()
         )
     })?;
-    signature.push_str("\n%% texpilot pythontex command\n");
+    signature.push_str("\n%% tekai pythontex command\n");
     signature.push_str(&job.command_arg);
     signature.push('\n');
     Ok(signature)
@@ -9070,7 +9058,7 @@ fn metapost_job(out_dir: &Path, input_path: PathBuf) -> Result<MetapostJob> {
     let output_paths = metapost_output_paths(&input_path, &source)?;
     let input_paths = metapost_input_paths(&input_path, &source);
     let state_name = external_tool_state_name(out_dir, &input_path);
-    let state_path = out_dir.join(format!(".texpilot-{state_name}.mpoststate.toml"));
+    let state_path = out_dir.join(format!(".tekai-{state_name}.mpoststate.toml"));
     Ok(MetapostJob {
         input_path,
         output_paths,
@@ -9199,7 +9187,7 @@ fn strip_metapost_comment(line: &str) -> &str {
 fn metapost_signature(job: &MetapostJob) -> Result<String> {
     let mut signature = fs::read_to_string(&job.input_path)
         .with_context(|| format!("failed to read MetaPost file {}", job.input_path.display()))?;
-    signature.push_str("\n%% texpilot metapost command\n");
+    signature.push_str("\n%% tekai metapost command\n");
     signature.push_str("mpost ");
     signature.push_str(
         job.input_path
@@ -9238,7 +9226,7 @@ fn gnuplottex_jobs_from_latest_run(
         };
         let input_paths = gnuplottex_input_paths(&script_path, &source);
         let state_name = external_tool_state_name(out_dir, &output_path);
-        let state_path = out_dir.join(format!(".texpilot-{state_name}.gnuplotstate.toml"));
+        let state_path = out_dir.join(format!(".tekai-{state_name}.gnuplotstate.toml"));
         jobs.push(GnuplottexJob {
             script_path,
             output_path,
@@ -9416,7 +9404,7 @@ fn gnuplottex_signature(job: &GnuplottexJob) -> Result<String> {
             job.script_path.display()
         )
     })?;
-    signature.push_str("\n%% texpilot gnuplottex command\ngnuplot\n");
+    signature.push_str("\n%% tekai gnuplottex command\ngnuplot\n");
     signature.push_str(&job.output_path.display().to_string());
     signature.push('\n');
     Ok(signature)
@@ -9515,7 +9503,7 @@ fn bib2gls_job_from_latest_run(
     resource_inputs.sort();
     resource_inputs.dedup();
 
-    let state_path = out_dir.join(format!(".texpilot-{job_name}.bib2glsstate.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.bib2glsstate.toml"));
     Ok(Some(Bib2GlsJob {
         doc_dir: doc_dir.to_path_buf(),
         aux_path,
@@ -9665,7 +9653,7 @@ fn balanced_braced_payload_at(source: &str, open: usize) -> Option<(String, usiz
 fn bib2gls_signature(job: &Bib2GlsJob) -> Result<String> {
     let mut signature = fs::read_to_string(&job.aux_path)
         .with_context(|| format!("failed to read Bib2Gls aux file {}", job.aux_path.display()))?;
-    signature.push_str("\n%% texpilot bib2gls command\n");
+    signature.push_str("\n%% tekai bib2gls command\n");
     signature.push_str(&job.command_arg);
     signature.push('\n');
     signature.push_str(&environment_signature(BIB_ENV_VARS));
@@ -9968,11 +9956,11 @@ fn bibtex_aux_signature_from_source(source: &str, job: &BibtexJob) -> String {
     for key in citation_keys {
         let _ = writeln!(&mut signature, "\\citation{{{key}}}");
     }
-    signature.push_str("%% texpilot bibtex program\n");
+    signature.push_str("%% tekai bibtex program\n");
     signature.push_str(job.program.executable());
     signature.push('\n');
     if !job.command_options.is_empty() {
-        signature.push_str("%% texpilot bibtex options\n");
+        signature.push_str("%% tekai bibtex options\n");
         for option in &job.command_options {
             signature.push_str(option);
             signature.push('\n');
@@ -11244,7 +11232,7 @@ fn append_biber_inputs(
     if biber_control_file_from_latest_run(doc_dir, out_dir, job_name)?.is_none() {
         return Ok(());
     }
-    let state_path = out_dir.join(format!(".texpilot-{job_name}.biberstate.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.biberstate.toml"));
     if !state_path.exists() {
         return Ok(());
     }
@@ -12716,24 +12704,24 @@ fn engine_program(engine: Engine) -> &'static str {
         Engine::XeLatex => "xelatex",
         Engine::LuaLatex => "lualatex",
         Engine::Tectonic => "tectonic",
-        Engine::TexpilotPdftex => "pdftex-rust",
-        Engine::TexpilotPdftexCertified => "pdflatex",
+        Engine::TekaiPdftex => "tekai-engine",
+        Engine::TekaiPdftexCertified => "pdflatex",
     }
 }
 
 fn tex_engine_command(engine: Engine) -> Command {
     if engine == Engine::PdfLatex
-        && let Some(runner) = std::env::var_os(EMBEDDED_PDFTEX_RUNNER_ENV)
+        && let Some(runner) = std::env::var_os(EMBEDDED_ENGINE_RUNNER_ENV)
     {
         let mut command = Command::new(runner);
-        command.arg(EMBEDDED_PDFTEX_SUBCOMMAND);
+        command.arg(EMBEDDED_ENGINE_SUBCOMMAND);
         return command;
     }
     Command::new(engine_program_path(engine))
 }
 
 fn engine_program_path(engine: Engine) -> PathBuf {
-    if engine != Engine::TexpilotPdftex {
+    if engine != Engine::TekaiPdftex {
         return PathBuf::from(engine_program(engine));
     }
 
@@ -12741,9 +12729,9 @@ fn engine_program_path(engine: Engine) -> PathBuf {
         && let Some(bin_dir) = current_exe.parent()
     {
         let binary_name = if cfg!(windows) {
-            "pdftex-rust.exe"
+            "tekai-engine.exe"
         } else {
-            "pdftex-rust"
+            "tekai-engine"
         };
 
         for dir in bin_dir.ancestors() {
@@ -12765,7 +12753,7 @@ fn engine_program_path(engine: Engine) -> PathBuf {
 fn uses_pdftex_graphics_pipeline(engine: Engine) -> bool {
     matches!(
         engine,
-        Engine::PdfLatex | Engine::TexpilotPdftex | Engine::TexpilotPdftexCertified
+        Engine::PdfLatex | Engine::TekaiPdftex | Engine::TekaiPdftexCertified
     )
 }
 
@@ -12789,8 +12777,8 @@ fn latexmk_command(
             command.arg("-lualatex");
         }
         Engine::Tectonic => unreachable!("tectonic uses its own command path"),
-        Engine::TexpilotPdftex | Engine::TexpilotPdftexCertified => {
-            unreachable!("texpilot-pdftex does not use latexmk")
+        Engine::TekaiPdftex | Engine::TekaiPdftexCertified => {
+            unreachable!("tekai-pdftex does not use latexmk")
         }
     }
     command
@@ -12932,7 +12920,7 @@ mod tests {
 
     #[test]
     fn source_features_detect_graphics_and_multipass_signals_recursively() {
-        let root = unique_temp_dir("texpilot-source-features");
+        let root = unique_temp_dir("tekai-source-features");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         let section = root.join("section.tex");
@@ -12954,7 +12942,7 @@ mod tests {
 
     #[test]
     fn source_features_detect_unbraced_input_recursively() {
-        let root = unique_temp_dir("texpilot-source-unbraced-input");
+        let root = unique_temp_dir("tekai-source-unbraced-input");
         let section_dir = root.join("sections");
         fs::create_dir_all(&section_dir).expect("failed to create temp root");
         let main = root.join("main.tex");
@@ -12978,7 +12966,7 @@ mod tests {
 
     #[test]
     fn source_features_detect_subfile_recursively() {
-        let root = unique_temp_dir("texpilot-source-subfile");
+        let root = unique_temp_dir("tekai-source-subfile");
         let section_dir = root.join("sections");
         fs::create_dir_all(&section_dir).expect("failed to create temp root");
         let main = root.join("main.tex");
@@ -13004,7 +12992,7 @@ mod tests {
 
     #[test]
     fn source_features_respect_includeonly() {
-        let root = unique_temp_dir("texpilot-source-includeonly");
+        let root = unique_temp_dir("tekai-source-includeonly");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         let active = root.join("active.tex");
@@ -13053,7 +13041,7 @@ mod tests {
 
     #[test]
     fn source_features_follow_tex_file_exists_probes() {
-        let root = unique_temp_dir("texpilot-source-if-file-exists-tex");
+        let root = unique_temp_dir("tekai-source-if-file-exists-tex");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         let conditional = root.join("conditional.tex");
@@ -13078,7 +13066,7 @@ mod tests {
 
     #[test]
     fn source_features_follow_uppercase_tex_file_exists_probes() {
-        let root = unique_temp_dir("texpilot-source-if-file-exists-uppercase-tex");
+        let root = unique_temp_dir("tekai-source-if-file-exists-uppercase-tex");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         let conditional = root.join("conditional.TEX");
@@ -13103,7 +13091,7 @@ mod tests {
 
     #[test]
     fn source_features_ignore_non_tex_file_exists_probes() {
-        let root = unique_temp_dir("texpilot-source-if-file-exists-binary");
+        let root = unique_temp_dir("tekai-source-if-file-exists-binary");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         let asset = root.join("asset.pdf");
@@ -13124,7 +13112,7 @@ mod tests {
 
     #[test]
     fn source_features_detect_svg_graphics() {
-        let root = unique_temp_dir("texpilot-source-svg");
+        let root = unique_temp_dir("tekai-source-svg");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         fs::write(
@@ -13143,7 +13131,7 @@ mod tests {
 
     #[test]
     fn source_features_detect_import_recursively() {
-        let root = unique_temp_dir("texpilot-source-import");
+        let root = unique_temp_dir("tekai-source-import");
         let section_dir = root.join("sections");
         fs::create_dir_all(&section_dir).expect("failed to create temp root");
         let main = root.join("main.tex");
@@ -13169,7 +13157,7 @@ mod tests {
 
     #[test]
     fn source_features_detect_backref_draft_convergence_signal() {
-        let root = unique_temp_dir("texpilot-source-backref");
+        let root = unique_temp_dir("tekai-source-backref");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         fs::write(
@@ -13188,7 +13176,7 @@ mod tests {
 
     #[test]
     fn auto_draft_prepass_stays_draft_for_graphic_multipass_documents() {
-        let root = unique_temp_dir("texpilot-auto-small-graphics");
+        let root = unique_temp_dir("tekai-auto-small-graphics");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         let out_dir = root.join("out");
@@ -13209,7 +13197,7 @@ mod tests {
 
     #[test]
     fn auto_draft_prepass_stays_draft_until_settled_for_image_heavy_documents() {
-        let root = unique_temp_dir("texpilot-auto-heavy-graphics");
+        let root = unique_temp_dir("tekai-auto-heavy-graphics");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         let out_dir = root.join("out");
@@ -13327,7 +13315,7 @@ mod tests {
             None
         );
 
-        options.engine = Engine::TexpilotPdftex;
+        options.engine = Engine::TekaiPdftex;
         options.shell_escape = true;
         assert_eq!(
             opportunistic_preamble_format_kind_for_run(&options, final_mode),
@@ -13374,7 +13362,7 @@ mod tests {
 
     #[test]
     fn preamble_format_cache_dir_is_stable_for_document() {
-        let root = unique_temp_dir("texpilot-preamble-cache-dir");
+        let root = unique_temp_dir("tekai-preamble-cache-dir");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         fs::write(
@@ -13383,7 +13371,7 @@ mod tests {
         )
         .expect("failed to write source");
         let cache_root = root.join("cache");
-        let _guard = EnvVarGuard::set("TEXPILOT_FORMAT_CACHE", cache_root.display().to_string());
+        let _guard = EnvVarGuard::set("TEKAI_FORMAT_CACHE", cache_root.display().to_string());
 
         let first = preamble_format_cache_dir(&root, &main);
         let second = preamble_format_cache_dir(&root, &main);
@@ -13401,7 +13389,7 @@ mod tests {
             .lock()
             .expect("TEXINPUTS test lock poisoned");
         let cwd = std::env::current_dir().expect("failed to read cwd");
-        let root = unique_temp_dir("texpilot-relative-format-cache");
+        let root = unique_temp_dir("tekai-relative-format-cache");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         fs::write(
@@ -13409,11 +13397,8 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}x\\end{document}\n",
         )
         .expect("failed to write source");
-        let relative_cache = PathBuf::from("target").join("texpilot-relative-format-cache-test");
-        let _guard = EnvVarGuard::set(
-            "TEXPILOT_FORMAT_CACHE",
-            relative_cache.display().to_string(),
-        );
+        let relative_cache = PathBuf::from("target").join("tekai-relative-format-cache-test");
+        let _guard = EnvVarGuard::set("TEKAI_FORMAT_CACHE", relative_cache.display().to_string());
 
         let dir = preamble_format_cache_dir(&root, &main);
 
@@ -13427,7 +13412,7 @@ mod tests {
             .lock()
             .expect("TEXINPUTS test lock poisoned");
         let cwd = std::env::current_dir().expect("failed to read cwd");
-        let root = unique_temp_dir("texpilot-relative-aux-cache");
+        let root = unique_temp_dir("tekai-relative-aux-cache");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         fs::write(
@@ -13435,8 +13420,8 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}x\\end{document}\n",
         )
         .expect("failed to write source");
-        let relative_cache = PathBuf::from("target").join("texpilot-relative-aux-cache-test");
-        let _guard = EnvVarGuard::set("TEXPILOT_AUX_CACHE", relative_cache.display().to_string());
+        let relative_cache = PathBuf::from("target").join("tekai-relative-aux-cache-test");
+        let _guard = EnvVarGuard::set("TEKAI_AUX_CACHE", relative_cache.display().to_string());
 
         let dir = settled_aux_cache_dir(&root, &main, "mode");
 
@@ -13449,7 +13434,7 @@ mod tests {
         let _env_lock = TEXINPUTS_TEST_LOCK
             .lock()
             .expect("TEXINPUTS test lock poisoned");
-        let root = unique_temp_dir("texpilot-global-bibtex-cache");
+        let root = unique_temp_dir("tekai-global-bibtex-cache");
         fs::create_dir_all(&root).expect("failed to create temp root");
         fs::write(
             root.join("refs.bib"),
@@ -13457,7 +13442,7 @@ mod tests {
         )
         .expect("failed to write bibliography");
         let cache_root = root.join("cache");
-        let _guard = EnvVarGuard::set("TEXPILOT_BIBTEX_CACHE", cache_root.display().to_string());
+        let _guard = EnvVarGuard::set("TEKAI_BIBTEX_CACHE", cache_root.display().to_string());
         let aux_source = "\\relax\n\\citation{x}\n\\bibstyle{plain}\n\\bibdata{refs}\n";
 
         let source_out = root.join("source-out");
@@ -13499,7 +13484,7 @@ mod tests {
 
     #[test]
     fn source_features_do_not_treat_comments_as_commands() {
-        let root = unique_temp_dir("texpilot-source-comments");
+        let root = unique_temp_dir("tekai-source-comments");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         fs::write(
@@ -13518,7 +13503,7 @@ mod tests {
 
     #[test]
     fn source_features_do_not_treat_inline_literals_as_commands() {
-        let root = unique_temp_dir("texpilot-source-inline-literals");
+        let root = unique_temp_dir("tekai-source-inline-literals");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         fs::write(
@@ -14013,7 +13998,7 @@ mod tests {
 
     #[test]
     fn source_eps_conversion_jobs_respect_includeonly() {
-        let root = unique_temp_dir("texpilot-eps-includeonly");
+        let root = unique_temp_dir("tekai-eps-includeonly");
         let out_dir = root.join("out");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
@@ -14112,7 +14097,7 @@ mod tests {
 
     #[test]
     fn declared_graphics_extensions_can_make_eps_precede_existing_raster() {
-        let root = unique_temp_dir("texpilot-declared-graphics-extensions");
+        let root = unique_temp_dir("tekai-declared-graphics-extensions");
         fs::create_dir_all(&root).expect("failed to create temp root");
         fs::write(root.join("fig.eps"), "%!PS\n").expect("failed to write EPS");
         fs::write(root.join("fig.png"), "not a real PNG\n").expect("failed to write PNG");
@@ -14217,12 +14202,12 @@ mod tests {
 
     #[test]
     fn gnuplottex_output_path_parses_generated_script() {
-        let script = Path::new("/tmp/texpilot/out/main-gnuplottex-fig1.gnuplot");
+        let script = Path::new("/tmp/tekai/out/main-gnuplottex-fig1.gnuplot");
         let source = "set terminal latex\nset output './main-gnuplottex-fig1.tex'\nplot sin(x)\n";
 
         assert_eq!(
             gnuplottex_output_path(script, source).as_deref(),
-            Some(Path::new("/tmp/texpilot/out/./main-gnuplottex-fig1.tex"))
+            Some(Path::new("/tmp/tekai/out/./main-gnuplottex-fig1.tex"))
         );
         assert_eq!(
             quoted_or_bare_shell_value("\"figure.pdf\" trailing"),
@@ -14232,7 +14217,7 @@ mod tests {
 
     #[test]
     fn gnuplottex_input_paths_track_existing_local_plot_data() {
-        let root = unique_temp_dir("texpilot-gnuplottex-inputs");
+        let root = unique_temp_dir("tekai-gnuplottex-inputs");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create output dir");
         let data = root.join("points.dat");
@@ -14272,7 +14257,7 @@ mod tests {
 
     #[test]
     fn pythontex_dependency_paths_resolve_against_workingdir() {
-        let root = unique_temp_dir("texpilot-pythontex-dependencies");
+        let root = unique_temp_dir("tekai-pythontex-dependencies");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create output dir");
         let data = root.join("data.txt");
@@ -14319,7 +14304,7 @@ mod tests {
 
     #[test]
     fn asymptote_input_paths_track_existing_local_imports() {
-        let root = unique_temp_dir("texpilot-asymptote-inputs");
+        let root = unique_temp_dir("tekai-asymptote-inputs");
         fs::create_dir_all(&root).expect("failed to create temp root");
         fs::write(root.join("style.asy"), "pen accent = red;\n")
             .expect("failed to write style input");
@@ -14348,7 +14333,7 @@ mod tests {
 
     #[test]
     fn asymptote_state_tracks_sidecar_input_freshness() {
-        let root = unique_temp_dir("texpilot-asymptote-state-inputs");
+        let root = unique_temp_dir("tekai-asymptote-state-inputs");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let input_path = root.join("main-1.asy");
         let macro_path = root.join("style.asy");
@@ -14393,7 +14378,7 @@ mod tests {
 
     #[test]
     fn metapost_input_paths_track_existing_local_inputs() {
-        let root = unique_temp_dir("texpilot-metapost-inputs");
+        let root = unique_temp_dir("tekai-metapost-inputs");
         fs::create_dir_all(&root).expect("failed to create temp root");
         fs::write(root.join("macros.mp"), "vardef marker = enddef;\n")
             .expect("failed to write macro input");
@@ -14415,7 +14400,7 @@ mod tests {
 
     #[test]
     fn metapost_state_tracks_sidecar_input_freshness() {
-        let root = unique_temp_dir("texpilot-metapost-state-inputs");
+        let root = unique_temp_dir("tekai-metapost-state-inputs");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let input_path = root.join("diagram.mp");
         let macro_path = root.join("macros.mp");
@@ -14460,8 +14445,8 @@ mod tests {
 
     #[test]
     fn kpathsea_env_preserves_existing_search_path() {
-        let doc_dir = PathBuf::from("/tmp/texpilot-paper");
-        let existing = OsStr::new("/tmp/texpilot-bib//:");
+        let doc_dir = PathBuf::from("/tmp/tekai-paper");
+        let existing = OsStr::new("/tmp/tekai-bib//:");
         let value = kpathsea_env_with_existing(&doc_dir, Some(existing));
 
         assert_eq!(
@@ -14549,7 +14534,7 @@ mod tests {
 
     #[test]
     fn logreq_parser_extracts_bibtex8_command() {
-        let root = unique_temp_dir("texpilot-logreq-bibtex8");
+        let root = unique_temp_dir("tekai-logreq-bibtex8");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create temp root");
         fs::write(out_dir.join("main.aux"), "\\relax\n").expect("failed to write aux");
@@ -14654,7 +14639,7 @@ mod tests {
 
     #[test]
     fn bibtex_state_writer_uses_supplied_aux_source() {
-        let root = unique_temp_dir("texpilot-bibtex-source-state");
+        let root = unique_temp_dir("tekai-bibtex-source-state");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create output dir");
         fs::write(
@@ -14690,7 +14675,7 @@ mod tests {
 
     #[test]
     fn bibtex_signature_canonicalizes_duplicate_citation_noise() {
-        let root = unique_temp_dir("texpilot-bibtex-canonical-signature");
+        let root = unique_temp_dir("tekai-bibtex-canonical-signature");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create output dir");
         let aux_path = out_dir.join("main.aux");
@@ -14753,7 +14738,7 @@ mod tests {
 
     #[test]
     fn biber_glob_fingerprint_tracks_matching_file_set() {
-        let root = unique_temp_dir("texpilot-biber-glob-fingerprint");
+        let root = unique_temp_dir("tekai-biber-glob-fingerprint");
         let refs_dir = root.join("refs");
         fs::create_dir_all(&refs_dir).expect("failed to create refs dir");
         fs::write(refs_dir.join("a.bib"), "@book{a,title={A}}\n")
@@ -14796,7 +14781,7 @@ mod tests {
 
     #[test]
     fn biber_config_choice_fingerprint_tracks_project_config_appearance() {
-        let root = unique_temp_dir("texpilot-biber-config-choice");
+        let root = unique_temp_dir("tekai-biber-config-choice");
         fs::create_dir_all(&root).expect("failed to create temp root");
 
         let initial_config =
@@ -14819,7 +14804,7 @@ mod tests {
 
     #[test]
     fn biber_config_inputs_track_project_config_content() {
-        let root = unique_temp_dir("texpilot-biber-config-content");
+        let root = unique_temp_dir("tekai-biber-config-content");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let config_path = root.join("biber.conf");
         fs::write(&config_path, "[sourcemap]\n").expect("failed to write project Biber config");
@@ -14862,7 +14847,7 @@ mod tests {
 
     #[test]
     fn fingerprint_reuses_previous_hash_when_metadata_matches() {
-        let root = unique_temp_dir("texpilot-fingerprint-reuse");
+        let root = unique_temp_dir("tekai-fingerprint-reuse");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let input = root.join("input.txt");
         fs::write(&input, "unchanged bytes\n").expect("failed to write input");
@@ -14890,7 +14875,7 @@ mod tests {
     fn effective_tex_fingerprint_reuses_previous_metadata_without_reading() {
         use std::os::unix::fs::PermissionsExt;
 
-        let root = unique_temp_dir("texpilot-effective-fingerprint-reuse");
+        let root = unique_temp_dir("tekai-effective-fingerprint-reuse");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let input = root.join("main.tex");
         fs::write(
@@ -14928,7 +14913,7 @@ mod tests {
 
     #[test]
     fn input_freshness_cache_reuses_previous_check_result() {
-        let root = unique_temp_dir("texpilot-input-freshness-cache");
+        let root = unique_temp_dir("tekai-input-freshness-cache");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let input = root.join("input.txt");
         fs::write(&input, "cached bytes\n").expect("failed to write input");
@@ -15024,7 +15009,7 @@ mod tests {
 
     #[test]
     fn auto_bibliography_rejects_mixed_backends_with_same_bbl_output() {
-        let root = unique_temp_dir("texpilot-mixed-bibliography-conflict");
+        let root = unique_temp_dir("tekai-mixed-bibliography-conflict");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create temp output dir");
         let main = root.join("main.tex");
@@ -15064,7 +15049,7 @@ mod tests {
 
     #[test]
     fn root_includeonly_filter_is_cached_per_session() {
-        let root = unique_temp_dir("texpilot-includeonly-session-cache");
+        let root = unique_temp_dir("tekai-includeonly-session-cache");
         let main = root.join("main.tex");
         fs::create_dir_all(&root).expect("failed to create temp dir");
         fs::write(
@@ -15093,7 +15078,7 @@ mod tests {
 
     #[test]
     fn source_external_tools_are_checked_once_per_session() {
-        let root = unique_temp_dir("texpilot-source-external-session");
+        let root = unique_temp_dir("tekai-source-external-session");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create output dir");
         let main = root.join("main.tex");
@@ -15122,7 +15107,7 @@ mod tests {
 
     #[test]
     fn source_external_tool_jobs_are_cached_per_session() {
-        let root = unique_temp_dir("texpilot-source-external-job-cache");
+        let root = unique_temp_dir("tekai-source-external-job-cache");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create output dir");
         let main = root.join("main.tex");
@@ -15155,7 +15140,7 @@ mod tests {
 
     #[test]
     fn tex_source_read_cache_reuses_source_text() {
-        let root = unique_temp_dir("texpilot-source-read-cache");
+        let root = unique_temp_dir("tekai-source-read-cache");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create output dir");
         let main = root.join("main.tex");
@@ -15182,7 +15167,7 @@ mod tests {
 
     #[test]
     fn tex_source_analysis_cache_reuses_parsed_source_facts() {
-        let root = unique_temp_dir("texpilot-source-analysis-cache");
+        let root = unique_temp_dir("tekai-source-analysis-cache");
         fs::create_dir_all(&root).expect("failed to create temp dir");
         let main = root.join("main.tex");
         fs::write(
@@ -15218,7 +15203,7 @@ mod tests {
 
     #[test]
     fn source_preflight_scan_combines_output_features_and_pgf() {
-        let root = unique_temp_dir("texpilot-source-preflight-scan");
+        let root = unique_temp_dir("tekai-source-preflight-scan");
         let out_dir = root.join("out");
         let sections = root.join("sections");
         fs::create_dir_all(&sections).expect("failed to create section dir");
@@ -15267,7 +15252,7 @@ mod tests {
             return;
         }
 
-        let root = unique_temp_dir("texpilot-source-kpathsea-seed");
+        let root = unique_temp_dir("tekai-source-kpathsea-seed");
         let paper = root.join("paper");
         let shared = root.join("shared").join("tex");
         fs::create_dir_all(&paper).expect("failed to create paper tree");
@@ -15346,7 +15331,7 @@ mod tests {
 
     #[test]
     fn external_tool_input_collection_reuses_cached_source_jobs() {
-        let root = unique_temp_dir("texpilot-external-input-cache");
+        let root = unique_temp_dir("tekai-external-input-cache");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create output dir");
         let main = root.join("main.tex");
@@ -15397,7 +15382,7 @@ mod tests {
 
     #[test]
     fn aux_tool_input_paths_reuses_cached_source_jobs() {
-        let root = unique_temp_dir("texpilot-aux-input-cache");
+        let root = unique_temp_dir("tekai-aux-input-cache");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create output dir");
         let main = root.join("main.tex");
@@ -15431,7 +15416,7 @@ mod tests {
 
     #[test]
     fn standard_rerun_output_snapshot_tracks_small_latex_state_files() {
-        let root = unique_temp_dir("texpilot-standard-rerun-snapshot");
+        let root = unique_temp_dir("tekai-standard-rerun-snapshot");
         let nested = root.join("sections");
         fs::create_dir_all(&nested).expect("failed to create temp output dirs");
         fs::write(root.join("main.aux"), "a").expect("failed to write aux");
@@ -15459,7 +15444,7 @@ mod tests {
 
     #[test]
     fn output_file_snapshot_batches_large_path_sets() {
-        let root = unique_temp_dir("texpilot-output-snapshot-batch");
+        let root = unique_temp_dir("tekai-output-snapshot-batch");
         fs::create_dir_all(&root).expect("failed to create temp output dir");
         let mut paths = Vec::new();
         for index in 0..24 {
@@ -15488,13 +15473,13 @@ mod tests {
         let _env_lock = TEXINPUTS_TEST_LOCK
             .lock()
             .expect("TEXINPUTS test lock poisoned");
-        let root = unique_temp_dir("texpilot-settled-aux-cache");
+        let root = unique_temp_dir("tekai-settled-aux-cache");
         let out_dir = root.join("out");
         let fresh_out_dir = root.join("fresh-out");
         let cache_root = root.join("cache");
         fs::create_dir_all(out_dir.join("sections")).expect("failed to create output dirs");
         fs::create_dir_all(&fresh_out_dir).expect("failed to create fresh output dir");
-        let _cache_guard = EnvVarGuard::set("TEXPILOT_AUX_CACHE", cache_root.display().to_string());
+        let _cache_guard = EnvVarGuard::set("TEKAI_AUX_CACHE", cache_root.display().to_string());
 
         let main = root.join("main.tex");
         fs::write(
@@ -15508,14 +15493,14 @@ mod tests {
         fs::write(out_dir.join("sections").join("intro.aux"), "\\relax\n")
             .expect("failed to write nested aux");
         fs::write(
-            out_dir.join(".texpilot-main.bibstate.toml"),
+            out_dir.join(".tekai-main.bibstate.toml"),
             format!(
                 "version = 10\nsignature = \"test\"\nbbl_path = \"{}\"\n",
                 out_dir.join("main.bbl").display()
             ),
         )
         .expect("failed to write bib state");
-        fs::write(out_dir.join(".texpilot-main.state.toml"), "not cached\n")
+        fs::write(out_dir.join(".tekai-main.state.toml"), "not cached\n")
             .expect("failed to write build state");
         fs::write(out_dir.join("main.log"), "not cached\n").expect("failed to write log");
         fs::write(out_dir.join("main.pdf"), "%PDF cached artifact\n").expect("failed to write pdf");
@@ -15578,7 +15563,7 @@ mod tests {
             "\\relax\n"
         );
         assert_eq!(
-            fs::read_to_string(fresh_out_dir.join(".texpilot-main.bibstate.toml"))
+            fs::read_to_string(fresh_out_dir.join(".tekai-main.bibstate.toml"))
                 .expect("missing restored bib state"),
             format!(
                 "version = 10\nsignature = \"test\"\nbbl_path = \"{}\"\n",
@@ -15586,7 +15571,7 @@ mod tests {
             )
         );
         assert!(!fresh_out_dir.join("main.log").exists());
-        assert!(!fresh_out_dir.join(".texpilot-main.state.toml").exists());
+        assert!(!fresh_out_dir.join(".tekai-main.state.toml").exists());
 
         fs::write(
             &main,
@@ -15618,10 +15603,10 @@ mod tests {
         assert!(is_standard_rerun_output(Path::new("main.BRF")));
         assert!(is_settled_aux_cache_sidecar(Path::new("main.BBL")));
         assert!(is_settled_aux_cache_sidecar(Path::new(
-            ".texpilot-main.bibstate.toml"
+            ".tekai-main.bibstate.toml"
         )));
         assert!(!is_settled_aux_cache_sidecar(Path::new(
-            ".texpilot-main.state.toml"
+            ".tekai-main.state.toml"
         )));
         assert_eq!(
             makeindex_input_kind(Path::new("people.IDX")),
@@ -15752,7 +15737,7 @@ mod tests {
 
     #[test]
     fn direct_mode_key_tracks_build_state_version() {
-        let root = unique_temp_dir("texpilot-mode-key-version");
+        let root = unique_temp_dir("tekai-mode-key-version");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         fs::write(&main, "\\documentclass{article}\n").expect("failed to write main source");
@@ -15769,7 +15754,7 @@ mod tests {
 
     #[test]
     fn build_state_compatibility_rejects_previous_schema_version() {
-        let root = unique_temp_dir("texpilot-state-version");
+        let root = unique_temp_dir("tekai-state-version");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         let pdf = root.join("main.pdf");
@@ -15806,7 +15791,7 @@ mod tests {
 
     #[test]
     fn build_dependency_paths_seed_source_graph_without_state() {
-        let root = unique_temp_dir("texpilot-dependency-seed");
+        let root = unique_temp_dir("tekai-dependency-seed");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create temp output dir");
         let main = root.join("main.tex");
@@ -16073,7 +16058,7 @@ mod tests {
         let _env_guard = TEXINPUTS_TEST_LOCK
             .lock()
             .expect("TEXINPUTS test lock poisoned");
-        let root = unique_temp_dir("texpilot-dependency-virtual-inputs");
+        let root = unique_temp_dir("tekai-dependency-virtual-inputs");
         let out_dir = root.join("out");
         fs::create_dir_all(&out_dir).expect("failed to create temp output dir");
         let main = root.join("main.tex");
@@ -16112,7 +16097,7 @@ mod tests {
             ],
         };
         fs::write(
-            out_dir.join(".texpilot-main.state.toml"),
+            out_dir.join(".tekai-main.state.toml"),
             toml::to_string(&state).expect("failed to serialize build state"),
         )
         .expect("failed to write build state");
@@ -16158,7 +16143,7 @@ mod tests {
 
     #[test]
     fn pgf_externalize_source_scan_respects_includeonly() {
-        let root = unique_temp_dir("texpilot-pgf-includeonly");
+        let root = unique_temp_dir("tekai-pgf-includeonly");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let main = root.join("main.tex");
         let active = root.join("active.tex");
