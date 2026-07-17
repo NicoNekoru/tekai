@@ -3,17 +3,24 @@ engine = "pdflatex"
 runner = "direct"
 bib = "auto"
 out_dir = "build"
+# job_name = "paper"
 draft_prepass = "auto"
 max_runs = 8
 fast = false
 once = false
+force = false
+precompile_preamble = false
 synctex = false
 shell_escape = false
+quiet = false
+print_command = false
 
 [build.env]
 # TEXINPUTS = "tex//:"
 # BIBINPUTS = "bib//:"
 # BSTINPUTS = "bst//:"
+# INDEXSTYLE = "styles//:"
+# TEXINDEXSTYLE = "styles//:"
 
 [lint]
 indent_size = 2

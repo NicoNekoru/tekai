@@ -6,6 +6,7 @@
 //! objective.
 
 pub mod contract;
+pub mod engine;
 pub mod expand;
 pub mod native;
 pub mod roadmap;
@@ -15,6 +16,12 @@ pub mod trace;
 pub use contract::{
     CURRENT_ENGINE_BOUNDARY, Capability, EngineBoundary, IntegrationPoint, NonSolution,
     PdfTexResponsibility, PerformanceStrategy, RewritePlan, TexpilotResponsibility,
+};
+pub use engine::{
+    AssetCounters, BottleneckLedger, DependencyCoverage, DocumentCounters, EngineV2Options,
+    EngineV2Report, EngineV2Status, ExecutorCounters, FixedPointCounters, LayoutCounters,
+    PdfCounters, ResolverCounters, SnapshotCounters, StageTiming, UnsupportedFeature,
+    run_report_only,
 };
 pub use expand::{
     ExpandError, ExpansionEngine, MacroDefinition, expand_to_source,

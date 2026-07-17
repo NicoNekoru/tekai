@@ -815,6 +815,7 @@ dependencies = [
  "clap",
  "glob",
  "notify",
+ "pdftex-rust",
  "serde",
  "serde_json",
  "texpilot-pdftex",

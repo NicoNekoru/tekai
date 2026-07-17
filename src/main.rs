@@ -1,3 +1,4 @@
+use std::ffi::{CString, OsStr};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -7,12 +8,19 @@ use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use serde::Serialize;
 use texpilot::cli::{BuildArgs, CheckArgs, CleanArgs, Cli, Command, LintArgs, WatchArgs};
-use texpilot::compiler::{BuildOptions, build};
+use texpilot::compiler::{
+    BuildOptions, EMBEDDED_PDFTEX_RUNNER_ENV, EMBEDDED_PDFTEX_SUBCOMMAND, build,
+};
 use texpilot::config::{BuildConfig, load_build_config, load_lint_config, load_project_config};
 use texpilot::lint::{Diagnostic, Severity, format_diagnostic, has_errors, lint_paths};
 use texpilot::watch::{WatchOptions, watch};
 
 fn main() -> Result<()> {
+    if std::env::args_os().nth(1).as_deref() == Some(OsStr::new(EMBEDDED_PDFTEX_SUBCOMMAND)) {
+        return run_embedded_pdftex();
+    }
+    enable_embedded_pdftex_runner()?;
+
     let matches = Cli::command().get_matches();
     let build_flag_sources = BuildFlagSources::from_root_matches(&matches);
     let cli = Cli::from_arg_matches(&matches)?;
@@ -23,6 +31,45 @@ fn main() -> Result<()> {
         Command::Check(args) => run_check(args, build_flag_sources),
         Command::Watch(args) => run_watch(args, build_flag_sources),
     }
+}
+
+fn enable_embedded_pdftex_runner() -> Result<()> {
+    if std::env::var_os(EMBEDDED_PDFTEX_RUNNER_ENV).is_none() {
+        let executable = std::env::current_exe().context("failed to locate texpilot executable")?;
+        // SAFETY: this is initialized before watcher threads or child processes start.
+        unsafe {
+            std::env::set_var(EMBEDDED_PDFTEX_RUNNER_ENV, executable);
+        }
+    }
+    Ok(())
+}
+
+fn run_embedded_pdftex() -> Result<()> {
+    let mut args = Vec::new();
+    args.push(CString::new("pdflatex").expect("static pdfTeX program name contains no NUL"));
+    for arg in std::env::args_os().skip(2) {
+        args.push(CString::new(os_arg_bytes(&arg)).context("pdfTeX argument contained NUL")?);
+    }
+    let mut argv = args
+        .iter()
+        .map(|arg| arg.as_ptr() as *mut core::ffi::c_char)
+        .collect::<Vec<_>>();
+    argv.push(std::ptr::null_mut());
+
+    let code =
+        unsafe { pdftex_rust::run_from_c_args(args.len() as core::ffi::c_int, argv.as_mut_ptr()) };
+    std::process::exit(code)
+}
+
+#[cfg(unix)]
+fn os_arg_bytes(arg: &OsStr) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    arg.as_bytes().to_vec()
+}
+
+#[cfg(not(unix))]
+fn os_arg_bytes(arg: &OsStr) -> Vec<u8> {
+    arg.to_string_lossy().into_owned().into_bytes()
 }
 
 fn run_clean(args: CleanArgs) -> Result<()> {
@@ -295,24 +342,7 @@ fn build_options(
     config: &BuildConfig,
     sources: BuildFlagSources,
 ) -> BuildOptions {
-    let mut options = BuildOptions {
-        main,
-        job_name: None,
-        engine: texpilot::compiler::Engine::PdfLatex,
-        runner: texpilot::compiler::Runner::Direct,
-        bib_mode: texpilot::compiler::BibMode::Auto,
-        out_dir: PathBuf::from("build"),
-        fast: false,
-        draft_prepass: texpilot::compiler::DraftPrepass::Auto,
-        once: false,
-        max_runs: 8,
-        force: false,
-        precompile_preamble: false,
-        synctex: false,
-        shell_escape: false,
-        quiet: false,
-        print_command: false,
-    };
+    let mut options = BuildOptions::for_main(main);
     apply_build_config(&mut options, config);
     apply_build_flags(&mut options, flags, sources);
     options

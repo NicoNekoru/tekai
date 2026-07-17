@@ -91,6 +91,9 @@ pub enum Engine {
     TexpilotPdftexCertified,
 }
 
+pub const EMBEDDED_PDFTEX_RUNNER_ENV: &str = "TEXPILOT_EMBEDDED_PDFTEX_RUNNER";
+pub const EMBEDDED_PDFTEX_SUBCOMMAND: &str = "__texpilot-pdftex-rust";
+
 fn is_texpilot_pdftex_engine(engine: Engine) -> bool {
     matches!(
         engine,
@@ -147,6 +150,29 @@ pub struct BuildOptions {
     pub shell_escape: bool,
     pub quiet: bool,
     pub print_command: bool,
+}
+
+impl BuildOptions {
+    pub fn for_main(main: impl Into<PathBuf>) -> Self {
+        Self {
+            main: main.into(),
+            job_name: None,
+            engine: Engine::PdfLatex,
+            runner: Runner::Direct,
+            bib_mode: BibMode::Auto,
+            out_dir: PathBuf::from("build"),
+            fast: false,
+            draft_prepass: DraftPrepass::Auto,
+            once: false,
+            max_runs: 8,
+            force: false,
+            precompile_preamble: false,
+            synctex: false,
+            shell_escape: false,
+            quiet: false,
+            print_command: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1361,13 +1387,16 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
                 // Draft logs can keep asking for reruns for backref/outfile churn that the
                 // final full-image pass will resolve. Switch once generated inputs settle.
                 draft_graphics_phase = false;
-                accept_stale_final_pdf_after_draft =
-                    should_accept_stale_final_pdf_after_stable_draft(
+                full_layout_no_pdf_phase = should_start_full_layout_no_pdf_after_stable_draft(
+                    source_features.as_ref(),
+                    can_suppress_pdf_output,
+                );
+                accept_stale_final_pdf_after_draft = !full_layout_no_pdf_phase
+                    && should_accept_stale_final_pdf_after_stable_draft(
                         source_features.as_ref(),
                         &rerun_reasons,
                         source_bibtex_preflight_used,
                     );
-                full_layout_no_pdf_phase = false;
                 stable_full_layout_no_pdf_rerun_passes = 0;
                 stable_standard_file_churn_no_pdf_rerun_passes = 0;
                 last_generated_outputs = None;
@@ -1379,12 +1408,20 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         }
 
         if full_layout_no_pdf {
-            if !generated_outputs_changed && !generated_inputs_unread && !needs_rerun {
+            let backref_outputs_changed = draft_prepass_used
+                && source_features
+                    .as_ref()
+                    .is_some_and(|features| features.has_backref_signal)
+                && !generated_outputs_changed
+                && !generated_inputs_unread
+                && standard_rerun_outputs_changed;
+            let generated_state_stable = !generated_outputs_changed && !generated_inputs_unread;
+            if generated_state_stable && (!needs_rerun || backref_outputs_changed) {
                 full_layout_no_pdf_phase = false;
                 stable_full_layout_no_pdf_rerun_passes = 0;
                 stable_standard_file_churn_no_pdf_rerun_passes = 0;
                 last_generated_outputs = None;
-            } else if !generated_outputs_changed && !generated_inputs_unread && needs_rerun {
+            } else if generated_state_stable && needs_rerun {
                 stable_full_layout_no_pdf_rerun_passes += 1;
                 if !standard_rerun_outputs_changed
                     && rerun_reasons.iter().any(|reason| reason == "file-changed")
@@ -1698,10 +1735,10 @@ fn tex_direct_base_command(
 }
 
 fn tex_run_records_files(options: &BuildOptions, mode: TexRunMode) -> bool {
-    !(mode.draft_graphics
-        && mode.suppress_pdf_output
-        && !mode.force_pgf_list_and_make
-        && !options.shell_escape)
+    !mode.draft_graphics
+        || !mode.suppress_pdf_output
+        || mode.force_pgf_list_and_make
+        || options.shell_escape
 }
 
 fn add_tex_direct_input(
@@ -1746,6 +1783,9 @@ fn prepare_preamble_format(
     mode: TexRunMode,
 ) -> Result<Option<PreambleFormatPreparation>> {
     if let Some(format_kind) = preamble_format_kind_for_run(options, mode) {
+        if !automatic_preamble_format_is_safe_for_root(main)? {
+            return Ok(None);
+        }
         return prepare_preamble_format_for_kind(
             doc_dir,
             file_name,
@@ -2317,6 +2357,9 @@ fn preamble_format_background_kind_for_run(
     mode: TexRunMode,
 ) -> Result<Option<PreambleFormatKind>> {
     if let Some(kind) = preamble_format_kind_for_run(options, mode) {
+        if !automatic_preamble_format_is_safe_for_root(main)? {
+            return Ok(None);
+        }
         return Ok(Some(kind));
     }
     let Some(kind) = opportunistic_preamble_format_kind_for_run(options, mode) else {
@@ -2335,7 +2378,7 @@ fn opportunistic_preamble_format_kind_for_run(
     options: &BuildOptions,
     mode: TexRunMode,
 ) -> Option<PreambleFormatKind> {
-    if !matches!(options.engine, Engine::TexpilotPdftex)
+    if !matches!(options.engine, Engine::PdfLatex | Engine::TexpilotPdftex)
         || options.fast
         || options.once
         || options.shell_escape
@@ -2516,13 +2559,20 @@ fn should_start_full_layout_no_pdf_phase(
     source_features.is_some_and(|features| features.has_multipass_signal && !features.has_graphics)
 }
 
+fn should_start_full_layout_no_pdf_after_stable_draft(
+    source_features: Option<&SourceFeatures>,
+    can_suppress_pdf_output: bool,
+) -> bool {
+    can_suppress_pdf_output && source_features.is_some_and(|features| features.has_backref_signal)
+}
+
 fn should_accept_stale_final_pdf_after_stable_draft(
     source_features: Option<&SourceFeatures>,
     rerun_reasons: &[String],
     source_bibtex_preflight_used: bool,
 ) -> bool {
     if source_features.is_some_and(|features| features.has_backref_signal) {
-        return true;
+        return false;
     }
     !source_bibtex_preflight_used && rerun_reasons.iter().any(|reason| reason == "file-changed")
 }
@@ -2532,9 +2582,10 @@ fn full_layout_pdf_promotion_threshold(
     stable_standard_file_churn_no_pdf_rerun_passes: usize,
     bibcite_preflight_seeded: bool,
 ) -> usize {
-    if !draft_prepass_used || stable_standard_file_churn_no_pdf_rerun_passes > 0 {
-        1
-    } else if bibcite_preflight_seeded {
+    if !draft_prepass_used
+        || stable_standard_file_churn_no_pdf_rerun_passes > 0
+        || bibcite_preflight_seeded
+    {
         1
     } else {
         2
@@ -2548,13 +2599,13 @@ fn can_accept_final_pdf_with_stale_rerun_warnings(
     generated_inputs_unread: bool,
     standard_rerun_outputs_changed: bool,
     rerun_reasons: &[String],
-    accept_stale_after_stable_draft: bool,
+    _accept_stale_after_stable_draft: bool,
 ) -> bool {
     !draft_graphics
         && !suppress_pdf_output
         && !generated_outputs_changed
         && !generated_inputs_unread
-        && (!standard_rerun_outputs_changed || accept_stale_after_stable_draft)
+        && !standard_rerun_outputs_changed
         && !rerun_reasons.is_empty()
         && rerun_reasons
             .iter()
@@ -3365,8 +3416,7 @@ fn scan_source_feature_line(line: &str, features: &mut SourceFeatures) {
             let command = &bytes[name_start..name_end];
             features.has_graphics |= source_feature_graphics_command(command);
             features.has_multipass_signal |= source_feature_multipass_command(command);
-            features.has_backref_signal |=
-                matches!(command, b"backref" | b"backrefalt");
+            features.has_backref_signal |= matches!(command, b"backref" | b"backrefalt");
         }
         cursor = name_end.max(name_start);
     }
@@ -10694,7 +10744,10 @@ fn resolve_kpathsea_input(doc_dir: &Path, name: &str, extension: &str) -> Result
         return Ok(cached.clone());
     }
 
-    if let Some(resolved) = resolve_texlive_ls_r_input(&candidate, extension) {
+    let has_explicit_search_path = extension_has_explicit_kpathsea_search_path(extension);
+    if !has_explicit_search_path
+        && let Some(resolved) = resolve_texlive_ls_r_input(&candidate, extension)
+    {
         if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
             cache.insert(cache_key, Some(resolved.clone()));
         }
@@ -10720,10 +10773,34 @@ fn resolve_kpathsea_input(doc_dir: &Path, name: &str, extension: &str) -> Result
             Some(PathBuf::from(path))
         }
     };
+    if resolved.is_none()
+        && has_explicit_search_path
+        && let Some(fallback) = resolve_texlive_ls_r_input(&candidate, extension)
+    {
+        if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
+            cache.insert(cache_key, Some(fallback.clone()));
+        }
+        return Ok(Some(fallback));
+    }
     if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
         cache.insert(cache_key, resolved.clone());
     }
     Ok(resolved)
+}
+
+fn extension_has_explicit_kpathsea_search_path(extension: &str) -> bool {
+    kpathsea_raw_env_vars_for_extension(extension)
+        .iter()
+        .any(|var| std::env::var_os(var).is_some_and(|value| !value.is_empty()))
+}
+
+fn kpathsea_raw_env_vars_for_extension(extension: &str) -> &'static [&'static str] {
+    match extension {
+        "bib" => &["BIBINPUTS"],
+        "bst" => &["BSTINPUTS"],
+        "ist" => &["TEXINDEXSTYLE", "INDEXSTYLE"],
+        _ => &["TEXINPUTS"],
+    }
 }
 
 fn tex_rerun_reasons(log_path: &Path) -> Result<Vec<String>> {
@@ -12645,6 +12722,13 @@ fn engine_program(engine: Engine) -> &'static str {
 }
 
 fn tex_engine_command(engine: Engine) -> Command {
+    if engine == Engine::PdfLatex
+        && let Some(runner) = std::env::var_os(EMBEDDED_PDFTEX_RUNNER_ENV)
+    {
+        let mut command = Command::new(runner);
+        command.arg(EMBEDDED_PDFTEX_SUBCOMMAND);
+        return command;
+    }
     Command::new(engine_program_path(engine))
 }
 
@@ -12829,6 +12913,22 @@ mod tests {
     use super::*;
 
     static TEXINPUTS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn build_options_for_main_uses_direct_final_build_defaults() {
+        let options = BuildOptions::for_main("paper/main.tex");
+
+        assert_eq!(options.main, PathBuf::from("paper/main.tex"));
+        assert_eq!(options.engine, Engine::PdfLatex);
+        assert_eq!(options.runner, Runner::Direct);
+        assert_eq!(options.bib_mode, BibMode::Auto);
+        assert_eq!(options.out_dir, PathBuf::from("build"));
+        assert_eq!(options.draft_prepass, DraftPrepass::Auto);
+        assert_eq!(options.max_runs, 8);
+        assert!(!options.fast);
+        assert!(!options.once);
+        assert!(!options.force);
+    }
 
     #[test]
     fn source_features_detect_graphics_and_multipass_signals_recursively() {
@@ -13197,7 +13297,7 @@ mod tests {
     }
 
     #[test]
-    fn opportunistic_preamble_format_is_limited_to_texpilot_pdftex_final_runs() {
+    fn opportunistic_preamble_format_allows_safe_pdflatex_final_runs() {
         let final_mode = TexRunMode {
             draft_graphics: false,
             suppress_pdf_output: false,
@@ -13210,7 +13310,7 @@ mod tests {
         };
         let mut options =
             test_build_options(Path::new("main.tex"), Path::new("out"), DraftPrepass::Auto);
-        options.engine = Engine::TexpilotPdftex;
+        options.engine = Engine::PdfLatex;
 
         assert_eq!(
             opportunistic_preamble_format_kind_for_run(&options, final_mode),
@@ -13221,7 +13321,7 @@ mod tests {
             None
         );
 
-        options.engine = Engine::PdfLatex;
+        options.engine = Engine::XeLatex;
         assert_eq!(
             opportunistic_preamble_format_kind_for_run(&options, final_mode),
             None
@@ -13253,6 +13353,18 @@ mod tests {
         let source = "\\documentclass{article}\n\
              \\newcommand{\\paperabstract}{\\input{abstract}}\n\
              \\input{macros}\n\
+             \\begin{document}\n\
+             Text.\n\
+             \\end{document}\n";
+
+        assert!(preamble_contains_input_like_dependency(source));
+    }
+
+    #[test]
+    fn automatic_preamble_format_rejects_input_in_predocument_macro_argument() {
+        let source = "\\documentclass{article}\n\
+             \\usepackage{simpleicml}\n\
+             \\icmlabstract{\\input{content/abstract}}\n\
              \\begin{document}\n\
              Text.\n\
              \\end{document}\n";
@@ -15568,7 +15680,7 @@ mod tests {
             has_backref_signal: true,
             ..plain_features
         };
-        assert!(should_accept_stale_final_pdf_after_stable_draft(
+        assert!(!should_accept_stale_final_pdf_after_stable_draft(
             Some(&backref_features),
             &citation_only_reasons,
             true
@@ -15616,7 +15728,7 @@ mod tests {
             &standard_reasons,
             false,
         ));
-        assert!(can_accept_final_pdf_with_stale_rerun_warnings(
+        assert!(!can_accept_final_pdf_with_stale_rerun_warnings(
             false,
             false,
             false,

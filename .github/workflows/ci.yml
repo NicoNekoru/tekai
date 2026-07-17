@@ -18,7 +18,7 @@ jobs:
 
       - name: Run Rust checks
         run: |
-          cargo fmt --package texpilot --package texpilot-pdftex --check
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo clippy -p pdftex-rust --bin pdftex-rust --no-default-features --features rust-binary -- -D warnings
-          cargo test --workspace
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo clippy -p pdftex-rust --bin pdftex-rust --no-default-features --features rust-binary --locked -- -D warnings
+          cargo test --workspace --locked

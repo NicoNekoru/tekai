@@ -188,6 +188,42 @@ fn fast_preview_precompile_preamble_reuses_format_after_body_edit() {
 }
 
 #[test]
+fn fast_preview_precompile_preamble_falls_back_for_predocument_inputs() {
+    if !command_available("pdflatex") || !tex_file_available("mylatexformat.ltx") {
+        eprintln!(
+            "skipping unsafe precompiled preamble test; pdflatex or mylatexformat is unavailable"
+        );
+        return;
+    }
+
+    let root = unique_temp_dir("texpilot-fast-unsafe-precompile-preamble-test");
+    fs::create_dir_all(&root).expect("failed to create test directory");
+    let main = root.join("main.tex");
+    let abstract_file = root.join("abstract.tex");
+    let out_dir = root.join("out");
+    fs::write(
+        &main,
+        "\\documentclass{article}\n\\newcommand{\\paperabstract}{\\input{abstract}}\n\\begin{document}\n\\paperabstract\n\\end{document}\n",
+    )
+    .expect("failed to write test document");
+    fs::write(&abstract_file, "Preview abstract.").expect("failed to write abstract");
+
+    let report = build(&BuildOptions {
+        fast: true,
+        once: true,
+        precompile_preamble: true,
+        ..options(&main, &out_dir)
+    })
+    .expect("unsafe precompiled preamble should fall back to normal fast preview");
+
+    assert_eq!(report.tex_runs, 1, "{report:#?}");
+    assert!(!report.preamble_format_used, "{report:#?}");
+    assert!(!report.preamble_format_built, "{report:#?}");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn full_build_precompile_preamble_reuses_format_after_body_edit() {
     if !command_available("pdflatex") || !tex_file_available("mylatexformat.ltx") {
         eprintln!(
@@ -231,6 +267,33 @@ fn full_build_precompile_preamble_reuses_format_after_body_edit() {
     assert_eq!(second.tex_runs, 1, "{second:#?}");
     assert!(second.preamble_format_used, "{second:#?}");
     assert!(!second.preamble_format_built, "{second:#?}");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn full_build_does_not_opportunistically_build_preamble_format_without_draft_prepass() {
+    if !command_available("pdflatex") {
+        eprintln!("skipping no-draft opportunistic preamble test; pdflatex is unavailable");
+        return;
+    }
+
+    let root = unique_temp_dir("texpilot-no-draft-opportunistic-preamble-test");
+    fs::create_dir_all(&root).expect("failed to create test directory");
+    let main = root.join("main.tex");
+    let out_dir = root.join("out");
+    fs::write(
+        &main,
+        "\\documentclass{article}\n\\begin{document}\nNo draft.\n\\end{document}\n",
+    )
+    .expect("failed to write test document");
+
+    let report = build(&options(&main, &out_dir))
+        .expect("ordinary no-draft build should not precompile opportunistically");
+
+    assert_eq!(report.tex_runs, 1, "{report:#?}");
+    assert!(!report.preamble_format_used, "{report:#?}");
+    assert!(!report.preamble_format_built, "{report:#?}");
 
     let _ = fs::remove_dir_all(root);
 }
@@ -566,6 +629,54 @@ fn draft_prepass_precompile_preamble_builds_format_for_final_pass() {
         ..options(&main, &out_dir)
     })
     .expect("draft/full build should use a precompiled final preamble");
+
+    assert!(report.draft_tex_runs > 0, "{report:#?}");
+    assert!(report.preamble_format_used, "{report:#?}");
+    assert!(report.preamble_format_built, "{report:#?}");
+    assert!(
+        report
+            .passes
+            .iter()
+            .any(|pass| !pass.draft && pass.preamble_format_used && pass.preamble_format_built),
+        "{report:#?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn draft_prepass_opportunistically_builds_safe_preamble_format_for_final_pass() {
+    if !command_available("pdflatex")
+        || !tex_file_available("mylatexformat.ltx")
+        || !tex_file_available("mwe/example-image.pdf")
+    {
+        eprintln!(
+            "skipping opportunistic preamble test; pdflatex, mylatexformat, or mwe image is unavailable"
+        );
+        return;
+    }
+
+    let root = unique_temp_dir("texpilot-draft-opportunistic-preamble-test");
+    fs::create_dir_all(&root).expect("failed to create test directory");
+    let main = root.join("main.tex");
+    let bibliography = root.join("refs.bib");
+    let out_dir = root.join("out");
+    fs::write(
+        &main,
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics{example-image}\n\\section{A}\\label{s:a}\nSee Section~\\ref{s:a} and \\cite{x}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n",
+    )
+    .expect("failed to write test document");
+    fs::write(
+        &bibliography,
+        "@article{x, author={A. Author}, title={Title}, journal={Journal}, year={2024}}\n",
+    )
+    .expect("failed to write test bibliography");
+
+    let report = build(&BuildOptions {
+        draft_prepass: DraftPrepass::Auto,
+        ..options(&main, &out_dir)
+    })
+    .expect("draft/full build should opportunistically use a precompiled final preamble");
 
     assert!(report.draft_tex_runs > 0, "{report:#?}");
     assert!(report.preamble_format_used, "{report:#?}");

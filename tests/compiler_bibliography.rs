@@ -764,6 +764,10 @@ fn auto_draft_prepass_switches_to_final_after_backref_outputs_stabilize() {
     let _env_guard = bibinputs_test_guard();
     let root = unique_temp_dir("texpilot-auto-prepass-backref-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
+    let _bib_cache_guard = EnvVarGuard::set(
+        "TEXPILOT_BIBTEX_CACHE",
+        root.join("bib-cache").into_os_string(),
+    );
     let main = root.join("main.tex");
     let refs = root.join("refs.bib");
     let out_dir = root.join("out");
@@ -776,7 +780,7 @@ fn auto_draft_prepass_switches_to_final_after_backref_outputs_stabilize() {
     })
     .expect("auto backref build should settle without exhausting draft reruns");
     assert_eq!(first.bibliography_runs, 1, "{first:#?}");
-    assert_eq!(first.tex_runs, 2, "{first:#?}");
+    assert_eq!(first.tex_runs, 3, "{first:#?}");
     assert!(first.draft_tex_runs > 0, "{first:#?}");
     assert!(first.final_tex_runs > 0, "{first:#?}");
     assert_eq!(first.pdf_tex_runs, 1, "{first:#?}");

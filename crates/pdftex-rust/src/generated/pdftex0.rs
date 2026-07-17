@@ -2458,11 +2458,11 @@ const CS_LOOKUP_CACHE_SIZE: usize = 4096;
 const CS_LOOKUP_CACHE_WAYS: usize = 2;
 static mut CS_LOOKUP_CACHE: [CsLookupCacheEntry; CS_LOOKUP_CACHE_SIZE * CS_LOOKUP_CACHE_WAYS] =
     [CsLookupCacheEntry {
-    h: 0,
-    len: 0,
-    p: 0,
-    s: 0,
-}; CS_LOOKUP_CACHE_SIZE * CS_LOOKUP_CACHE_WAYS];
+        h: 0,
+        len: 0,
+        p: 0,
+        s: 0,
+    }; CS_LOOKUP_CACHE_SIZE * CS_LOOKUP_CACHE_WAYS];
 #[inline(always)]
 fn cs_lookup_cache_index(h: integer, len: integer) -> usize {
     (((h as u32).wrapping_mul(33) ^ len as u32) as usize & (CS_LOOKUP_CACHE_SIZE - 1))
@@ -3501,8 +3501,7 @@ pub unsafe extern "C" fn zgetnode(mut s: integer) -> halfword {
         if p != 0 as ::core::ffi::c_int {
             SMALL_NODE_CACHE_HEADS[cache_index] = (*mem.offset(p as isize)).hh.v.RH;
             SMALL_NODE_CACHE_COUNTS[cache_index] -= 1;
-            (*mem.offset(p as isize)).hh.v.RH =
-                -(268435455 as ::core::ffi::c_long) as halfword;
+            (*mem.offset(p as isize)).hh.v.RH = -(268435455 as ::core::ffi::c_long) as halfword;
             varused = varused + s;
             if s >= 4 as ::core::ffi::c_int {
                 (*mem.offset(
@@ -10938,12 +10937,15 @@ pub unsafe extern "C" fn zidlookup(mut j: integer, mut l_0: integer) -> halfword
     if Result != 26627 as ::core::ffi::c_int {
         let s = (*hash.offset(Result as isize)).v.RH;
         if s > 0 as ::core::ffi::c_int {
-            cs_lookup_store_entry(cache_index, CsLookupCacheEntry {
-                h,
-                len: l_0,
-                p: Result,
-                s,
-            });
+            cs_lookup_store_entry(
+                cache_index,
+                CsLookupCacheEntry {
+                    h,
+                    len: l_0,
+                    p: Result,
+                    s,
+                },
+            );
         }
     }
     return Result;
@@ -12555,23 +12557,21 @@ pub unsafe extern "C" fn zbegintokenlist(mut p: halfword, mut t: quarterword) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn endtokenlist() {
-    if curinput.indexfield as ::core::ffi::c_int >= 3 as ::core::ffi::c_int {
-        if curinput.indexfield as ::core::ffi::c_int <= 4 as ::core::ffi::c_int {
-            zflushlist(curinput.startfield);
-        } else {
-            zdeletetokenref(curinput.startfield);
-            if curinput.indexfield as ::core::ffi::c_int == 5 as ::core::ffi::c_int {
-                while paramptr > curinput.limitfield {
-                    paramptr -= 1;
-                    zflushlist(*paramstack.offset(paramptr as isize));
-                }
-            } else if curinput.indexfield as ::core::ffi::c_int == 6 as ::core::ffi::c_int
-                && outputcanend == 0
-            {
-                zfatalerror(688 as ::core::ffi::c_int);
+    let index = curinput.indexfield as ::core::ffi::c_int;
+    if index >= 5 as ::core::ffi::c_int {
+        zdeletetokenref(curinput.startfield);
+        if index == 5 as ::core::ffi::c_int {
+            let limit = curinput.limitfield;
+            while paramptr > limit {
+                paramptr -= 1;
+                zflushlist(*paramstack.offset(paramptr as isize));
             }
+        } else if index == 6 as ::core::ffi::c_int && outputcanend == 0 {
+            zfatalerror(688 as ::core::ffi::c_int);
         }
-    } else if curinput.indexfield as ::core::ffi::c_int == 1 as ::core::ffi::c_int {
+    } else if index >= 3 as ::core::ffi::c_int {
+        zflushlist(curinput.startfield);
+    } else if index == 1 as ::core::ffi::c_int {
         if alignstate as ::core::ffi::c_long > 500000 as ::core::ffi::c_long {
             alignstate = 0 as ::core::ffi::c_int as integer;
         } else {
@@ -12994,6 +12994,22 @@ pub unsafe extern "C" fn getnext() {
         (*eqtb.offset(29338 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int;
     '_lab20: loop {
         curcs = 0 as ::core::ffi::c_int as halfword;
+        if curinput.statefield as ::core::ffi::c_int == 0 as ::core::ffi::c_int
+            && curinput.locfield as ::core::ffi::c_long != -(268435455 as ::core::ffi::c_long)
+        {
+            let loc_mem = mem.offset(curinput.locfield as isize);
+            let token = (*loc_mem).hh.v.LH;
+            if token < 4095 as ::core::ffi::c_int {
+                let command =
+                    (token as ::core::ffi::c_int / 256 as ::core::ffi::c_int) as eightbits;
+                if !matches!(command as ::core::ffi::c_int, 1 | 2 | 4 | 5) {
+                    curinput.locfield = (*loc_mem).hh.v.RH;
+                    curcmd = command;
+                    curchr = (token as ::core::ffi::c_int % 256 as ::core::ffi::c_int) as halfword;
+                    break;
+                }
+            }
+        }
         if curinput.statefield as ::core::ffi::c_int != 0 as ::core::ffi::c_int {
             '_lab25: loop {
                 if curinput.locfield <= curinput.limitfield {
@@ -13009,10 +13025,7 @@ pub unsafe extern "C" fn getnext() {
                         break;
                     } else {
                         loop {
-                            curcmd = (*catcode_base.offset(curchr as isize))
-                                .hh
-                                .v
-                                .RH as eightbits;
+                            curcmd = (*catcode_base.offset(curchr as isize)).hh.v.RH as eightbits;
                             match curinput.statefield as ::core::ffi::c_int
                                 + curcmd as ::core::ffi::c_int
                             {
@@ -13364,10 +13377,7 @@ pub unsafe extern "C" fn getnext() {
                                 mubyteskeep = mubytekeep;
                                 curchr =
                                     readbuffer_for_getnext(&raw mut k, mubyte_enabled) as halfword;
-                                cat = (*catcode_base.offset(curchr as isize))
-                                    .hh
-                                    .v
-                                    .RH
+                                cat = (*catcode_base.offset(curchr as isize)).hh.v.RH
                                     as ::core::ffi::c_uchar;
                                 if mubyte_enabled
                                     && mubyteincs == 0
@@ -13401,10 +13411,7 @@ pub unsafe extern "C" fn getnext() {
                                             curchr =
                                                 readbuffer_for_getnext(&raw mut k, mubyte_enabled)
                                                     as halfword;
-                                            cat = (*catcode_base.offset(curchr as isize))
-                                            .hh
-                                            .v
-                                            .RH
+                                            cat = (*catcode_base.offset(curchr as isize)).hh.v.RH
                                                 as ::core::ffi::c_uchar;
                                             if mubytetoken > 0 as ::core::ffi::c_int {
                                                 cat = 0 as ::core::ffi::c_uchar;

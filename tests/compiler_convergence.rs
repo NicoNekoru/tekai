@@ -38,6 +38,33 @@ See Figure~\ref{fig:box}.
 \end{document}
 "#;
 
+const CHANGED_STANDARD_SIDECAR_DOC: &str = r#"\documentclass{article}
+\usepackage{graphicx}
+\newcommand{\backref}[1]{#1}
+\newwrite\sidecar
+\AtEndDocument{%
+  \PackageWarningNoLine{rerunfilecheck}{File `main.out' has changed}%
+}
+\begin{document}
+See Figure~\ref{fig:box}.
+\begin{figure}
+\includegraphics[width=1cm]{example-image}
+\caption{Box}\label{fig:box}
+\end{figure}
+\makeatletter
+\ifGin@draft
+  \immediate\openout\sidecar=\jobname.out
+  \immediate\write\sidecar{draft-sidecar}
+  \immediate\closeout\sidecar
+\else
+  \immediate\openout\sidecar=\jobname.out
+  \immediate\write\sidecar{final-sidecar}
+  \immediate\closeout\sidecar
+\fi
+\makeatother
+\end{document}
+"#;
+
 #[test]
 fn direct_runner_tracks_generated_output_changes_even_when_log_is_silent() {
     if !command_available("pdflatex") {
@@ -97,6 +124,60 @@ fn direct_runner_promotes_after_stale_file_change_warning_without_standard_file_
             .iter()
             .any(|reason| reason == "file-changed"),
         "{first:#?}"
+    );
+    assert!(out_dir.join("main.pdf").exists());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn direct_runner_reruns_when_promoted_pdf_changes_standard_sidecars() {
+    if !command_available("pdflatex") || !tex_file_available("example-image.pdf") {
+        eprintln!(
+            "skipping changed standard-sidecar convergence test; pdflatex or example-image is unavailable"
+        );
+        return;
+    }
+
+    let root = unique_temp_dir("texpilot-changed-standard-sidecar-test");
+    fs::create_dir_all(&root).expect("failed to create test directory");
+    let main = root.join("main.tex");
+    let out_dir = root.join("out");
+    fs::write(&main, CHANGED_STANDARD_SIDECAR_DOC).expect("failed to write test document");
+
+    let first = build(&BuildOptions {
+        draft_prepass: DraftPrepass::Auto,
+        max_runs: 4,
+        ..options(&main, &out_dir)
+    })
+    .expect("changed standard sidecar should force one settling final pass");
+
+    assert_eq!(first.tex_runs, 3, "{first:#?}");
+    assert_eq!(first.draft_tex_runs, 1, "{first:#?}");
+    assert_eq!(first.final_tex_runs, 2, "{first:#?}");
+    assert_eq!(first.pdf_tex_runs, 1, "{first:#?}");
+    assert_eq!(first.passes.len(), 3, "{first:#?}");
+    assert!(first.passes[0].draft, "{first:#?}");
+    assert!(!first.passes[1].draft, "{first:#?}");
+    assert!(!first.passes[1].pdf_output, "{first:#?}");
+    assert!(!first.passes[2].draft, "{first:#?}");
+    assert!(first.passes[2].pdf_output, "{first:#?}");
+    if tex_file_available("mylatexformat.ltx") {
+        assert!(first.passes[1].preamble_format_used, "{first:#?}");
+        assert!(first.passes[1].preamble_format_built, "{first:#?}");
+        assert!(first.passes[2].preamble_format_used, "{first:#?}");
+        assert!(!first.passes[2].preamble_format_built, "{first:#?}");
+    }
+    assert!(
+        first.passes[1]
+            .rerun_reasons
+            .iter()
+            .any(|reason| reason == "file-changed"),
+        "{first:#?}"
+    );
+    assert_eq!(
+        fs::read_to_string(out_dir.join("main.out")).expect("failed to read standard sidecar"),
+        "final-sidecar\n"
     );
     assert!(out_dir.join("main.pdf").exists());
 

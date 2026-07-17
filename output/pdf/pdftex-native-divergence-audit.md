@@ -2,6 +2,11 @@
 
 Date: 2026-07-05
 
+Status: historical diagnostic snapshot for the experimental
+`--engine texpilot-pdftex` renderer. The default `pdf-latex` + `direct` path
+uses the exact `pdftex-rust` engine and is not subject to the divergences below.
+See [`docs/usage.md`](../../docs/usage.md) for the current engine modes.
+
 Compared PDFs:
 
 - arXiv-2605 native: `/tmp/texpilot-pdf-compare/arxiv-2605/native/main.pdf`

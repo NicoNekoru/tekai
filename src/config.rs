@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -19,7 +19,7 @@ pub struct BuildConfig {
     pub engine: Option<Engine>,
     pub runner: Option<Runner>,
     pub bib_mode: Option<BibMode>,
-    pub out_dir: Option<std::path::PathBuf>,
+    pub out_dir: Option<PathBuf>,
     pub job_name: Option<String>,
     pub fast: Option<bool>,
     pub draft_prepass: Option<DraftPrepass>,
@@ -46,7 +46,7 @@ struct RawBuildConfig {
     runner: Option<String>,
     bib: Option<String>,
     bibliography: Option<String>,
-    out_dir: Option<std::path::PathBuf>,
+    out_dir: Option<PathBuf>,
     job_name: Option<String>,
     fast: Option<bool>,
     no_images: Option<bool>,
@@ -114,7 +114,7 @@ fn load_raw_config(path: Option<&Path>) -> Result<Option<RawConfig>> {
     Ok(Some(raw))
 }
 
-fn default_config_path() -> Option<std::path::PathBuf> {
+fn default_config_path() -> Option<PathBuf> {
     let candidate = std::env::current_dir().ok()?.join("texpilot.toml");
     candidate.exists().then_some(candidate)
 }

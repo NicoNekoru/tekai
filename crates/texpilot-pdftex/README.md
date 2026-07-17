@@ -1,432 +1,68 @@
 # texpilot-pdftex
 
-This crate is the experimental pdfTeX-rewrite track for `texpilot`.
+`texpilot-pdftex` is the experimental native TeX/STY-to-PDF replacement-engine
+track for the `texpilot` workspace.
 
-It is intentionally separate from the current CLI crate. Today `texpilot`
-optimizes the build graph around TeX: it chooses passes, prepares preview modes,
-runs legacy helper tools when needed, tracks inputs, and reports timing.
-External `pdflatex` still owns the expensive engine work:
+It is intentionally separate from [`pdftex-rust`](../pdftex-rust/README.md):
 
-- category-code-sensitive tokenization;
-- macro expansion, grouping, assignments, registers, and primitives;
-- package execution and file I/O;
-- paragraph breaking, math layout, page building, and output routines;
-- fonts, encodings, image inclusion, PDF primitives, and PDF object writing;
-- diagnostics, optional interop artifacts, and shell-escape semantics.
+- `pdftex-rust` preserves pdfTeX's algorithms and powers the default exact
+  `--engine pdf-latex --runner direct` path;
+- `texpilot-pdftex` explores a faster fused expansion, in-memory document,
+  layout, asset, and PDF architecture.
 
-That boundary is the reason scheduler work can beat `latexmk` but cannot make a
-clean final-quality build sub-second once one ordinary pdfTeX pass already takes
-multiple seconds.
-
-## Target
-
-The target is not a preview renderer and not a LaTeX parser. The target is a
-high-performance TeX/STY-to-PDF engine backend that can eventually replace
-external `pdflatex` for final builds. Compatibility is judged by the generated
-PDF: for the same TeX/STY inputs, the native backend should produce a
-near-identical rendered document quickly. Legacy sidecars such as `.aux`,
-`.fls`, `.log`, `.bbl`, `.idx`, and SyncTeX are optional adapters or debugging
-outputs, not the hot-path correctness model.
-
-Development should stay ruthless about that boundary. A compatibility feature
-belongs on the native hot path only when it improves rendered-PDF parity or
-unblocks TeX/STY semantics that do. Recreating page chrome, rerun logs, aux-file
-shape, BibTeX/Biber choreography, or other process artifacts is not useful by
-itself if the pixels do not get closer.
-
-For the bundled large-paper benchmark, the first meaningful gate is:
-
-1. produce near-identical rendered PDF output compared with external pdfTeX;
-2. beat one external PDF-producing pdfTeX pass on clean final builds;
-3. then push both large examples below one second end-to-end.
-
-## Why a rewrite can win
-
-The external-engine path pays for work that a native backend can avoid or
-collapse:
-
-- process startup and distribution/package reparsing;
-- repeated full TeX passes for aux convergence;
-- disk round-trips for control files that can be modeled in memory;
-- external bibliography and index runs for common paper patterns;
-- serial asset loading and PDF object generation;
-- opaque engine state that `texpilot` cannot inspect or reuse.
-
-The planned backend attacks those directly with memory-mapped format snapshots,
-preindexed distribution files, in-memory document fixed-point solving, native
-bibliography/index models, a native layout/PDF backend, and parallel asset/PDF
-pipelines.
-
-## Non-solutions
-
-These are useful in other parts of the project but do not satisfy the clean
-full-build target by themselves:
-
-- faster source parsing without TeX expansion;
-- preamble caching alone;
-- pass scheduling alone;
-- preview-only rendering;
-- page reuse that only helps warm incremental edits;
-- exact `.aux`/`.log`/`.fls`/BibTeX/Biber sidecar compatibility;
-- silently switching users to an incompatible LaTeX subset.
-
-## Phases
-
-The code exposes the current boundary and roadmap as Rust data so later
-integration work can test against it:
-
-- `p0`: rendered-PDF equivalence harness;
-- `p1`: expansion core;
-- `p2`: snapshot and file-system layer;
-- `p3`: in-memory document convergence;
-- `p4`: layout and PDF backend;
-- `p5`: sub-second candidate.
-
-The default `texpilot` runner still uses external TeX engines. This crate is
-where the replacement engine can grow until its rendered PDFs are equivalent
-enough and fast enough to be wired into `BuildOptions` as a default-capable
-backend.
-
-## Current executable subset
-
-The crate is now wired into the main CLI as:
+## CLI modes
 
 ```sh
 cargo run -- build path/to/main.tex --engine texpilot-pdftex
 cargo run -- build path/to/main.tex --engine texpilot-pdftex-certified
 ```
 
-`texpilot-pdftex` is the fast native path. It is allowed to be approximate while
-the replacement engine is still growing, and its compatibility is measured by
-rendered-PDF parity gates.
+`texpilot-pdftex` runs the native renderer for its supported subset. Supported
+native output is approximate and must not be described as general pdfTeX
+parity. Unsupported documents fall back to the exact embedded pdfTeX path.
 
-`texpilot-pdftex-certified` is the deterministic fidelity path. It runs the
-native backend for diagnostics and trace coverage, then writes the final PDF via
-pdfTeX itself and appends `certification_policy\tpdftex-final-oracle` to the
-native trace. That mode is perfect-fidelity by construction: the delivered
-`*.pdf` is the pdfTeX artifact, not an uncertified native approximation.
+`texpilot-pdftex-certified` runs the native backend for trace/coverage evidence,
+then produces the delivered PDF with the exact pdfTeX engine. Its fidelity comes
+from that final oracle artifact, not from certifying the approximate native
+rendering.
 
-The native backend currently handles a deliberately pragmatic final-build
-subset:
+## Correctness boundary
 
-- article-style `\begin{document}` / `\end{document}`;
-- recursive local and `TEXINPUTS`-resolved `\input{...}` / `\include{...}`
-  expansion with `.tex` extension probing, `\IfFileExists`/
-  `\InputIfFileExists` branch expansion, `\jobname` file-name expansion, plus
-  `\includeonly{...}` filtering;
-- plain paragraphs and line wrapping;
-- `\title`, `\author`, `\date`, `\maketitle`, starred/numbered sectioning,
-  `\AtBeginDocument`/`\AtEndDocument` hooks, visible run-in `\paragraph`
-  heading rendering, and NeurIPS-style paragraph before-skip accounting;
-- focused `\newcommand`/`\renewcommand`/`\providecommand`,
-  `\DeclareRobustCommand`, `\DeclareMathOperator`, `\def`, `\gdef`,
-  `\edef`/`\xdef`, and `\protected@edef` macro expansion, including positional
-  arguments for common paper macros;
-- simple inline formatting, transparent color/style text wrappers with visible
-  `\textsc` small-caps text, plus permissive inline math segment/control-word
-  fallback and common math wrapper/operator/script normalization in rendered
-  equations, including compact fraction/root/accent atoms, layout/style
-  declaration cleanup, prose/caption math-boundary cleanup, relation/operator
-  spacing, labeled arrow normalization, derivative/gradient and set-operator
-  cleanup, transpose cleanup, under/over brace annotation cleanup, native PDF
-  Symbol-font rendering for common Greek, relation/operator, arrow,
-  perpendicular, partial, gradient, square-root, and plus-minus glyphs,
-  minus-plus ASCII fallback, raw `$$...$$` display blocks, and `\[...\]`
-  display-delimiter cleanup on the text-cleaning path;
-- package declarations as no-ops by default, with local `.sty` discovery,
-  recursive local package dependency tracking, optional legacy `.fls` export, and
-  native-safe adapters for selected document-command packages such as
-  `simpleicml` and `sectionnav`;
-- bibliography loading with numeric `\cite`/`\citep`/`\parencite` rendering,
-  textual numeric `\citet`/`\textcite` author labels, `plainnat` author-year
-  `\cite`/`\citep`/`\citet` labels, natbib-style optional citation pre/post
-  notes, `\bibliography` and `\addbibresource` discovery, basic BibTeX
-  brace/accent/text-command cleanup, manual `thebibliography`/`\bibitem`
-  parsing, and a generated references section;
-- section `\label{...}`, `\ref{...}`, and `\pageref{...}` resolution without
-  aux-file reruns, plus one-pass `\tableofcontents` rendering with
-  `\addcontentsline` TOC entries and appendix section numbering;
-- native `\footnote`, `\thanks`, `\footnotemark`, and `\footnotetext` markers
-  using compact numeric inline marks with rendered notes;
-- numbered `equation`, `align`, and `multline` environments with labels, plus
-  lightweight raw `$$...$$` display-math blocks;
-- approximate table/list/algorithm/listing/minipage wrappers,
-  itemize/enumerate/description markers, optional numbered captions,
-  `\makecell`/`\thead` text-cell unwrapping, source-derived
-  `\lstlistingname` for listing captions and single listing references,
-  single `\cref` prefixes for section/figure/table/theorem/listing labels, plus
-  local style `labelsep=period` caption punctuation and conservative wrapping
-  for extreme caption overflows,
-  native `lstlisting`, grouped two-column `lstfloat` blocks, local and
-  `TEXINPUTS`-resolved `\lstinputlisting`, verbatim-like, minted, and
-  `\inputminted` code rendering, `\captionof`,
-  one-pass `\listoffigures`/
-  `\listoftables` rendering with native `.lof`/`.lot`, and ignored
-  `\captionsetup`;
-- common hyperref text commands (`\href`, `\url`, `\hyperref`, `\autoref`),
-  `\phantomsection`, native PDF outlines and `.out` bookmark output from
-  `\pdfbookmark`, section, and subsection anchors, plus page-backref `.brf`
-  records;
-- common `\pdfinfo{...}` and `\hypersetup{pdf...=...}` metadata as native PDF
-  `/Info` entries, plus safe no-op `\pdfcatalog`, `\pdfnames`, `\pdftrailer`,
-  `\pdfmapfile`, and `\pdfmapline` declarations;
-- theorem-like tcolorbox/amsthm headings with native counters and labels, plus
-  colon-style titled graphical theorem boxes for image-heavy definition panels,
-  including theorem boxes nested inside wide figure floats;
-- JPEG/PNG `\includegraphics` as native PDF image XObjects, including
-  local and `TEXINPUTS`-resolved `\graphicspath` and
-  `\DeclareGraphicsExtensions` lookup, common `graphicx` sizing options
-  (`width`, `height`, `scale`, `keepaspectratio`, `angle`, `\linewidth`,
-  `\textwidth`, and `\columnwidth`) plus PDF-visible `trim`/`viewport` boxes
-  with `clip`, and PNG alpha soft masks;
-- first-page PDF `\includegraphics` as Form XObjects with imported resources;
-- PDF `\includegraphics[page=N]{...}` selection for one-based page imports;
-- other resolved graphics as tracked placeholders;
-- style-aware built-in PDF base-font selection for the current NeurIPS-like
-  Times and `simpleicml` Palatino/sans-heading profiles;
-- direct TeX Gyre Pagella/Heros Type 1 font embedding when Kpathsea resolves
-  the local PFB files, including ICML-style Heros code/listing text, using
-  static ASCII metrics and compressed font streams so the native PDF does not
-  depend on viewer font substitution for document text;
-- calibrated NeurIPS-style `\LARGE` title sizing, baseline, and centering;
-- native NeurIPS-style `\And` author-grid title blocks with preserved author,
-  affiliation, and email rows;
-- calibrated native page-number rendering for the current conference-style
-  page profiles, with title-page numbers suppressed where those styles do so;
-- calibrated native `simpleicml`/`sectionnav` two-line running headers on
-  non-title pages;
-- centered native title, author, and abstract-line rendering, including
-  full-width ICML-style title panels with shaded abstract boxes and native
-  teaser image/table rows;
-- PDF text objects isolate fill color so decorative colored boxes and headers do
-  not leak graphics state into subsequent body text;
-- caption-sized figure, table, and listing captions, including denser full-width
-  minipage figure captions, single-column graphic figure row packing, and
-  teaser-style minipage figure rows grouped as native float blocks with
-  column-top placement, plus deferred placement for leading wide top floats in
-  two-column layouts;
-- page-builder controls for strict `\clearpage`/layout switches and soft
-  near-bottom `\newpage` hints that release queued top floats only when doing so
-  preserves rendered flow, plus conservative positive `\vspace` materialization
-  for common TeX length units and standalone `\smallskip`/`\medskip`/
-  `\bigskip` skip glue;
-- nested inline layout-scaffold cleanup for teaser-style minipage/tabular
-  content that reaches text-cleaning paths;
-- native `.pdf`, `.log`, `.fls`, trace output, minimal `.synctex.gz`, `.toc`,
-  `.lof`, `.lot`, `.out`, `.brf`, explicit local `\newwrite`/`\openout`/
-  `\write`/`\closeout` sidecar outputs, simple local and `TEXINPUTS`-resolved
-  `\newread`/`\openin`/`\read`/`\ifeof`/`\closein` input streams,
-  basic `.idx` output and native `\makeindex`/`\index`/`\printindex`
-  rendering,
-  local and `TEXINPUTS`-resolved class/package/style traversal for native
-  adapters and package-option detection, including simple
-  `\PassOptionsToPackage{...}{...}` propagation and
-  `\RequirePackageWithOptions{...}` package loads, and page-aware `.aux` files
-  with supported label, table-of-contents, citation, `\bibstyle`, local and
-  `BIBINPUTS`-resolved `\bibdata` records, plus local and
-  `BSTINPUTS`-resolved bibliography style inputs from `\bibliographystyle`.
+The target is a high-performance TeX/STY-to-PDF engine, not a preview-only
+renderer or a source-level LaTeX parser. Features belong on the native hot path
+when they improve executed TeX semantics or visible PDF fidelity. Reproducing
+legacy `.aux`, `.log`, `.fls`, bibliography, or SyncTeX file shape is optional
+unless it affects the delivered PDF or required interoperability.
 
-Rendered PDF parity is the compatibility test. Those sidecar outputs are
-transitional interop/debug artifacts, not the contract: the native document
-state that drives PDF generation is the correctness path, and exporting legacy
-files should remain optional unless a caller explicitly asks for them.
+The native renderer already supports the two checked-in large papers as a
+useful development corpus, but it still substitutes simplified font, math,
+paragraph, page-building, float, environment, and bibliography behavior. The
+systematic differences are documented in the
+[native divergence audit](../../output/pdf/pdftex-native-divergence-audit.md).
 
-Anything outside that subset returns an unsupported reason and the main
-`texpilot` direct runner falls back to external `pdflatex`. Runtime modes whose
-semantics are not implemented natively yet, including shell escape, also use
-that fallback path instead of being silently ignored.
+## Architecture
 
-On the bundled large-paper examples, the native path now expands the source
-tree and writes final PDFs as one native pass without invoking external
-`pdflatex`, BibTeX, or draft-prepass convergence. This is a fast functional
-renderer moving toward near-identical PDF output: rich layout constructs are
-currently represented approximately.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) specifies the proposed engine-v2 dataflow:
 
-When exact final-output fidelity is required before native parity is complete,
-use `--engine texpilot-pdftex-certified`. That mode intentionally pays for a
-pdfTeX final pass and treats native output as diagnostic evidence only.
+1. memory-mapped format snapshot and indexed distribution/project resolver;
+2. fused token executor with compact token frames;
+3. typed in-memory reference, bibliography, index, and document state;
+4. fidelity paragraph/page builders;
+5. parallel asset and PDF-object pipelines;
+6. fixed-DPI rendered parity gates with exact pdfTeX as verifier and fallback.
 
-The main CLI uses the PDF-only artifact policy for supported native documents:
-it writes the PDF plus `*.texpilot-pdftex.trace` and skips `.aux`, `.fls`,
-`.log`, and other legacy sidecars unless a caller explicitly uses the lower
-level legacy-artifact mode for diagnostics or interoperability tests. This keeps
-the hot path focused on TeX/STY-to-PDF functionality instead of recreating
-outdated rerun machinery. The same in-memory layout pass now feeds page-count
-selection, PDF page-stream generation, SyncTeX boxes, and layout trace metrics,
-so the measured output-routine state is the state that writes the PDF. Explicit
-`\openout`/`\write` streams are stripped, not materialized, on the PDF-only hot
-path; list/float sidecar scans and bibliography-style metadata discovery are
-also skipped unless they can affect rendered PDF output. Legacy-artifact mode
-remains available when sidecar inspection is useful.
-The native trace also records caption pages from the rendered layout placements,
-giving float/page-builder work a direct native signal instead of relying only on
-post-hoc PDF text extraction. It now also records
-`layout_two_column_graphic_float_fallbacks` and
-`layout_two_column_wide_graphic_float_fallbacks`, counting graphic float bodies
-that are visible TeX/STY input but still fall through the approximate
-two-column path instead of entering the native grouped-float/output-routine
-model. For those skipped bodies, the trace also records shadow native sizing:
-`layout_two_column_graphic_float_fallback_estimated_native_slots`,
-`layout_two_column_wide_graphic_float_fallback_estimated_native_slots`, and
-per-fallback `native_rows`, `native_image_slots`, `native_caption_slots`, and
-`native_slots`. These diagnostics do not change the rendered document; they
-size the exact output-routine work that must be implemented before enabling the
-float bodies on the hot path.
+The `engine` module currently exposes report-only counters and stage boundaries
+for evaluating that design without claiming it is production typesetting.
 
-Native timing and coverage checks now live in Rust tests or Rust benchmark
-work, not in Python or shell harnesses. Use the workspace Cargo suite as the
-supported local check:
+## Development
 
 ```sh
 cargo test -p texpilot-pdftex
-cargo test --workspace
+cargo test --test compiler_texpilot_pdftex
+cargo clippy -p texpilot-pdftex --all-targets --locked -- -D warnings
 ```
 
-That keeps the sub-second target honest in the Rust codebase itself: a build is
-not considered healthier merely because it is fast while more TeX/STY float
-functionality has slipped back to the approximate path.
-
-The native hot path resolves project-local and explicit `TEXINPUTS`/
-`BIBINPUTS`/`BSTINPUTS` search roots in process before falling back to
-`kpsewhich`. Standard distribution class traversal is deliberately not on the
-default parser path: local and search-path classes still contribute adapters
-and package options, but asking the TeX installation about `article.cls` is
-legacy discovery work unless it changes the rendered PDF.
-
-Rendered output is the compatibility target. `.aux`, `.toc`, `.lof`,
-`.lot`, `.out`, `.brf`, BibTeX/Biber choreography, and verbose rerun logs are
-only useful when they help explain or bridge missing TeX/STY semantics; they
-are not required artifacts for the high-performance replacement path.
-
-Current rendered-parity evidence for the large examples is page-count and
-dimension agreement, not near-identical output yet. At the harness default of
-96 DPI, the current native renderer measures:
-
-| source | pages | mean RMSE | max page RMSE | max diff ratio |
-| --- | ---: | ---: | ---: | ---: |
-| `examples/arXiv-2605.26379v1/main.tex` | 48/48 | 47.370 | 97.243 | 0.3513 |
-| `examples/arXiv-2511.08544v3/main.tex` | 50/50 | 54.696 | 78.313 | 0.6769 |
-
-With caption-flow diagnostics enabled, the same run reports aggregate absolute
-caption drift of 27 pages across 23 matched captions for `arXiv-2605.26379v1`
-and 27 pages across 21 matched captions for `arXiv-2511.08544v3`; their largest
-single-caption drift is 5 and 2 pages, respectively.
-The corresponding native trace surface shows 0 two-column graphic-float
-fallbacks for both large examples, including 0 starred/wide graphic fallbacks
-and 0 estimated native-slot debt. The remaining output-routine gap is therefore
-not hidden fallback coverage: it is the exact float queue release, paragraph
-breaking, and package layout fidelity needed to move the rendered pixels and
-caption pages into alignment.
-The ICML-style RMSE is higher after direct font embedding because the native
-text now renders as embedded black Type 1 glyphs, including Heros code/listing
-text, instead of pale viewer substitutions; that exposes the remaining layout
-mismatch instead of hiding it behind weaker font rendering.
-
-The main remaining replacement gaps are therefore visual-fidelity gaps rather
-than scheduler gaps: real TeX paragraph breaking, page-builder/output-routine
-behavior, Computer Modern/math font embedding, math layout, float placement,
-and package-level layout semantics must replace the current approximate line
-model before `--strict` rendered parity can pass.
-
-Recent float experiments reinforce that rendered parity is the only useful
-compatibility test here. Treating more float bodies as native blocks sounds
-closer to TeX, but it only counts as progress when the rendered pages improve.
-The accepted path is now narrower and stricter: native-parsable two-column
-`figure*` graphics and `table*` tabular bodies enter the wide top-float path,
-the ICML vertical slot model uses a float/image reservation height calibrated to
-the local `simpleicml` baseline behavior, and the large examples keep 48/48 and
-50/50 page counts with zero two-column graphic fallback debt. The next float
-target is therefore not more command-by-command legacy emulation, but an actual
-deferred float-page/output-routine model that can hold and release queued
-tables and figures exactly where the rendered baseline would place them.
-
-The caption-flow diagnostic currently shows that the large NeurIPS-style paper's
-appendix floats are still early: Table 4 is 5 pages early, Figure 7 is 3 pages
-early, Figures 9 and 10 are 2 pages early, and Figure 13 is 2 pages late.
-The ICML-style paper now keeps 50/50 pages while admitting two-column
-`figure*` graphics and `table*` bodies into the native wide-float path. Its
-remaining main-body flow error is concentrated in a dense float cluster:
-Algorithm 2, Figures 8-14, and Table 2 are still about 2 pages late in the main
-body, while appendix Figure 15 and Tables 3, 5, and 6 are about 2 pages early.
-One-column
-graphic figures still enter the native top-float path, including starred
-`figure*` graphics once `\onecolumn` is active, and scoped one-column starred
-`table*` bodies enter the same top-float path when their table payload can be
-represented natively. Oversized top floats start at a page top instead of
-mid-page, and overflow placements reserve page count without re-rendering the
-same oversized visual object on every overflow page. This is still not true TeX
-clipping or float-page splitting, but it removes a duplicated-figure artifact,
-improves the NeurIPS-style mean RMSE measurement, removes the ICML graphic
-fallback debt, and preserves both large-example page counts. The native page
-builder now carries layout with each placement and supports explicit output
-controls for `\clearpage`, `\onecolumn`, and `\twocolumn`, plus a soft
-near-bottom `\newpage` hint for the approximate line model, so appendix content
-can switch geometry without changing the global document layout. Native
-bibliography rendering is likewise placed at `\bibliography`,
-`\printbibliography`, or `thebibliography` in the source stream, with denser
-bibliography wrapping to match conference-style reference typography. Earlier
-isolated experiments were worse: literal hard `\newpage` handling changed the
-NeurIPS-style example from 48/48 to 48/49 pages, while the accepted soft
-near-bottom handling preserves the current 48/48 and 50/50 rendered-page
-counts; simple `\clearpage` handling changed a large example to 50/51 pages, a
-narrower one-column-graphics-only experiment made the ICML-style paper 50/53
-pages, and compacting table rows alone dropped the ICML-style paper to 50/49
-pages. Admitting two-column `figure*` graphics before calibrating ICML
-float/image slot height made the ICML-style paper 50/52 pages; with calibrated
-slot height and `table*` admission it returns to 50/50, removes the remaining
-graphic fallback debt, and lowers ICML mean RMSE. The next target is therefore
-the real deferred float-page/output-routine itself, especially queue release
-around dense main-body float clusters, appendix transitions, oversized tables,
-and real float clipping/splitting, not more command-by-command legacy emulation.
-
-Recent display-math experiments landed the same lesson in smaller form:
-lightweight raw `$$...$$` display rows preserve the current page-count parity,
-but promoting raw `\[...\]` displays to standalone native rows makes the
-ICML-style paper grow to 51-55 native pages depending on the glue model. The
-accepted `\[...\]` support therefore remains delimiter cleanup through the text
-path until the page builder can model real TeX display glue. This improves
-TeX/STY syntax coverage without pretending the approximate line model is a real
-TeX display-math/page-builder implementation.
-
-The main CLI treats this as a native-first backend: supported documents return
-from the single-pass Rust renderer, while unsupported documents keep the
-`*.texpilot-pdftex.trace` reason and then re-enter the ordinary `pdflatex`
-direct runner. That fallback is a development bridge for uncovered TeX/STY
-semantics, not a compatibility design goal.
-
-The crate also exposes an executable p1 expansion-core slice through
-`ExpansionEngine`: streaming tokenization with mutable catcodes, `\def`/`\gdef`,
-`\edef`/`\xdef`, `\protected@edef`, `\csname`/`\endcsname`, `\expandafter`,
-`\futurelet`, `\aftergroup`, `\relax`, focused
-`\newcommand`/`\renewcommand`/`\providecommand` and `\DeclareRobustCommand`
-macro definitions, protected `\DeclareRobustCommand` aliases, `\let` aliases,
-positional argument substitution, optional first-argument defaults,
-`\protected` definition prefixes, local brace/`\begingroup` scopes, global
-assignment forms such as `\global\def`, and token-level conditionals such as
-`\iftrue`, `\iffalse`, `\ifx`, `\ifdefined`, `\ifcsname`, `\if`, `\ifcat`,
-`\unless`, `\ifnum`, `\ifodd`, `\ifcase`, and `\newif`, raw and aliased count registers
-with `\count<number>`, `\countdef`, `\newcount`, assignment, `\advance`,
-`\number`, `\numexpr`, and `\the`, common pdfTeX count primitives such as
-`\pdfoutput`, `\pdfminorversion`, `\pdfcompresslevel`, and
-`\pdfobjcompresslevel`, plus native-disabled `\pdfshellescape`, dimension
-registers with `\dimen<number>`,
-`\dimendef`, `\newdimen`, `\ifdim`, `\dimexpr`, common TeX units including
-separated `true` units such as `297 true mm`, and pdfTeX page dimension
-primitives such as `\pdfpagewidth`, `\pdfpageheight`, `\pdfhorigin`, and
-`\pdfvorigin`,
-skip/glue registers with `\skip<number>`, `\skipdef`, and `\newskip`,
-token-list registers with `\toks<number>`, `\toksdef`, and `\newtoks`,
-pdfTeX token primitives such as `\pdfpageattr` and `\pdfpageresources`,
-expandable primitives such as `\romannumeral`, `\string`, `\meaning`,
-`\detokenize`, `\unexpanded`, `\expanded`, `\noexpand`, `\jobname`,
-`\pdfprimitive`, `\ifpdfprimitive`, `\pdfcreationdate`, `\pdffilesize`,
-`\pdffilemoddate`, `\pdffiledump`, `\pdfstrcmp`,
-`\pdfescapehex`, `\pdfunescapehex`, `\pdfescapestring`, `\pdfescapename`,
-`\pdfmdfivesum`, and `\pdfmdfivesum file {...}`,
-pdfTeX version constants such as `\pdftexversion` and `\pdftexrevision`,
-constants from `\chardef`/`\mathchardef`, plus focused `\catcode`/`\makeatletter` assignments.
-The native renderer now uses that engine as a file-aware pre-expansion pass
-before document modeling, and injects a native-safe `pdftexcmds` adapter for
-installed-package wrappers around supported pdfTeX primitives. This is the
-first step from string-level document handling toward a TeX-shaped expansion
-pipeline.
+Any change presented as a fidelity improvement should include fixed-DPI
+rendered comparison against the exact engine. Any change presented as a
+performance improvement should include matched release-mode timings on the
+large examples and name the unsupported/fallback boundary.

@@ -1927,214 +1927,15 @@ unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
             && try_write_png_rgb_alpha_8_fast(img, smask, &mut smask_ptr) != 0;
         if fast_rgb_alpha {
         } else if png_get_interlace_type(
-        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-        (*image_array.offset(img as isize))
-            .image_struct
-            .png
-            .info_ptr as png_const_inforp,
-    ) as ::core::ffi::c_int
-        == PNG_INTERLACE_NONE
-    {
-        row = xmalloc(
-            png_get_rowbytes(
-                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-                (*image_array.offset(img as isize))
-                    .image_struct
-                    .png
-                    .info_ptr as png_const_inforp,
-            )
-            .wrapping_mul(::core::mem::size_of::<png_byte>() as size_t),
-        ) as *mut png_byte as png_bytep;
-        if png_get_bit_depth(
             (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
             (*image_array.offset(img as isize))
                 .image_struct
                 .png
                 .info_ptr as png_const_inforp,
         ) as ::core::ffi::c_int
-            == 16 as ::core::ffi::c_int
-            && fixedimagehicolor != 0
+            == PNG_INTERLACE_NONE
         {
-            i = 0 as ::core::ffi::c_int;
-            while i < png_get_image_height(
-                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-                (*image_array.offset(img as isize))
-                    .image_struct
-                    .png
-                    .info_ptr as png_const_inforp,
-            ) as ::core::ffi::c_int
-            {
-                png_read_row(
-                    (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_structrp,
-                    row,
-                    ::core::ptr::null_mut::<png_byte>(),
-                );
-                r = row;
-                k = png_get_rowbytes(
-                    (*image_array.offset(img as isize)).image_struct.png.png_ptr
-                        as png_const_structrp,
-                    (*image_array.offset(img as isize))
-                        .image_struct
-                        .png
-                        .info_ptr as png_const_inforp,
-                ) as ::core::ffi::c_int;
-                while k > 0 as ::core::ffi::c_int {
-                    l = if k > pdfbufsize {
-                        pdfbufsize as ::core::ffi::c_int
-                    } else {
-                        k
-                    };
-                    if (l as integer + pdfptr) as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
-                    {
-                        if pdfosmode != 0 {
-                            zpdfosgetosbuf(l);
-                        } else if l as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-                            crate::utils::pdftex_fail_args(
-                                b"PDF output buffer overflowed\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[],
-                            );
-                        } else {
-                            pdfflush();
-                        }
-                    }
-                    j = 0 as ::core::ffi::c_int;
-                    while j < l {
-                        if !(j % 8 as ::core::ffi::c_int == 6 as ::core::ffi::c_int
-                            || j % 8 as ::core::ffi::c_int == 7 as ::core::ffi::c_int)
-                        {
-                            let fresh11 = r;
-                            r = r.offset(1);
-                            let fresh12 = pdfptr;
-                            pdfptr = pdfptr + 1;
-                            *pdfbuf.offset(fresh12 as isize) = *fresh11 as eightbits;
-                        } else {
-                            let fresh13 = r;
-                            r = r.offset(1);
-                            let fresh14 = smask_ptr;
-                            smask_ptr = smask_ptr + 1;
-                            *smask.offset(fresh14 as isize) = *fresh13;
-                        }
-                        j += 1;
-                    }
-                    k -= l;
-                }
-                i += 1;
-            }
-        } else {
-            i = 0 as ::core::ffi::c_int;
-            while i < png_get_image_height(
-                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-                (*image_array.offset(img as isize))
-                    .image_struct
-                    .png
-                    .info_ptr as png_const_inforp,
-            ) as ::core::ffi::c_int
-            {
-                png_read_row(
-                    (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_structrp,
-                    row,
-                    ::core::ptr::null_mut::<png_byte>(),
-                );
-                r = row;
-                k = png_get_rowbytes(
-                    (*image_array.offset(img as isize)).image_struct.png.png_ptr
-                        as png_const_structrp,
-                    (*image_array.offset(img as isize))
-                        .image_struct
-                        .png
-                        .info_ptr as png_const_inforp,
-                ) as ::core::ffi::c_int;
-                while k > 0 as ::core::ffi::c_int {
-                    l = if k > pdfbufsize {
-                        pdfbufsize as ::core::ffi::c_int
-                    } else {
-                        k
-                    };
-                    if (l as integer + pdfptr) as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
-                    {
-                        if pdfosmode != 0 {
-                            zpdfosgetosbuf(l);
-                        } else if l as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-                            crate::utils::pdftex_fail_args(
-                                b"PDF output buffer overflowed\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[],
-                            );
-                        } else {
-                            pdfflush();
-                        }
-                    }
-                    j = 0 as ::core::ffi::c_int;
-                    while j < l {
-                        if j % 4 as ::core::ffi::c_int != 3 as ::core::ffi::c_int {
-                            let fresh15 = r;
-                            r = r.offset(1);
-                            let fresh16 = pdfptr;
-                            pdfptr = pdfptr + 1;
-                            *pdfbuf.offset(fresh16 as isize) = *fresh15 as eightbits;
-                        } else {
-                            let fresh17 = r;
-                            r = r.offset(1);
-                            let fresh18 = smask_ptr;
-                            smask_ptr = smask_ptr + 1;
-                            *smask.offset(fresh18 as isize) = *fresh17;
-                        }
-                        j += 1;
-                    }
-                    k -= l;
-                }
-                i += 1;
-            }
-        }
-        if !row.is_null() {
-            free(row as *mut ::core::ffi::c_void);
-        }
-        row = ::core::ptr::null_mut::<png_byte>();
-    } else {
-        if (png_get_image_height(
-            (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-            (*image_array.offset(img as isize))
-                .image_struct
-                .png
-                .info_ptr as png_const_inforp,
-        ) as size_t)
-            .wrapping_mul(png_get_rowbytes(
-                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-                (*image_array.offset(img as isize))
-                    .image_struct
-                    .png
-                    .info_ptr as png_const_inforp,
-            ))
-            >= 10240000 as ::core::ffi::c_long as size_t
-        {
-            crate::utils::pdftex_warn_args(b"large interlaced PNG might cause out of memory (use non-interlaced PNG to fix this)\0"
-                    as *const u8 as *const ::core::ffi::c_char, &[]);
-        }
-        rows = xmalloc(
-            (png_get_image_height(
-                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-                (*image_array.offset(img as isize))
-                    .image_struct
-                    .png
-                    .info_ptr as png_const_inforp,
-            ) as size_t)
-                .wrapping_mul(::core::mem::size_of::<png_bytep>() as size_t),
-        ) as *mut png_bytep;
-        i = 0 as ::core::ffi::c_int;
-        while (i as ::core::ffi::c_uint)
-            < png_get_image_height(
-                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-                (*image_array.offset(img as isize))
-                    .image_struct
-                    .png
-                    .info_ptr as png_const_inforp,
-            )
-        {
-            let ref mut fresh19 = *rows.offset(i as isize);
-            *fresh19 = xmalloc(
+            row = xmalloc(
                 png_get_rowbytes(
                     (*image_array.offset(img as isize)).image_struct.png.png_ptr
                         as png_const_structrp,
@@ -2145,160 +1946,369 @@ unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
                 )
                 .wrapping_mul(::core::mem::size_of::<png_byte>() as size_t),
             ) as *mut png_byte as png_bytep;
-            i += 1;
-        }
-        png_read_image(
-            (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_structrp,
-            rows as png_bytepp,
-        );
-        if png_get_bit_depth(
-            (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-            (*image_array.offset(img as isize))
-                .image_struct
-                .png
-                .info_ptr as png_const_inforp,
-        ) as ::core::ffi::c_int
-            == 16 as ::core::ffi::c_int
-            && fixedimagehicolor != 0
-        {
-            i = 0 as ::core::ffi::c_int;
-            while i < png_get_image_height(
+            if png_get_bit_depth(
                 (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
                 (*image_array.offset(img as isize))
                     .image_struct
                     .png
                     .info_ptr as png_const_inforp,
             ) as ::core::ffi::c_int
+                == 16 as ::core::ffi::c_int
+                && fixedimagehicolor != 0
             {
-                row = *rows.offset(i as isize);
-                k = png_get_rowbytes(
+                i = 0 as ::core::ffi::c_int;
+                while i < png_get_image_height(
                     (*image_array.offset(img as isize)).image_struct.png.png_ptr
                         as png_const_structrp,
                     (*image_array.offset(img as isize))
                         .image_struct
                         .png
                         .info_ptr as png_const_inforp,
-                ) as ::core::ffi::c_int;
-                while k > 0 as ::core::ffi::c_int {
-                    l = if k > pdfbufsize {
-                        pdfbufsize as ::core::ffi::c_int
-                    } else {
-                        k
-                    };
-                    if (l as integer + pdfptr) as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
-                    {
-                        if pdfosmode != 0 {
-                            zpdfosgetosbuf(l);
-                        } else if l as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-                            crate::utils::pdftex_fail_args(
-                                b"PDF output buffer overflowed\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[],
-                            );
+                ) as ::core::ffi::c_int
+                {
+                    png_read_row(
+                        (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                            as png_structrp,
+                        row,
+                        ::core::ptr::null_mut::<png_byte>(),
+                    );
+                    r = row;
+                    k = png_get_rowbytes(
+                        (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                            as png_const_structrp,
+                        (*image_array.offset(img as isize))
+                            .image_struct
+                            .png
+                            .info_ptr as png_const_inforp,
+                    ) as ::core::ffi::c_int;
+                    while k > 0 as ::core::ffi::c_int {
+                        l = if k > pdfbufsize {
+                            pdfbufsize as ::core::ffi::c_int
                         } else {
-                            pdfflush();
-                        }
-                    }
-                    j = 0 as ::core::ffi::c_int;
-                    while j < l {
-                        if !(j % 8 as ::core::ffi::c_int == 6 as ::core::ffi::c_int
-                            || j % 8 as ::core::ffi::c_int == 7 as ::core::ffi::c_int)
+                            k
+                        };
+                        if (l as integer + pdfptr) as ::core::ffi::c_uint
+                            > pdfbufsize as ::core::ffi::c_uint
                         {
-                            let fresh20 = row;
-                            row = row.offset(1);
-                            let fresh21 = pdfptr;
-                            pdfptr = pdfptr + 1;
-                            *pdfbuf.offset(fresh21 as isize) = *fresh20 as eightbits;
-                        } else {
-                            let fresh22 = row;
-                            row = row.offset(1);
-                            let fresh23 = smask_ptr;
-                            smask_ptr = smask_ptr + 1;
-                            *smask.offset(fresh23 as isize) = *fresh22;
+                            if pdfosmode != 0 {
+                                zpdfosgetosbuf(l);
+                            } else if l as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
+                                crate::utils::pdftex_fail_args(
+                                    b"PDF output buffer overflowed\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                    &[],
+                                );
+                            } else {
+                                pdfflush();
+                            }
                         }
-                        j += 1;
+                        j = 0 as ::core::ffi::c_int;
+                        while j < l {
+                            if !(j % 8 as ::core::ffi::c_int == 6 as ::core::ffi::c_int
+                                || j % 8 as ::core::ffi::c_int == 7 as ::core::ffi::c_int)
+                            {
+                                let fresh11 = r;
+                                r = r.offset(1);
+                                let fresh12 = pdfptr;
+                                pdfptr = pdfptr + 1;
+                                *pdfbuf.offset(fresh12 as isize) = *fresh11 as eightbits;
+                            } else {
+                                let fresh13 = r;
+                                r = r.offset(1);
+                                let fresh14 = smask_ptr;
+                                smask_ptr = smask_ptr + 1;
+                                *smask.offset(fresh14 as isize) = *fresh13;
+                            }
+                            j += 1;
+                        }
+                        k -= l;
                     }
-                    k -= l;
+                    i += 1;
                 }
-                if !(*rows.offset(i as isize)).is_null() {
-                    free(*rows.offset(i as isize) as *mut ::core::ffi::c_void);
-                }
-                let ref mut fresh24 = *rows.offset(i as isize);
-                *fresh24 = ::core::ptr::null_mut::<png_byte>();
-                i += 1;
-            }
-        } else {
-            i = 0 as ::core::ffi::c_int;
-            while i < png_get_image_height(
-                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-                (*image_array.offset(img as isize))
-                    .image_struct
-                    .png
-                    .info_ptr as png_const_inforp,
-            ) as ::core::ffi::c_int
-            {
-                row = *rows.offset(i as isize);
-                k = png_get_rowbytes(
+            } else {
+                i = 0 as ::core::ffi::c_int;
+                while i < png_get_image_height(
                     (*image_array.offset(img as isize)).image_struct.png.png_ptr
                         as png_const_structrp,
                     (*image_array.offset(img as isize))
                         .image_struct
                         .png
                         .info_ptr as png_const_inforp,
-                ) as ::core::ffi::c_int;
-                while k > 0 as ::core::ffi::c_int {
-                    l = if k > pdfbufsize {
-                        pdfbufsize as ::core::ffi::c_int
-                    } else {
-                        k
-                    };
-                    if (l as integer + pdfptr) as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
-                    {
-                        if pdfosmode != 0 {
-                            zpdfosgetosbuf(l);
-                        } else if l as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-                            crate::utils::pdftex_fail_args(
-                                b"PDF output buffer overflowed\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[],
-                            );
+                ) as ::core::ffi::c_int
+                {
+                    png_read_row(
+                        (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                            as png_structrp,
+                        row,
+                        ::core::ptr::null_mut::<png_byte>(),
+                    );
+                    r = row;
+                    k = png_get_rowbytes(
+                        (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                            as png_const_structrp,
+                        (*image_array.offset(img as isize))
+                            .image_struct
+                            .png
+                            .info_ptr as png_const_inforp,
+                    ) as ::core::ffi::c_int;
+                    while k > 0 as ::core::ffi::c_int {
+                        l = if k > pdfbufsize {
+                            pdfbufsize as ::core::ffi::c_int
                         } else {
-                            pdfflush();
+                            k
+                        };
+                        if (l as integer + pdfptr) as ::core::ffi::c_uint
+                            > pdfbufsize as ::core::ffi::c_uint
+                        {
+                            if pdfosmode != 0 {
+                                zpdfosgetosbuf(l);
+                            } else if l as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
+                                crate::utils::pdftex_fail_args(
+                                    b"PDF output buffer overflowed\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                    &[],
+                                );
+                            } else {
+                                pdfflush();
+                            }
                         }
-                    }
-                    j = 0 as ::core::ffi::c_int;
-                    while j < l {
-                        if j % 4 as ::core::ffi::c_int != 3 as ::core::ffi::c_int {
-                            let fresh25 = row;
-                            row = row.offset(1);
-                            let fresh26 = pdfptr;
-                            pdfptr = pdfptr + 1;
-                            *pdfbuf.offset(fresh26 as isize) = *fresh25 as eightbits;
-                        } else {
-                            let fresh27 = row;
-                            row = row.offset(1);
-                            let fresh28 = smask_ptr;
-                            smask_ptr = smask_ptr + 1;
-                            *smask.offset(fresh28 as isize) = *fresh27;
+                        j = 0 as ::core::ffi::c_int;
+                        while j < l {
+                            if j % 4 as ::core::ffi::c_int != 3 as ::core::ffi::c_int {
+                                let fresh15 = r;
+                                r = r.offset(1);
+                                let fresh16 = pdfptr;
+                                pdfptr = pdfptr + 1;
+                                *pdfbuf.offset(fresh16 as isize) = *fresh15 as eightbits;
+                            } else {
+                                let fresh17 = r;
+                                r = r.offset(1);
+                                let fresh18 = smask_ptr;
+                                smask_ptr = smask_ptr + 1;
+                                *smask.offset(fresh18 as isize) = *fresh17;
+                            }
+                            j += 1;
                         }
-                        j += 1;
+                        k -= l;
                     }
-                    k -= l;
+                    i += 1;
                 }
-                if !(*rows.offset(i as isize)).is_null() {
-                    free(*rows.offset(i as isize) as *mut ::core::ffi::c_void);
-                }
-                let ref mut fresh29 = *rows.offset(i as isize);
-                *fresh29 = ::core::ptr::null_mut::<png_byte>();
+            }
+            if !row.is_null() {
+                free(row as *mut ::core::ffi::c_void);
+            }
+            row = ::core::ptr::null_mut::<png_byte>();
+        } else {
+            if (png_get_image_height(
+                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+                (*image_array.offset(img as isize))
+                    .image_struct
+                    .png
+                    .info_ptr as png_const_inforp,
+            ) as size_t)
+                .wrapping_mul(png_get_rowbytes(
+                    (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                        as png_const_structrp,
+                    (*image_array.offset(img as isize))
+                        .image_struct
+                        .png
+                        .info_ptr as png_const_inforp,
+                ))
+                >= 10240000 as ::core::ffi::c_long as size_t
+            {
+                crate::utils::pdftex_warn_args(b"large interlaced PNG might cause out of memory (use non-interlaced PNG to fix this)\0"
+                    as *const u8 as *const ::core::ffi::c_char, &[]);
+            }
+            rows = xmalloc(
+                (png_get_image_height(
+                    (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                        as png_const_structrp,
+                    (*image_array.offset(img as isize))
+                        .image_struct
+                        .png
+                        .info_ptr as png_const_inforp,
+                ) as size_t)
+                    .wrapping_mul(::core::mem::size_of::<png_bytep>() as size_t),
+            ) as *mut png_bytep;
+            i = 0 as ::core::ffi::c_int;
+            while (i as ::core::ffi::c_uint)
+                < png_get_image_height(
+                    (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                        as png_const_structrp,
+                    (*image_array.offset(img as isize))
+                        .image_struct
+                        .png
+                        .info_ptr as png_const_inforp,
+                )
+            {
+                let ref mut fresh19 = *rows.offset(i as isize);
+                *fresh19 = xmalloc(
+                    png_get_rowbytes(
+                        (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                            as png_const_structrp,
+                        (*image_array.offset(img as isize))
+                            .image_struct
+                            .png
+                            .info_ptr as png_const_inforp,
+                    )
+                    .wrapping_mul(::core::mem::size_of::<png_byte>() as size_t),
+                ) as *mut png_byte as png_bytep;
                 i += 1;
             }
-        }
-        if !rows.is_null() {
-            free(rows as *mut ::core::ffi::c_void);
-        }
-        rows = ::core::ptr::null_mut::<png_bytep>();
+            png_read_image(
+                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_structrp,
+                rows as png_bytepp,
+            );
+            if png_get_bit_depth(
+                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
+                (*image_array.offset(img as isize))
+                    .image_struct
+                    .png
+                    .info_ptr as png_const_inforp,
+            ) as ::core::ffi::c_int
+                == 16 as ::core::ffi::c_int
+                && fixedimagehicolor != 0
+            {
+                i = 0 as ::core::ffi::c_int;
+                while i < png_get_image_height(
+                    (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                        as png_const_structrp,
+                    (*image_array.offset(img as isize))
+                        .image_struct
+                        .png
+                        .info_ptr as png_const_inforp,
+                ) as ::core::ffi::c_int
+                {
+                    row = *rows.offset(i as isize);
+                    k = png_get_rowbytes(
+                        (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                            as png_const_structrp,
+                        (*image_array.offset(img as isize))
+                            .image_struct
+                            .png
+                            .info_ptr as png_const_inforp,
+                    ) as ::core::ffi::c_int;
+                    while k > 0 as ::core::ffi::c_int {
+                        l = if k > pdfbufsize {
+                            pdfbufsize as ::core::ffi::c_int
+                        } else {
+                            k
+                        };
+                        if (l as integer + pdfptr) as ::core::ffi::c_uint
+                            > pdfbufsize as ::core::ffi::c_uint
+                        {
+                            if pdfosmode != 0 {
+                                zpdfosgetosbuf(l);
+                            } else if l as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
+                                crate::utils::pdftex_fail_args(
+                                    b"PDF output buffer overflowed\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                    &[],
+                                );
+                            } else {
+                                pdfflush();
+                            }
+                        }
+                        j = 0 as ::core::ffi::c_int;
+                        while j < l {
+                            if !(j % 8 as ::core::ffi::c_int == 6 as ::core::ffi::c_int
+                                || j % 8 as ::core::ffi::c_int == 7 as ::core::ffi::c_int)
+                            {
+                                let fresh20 = row;
+                                row = row.offset(1);
+                                let fresh21 = pdfptr;
+                                pdfptr = pdfptr + 1;
+                                *pdfbuf.offset(fresh21 as isize) = *fresh20 as eightbits;
+                            } else {
+                                let fresh22 = row;
+                                row = row.offset(1);
+                                let fresh23 = smask_ptr;
+                                smask_ptr = smask_ptr + 1;
+                                *smask.offset(fresh23 as isize) = *fresh22;
+                            }
+                            j += 1;
+                        }
+                        k -= l;
+                    }
+                    if !(*rows.offset(i as isize)).is_null() {
+                        free(*rows.offset(i as isize) as *mut ::core::ffi::c_void);
+                    }
+                    let ref mut fresh24 = *rows.offset(i as isize);
+                    *fresh24 = ::core::ptr::null_mut::<png_byte>();
+                    i += 1;
+                }
+            } else {
+                i = 0 as ::core::ffi::c_int;
+                while i < png_get_image_height(
+                    (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                        as png_const_structrp,
+                    (*image_array.offset(img as isize))
+                        .image_struct
+                        .png
+                        .info_ptr as png_const_inforp,
+                ) as ::core::ffi::c_int
+                {
+                    row = *rows.offset(i as isize);
+                    k = png_get_rowbytes(
+                        (*image_array.offset(img as isize)).image_struct.png.png_ptr
+                            as png_const_structrp,
+                        (*image_array.offset(img as isize))
+                            .image_struct
+                            .png
+                            .info_ptr as png_const_inforp,
+                    ) as ::core::ffi::c_int;
+                    while k > 0 as ::core::ffi::c_int {
+                        l = if k > pdfbufsize {
+                            pdfbufsize as ::core::ffi::c_int
+                        } else {
+                            k
+                        };
+                        if (l as integer + pdfptr) as ::core::ffi::c_uint
+                            > pdfbufsize as ::core::ffi::c_uint
+                        {
+                            if pdfosmode != 0 {
+                                zpdfosgetosbuf(l);
+                            } else if l as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
+                                crate::utils::pdftex_fail_args(
+                                    b"PDF output buffer overflowed\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                    &[],
+                                );
+                            } else {
+                                pdfflush();
+                            }
+                        }
+                        j = 0 as ::core::ffi::c_int;
+                        while j < l {
+                            if j % 4 as ::core::ffi::c_int != 3 as ::core::ffi::c_int {
+                                let fresh25 = row;
+                                row = row.offset(1);
+                                let fresh26 = pdfptr;
+                                pdfptr = pdfptr + 1;
+                                *pdfbuf.offset(fresh26 as isize) = *fresh25 as eightbits;
+                            } else {
+                                let fresh27 = row;
+                                row = row.offset(1);
+                                let fresh28 = smask_ptr;
+                                smask_ptr = smask_ptr + 1;
+                                *smask.offset(fresh28 as isize) = *fresh27;
+                            }
+                            j += 1;
+                        }
+                        k -= l;
+                    }
+                    if !(*rows.offset(i as isize)).is_null() {
+                        free(*rows.offset(i as isize) as *mut ::core::ffi::c_void);
+                    }
+                    let ref mut fresh29 = *rows.offset(i as isize);
+                    *fresh29 = ::core::ptr::null_mut::<png_byte>();
+                    i += 1;
+                }
+            }
+            if !rows.is_null() {
+                free(rows as *mut ::core::ffi::c_void);
+            }
+            rows = ::core::ptr::null_mut::<png_bytep>();
         }
         pdfendstream();
     }

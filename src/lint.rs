@@ -141,10 +141,6 @@ enum MathMode {
 }
 
 impl MathMode {
-    fn is_math(&self) -> bool {
-        true
-    }
-
     fn start(&self) -> (usize, usize) {
         match self {
             Self::InlineDollar { line, column }
@@ -544,7 +540,7 @@ fn lint_math(
         let column = column_for_byte(line, byte);
         if bytes[byte] == b'\\' {
             if config.prefer_prime_command
-                && state.math_mode.as_ref().is_some_and(MathMode::is_math)
+                && state.math_mode.is_some()
                 && let Some(end) = math_text_command_payload_end(line, byte)
             {
                 byte = end;
@@ -568,7 +564,7 @@ fn lint_math(
                 byte = end;
                 continue;
             }
-            if state.math_mode.as_ref().is_some_and(MathMode::is_math)
+            if state.math_mode.is_some()
                 && starts_with_latex_command(bytes, byte, br"\left")
                 && let Some((fence, end)) = math_fence_after_command(line, byte + br"\left".len())
             {
@@ -581,7 +577,7 @@ fn lint_math(
                 byte = end;
                 continue;
             }
-            if state.math_mode.as_ref().is_some_and(MathMode::is_math)
+            if state.math_mode.is_some()
                 && starts_with_latex_command(bytes, byte, br"\right")
                 && let Some((fence, end)) = math_fence_after_command(line, byte + br"\right".len())
             {
@@ -700,7 +696,7 @@ fn lint_math(
 
         if bytes[byte] == b'\''
             && config.prefer_prime_command
-            && state.math_mode.as_ref().is_some_and(MathMode::is_math)
+            && state.math_mode.is_some()
             && !is_escaped(bytes, byte)
         {
             diagnostics.push(Diagnostic::warning(

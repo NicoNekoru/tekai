@@ -12,6 +12,7 @@ use crate::generated::pdftexextra::{
 };
 use libc::{c_char, c_double, c_int, c_uint, c_void, size_t};
 use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::ffi::{CStr, OsStr, OsString};
 use std::fs::File;
@@ -138,8 +139,93 @@ thread_local! {
     static INDEX_READABLE_CACHE: RefCell<HashMap<PathBuf, bool>> = RefCell::new(HashMap::new());
 }
 
+const NO_FILE_INDEX: u32 = u32::MAX;
+
+#[derive(Default)]
 struct FileIndex {
-    by_name: HashMap<String, Vec<PathBuf>>,
+    by_name: HashMap<Box<str>, FileIndexEntry>,
+    directories: Vec<PathBuf>,
+    files: Vec<IndexedFile>,
+}
+
+#[derive(Clone, Copy)]
+struct FileIndexEntry {
+    first: u32,
+    last: u32,
+}
+
+struct IndexedFile {
+    directory: u32,
+    next: u32,
+}
+
+struct IndexedPaths<'a> {
+    index: &'a FileIndex,
+    name: &'a str,
+    next: u32,
+}
+
+impl FileIndex {
+    fn reserve_for_database(&mut self, byte_len: usize) {
+        // TeX Live's ls-R averages roughly 30 bytes per unique runtime name,
+        // 28 bytes per runtime file, and 600 bytes per runtime directory.
+        // Reserving from the database size avoids repeated table growth while
+        // leaving enough headroom for installations with a different mix.
+        self.by_name.reserve(byte_len / 30);
+        self.files.reserve(byte_len / 28);
+        self.directories.reserve(byte_len / 600);
+    }
+
+    fn add_directory(&mut self, directory: PathBuf) -> u32 {
+        let index = u32::try_from(self.directories.len()).expect("too many TeX Live directories");
+        self.directories.push(directory);
+        index
+    }
+
+    fn add_file(&mut self, name: &str, directory: u32) {
+        let index = u32::try_from(self.files.len()).expect("too many TeX Live files");
+        self.files.push(IndexedFile {
+            directory,
+            next: NO_FILE_INDEX,
+        });
+        match self.by_name.entry(name.into()) {
+            Entry::Occupied(mut occupied) => {
+                let entry = occupied.get_mut();
+                self.files[entry.last as usize].next = index;
+                entry.last = index;
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(FileIndexEntry {
+                    first: index,
+                    last: index,
+                });
+            }
+        }
+    }
+
+    fn paths_for<'a>(&'a self, name: &'a str) -> IndexedPaths<'a> {
+        IndexedPaths {
+            index: self,
+            name,
+            next: self
+                .by_name
+                .get(name)
+                .map_or(NO_FILE_INDEX, |entry| entry.first),
+        }
+    }
+}
+
+impl Iterator for IndexedPaths<'_> {
+    type Item = PathBuf;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next == NO_FILE_INDEX {
+            return None;
+        }
+        let file = &self.index.files[self.next as usize];
+        self.next = file.next;
+        Some(self.index.directories[file.directory as usize].join(self.name))
+    }
 }
 
 fn overrides() -> &'static Mutex<HashMap<String, String>> {
@@ -386,37 +472,36 @@ fn latest_texlive_root() -> Option<PathBuf> {
 
 fn file_index() -> &'static FileIndex {
     FILE_INDEX.get_or_init(|| {
-        let mut by_name: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        let mut index = FileIndex::default();
         for root in texlive_roots() {
-            parse_ls_r(&root, &mut by_name);
+            parse_ls_r(&root, &mut index);
         }
-        FileIndex { by_name }
+        index
     })
 }
 
-fn parse_ls_r(root: &Path, by_name: &mut HashMap<String, Vec<PathBuf>>) {
+fn parse_ls_r(root: &Path, index: &mut FileIndex) {
     let Ok(text) = std::fs::read_to_string(root.join("ls-R")) else {
         return;
     };
-    let mut current_dir = root.to_path_buf();
-    let mut current_dir_is_runtime = true;
+    index.reserve_for_database(text.len());
+    parse_ls_r_text(root, &text, index);
+}
+
+fn parse_ls_r_text(root: &Path, text: &str, index: &mut FileIndex) {
+    let mut current_dir = Some(index.add_directory(root.to_path_buf()));
     for line in text.lines() {
         if line.is_empty() || line.starts_with('%') {
             continue;
         }
         if let Some(dir) = line.strip_suffix(':') {
             let dir = dir.strip_prefix("./").unwrap_or(dir);
-            current_dir_is_runtime = is_runtime_ls_r_dir(dir);
-            if current_dir_is_runtime {
-                current_dir = root.join(dir);
-            }
+            current_dir = is_runtime_ls_r_dir(dir).then(|| index.add_directory(root.join(dir)));
             continue;
         }
-        if !current_dir_is_runtime {
-            continue;
+        if let Some(directory) = current_dir {
+            index.add_file(line, directory);
         }
-        let path = current_dir.join(line);
-        by_name.entry(line.to_owned()).or_default().push(path);
     }
 }
 
@@ -449,27 +534,22 @@ fn find_in_index(candidate: &str, format: c_uint) -> Option<PathBuf> {
 fn find_in_index_uncached(candidate: &str, format: c_uint) -> Option<PathBuf> {
     let index = file_index();
     let key = basename(candidate);
-    let matches = index.by_name.get(key)?;
     if candidate == key {
-        return best_index_match(matches.iter(), format);
+        return best_index_match(index.paths_for(key), format);
     }
     best_index_match(
-        matches
-            .iter()
+        index
+            .paths_for(key)
             .filter(|path| path.to_string_lossy().ends_with(candidate)),
         format,
     )
 }
 
-fn best_index_match<'a>(
-    matches: impl Iterator<Item = &'a PathBuf>,
-    format: c_uint,
-) -> Option<PathBuf> {
+fn best_index_match(matches: impl Iterator<Item = PathBuf>, format: c_uint) -> Option<PathBuf> {
     matches
         .filter(|path| index_path_is_runtime(path, format))
         .filter(|path| indexed_path_is_readable(path))
         .min_by_key(|path| index_path_rank(path, format))
-        .cloned()
 }
 
 fn index_path_is_runtime(path: &Path, format: c_uint) -> bool {
@@ -827,11 +907,34 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn compact_file_index_preserves_match_order_and_skips_nonruntime_trees() {
+        let root = Path::new("/texlive/texmf-dist");
+        let mut index = FileIndex::default();
+        parse_ls_r_text(
+            root,
+            "./tex/latex/first:\nshared.sty\nunique.sty\n\
+             ./doc/latex/first:\nmanual.pdf\n\
+             ./source/latex/first:\nsource.dtx\n\
+             ./tex/latex/second:\nshared.sty\n",
+            &mut index,
+        );
+
+        assert_eq!(index.by_name.len(), 2);
+        assert_eq!(index.files.len(), 3);
+        assert_eq!(
+            index.paths_for("shared.sty").collect::<Vec<_>>(),
+            vec![
+                root.join("tex/latex/first/shared.sty"),
+                root.join("tex/latex/second/shared.sty"),
+            ]
+        );
+        assert!(index.paths_for("manual.pdf").next().is_none());
+        assert!(index.paths_for("source.dtx").next().is_none());
+    }
+
+    #[test]
     fn format_lookup_prefers_raw_companion() {
-        let root = std::env::temp_dir().join(format!(
-            "pdftex-rust-format-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("pdftex-rust-format-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("failed to create test format dir");
         let fmt = root.join("pdflatex.fmt");

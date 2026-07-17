@@ -1188,31 +1188,33 @@ unsafe extern "C" fn edecrypt(mut cipher: byte) -> byte {
     }
     plain = (cipher as ::core::ffi::c_int ^ t1_dr as ::core::ffi::c_int >> 8 as ::core::ffi::c_int)
         as byte;
-    t1_dr = ((cipher as ::core::ffi::c_int + t1_dr as ::core::ffi::c_int)
-        * t1_c1 as ::core::ffi::c_int
-        + t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
+    t1_dr = (cipher as ::core::ffi::c_int + t1_dr as ::core::ffi::c_int)
+        .wrapping_mul(t1_c1 as ::core::ffi::c_int)
+        .wrapping_add(t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
     return plain;
 }
 unsafe extern "C" fn cdecrypt(mut cipher: byte, mut cr: *mut ::core::ffi::c_ushort) -> byte {
     let plain: byte = (cipher as ::core::ffi::c_int
         ^ *cr as ::core::ffi::c_int >> 8 as ::core::ffi::c_int) as byte;
-    *cr = ((cipher as ::core::ffi::c_int + *cr as ::core::ffi::c_int) * t1_c1 as ::core::ffi::c_int
-        + t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
+    *cr = (cipher as ::core::ffi::c_int + *cr as ::core::ffi::c_int)
+        .wrapping_mul(t1_c1 as ::core::ffi::c_int)
+        .wrapping_add(t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
     return plain;
 }
 unsafe extern "C" fn eencrypt(mut plain: byte) -> byte {
     let cipher: byte = (plain as ::core::ffi::c_int
         ^ t1_er as ::core::ffi::c_int >> 8 as ::core::ffi::c_int) as byte;
-    t1_er = ((cipher as ::core::ffi::c_int + t1_er as ::core::ffi::c_int)
-        * t1_c1 as ::core::ffi::c_int
-        + t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
+    t1_er = (cipher as ::core::ffi::c_int + t1_er as ::core::ffi::c_int)
+        .wrapping_mul(t1_c1 as ::core::ffi::c_int)
+        .wrapping_add(t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
     return cipher;
 }
 unsafe extern "C" fn cencrypt(mut plain: byte, mut cr: *mut ::core::ffi::c_ushort) -> byte {
     let cipher: byte = (plain as ::core::ffi::c_int
         ^ *cr as ::core::ffi::c_int >> 8 as ::core::ffi::c_int) as byte;
-    *cr = ((cipher as ::core::ffi::c_int + *cr as ::core::ffi::c_int) * t1_c1 as ::core::ffi::c_int
-        + t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
+    *cr = (cipher as ::core::ffi::c_int + *cr as ::core::ffi::c_int)
+        .wrapping_mul(t1_c1 as ::core::ffi::c_int)
+        .wrapping_add(t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
     return cipher;
 }
 unsafe extern "C" fn eol(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {

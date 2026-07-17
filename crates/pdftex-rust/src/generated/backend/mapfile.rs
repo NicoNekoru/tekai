@@ -1621,31 +1621,31 @@ unsafe extern "C" fn fm_scan_line() {
                 let ff_name_len = strlen((*fm).ff_name);
                 if ff_name_len > 3 as size_t {
                     let ff_suffix = (*fm).ff_name.offset(ff_name_len as isize - 4 as isize);
-                if strcasecmp(
-                    ff_suffix,
-                    b".ttf\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0 as ::core::ffi::c_int
-                {
-                    (*fm).type_0 =
-                        ((*fm).type_0 as ::core::ffi::c_int | F_TRUETYPE) as ::core::ffi::c_ushort;
-                } else if strcasecmp(
-                    ff_suffix,
-                    b".ttc\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0 as ::core::ffi::c_int
-                {
-                    (*fm).type_0 =
-                        ((*fm).type_0 as ::core::ffi::c_int | F_TRUETYPE) as ::core::ffi::c_ushort;
-                } else if strcasecmp(
-                    ff_suffix,
-                    b".otf\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0 as ::core::ffi::c_int
-                {
-                    (*fm).type_0 =
-                        ((*fm).type_0 as ::core::ffi::c_int | F_OTF) as ::core::ffi::c_ushort;
-                } else {
-                    (*fm).type_0 =
-                        ((*fm).type_0 as ::core::ffi::c_int | F_TYPE1) as ::core::ffi::c_ushort;
-                }
+                    if strcasecmp(
+                        ff_suffix,
+                        b".ttf\0" as *const u8 as *const ::core::ffi::c_char,
+                    ) == 0 as ::core::ffi::c_int
+                    {
+                        (*fm).type_0 = ((*fm).type_0 as ::core::ffi::c_int | F_TRUETYPE)
+                            as ::core::ffi::c_ushort;
+                    } else if strcasecmp(
+                        ff_suffix,
+                        b".ttc\0" as *const u8 as *const ::core::ffi::c_char,
+                    ) == 0 as ::core::ffi::c_int
+                    {
+                        (*fm).type_0 = ((*fm).type_0 as ::core::ffi::c_int | F_TRUETYPE)
+                            as ::core::ffi::c_ushort;
+                    } else if strcasecmp(
+                        ff_suffix,
+                        b".otf\0" as *const u8 as *const ::core::ffi::c_char,
+                    ) == 0 as ::core::ffi::c_int
+                    {
+                        (*fm).type_0 =
+                            ((*fm).type_0 as ::core::ffi::c_int | F_OTF) as ::core::ffi::c_ushort;
+                    } else {
+                        (*fm).type_0 =
+                            ((*fm).type_0 as ::core::ffi::c_int | F_TYPE1) as ::core::ffi::c_ushort;
+                    }
                 } else if (*fm).ps_name.is_null() {
                     (*fm).type_0 =
                         ((*fm).type_0 as ::core::ffi::c_int | F_PK) as ::core::ffi::c_ushort;

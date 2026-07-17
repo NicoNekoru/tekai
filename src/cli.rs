@@ -215,7 +215,7 @@ pub struct BuildFlags {
     #[arg(long)]
     pub print_command: bool,
 
-    /// Reduce latexmk output.
+    /// Suppress TeX engine and auxiliary-tool output.
     #[arg(short, long)]
     pub quiet: bool,
 }
