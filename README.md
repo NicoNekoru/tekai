@@ -60,6 +60,9 @@ Common workflows:
 # Lint, then build only if lint passes.
 tekai check path/to/main.tex --allow-warnings
 
+# Apply safe lint fixes, then lint and build.
+tekai check path/to/main.tex --fix
+
 # Fast live preview; produce an exact final build after 1.5 seconds of idle time.
 tekai watch path/to/main.tex \
   --preview --final-after-idle-ms 1500 --allow-warnings
@@ -126,7 +129,9 @@ BIBINPUTS = "bib//:"
 
 [lint]
 indent_size = 2
+indent_style = "tabs" # or "spaces"
 max_line_length = 120
+prose_wrap = "hardwrap" # or "unwrapped"
 
 [lint.rules]
 "math/inline-dollar" = "error"

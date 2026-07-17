@@ -12,7 +12,7 @@ use tekai::compiler::{
     BuildOptions, EMBEDDED_ENGINE_RUNNER_ENV, EMBEDDED_ENGINE_SUBCOMMAND, build,
 };
 use tekai::config::{BuildConfig, load_build_config, load_lint_config, load_project_config};
-use tekai::lint::{Diagnostic, Severity, format_diagnostic, has_errors, lint_paths};
+use tekai::lint::{Diagnostic, Severity, fix_paths, format_diagnostic, has_errors, lint_paths};
 use tekai::watch::{WatchOptions, watch};
 
 fn main() -> Result<()> {
@@ -267,6 +267,16 @@ fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
     let report_json = args.report_json;
     let config = load_project_config(args.config.as_deref())?;
     let lint_target = vec![document_root(&args.main)];
+    if args.fix {
+        let fix_report = fix_paths(&lint_target, &config.lint)?;
+        if fix_report.fixes_applied > 0 {
+            eprintln!(
+                "fixed {} issue(s) in {} file(s)",
+                fix_report.fixes_applied,
+                fix_report.files_changed.len()
+            );
+        }
+    }
     let diagnostics = lint_paths(&lint_target, &config.lint)?;
     print_lint_diagnostics(&diagnostics, report_json);
     if has_errors(&diagnostics)

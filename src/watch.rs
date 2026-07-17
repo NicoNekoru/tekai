@@ -1275,7 +1275,7 @@ fn has_relevant_file_name(path: &Path) -> bool {
 }
 
 fn has_lint_extension(path: &Path) -> bool {
-    extension_is_any(path, &["tex", "ltx", "sty", "cls"])
+    extension_is_any(path, &["tex", "ltx", "cls"])
 }
 
 fn extension_is_any(path: &Path, extensions: &[&str]) -> bool {
@@ -1635,10 +1635,7 @@ mod tests {
         )
         .expect("failed to resolve lint targets");
 
-        assert_eq!(
-            targets,
-            vec![main.canonicalize().unwrap(), style.canonicalize().unwrap()]
-        );
+        assert_eq!(targets, vec![main.canonicalize().unwrap()]);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1661,10 +1658,7 @@ mod tests {
         )
         .expect("failed to resolve lint targets");
 
-        assert_eq!(
-            targets,
-            vec![main.canonicalize().unwrap(), style.canonicalize().unwrap()]
-        );
+        assert_eq!(targets, vec![main.canonicalize().unwrap()]);
 
         let _ = fs::remove_dir_all(root);
     }

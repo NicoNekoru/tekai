@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::compiler::{BibMode, DraftPrepass, Engine, Runner};
-use crate::lint::{LintConfig, RuleLevel};
+use crate::lint::{IndentStyle, LintConfig, ProseWrap, RuleLevel};
 
 #[derive(Debug, Default, Deserialize)]
 struct RawConfig {
@@ -65,6 +65,7 @@ struct RawBuildConfig {
 #[derive(Debug, Default, Deserialize)]
 struct RawLintConfig {
     indent_size: Option<usize>,
+    indent_style: Option<String>,
     indent_environments: Option<bool>,
     indent_display_math: Option<bool>,
     ignored_indent_environments: Option<Vec<String>>,
@@ -73,6 +74,7 @@ struct RawLintConfig {
     prefer_prime_command: Option<bool>,
     check_environment_stack: Option<bool>,
     max_line_length: Option<usize>,
+    prose_wrap: Option<String>,
     rules: Option<HashMap<String, String>>,
 }
 
@@ -126,6 +128,11 @@ fn apply_lint_config(mut config: LintConfig, raw: Option<RawLintConfig>) -> Resu
     if let Some(value) = raw.indent_size {
         config.indent_size = value;
     }
+    if let Some(value) = raw.indent_style {
+        config.indent_style = value
+            .parse::<IndentStyle>()
+            .map_err(|message| anyhow::anyhow!("invalid lint.indent_style value: {message}"))?;
+    }
     if let Some(value) = raw.indent_environments {
         config.indent_environments = value;
     }
@@ -149,6 +156,13 @@ fn apply_lint_config(mut config: LintConfig, raw: Option<RawLintConfig>) -> Resu
     }
     if let Some(value) = raw.max_line_length {
         config.max_line_length = Some(value);
+    }
+    if let Some(value) = raw.prose_wrap {
+        config.prose_wrap = Some(
+            value
+                .parse::<ProseWrap>()
+                .map_err(|message| anyhow::anyhow!("invalid lint.prose_wrap value: {message}"))?,
+        );
     }
     if let Some(rules) = raw.rules {
         for (rule, level) in rules {
@@ -336,6 +350,75 @@ mod tests {
         .expect("display math indentation config should parse");
 
         assert!(!config.indent_display_math);
+    }
+
+    #[test]
+    fn apply_lint_config_parses_tab_indentation_style() {
+        let config = apply_lint_config(
+            LintConfig::default(),
+            Some(RawLintConfig {
+                indent_style: Some("tabs".to_string()),
+                ..RawLintConfig::default()
+            }),
+        )
+        .expect("tab indentation config should parse");
+
+        assert_eq!(config.indent_style, IndentStyle::Tabs);
+    }
+
+    #[test]
+    fn apply_lint_config_rejects_unknown_indentation_style() {
+        let error = apply_lint_config(
+            LintConfig::default(),
+            Some(RawLintConfig {
+                indent_style: Some("mixed".to_string()),
+                ..RawLintConfig::default()
+            }),
+        )
+        .expect_err("unknown indentation style should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("invalid lint.indent_style value"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn apply_lint_config_parses_prose_wrap_modes() {
+        for (raw_value, expected) in [
+            ("hardwrap", ProseWrap::Hard),
+            ("unwrapped", ProseWrap::Unwrapped),
+        ] {
+            let config = apply_lint_config(
+                LintConfig::default(),
+                Some(RawLintConfig {
+                    prose_wrap: Some(raw_value.to_string()),
+                    ..RawLintConfig::default()
+                }),
+            )
+            .expect("prose wrap config should parse");
+
+            assert_eq!(config.prose_wrap, Some(expected));
+        }
+    }
+
+    #[test]
+    fn apply_lint_config_rejects_unknown_prose_wrap_mode() {
+        let error = apply_lint_config(
+            LintConfig::default(),
+            Some(RawLintConfig {
+                prose_wrap: Some("sometimes".to_string()),
+                ..RawLintConfig::default()
+            }),
+        )
+        .expect_err("unknown prose wrap mode should fail");
+
+        assert!(
+            error.to_string().contains("invalid lint.prose_wrap value"),
+            "{error:#}"
+        );
     }
 
     #[test]

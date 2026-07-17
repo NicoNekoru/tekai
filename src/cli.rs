@@ -81,7 +81,7 @@ pub struct BuildArgs {
 
 #[derive(Debug, Args, Clone)]
 #[command(
-    after_help = "EXAMPLES:\n  tekai check main.tex --allow-warnings\n  tekai check main.tex --report-json --allow-warnings"
+    after_help = "EXAMPLES:\n  tekai check main.tex --allow-warnings\n  tekai check main.tex --fix\n  tekai check main.tex --report-json --allow-warnings"
 )]
 pub struct CheckArgs {
     /// Root TeX document to lint and compile.
@@ -94,6 +94,10 @@ pub struct CheckArgs {
     /// Emit a machine-readable JSON build report to stdout after lint passes.
     #[arg(long)]
     pub report_json: bool,
+
+    /// Apply available safe fixes before checking and building.
+    #[arg(long)]
+    pub fix: bool,
 
     #[command(flatten)]
     pub flags: BuildFlags,

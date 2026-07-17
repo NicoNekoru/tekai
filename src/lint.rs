@@ -8,6 +8,7 @@ use walkdir::{DirEntry, WalkDir};
 #[derive(Debug, Clone)]
 pub struct LintConfig {
     pub indent_size: usize,
+    pub indent_style: IndentStyle,
     pub indent_environments: bool,
     pub indent_display_math: bool,
     pub ignored_indent_environments: Vec<String>,
@@ -16,6 +17,7 @@ pub struct LintConfig {
     pub prefer_prime_command: bool,
     pub check_environment_stack: bool,
     pub max_line_length: Option<usize>,
+    pub prose_wrap: Option<ProseWrap>,
     pub rule_levels: HashMap<String, RuleLevel>,
 }
 
@@ -23,6 +25,7 @@ impl Default for LintConfig {
     fn default() -> Self {
         Self {
             indent_size: 2,
+            indent_style: IndentStyle::Spaces,
             indent_environments: true,
             indent_display_math: true,
             ignored_indent_environments: vec!["document".to_string()],
@@ -31,7 +34,48 @@ impl Default for LintConfig {
             prefer_prime_command: false,
             check_environment_stack: true,
             max_line_length: Some(120),
+            prose_wrap: None,
             rule_levels: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum IndentStyle {
+    Spaces,
+    Tabs,
+}
+
+impl std::str::FromStr for IndentStyle {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "space" | "spaces" => Ok(Self::Spaces),
+            "tab" | "tabs" => Ok(Self::Tabs),
+            _ => Err(format!(
+                "invalid indentation style '{value}'; expected spaces or tabs"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ProseWrap {
+    Hard,
+    Unwrapped,
+}
+
+impl std::str::FromStr for ProseWrap {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "hard" | "hardwrap" | "hard-wrapped" | "hardwrapped" => Ok(Self::Hard),
+            "unwrapped" | "unwrap" => Ok(Self::Unwrapped),
+            _ => Err(format!(
+                "invalid prose wrap mode '{value}'; expected hardwrap or unwrapped"
+            )),
         }
     }
 }
@@ -73,6 +117,19 @@ pub struct Diagnostic {
     pub rule: &'static str,
     pub message: String,
     pub help: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct FixReport {
+    pub fixes_applied: usize,
+    pub files_changed: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct TextEdit {
+    start: usize,
+    end: usize,
+    replacement: String,
 }
 
 impl Diagnostic {
@@ -218,6 +275,38 @@ struct LintLine<'a> {
 }
 
 pub fn lint_paths(paths: &[PathBuf], config: &LintConfig) -> Result<Vec<Diagnostic>> {
+    let files = lint_files(paths)?;
+
+    let mut diagnostics = Vec::new();
+    for file in files {
+        let source = fs::read_to_string(&file)
+            .with_context(|| format!("failed to read TeX source {}", file.display()))?;
+        diagnostics.extend(lint_source(&file, &source, config));
+    }
+    Ok(diagnostics)
+}
+
+pub fn fix_paths(paths: &[PathBuf], config: &LintConfig) -> Result<FixReport> {
+    let files = lint_files(paths)?;
+    let mut report = FixReport::default();
+
+    for file in files {
+        let source = fs::read_to_string(&file)
+            .with_context(|| format!("failed to read TeX source {}", file.display()))?;
+        let (fixed, fixes_applied) = fix_source(&file, &source, config);
+        if fixes_applied == 0 {
+            continue;
+        }
+        fs::write(&file, fixed)
+            .with_context(|| format!("failed to write fixed TeX source {}", file.display()))?;
+        report.fixes_applied += fixes_applied;
+        report.files_changed.push(file);
+    }
+
+    Ok(report)
+}
+
+fn lint_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let targets = if paths.is_empty() {
         vec![std::env::current_dir()?]
     } else {
@@ -229,14 +318,273 @@ pub fn lint_paths(paths: &[PathBuf], config: &LintConfig) -> Result<Vec<Diagnost
     }
     files.sort();
     files.dedup();
+    Ok(files)
+}
 
-    let mut diagnostics = Vec::new();
-    for file in files {
-        let source = fs::read_to_string(&file)
-            .with_context(|| format!("failed to read TeX source {}", file.display()))?;
-        diagnostics.extend(lint_source(&file, &source, config));
+fn fix_source(path: &Path, source: &str, config: &LintConfig) -> (String, usize) {
+    let mut fixed = source.to_string();
+    let mut fixes_applied = 0;
+
+    // A tab rewrite can expose the final indentation fix on the next pass.
+    for _ in 0..8 {
+        let (next, pass_fixes) = fix_source_once(path, &fixed, config);
+        if pass_fixes == 0 {
+            break;
+        }
+        fixed = next;
+        fixes_applied += pass_fixes;
     }
-    Ok(diagnostics)
+
+    (fixed, fixes_applied)
+}
+
+fn fix_source_once(path: &Path, source: &str, config: &LintConfig) -> (String, usize) {
+    let diagnostics = lint_source(path, source, config);
+    let suppressions = lint_suppressions(source);
+    let verbatim_lines = verbatim_content_lines(source);
+    let mut edits = Vec::new();
+    let indentation_size_lines = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.rule == "indent/size")
+        .map(|diagnostic| diagnostic.line)
+        .collect::<HashSet<_>>();
+
+    for diagnostic in &diagnostics {
+        if !matches!(diagnostic.rule, "indent/tabs" | "indent/spaces")
+            || indentation_size_lines.contains(&diagnostic.line)
+            || verbatim_lines.contains(&diagnostic.line)
+        {
+            continue;
+        }
+        let Some((start, end)) = line_bounds(source, diagnostic.line) else {
+            continue;
+        };
+        let line = &source[start..end];
+        let prefix_end = leading_indentation_end(line);
+        let prefix = &line[..prefix_end];
+        let replacement = normalize_indentation_style(prefix, config);
+        if replacement == prefix {
+            continue;
+        }
+        edits.push(TextEdit {
+            start,
+            end: start + prefix_end,
+            replacement,
+        });
+    }
+
+    for diagnostic in &diagnostics {
+        if diagnostic.rule != "indent/size" {
+            continue;
+        }
+        let Some(expected) = expected_indentation_units(&diagnostic.message) else {
+            continue;
+        };
+        let Some((start, end)) = line_bounds(source, diagnostic.line) else {
+            continue;
+        };
+        let line = &source[start..end];
+        let actual = leading_indentation_end(line);
+        edits.push(TextEdit {
+            start,
+            end: start + actual,
+            replacement: match config.indent_style {
+                IndentStyle::Spaces => " ".repeat(expected),
+                IndentStyle::Tabs => "\t".repeat(expected),
+            },
+        });
+    }
+
+    let mut structural_config = config.clone();
+    structural_config.rule_levels.clear();
+    let has_structural_math_error =
+        lint_source(path, source, &structural_config)
+            .iter()
+            .any(|diagnostic| {
+                diagnostic.rule.starts_with("math/")
+                    && !matches!(
+                        diagnostic.rule,
+                        "math/inline-dollar" | "math/display-dollar" | "math/prime-command"
+                    )
+            });
+    if !has_structural_math_error && !suppressions.has_math_suppression() {
+        add_dollar_math_edits(
+            source,
+            &diagnostics,
+            "math/inline-dollar",
+            "$",
+            r"\(",
+            r"\)",
+            &mut edits,
+        );
+        add_dollar_math_edits(
+            source,
+            &diagnostics,
+            "math/display-dollar",
+            "$$",
+            r"\[",
+            r"\]",
+            &mut edits,
+        );
+    }
+
+    edits.sort_by_key(|edit| (edit.start, edit.end));
+    edits.dedup();
+    if edits.windows(2).any(|pair| pair[0].end > pair[1].start) {
+        return (source.to_string(), 0);
+    }
+
+    let fixes_applied = edits.len();
+    let mut fixed = source.to_string();
+    for edit in edits.into_iter().rev() {
+        fixed.replace_range(edit.start..edit.end, &edit.replacement);
+    }
+    (fixed, fixes_applied)
+}
+
+fn add_dollar_math_edits(
+    source: &str,
+    diagnostics: &[Diagnostic],
+    rule: &str,
+    token: &str,
+    opener: &str,
+    closer: &str,
+    edits: &mut Vec<TextEdit>,
+) {
+    let matching = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.rule == rule)
+        .collect::<Vec<_>>();
+    if matching.len() % 2 != 0 {
+        return;
+    }
+
+    let mut candidate_edits = Vec::new();
+    for (index, diagnostic) in matching.into_iter().enumerate() {
+        let Some(start) = byte_offset_for_line_column(source, diagnostic.line, diagnostic.column)
+        else {
+            return;
+        };
+        let end = start + token.len();
+        if source.get(start..end) != Some(token) {
+            return;
+        }
+        candidate_edits.push(TextEdit {
+            start,
+            end,
+            replacement: if index % 2 == 0 { opener } else { closer }.to_string(),
+        });
+    }
+    edits.extend(candidate_edits);
+}
+
+fn expected_indentation_units(message: &str) -> Option<usize> {
+    message
+        .strip_prefix("expected ")?
+        .split_once(" leading ")?
+        .0
+        .parse()
+        .ok()
+}
+
+fn indentation_prefix(config: &LintConfig, level: usize) -> String {
+    match config.indent_style {
+        IndentStyle::Spaces => " ".repeat(level * config.indent_size),
+        IndentStyle::Tabs => "\t".repeat(level),
+    }
+}
+
+fn normalize_indentation_style(prefix: &str, config: &LintConfig) -> String {
+    match config.indent_style {
+        IndentStyle::Spaces => prefix.replace('\t', &" ".repeat(config.indent_size)),
+        IndentStyle::Tabs => {
+            let width = config.indent_size.max(1);
+            let columns = prefix
+                .chars()
+                .map(|ch| if ch == '\t' { width } else { 1 })
+                .sum::<usize>();
+            "\t".repeat(columns.div_ceil(width))
+        }
+    }
+}
+
+fn leading_indentation_end(line: &str) -> usize {
+    line.char_indices()
+        .find_map(|(index, ch)| (!matches!(ch, ' ' | '\t')).then_some(index))
+        .unwrap_or(line.len())
+}
+
+fn line_bounds(source: &str, line: usize) -> Option<(usize, usize)> {
+    if line == 0 {
+        return None;
+    }
+    let start = if line == 1 {
+        0
+    } else {
+        source
+            .match_indices('\n')
+            .nth(line - 2)
+            .map(|(index, _)| index + 1)?
+    };
+    let end = source[start..]
+        .find('\n')
+        .map(|offset| start + offset)
+        .unwrap_or(source.len());
+    Some((start, end))
+}
+
+fn byte_offset_for_line_column(source: &str, line: usize, column: usize) -> Option<usize> {
+    if column == 0 {
+        return None;
+    }
+    let (start, end) = line_bounds(source, line)?;
+    let content = &source[start..end];
+    if column == content.chars().count() + 1 {
+        return Some(end);
+    }
+    content
+        .char_indices()
+        .nth(column - 1)
+        .map(|(offset, _)| start + offset)
+}
+
+fn verbatim_content_lines(source: &str) -> HashSet<usize> {
+    let mut lines = HashSet::new();
+    let mut active: Option<String> = None;
+
+    for (index, raw_line) in source.lines().enumerate() {
+        let line_no = index + 1;
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        let masked = mask_inline_verbatim(line);
+        let uncommented = strip_comment(&masked);
+        let events = env_events(uncommented);
+
+        if let Some(name) = active.as_deref() {
+            if events
+                .iter()
+                .any(|event| event.kind == EnvKind::End && event.name == name)
+            {
+                active = None;
+            } else {
+                lines.insert(line_no);
+                continue;
+            }
+        }
+
+        for event in events {
+            match event.kind {
+                EnvKind::Begin if is_verbatim_environment(&event.name) => {
+                    active = Some(event.name);
+                }
+                EnvKind::End if active.as_deref() == Some(event.name.as_str()) => {
+                    active = None;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    lines
 }
 
 pub fn lint_source(path: &Path, source: &str, config: &LintConfig) -> Vec<Diagnostic> {
@@ -255,13 +603,40 @@ pub fn lint_source(path: &Path, source: &str, config: &LintConfig) -> Vec<Diagno
         indent_level: 0,
         verbatim_env: None,
     };
+    let mut previous_line_is_prose = false;
+    let mut brace_depth = 0;
 
     for (index, raw_line) in source.lines().enumerate() {
         let line_no = index + 1;
         let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        lint_line_length(path, line, line_no, config, &mut diagnostics);
-        lint_tabs(path, line, line_no, &mut diagnostics);
+        let masked = mask_inline_verbatim(line);
+        let uncommented = strip_comment(&masked);
+        let line_is_prose = state.verbatim_env.is_none()
+            && state.math_mode.is_none()
+            && brace_depth == 0
+            && is_prose_line(uncommented);
+        let starts_new_prose_paragraph = starts_new_prose_paragraph(uncommented);
+        lint_line_length(path, line, line_no, config, line_is_prose, &mut diagnostics);
+        lint_prose_wrap(
+            path,
+            uncommented,
+            line_no,
+            config,
+            line_is_prose,
+            previous_line_is_prose,
+            starts_new_prose_paragraph,
+            &mut diagnostics,
+        );
+        lint_indentation_style(
+            path,
+            line,
+            line_no,
+            config,
+            state.verbatim_env.is_some(),
+            &mut diagnostics,
+        );
         if state.verbatim_env.is_some() {
+            previous_line_is_prose = false;
             lint_verbatim_line(
                 path,
                 line,
@@ -274,8 +649,6 @@ pub fn lint_source(path: &Path, source: &str, config: &LintConfig) -> Vec<Diagno
             continue;
         }
 
-        let masked = mask_inline_verbatim(line);
-        let uncommented = strip_comment(&masked);
         let math_mode_before = state.math_mode.clone();
         lint_math(
             path,
@@ -299,6 +672,8 @@ pub fn lint_source(path: &Path, source: &str, config: &LintConfig) -> Vec<Diagno
             &mut diagnostics,
         );
         update_verbatim_state(uncommented, &mut state);
+        previous_line_is_prose = line_is_prose && !uncommented.trim_end().ends_with(r"\par");
+        brace_depth = updated_brace_depth(uncommented, brace_depth);
     }
 
     if let Some(mode) = state.math_mode.take() {
@@ -418,6 +793,14 @@ impl LintSuppressions {
                 .get(&line)
                 .is_some_and(|rules| rules.contains(rule))
     }
+
+    fn has_math_suppression(&self) -> bool {
+        !self.all_by_line.is_empty()
+            || self
+                .rules_by_line
+                .values()
+                .any(|rules| rules.iter().any(|rule| rule.starts_with("math/")))
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -484,7 +867,7 @@ fn is_tex_like(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| {
-            ["tex", "ltx", "sty", "cls"]
+            ["tex", "ltx", "cls"]
                 .iter()
                 .any(|candidate| ext.eq_ignore_ascii_case(candidate))
         })
@@ -495,8 +878,12 @@ fn lint_line_length(
     line: &str,
     line_no: usize,
     config: &LintConfig,
+    line_is_prose: bool,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if line_is_prose && config.prose_wrap.is_some() {
+        return;
+    }
     let Some(limit) = config.max_line_length else {
         return;
     };
@@ -513,16 +900,164 @@ fn lint_line_length(
     }
 }
 
-fn lint_tabs(path: &Path, line: &str, line_no: usize, diagnostics: &mut Vec<Diagnostic>) {
-    if let Some(column) = line.chars().position(|ch| ch == '\t').map(|idx| idx + 1) {
-        diagnostics.push(Diagnostic::warning(
-            path,
-            line_no,
-            column,
-            "indent/tabs",
-            "tab indentation is not allowed",
-            Some("Use spaces for deterministic TeX diffs.".to_string()),
-        ));
+fn lint_prose_wrap(
+    path: &Path,
+    line: &str,
+    line_no: usize,
+    config: &LintConfig,
+    line_is_prose: bool,
+    previous_line_is_prose: bool,
+    starts_new_prose_paragraph: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if !line_is_prose {
+        return;
+    }
+    match config.prose_wrap {
+        Some(ProseWrap::Hard) => {
+            let Some(limit) = config.max_line_length else {
+                return;
+            };
+            let len = line.trim_end().chars().count();
+            if len > limit {
+                diagnostics.push(Diagnostic::warning(
+                    path,
+                    line_no,
+                    limit + 1,
+                    "prose/wrap",
+                    format!(
+                        "prose line is {len} characters; configured hard-wrap width is {limit}"
+                    ),
+                    Some(format!("Wrap prose at or before column {limit}.")),
+                ));
+            }
+        }
+        Some(ProseWrap::Unwrapped) if previous_line_is_prose && !starts_new_prose_paragraph => {
+            diagnostics.push(Diagnostic::warning(
+                path,
+                line_no,
+                1,
+                "prose/wrap",
+                "prose paragraph is split across physical lines",
+                Some("Keep each prose paragraph on one source line.".to_string()),
+            ));
+        }
+        Some(ProseWrap::Unwrapped) | None => {}
+    }
+}
+
+fn is_prose_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('%')
+        || matches!(trimmed.chars().next(), Some('{' | '}' | '[' | ']'))
+        || trimmed.contains("\\begin{")
+        || trimmed.contains("\\end{")
+        || trimmed.contains('&')
+        || trimmed.contains('=')
+        || trimmed.ends_with(r"\\")
+        || (trimmed.ends_with(',') && trimmed.split_whitespace().count() == 1)
+    {
+        return false;
+    }
+
+    let payload = if let Some(rest) = trimmed.strip_prefix(r"\item") {
+        strip_optional_item_label(rest).trim_start()
+    } else if let Some(rest) = trimmed.strip_prefix(r"\noindent") {
+        rest.trim_start()
+    } else if trimmed.starts_with('\\') {
+        return false;
+    } else {
+        trimmed
+    };
+
+    !payload.is_empty() && payload.chars().any(char::is_alphabetic)
+}
+
+fn updated_brace_depth(line: &str, mut depth: usize) -> usize {
+    let bytes = line.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if is_escaped(bytes, index) {
+            continue;
+        }
+        match byte {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth
+}
+
+fn starts_new_prose_paragraph(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    starts_with_latex_command(trimmed.as_bytes(), 0, br"\item")
+        || starts_with_latex_command(trimmed.as_bytes(), 0, br"\noindent")
+}
+
+fn strip_optional_item_label(value: &str) -> &str {
+    let value = value.trim_start();
+    let Some(rest) = value.strip_prefix('[') else {
+        return value;
+    };
+    let Some(end) = rest.find(']') else {
+        return value;
+    };
+    &rest[end + 1..]
+}
+
+fn lint_indentation_style(
+    path: &Path,
+    line: &str,
+    line_no: usize,
+    config: &LintConfig,
+    in_verbatim: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if in_verbatim {
+        return;
+    }
+    let prefix_end = leading_indentation_end(line);
+    let prefix = &line[..prefix_end];
+    match config.indent_style {
+        IndentStyle::Spaces => {
+            if let Some(column) = line.chars().position(|ch| ch == '\t').map(|idx| idx + 1) {
+                diagnostics.push(Diagnostic::warning(
+                    path,
+                    line_no,
+                    column,
+                    "indent/tabs",
+                    "tab indentation is not allowed",
+                    Some("Use spaces for deterministic TeX diffs.".to_string()),
+                ));
+            }
+        }
+        IndentStyle::Tabs => {
+            if prefix.contains(' ') {
+                diagnostics.push(Diagnostic::warning(
+                    path,
+                    line_no,
+                    1,
+                    "indent/spaces",
+                    "space indentation is not allowed",
+                    Some("Use one tab per indentation level.".to_string()),
+                ));
+            }
+            if let Some(column) = line[prefix_end..]
+                .chars()
+                .position(|ch| ch == '\t')
+                .map(|index| prefix.chars().count() + index + 1)
+            {
+                diagnostics.push(Diagnostic::warning(
+                    path,
+                    line_no,
+                    column,
+                    "indent/tabs",
+                    "tab character appears outside indentation",
+                    Some("Use tabs only for leading indentation.".to_string()),
+                ));
+            }
+        }
     }
 }
 
@@ -585,7 +1120,7 @@ fn lint_math(
                 byte = end;
                 continue;
             }
-            if starts_with_at(bytes, byte, br"\(") {
+            if !is_escaped(bytes, byte) && starts_with_at(bytes, byte, br"\(") {
                 open_command_math(
                     path,
                     line_no,
@@ -600,7 +1135,7 @@ fn lint_math(
                 byte += 2;
                 continue;
             }
-            if starts_with_at(bytes, byte, br"\)") {
+            if !is_escaped(bytes, byte) && starts_with_at(bytes, byte, br"\)") {
                 close_command_math(
                     path,
                     line_no,
@@ -613,7 +1148,7 @@ fn lint_math(
                 byte += 2;
                 continue;
             }
-            if starts_with_at(bytes, byte, br"\[") {
+            if !is_escaped(bytes, byte) && starts_with_at(bytes, byte, br"\[") {
                 open_command_math(
                     path,
                     line_no,
@@ -628,7 +1163,7 @@ fn lint_math(
                 byte += 2;
                 continue;
             }
-            if starts_with_at(bytes, byte, br"\]") {
+            if !is_escaped(bytes, byte) && starts_with_at(bytes, byte, br"\]") {
                 close_command_math(
                     path,
                     line_no,
@@ -1126,19 +1661,37 @@ fn lint_environments_and_indent(
         let prefix_closes = leading_closing_indent_events(&events, ignored);
         let expected_level =
             state.indent_level.saturating_sub(prefix_closes) + display_math_indent.unwrap_or(0);
-        let expected = expected_level * config.indent_size;
-        let actual = line.source.len() - line.source.trim_start_matches(' ').len();
-        if actual != expected {
+        let expected = indentation_prefix(config, expected_level);
+        let actual_end = leading_indentation_end(line.source);
+        let actual = &line.source[..actual_end];
+        let width = config.indent_size.max(1);
+        let expected_width = expected_level * width;
+        let actual_width = indentation_visual_width(actual, width);
+        if actual_width != expected_width {
+            let (expected_units, actual_units, unit_name, help) = match config.indent_style {
+                IndentStyle::Spaces => (
+                    expected.len(),
+                    actual_width,
+                    "spaces",
+                    format!(
+                        "Indent nested environments by {} spaces.",
+                        config.indent_size
+                    ),
+                ),
+                IndentStyle::Tabs => (
+                    expected_level,
+                    actual_width / width,
+                    "tabs",
+                    "Indent nested environments with one tab per level.".to_string(),
+                ),
+            };
             diagnostics.push(Diagnostic::warning(
                 path,
                 line_no,
                 1,
                 "indent/size",
-                format!("expected {expected} leading spaces, found {actual}"),
-                Some(format!(
-                    "Indent nested environments by {} spaces.",
-                    config.indent_size
-                )),
+                format!("expected {expected_units} leading {unit_name}, found {actual_units}"),
+                Some(help),
             ));
         }
     }
@@ -1197,6 +1750,13 @@ fn lint_environments_and_indent(
             }
         }
     }
+}
+
+fn indentation_visual_width(prefix: &str, tab_width: usize) -> usize {
+    prefix
+        .chars()
+        .map(|ch| if ch == '\t' { tab_width } else { 1 })
+        .sum()
 }
 
 fn lint_verbatim_line(
@@ -2119,5 +2679,202 @@ mod tests {
             &LintConfig::default(),
         );
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn latex_line_break_spacing_is_not_a_display_math_opener() {
+        let diagnostics = lint_source(
+            Path::new("sample.tex"),
+            "First line\\\\[0.5em]\nSecond line\\\\[-1pt]\n",
+            &LintConfig::default(),
+        );
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.rule.starts_with("math/")),
+            "{diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn hard_wrap_policy_checks_prose_with_its_own_rule() {
+        let config = LintConfig {
+            max_line_length: Some(24),
+            prose_wrap: Some(ProseWrap::Hard),
+            ..LintConfig::default()
+        };
+        let diagnostics = lint_source(
+            Path::new("sample.tex"),
+            "This prose line is intentionally longer than the configured width.\n\\newcommand{\\averylongcommandname}{value}\n",
+            &config,
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.rule == "prose/wrap" && diagnostic.line == 1 })
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.rule == "line/length" && diagnostic.line == 1 })
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.rule == "line/length" && diagnostic.line == 2 })
+        );
+    }
+
+    #[test]
+    fn unwrapped_policy_checks_continuation_lines_not_line_length() {
+        let config = LintConfig {
+            max_line_length: Some(20),
+            prose_wrap: Some(ProseWrap::Unwrapped),
+            ..LintConfig::default()
+        };
+        let diagnostics = lint_source(
+            Path::new("sample.tex"),
+            "First prose line\ncontinues on this line.\n\nA separate paragraph can be arbitrarily long in unwrapped mode without a line-length warning.\n\\begin{itemize}\n  \\item Item prose starts here\n    and continues here.\n\\end{itemize}\n",
+            &config,
+        );
+
+        let wrap_lines = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == "prose/wrap")
+            .map(|diagnostic| diagnostic.line)
+            .collect::<Vec<_>>();
+        assert_eq!(wrap_lines, vec![2, 7], "{diagnostics:#?}");
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.rule == "line/length" && diagnostic.line == 4 })
+        );
+    }
+
+    #[test]
+    fn unwrapped_policy_respects_paragraph_and_structural_boundaries() {
+        let config = LintConfig {
+            prose_wrap: Some(ProseWrap::Unwrapped),
+            ..LintConfig::default()
+        };
+        let diagnostics = lint_source(
+            Path::new("sample.tex"),
+            "First paragraph ends here.\\par\nSecond paragraph.\n% source comment boundary\nThird paragraph.\n\\section{Heading}\nFourth paragraph.\n\\[\n  x = y\n\\]\nFifth paragraph.\n\\begin{verbatim}\nliteral prose-looking lines\nremain untouched\n\\end{verbatim}\nSixth paragraph.\n",
+            &config,
+        );
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.rule == "prose/wrap"),
+            "{diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn unwrapped_policy_ignores_multiline_command_arguments_and_option_blocks() {
+        let config = LintConfig {
+            prose_wrap: Some(ProseWrap::Unwrapped),
+            ..LintConfig::default()
+        };
+        let diagnostics = lint_source(
+            Path::new("sample.tex"),
+            "\\authors{%\n  Alice Example\\\\\n  Bob Example\n}\n\\begin{tikzpicture}[\n  font=\\small,\n  enhanced,\n]\n\\end{tikzpicture}\n",
+            &config,
+        );
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.rule == "prose/wrap"),
+            "{diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn prose_wrap_policy_is_neutral_by_default() {
+        let diagnostics = lint_source(
+            Path::new("sample.tex"),
+            "This prose paragraph\nuses two source lines.\n",
+            &LintConfig::default(),
+        );
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.rule == "prose/wrap"),
+            "{diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn tab_indentation_accepts_one_tab_per_environment_level() {
+        let config = LintConfig {
+            indent_style: IndentStyle::Tabs,
+            ..LintConfig::default()
+        };
+        let diagnostics = lint_source(
+            Path::new("sample.tex"),
+            "\\begin{itemize}\n\t\\item First\n\t\\begin{enumerate}\n\t\t\\item Nested\n\t\\end{enumerate}\n\\end{itemize}\n",
+            &config,
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic.rule,
+                "indent/spaces" | "indent/tabs" | "indent/size"
+            )),
+            "{diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn tab_indentation_rejects_leading_spaces_and_wrong_depth() {
+        let config = LintConfig {
+            indent_style: IndentStyle::Tabs,
+            ..LintConfig::default()
+        };
+        let diagnostics = lint_source(
+            Path::new("sample.tex"),
+            "\\begin{itemize}\n  \\item Spaces\n\t\t\\item Too deep\n\\end{itemize}\n",
+            &config,
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.rule == "indent/spaces" && diagnostic.line == 2 })
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.rule == "indent/size" && diagnostic.line == 2 })
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.rule == "indent/size" && diagnostic.line == 3 })
+        );
+    }
+
+    #[test]
+    fn tab_indentation_rejects_tabs_outside_the_leading_prefix() {
+        let config = LintConfig {
+            indent_style: IndentStyle::Tabs,
+            ..LintConfig::default()
+        };
+        let diagnostics = lint_source(
+            Path::new("sample.tex"),
+            "Text\twith an internal tab.\n",
+            &config,
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.rule == "indent/tabs" && diagnostic.column == 5 })
+        );
     }
 }

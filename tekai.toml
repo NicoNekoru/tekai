@@ -24,6 +24,7 @@ print_command = false
 
 [lint]
 indent_size = 2
+# indent_style = "tabs" # defaults to "spaces"
 indent_environments = true
 indent_display_math = true
 ignored_indent_environments = ["document"]
@@ -32,6 +33,7 @@ prefer_bracket_display_math = true
 prefer_prime_command = false
 check_environment_stack = true
 max_line_length = 120
+# prose_wrap = "hardwrap" # or "unwrapped"
 
 [lint.rules]
 # "math/prime-command" = "warn"

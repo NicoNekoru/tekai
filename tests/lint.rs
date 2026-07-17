@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tekai::lint::{LintConfig, lint_paths, lint_source};
+use tekai::lint::{IndentStyle, LintConfig, fix_paths, lint_paths, lint_source};
 
 #[test]
 fn bracket_math_is_accepted() {
@@ -93,6 +93,172 @@ fn lint_paths_collects_tex_like_extensions_case_insensitively() {
             .iter()
             .any(|diagnostic| diagnostic.rule == "math/inline-dollar"),
         "{diagnostics:#?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn lint_paths_skip_style_files() {
+    let root = unique_temp_dir("tekai-lint-skip-style");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    fs::write(root.join("paper.tex"), "Text \\(x\\).\n").expect("failed to write TeX source");
+    fs::write(root.join("package.sty"), "Text $x$.\n").expect("failed to write style source");
+
+    let diagnostics =
+        lint_paths(std::slice::from_ref(&root), &LintConfig::default()).expect("lint failed");
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn fix_paths_rewrites_safe_issues_and_skips_style_files() {
+    let root = unique_temp_dir("tekai-lint-fix");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    let source = root.join("paper.tex");
+    let style = root.join("package.sty");
+    fs::write(
+        &source,
+        "\\begin{itemize}\n\t\\item Inline café $x$\n\\end{itemize}\n$$y$$\n",
+    )
+    .expect("failed to write TeX source");
+    fs::write(&style, "Style $z$.\n").expect("failed to write style source");
+
+    let report =
+        fix_paths(std::slice::from_ref(&root), &LintConfig::default()).expect("fix failed");
+
+    assert_eq!(report.files_changed, vec![source.clone()]);
+    assert_eq!(
+        fs::read_to_string(&source).expect("failed to read fixed source"),
+        "\\begin{itemize}\n  \\item Inline café \\(x\\)\n\\end{itemize}\n\\[y\\]\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&style).expect("failed to read style source"),
+        "Style $z$.\n"
+    );
+    assert!(
+        lint_paths(std::slice::from_ref(&root), &LintConfig::default())
+            .expect("lint failed")
+            .is_empty()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn fix_paths_leave_suppressed_math_unchanged() {
+    let root = unique_temp_dir("tekai-lint-fix-suppressed");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    let source = root.join("paper.tex");
+    let contents = "Legacy $x$. % tekai-ignore-line math/inline-dollar\n";
+    fs::write(&source, contents).expect("failed to write TeX source");
+
+    let report =
+        fix_paths(std::slice::from_ref(&source), &LintConfig::default()).expect("fix failed");
+
+    assert_eq!(report.fixes_applied, 0);
+    assert_eq!(
+        fs::read_to_string(&source).expect("failed to read source"),
+        contents
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn fix_paths_do_not_rewrite_structurally_invalid_math() {
+    let root = unique_temp_dir("tekai-lint-fix-invalid-math");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    let source = root.join("paper.tex");
+    let contents = "Nested \\($x$\\).\n";
+    fs::write(&source, contents).expect("failed to write TeX source");
+
+    let report =
+        fix_paths(std::slice::from_ref(&source), &LintConfig::default()).expect("fix failed");
+
+    assert_eq!(report.fixes_applied, 0);
+    assert_eq!(
+        fs::read_to_string(&source).expect("failed to read source"),
+        contents
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn fix_paths_preserve_tabs_inside_verbatim_content() {
+    let root = unique_temp_dir("tekai-lint-fix-verbatim");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    let source = root.join("paper.tex");
+    let contents = "\\begin{verbatim}\n\tliteral tab\n\\end{verbatim}\n";
+    fs::write(&source, contents).expect("failed to write TeX source");
+
+    let report =
+        fix_paths(std::slice::from_ref(&source), &LintConfig::default()).expect("fix failed");
+
+    assert_eq!(report.fixes_applied, 0);
+    assert_eq!(
+        fs::read_to_string(&source).expect("failed to read source"),
+        contents
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn fix_paths_convert_space_indentation_to_tabs() {
+    let root = unique_temp_dir("tekai-lint-fix-tab-indentation");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    let source = root.join("paper.tex");
+    fs::write(
+        &source,
+        "\\begin{itemize}\n  \\item First\n  \\begin{enumerate}\n    \\item Nested\n  \\end{enumerate}\n\\end{itemize}\n",
+    )
+    .expect("failed to write TeX source");
+    let config = LintConfig {
+        indent_style: IndentStyle::Tabs,
+        ..LintConfig::default()
+    };
+
+    let report = fix_paths(std::slice::from_ref(&source), &config).expect("fix failed");
+
+    assert!(report.fixes_applied > 0, "{report:#?}");
+    assert_eq!(
+        fs::read_to_string(&source).expect("failed to read fixed source"),
+        "\\begin{itemize}\n\t\\item First\n\t\\begin{enumerate}\n\t\t\\item Nested\n\t\\end{enumerate}\n\\end{itemize}\n"
+    );
+    assert!(
+        lint_paths(std::slice::from_ref(&source), &config)
+            .expect("lint failed")
+            .is_empty()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn fix_paths_round_odd_space_indentation_to_tabs() {
+    let root = unique_temp_dir("tekai-lint-fix-odd-tab-indentation");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    let source = root.join("paper.tex");
+    fs::write(&source, "   manually aligned text\n").expect("failed to write TeX source");
+    let config = LintConfig {
+        indent_style: IndentStyle::Tabs,
+        indent_environments: false,
+        ..LintConfig::default()
+    };
+
+    fix_paths(std::slice::from_ref(&source), &config).expect("fix failed");
+
+    assert_eq!(
+        fs::read_to_string(&source).expect("failed to read fixed source"),
+        "\t\tmanually aligned text\n"
+    );
+    assert!(
+        lint_paths(std::slice::from_ref(&source), &config)
+            .expect("lint failed")
+            .is_empty()
     );
 
     let _ = fs::remove_dir_all(root);

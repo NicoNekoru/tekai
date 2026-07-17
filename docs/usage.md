@@ -33,7 +33,7 @@ the CLI but does not choose a TeX distribution for you.
 | Command | Behavior |
 | --- | --- |
 | `build MAIN` | Compile a root TeX document. |
-| `check MAIN` | Lint the document tree, then build if lint passes. |
+| `check MAIN` | Lint the document tree, then build if lint passes; add `--fix` to apply safe fixes first. |
 | `watch MAIN` | Watch relevant source/dependency files and rebuild. |
 | `lint [PATH ...]` | Lint files or directories; defaults to the current directory. |
 | `clean` | Safely remove the configured output directory. |
@@ -196,6 +196,7 @@ INDEXSTYLE = "styles//:"
 
 [lint]
 indent_size = 2
+indent_style = "tabs" # or "spaces"
 indent_environments = true
 indent_display_math = true
 ignored_indent_environments = ["document"]
@@ -204,6 +205,7 @@ prefer_bracket_display_math = true
 prefer_prime_command = false
 check_environment_stack = true
 max_line_length = 120
+prose_wrap = "hardwrap" # or "unwrapped"
 
 [lint.rules]
 "math/inline-dollar" = "error"
@@ -269,7 +271,14 @@ go to stderr so successful stdout remains parseable JSON.
 ```sh
 tekai lint paper --allow-warnings
 tekai check paper/main.tex --allow-warnings
+tekai check paper/main.tex --fix
 ```
+
+`check --fix` follows the Ruff-style check/fix loop: it rewrites deterministic,
+safe fixes, lints the updated sources, and builds only when the remaining
+diagnostics pass. It currently fixes dollar-math delimiters, indentation style,
+and environment/display-math indentation. Package `.sty` files remain build and
+watch dependencies but are not lint targets.
 
 Rule identifiers currently include:
 
@@ -277,7 +286,21 @@ Rule identifiers currently include:
   `math/nested`, `math/prime-command`, `math/left-right`, and unmatched or
   unclosed math delimiters/environments;
 - `env/mismatch`, `env/unclosed`, and `env/unmatched-end`;
-- `indent/size`, `indent/tabs`, and `line/length`.
+- `indent/size`, `indent/spaces`, `indent/tabs`, `line/length`, and
+  `prose/wrap`.
+
+Set `indent_style = "spaces"` (the default) to use `indent_size` spaces per
+environment level, or set `indent_style = "tabs"` to require one tab per level.
+In tab mode, `indent_size` is the visual width used when `check --fix` converts
+existing space indentation.
+
+Set `prose_wrap = "hardwrap"` to require prose source lines to stay within
+`max_line_length`. Set it to `"unwrapped"` to require one physical source line
+per prose paragraph; prose is then exempt from `line/length`. If `prose_wrap`
+is omitted, the linter preserves the previous neutral behavior and only applies
+the general `line/length` rule. The prose scanner is deliberately conservative:
+it ignores command-only lines, environment boundaries, display math, comments,
+and verbatim content.
 
 Set a rule to `off`, `warn`, or `error` under `[lint.rules]`. Suppress a specific
 source line when needed:
