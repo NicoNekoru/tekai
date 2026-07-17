@@ -33,7 +33,7 @@ prefer_bracket_display_math = true
 prefer_prime_command = false
 check_environment_stack = true
 max_line_length = 120
-# prose_wrap = "hardwrap" # or "unwrapped"
+# prose_wrap = "unwrapped" # or "hardwrap"; omitted is neutral
 
 [lint.rules]
 # "math/prime-command" = "warn"

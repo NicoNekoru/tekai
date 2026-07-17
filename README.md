@@ -129,14 +129,19 @@ BIBINPUTS = "bib//:"
 
 [lint]
 indent_size = 2
-indent_style = "tabs" # or "spaces"
+indent_style = "tabs" # defaults to "spaces"
 max_line_length = 120
-prose_wrap = "hardwrap" # or "unwrapped"
+prose_wrap = "unwrapped" # or "hardwrap"; omit for neutral behavior
 
 [lint.rules]
 "math/inline-dollar" = "error"
 "line/length" = "warn"
 ```
+
+The linter scans `.tex`, `.ltx`, and `.cls` sources, while package `.sty` files
+remain build/watch dependencies without becoming lint targets. `check --fix`
+applies conservative math-delimiter and indentation fixes before linting and
+building; prose wrapping is reported but never rewritten automatically.
 
 The checked-in [tekai.toml](tekai.toml) is a complete starting point.
 
@@ -164,7 +169,7 @@ Current evidence and known limits are recorded in:
 | --- | --- |
 | `src/compiler.rs` | Direct build scheduler, caches, dependencies, auxiliary tools, and engine dispatch. |
 | `src/watch.rs` | Watch filtering, live preview, debounce, and structural fallbacks. |
-| `src/lint.rs` | Single-pass TeX-aware linting and suppression handling. |
+| `src/lint.rs` | Single-pass TeX-aware linting, safe fixes, prose policy, and suppression handling. |
 | `crates/tekai-engine` | Self-contained exact typesetting engine. |
 | `crates/tekai-pdftex` | Experimental native renderer and next-engine architecture. |
 | `tests` | CLI and document-workflow integration tests. |

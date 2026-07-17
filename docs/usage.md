@@ -196,7 +196,7 @@ INDEXSTYLE = "styles//:"
 
 [lint]
 indent_size = 2
-indent_style = "tabs" # or "spaces"
+indent_style = "spaces" # or "tabs"
 indent_environments = true
 indent_display_math = true
 ignored_indent_environments = ["document"]
@@ -205,7 +205,7 @@ prefer_bracket_display_math = true
 prefer_prime_command = false
 check_environment_stack = true
 max_line_length = 120
-prose_wrap = "hardwrap" # or "unwrapped"
+# prose_wrap = "unwrapped" # or "hardwrap"; omitted is neutral
 
 [lint.rules]
 "math/inline-dollar" = "error"
@@ -272,19 +272,26 @@ go to stderr so successful stdout remains parseable JSON.
 tekai lint paper --allow-warnings
 tekai check paper/main.tex --allow-warnings
 tekai check paper/main.tex --fix
+tekai check paper/main.tex --fix --allow-warnings
 ```
+
+`lint` is read-only and scans `.tex`, `.ltx`, and `.cls` files. Package `.sty`
+files remain build and watch dependencies but are not lint targets.
 
 `check --fix` follows the Ruff-style check/fix loop: it rewrites deterministic,
 safe fixes, lints the updated sources, and builds only when the remaining
 diagnostics pass. It currently fixes dollar-math delimiters, indentation style,
-and environment/display-math indentation. Package `.sty` files remain build and
-watch dependencies but are not lint targets.
+and environment/display-math indentation. It does not rewrite prose, long lines,
+prime notation, or structurally ambiguous math. Suppression comments and disabled
+rules are respected; if non-fixable warnings remain, pass `--allow-warnings` to
+continue to the build.
 
 Rule identifiers currently include:
 
 - `math/inline-dollar`, `math/display-dollar`, `math/mixed-delimiters`,
-  `math/nested`, `math/prime-command`, `math/left-right`, and unmatched or
-  unclosed math delimiters/environments;
+  `math/nested`, `math/prime-command`, `math/left-right`, `math/unclosed`,
+  `math/unmatched-paren`, `math/unmatched-bracket`,
+  `math/unclosed-environment`, and `math/unmatched-environment`;
 - `env/mismatch`, `env/unclosed`, and `env/unmatched-end`;
 - `indent/size`, `indent/spaces`, `indent/tabs`, `line/length`, and
   `prose/wrap`.
@@ -300,7 +307,8 @@ per prose paragraph; prose is then exempt from `line/length`. If `prose_wrap`
 is omitted, the linter preserves the previous neutral behavior and only applies
 the general `line/length` rule. The prose scanner is deliberately conservative:
 it ignores command-only lines, environment boundaries, display math, comments,
-and verbatim content.
+and verbatim content. Neither prose mode is auto-fixable: `check --fix` reports
+violations without reflowing TeX source.
 
 Set a rule to `off`, `warn`, or `error` under `[lint.rules]`. Suppress a specific
 source line when needed:
