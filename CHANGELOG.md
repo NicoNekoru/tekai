@@ -3,6 +3,17 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
+## 0.2.0 - 2026-07-20
+
+- Added first-party VS Code and Neovim integrations for diagnostics, exact and
+  fast builds, root-document discovery, and live PDF previews.
+- Added `tekai init [PATH]` to create a complete, documented default config
+  without replacing an existing file unless `--force` is passed.
+- Made `check --report-json` include the exact diagnostics that gated its build,
+  and made the Neovim check command replace annotations from that same report.
+- Fixed `--synctex` on the default embedded engine so it emits a usable
+  `.synctex.gz` sidecar instead of forwarding an unsupported option.
+
 ## 0.1.0 - 2026-07-17
 
 - Introduced the `tekai` CLI for direct, converged LaTeX builds, checks, linting,

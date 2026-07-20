@@ -692,7 +692,13 @@ fn tekai_pdftex_native_backend_writes_synctex_when_requested() {
     assert_eq!(report.pdf_tex_runs, 1, "{report:#?}");
     assert_eq!(report.bibliography_runs, 0, "{report:#?}");
     assert!(out_dir.join("main.pdf").exists());
-    assert!(!out_dir.join("main.synctex.gz").exists());
+    let synctex = fs::read(out_dir.join("main.synctex.gz"))
+        .expect("native backend should write a SyncTeX sidecar");
+    assert!(
+        synctex.starts_with(&[0x1f, 0x8b]),
+        "sidecar should be gzip data"
+    );
+    assert!(synctex.len() > 20, "sidecar should not be empty");
     let log = fs::read_to_string(out_dir.join("main.log")).expect("log should be readable");
     assert!(log.contains("This is pdfTeX"), "{log}");
 

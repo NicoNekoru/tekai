@@ -6,7 +6,7 @@ track for the `tekai` workspace.
 It is intentionally separate from [`tekai-engine`](../tekai-engine/README.md):
 
 - `tekai-engine` preserves pdfTeX's algorithms and powers the default exact
-  `--engine pdf-latex --runner direct` path;
+  `--engine tekai-engine --runner direct` path;
 - `tekai-pdftex` explores a faster fused expansion, in-memory document,
   layout, asset, and PDF architecture.
 

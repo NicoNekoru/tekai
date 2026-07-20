@@ -653,6 +653,27 @@ pub fn build_dependency_paths(options: &BuildOptions) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+/// Return the lintable TeX source graph rooted at `main`.
+///
+/// This follows the same source-level dependency discovery used to seed direct
+/// builds, but excludes packages and non-source build inputs. The explicit root
+/// is always included.
+pub fn tex_source_dependency_paths(main: &Path) -> Result<Vec<PathBuf>> {
+    clear_kpathsea_resolution_cache();
+    let main = main
+        .canonicalize()
+        .with_context(|| format!("cannot find root TeX file {}", main.display()))?;
+    let state = source_seed_dependency_state(&main)?;
+    let mut paths = state
+        .visited
+        .into_iter()
+        .filter(|path| path_extension_is_any(path, &["tex", "ltx", "cls"]))
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 fn latexmk_or_tectonic_build(options: &BuildOptions) -> Result<BuildReport> {
     let main = options
         .main
@@ -767,7 +788,7 @@ fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
         .filter(|state| build_state_is_compatible(state, &mode_key, &pdf_path));
     let mut build_state_input_freshness = HashMap::new();
     if !options.force
-        && pdf_path.exists()
+        && direct_artifacts_exist(options, &out_dir, &job_name, &pdf_path)
         && let Some(state) = compatible_previous_build_state
         && build_state_inputs_are_fresh(state, &mut build_state_input_freshness)?
     {
@@ -982,7 +1003,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         .filter(|state| build_state_is_compatible(state, &mode_key, &pdf_path));
     let mut build_state_input_freshness = HashMap::new();
     if !options.force
-        && pdf_path.exists()
+        && direct_artifacts_exist(options, &out_dir, &job_name, &pdf_path)
         && let Some(state) = compatible_previous_build_state
         && build_state_inputs_are_fresh(state, &mut build_state_input_freshness)?
     {
@@ -2788,6 +2809,14 @@ fn source_preflight_scan(
 }
 
 fn source_seed_dependency_paths(main: &Path) -> Result<Vec<PathBuf>> {
+    let state = source_seed_dependency_state(main)?;
+    let mut paths = state.paths;
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn source_seed_dependency_state(main: &Path) -> Result<SourceSeedState> {
     let doc_dir = main
         .parent()
         .context("root TeX file has no parent directory")?;
@@ -2800,10 +2829,7 @@ fn source_seed_dependency_paths(main: &Path) -> Result<Vec<PathBuf>> {
     };
     let mut state = SourceSeedState::default();
     collect_source_seed_dependency_paths(context, main, &mut state)?;
-    let mut paths = state.paths;
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
+    Ok(state)
 }
 
 #[derive(Clone, Copy)]
@@ -10943,6 +10969,16 @@ fn build_state_is_compatible(state: &BuildState, mode_key: &str, pdf_path: &Path
     state.version == BUILD_STATE_VERSION
         && state.mode_key == mode_key
         && state.pdf_path == pdf_path.display().to_string()
+}
+
+fn direct_artifacts_exist(
+    options: &BuildOptions,
+    out_dir: &Path,
+    job_name: &str,
+    pdf_path: &Path,
+) -> bool {
+    pdf_path.exists()
+        && (!options.synctex || out_dir.join(format!("{job_name}.synctex.gz")).exists())
 }
 
 fn build_state_inputs_are_fresh(

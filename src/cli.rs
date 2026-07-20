@@ -25,12 +25,28 @@ pub enum Command {
     Build(BuildArgs),
     /// Safely remove the configured build output directory.
     Clean(CleanArgs),
+    /// Create a complete tekai.toml with the default settings.
+    Init(InitArgs),
     /// Lint TeX sources for structural and style issues.
     Lint(LintArgs),
-    /// Lint a document tree, then build when lint passes.
+    /// Lint a root document and its referenced TeX sources, then build.
     Check(CheckArgs),
     /// Watch dependencies and rebuild after relevant changes.
     Watch(WatchArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+#[command(
+    after_help = "EXAMPLES:\n  tekai init\n  tekai init config/tekai.toml\n  tekai init --force"
+)]
+pub struct InitArgs {
+    /// Configuration file to create.
+    #[arg(default_value = "tekai.toml")]
+    pub path: PathBuf,
+
+    /// Replace an existing configuration file.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -84,14 +100,14 @@ pub struct BuildArgs {
     after_help = "EXAMPLES:\n  tekai check main.tex --allow-warnings\n  tekai check main.tex --fix\n  tekai check main.tex --report-json --allow-warnings"
 )]
 pub struct CheckArgs {
-    /// Root TeX document to lint and compile.
+    /// Root TeX document whose referenced source graph is linted and compiled.
     pub main: PathBuf,
 
     /// Configuration file. Defaults to ./tekai.toml when it exists.
     #[arg(long)]
     pub config: Option<PathBuf>,
 
-    /// Emit a machine-readable JSON build report to stdout after lint passes.
+    /// Emit diagnostics and, when lint passes, the build report as JSON.
     #[arg(long)]
     pub report_json: bool,
 

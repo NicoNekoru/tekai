@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -7,6 +9,87 @@ use serde::Deserialize;
 
 use crate::compiler::{BibMode, DraftPrepass, Engine, Runner};
 use crate::lint::{IndentStyle, LintConfig, ProseWrap, RuleLevel};
+
+/// A complete, documented project configuration using Tekai's defaults.
+///
+/// Optional values with no active default are shown as commented examples so
+/// that initializing a project does not change its behavior.
+pub const DEFAULT_CONFIG: &str = r#"[build]
+engine = "tekai-engine"
+runner = "direct"
+bib = "auto"
+out_dir = "build"
+# job_name = "paper" # unset: use the root document's file stem
+fast = false
+draft_prepass = "auto"
+once = false
+max_runs = 8
+force = false
+precompile_preamble = false
+synctex = false
+shell_escape = false
+print_command = false
+quiet = false
+
+[build.env]
+# No environment variables are set by default. Examples:
+# TEXINPUTS = "tex//:"
+# BIBINPUTS = "bib//:"
+# BSTINPUTS = "bst//:"
+# INDEXSTYLE = "styles//:"
+# TEXINDEXSTYLE = "styles//:"
+
+[lint]
+indent_size = 2
+indent_style = "spaces"
+indent_environments = true
+indent_display_math = true
+ignored_indent_environments = ["document"]
+prefer_paren_inline_math = true
+prefer_bracket_display_math = true
+prefer_prime_command = false
+check_environment_stack = true
+max_line_length = 120
+# prose_wrap = "unwrapped" # unset by default; may also be "hardwrap"
+
+[lint.rules]
+# Rules use their built-in levels by default. Override them with "off", "warn",
+# or "error", for example:
+# "math/prime-command" = "warn"
+# "math/inline-dollar" = "error"
+# "line/length" = "off"
+"#;
+
+pub fn write_default_config(path: &Path, force: bool) -> Result<()> {
+    if path.exists() && !force {
+        anyhow::bail!(
+            "configuration file {} already exists; pass --force to replace it",
+            path.display()
+        );
+    }
+
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    }
+
+    let mut options = OpenOptions::new();
+    options.write(true);
+    if force {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("failed to create config {}", path.display()))?;
+    file.write_all(DEFAULT_CONFIG.as_bytes())
+        .with_context(|| format!("failed to write config {}", path.display()))?;
+    Ok(())
+}
 
 #[derive(Debug, Default, Deserialize)]
 struct RawConfig {

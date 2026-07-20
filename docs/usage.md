@@ -2,6 +2,7 @@
 
 This is the user-facing reference for `tekai`. Run `tekai <command>
 --help` for the exact flags supported by the installed binary.
+Every subcommand also supports the equivalent `tekai help <command>` form.
 
 ## Running the CLI
 
@@ -12,7 +13,7 @@ brew install NicoNekoru/tap/tekai
 tekai --version
 ```
 
-The 0.1.0 release supports macOS. Linux is not currently a supported target.
+The 0.2.0 release supports macOS. Linux is not currently a supported target.
 
 For development from a checkout:
 
@@ -32,8 +33,9 @@ the CLI but does not choose a TeX distribution for you.
 
 | Command | Behavior |
 | --- | --- |
+| `init [PATH]` | Create a complete default config at `PATH` (default `tekai.toml`); use `--force` to replace one. |
 | `build MAIN` | Compile a root TeX document. |
-| `check MAIN` | Lint the document tree, then build if lint passes; add `--fix` to apply safe fixes first. |
+| `check MAIN` | Lint `MAIN` and its referenced TeX source graph, then build if lint passes; add `--fix` to apply safe fixes first. |
 | `watch MAIN` | Watch relevant source/dependency files and rebuild. |
 | `lint [PATH ...]` | Lint files or directories; defaults to the current directory. |
 | `clean` | Safely remove the configured output directory. |
@@ -170,6 +172,14 @@ the [divergence audit](../output/pdf/pdftex-native-divergence-audit.md).
 default. All commands accept `--config PATH`. Explicit CLI build flags override
 configuration; omitted flags retain configured values.
 
+Initialize a documented config containing every effective default with:
+
+```sh
+tekai init
+# Or choose a path; existing files are preserved unless --force is explicit.
+tekai init config/tekai.toml
+```
+
 ```toml
 [build]
 engine = "tekai-engine"
@@ -263,8 +273,10 @@ tekai clean --dry-run --report-json
 
 Build reports include cache status, PDF path, total/draft/final/PDF-producing
 TeX runs, per-pass timing and rerun reasons, bibliography/index/external runs,
-and preflight/preamble-format usage. In `check --report-json`, lint diagnostics
-go to stderr so successful stdout remains parseable JSON.
+and preflight/preamble-format usage. `check --report-json` always includes the
+lint diagnostics and counts that gated the build. When lint passes, the same
+object is augmented with the normal build-report fields; when lint blocks the
+build, it exits with status 1 and omits those build fields.
 
 ## Linting
 
@@ -277,6 +289,11 @@ tekai check paper/main.tex --fix --allow-warnings
 
 `lint` is read-only and scans `.tex`, `.ltx`, and `.cls` files. Package `.sty`
 files remain build and watch dependencies but are not lint targets.
+
+`check MAIN` does not sweep `MAIN`'s parent directory. It always lints the
+explicit root, follows the TeX sources referenced by that document, and ignores
+unreferenced sibling files. Project build environment such as `TEXINPUTS` is
+applied before resolving this source graph.
 
 `check --fix` follows the Ruff-style check/fix loop: it rewrites deterministic,
 safe fixes, lints the updated sources, and builds only when the remaining

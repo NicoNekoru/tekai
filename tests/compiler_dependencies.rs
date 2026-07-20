@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use tekai::compiler::{
     BibMode, BuildOptions, DraftPrepass, Engine, Runner, build, build_dependency_paths,
+    tex_source_dependency_paths,
 };
 
 const DATA_DOC: &str = r#"\documentclass{article}
@@ -11,6 +12,34 @@ const DATA_DOC: &str = r#"\documentclass{article}
 \end{document}
 "#;
 const DATA_SOURCE: &str = "Recorded data dependency.\n";
+
+#[test]
+fn lint_source_graph_contains_only_referenced_lintable_sources() {
+    let root = unique_temp_dir("tekai-lint-source-graph-test");
+    fs::create_dir_all(&root).expect("failed to create test directory");
+    let main = root.join("main.tex");
+    let section = root.join("section.tex");
+    let package = root.join("localpkg.sty");
+    let unrelated = root.join("unrelated.tex");
+    fs::write(&main, "\\usepackage{localpkg}\n\\input{section}\n")
+        .expect("failed to write root source");
+    fs::write(&section, "Referenced source.\n").expect("failed to write referenced source");
+    fs::write(&package, "\\ProvidesPackage{localpkg}\n").expect("failed to write package");
+    fs::write(&unrelated, "Unrelated source.\n").expect("failed to write unrelated source");
+
+    let paths = tex_source_dependency_paths(&main).expect("failed to resolve source graph");
+    assert_eq!(
+        paths,
+        vec![
+            main.canonicalize().expect("failed to canonicalize root"),
+            section
+                .canonicalize()
+                .expect("failed to canonicalize referenced source"),
+        ]
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
 
 #[test]
 fn direct_build_state_tracks_nonstandard_source_dependencies() {

@@ -26,7 +26,7 @@ The formula builds `tekai` from source. TeX Live or MacTeX remains the package,
 font, format-data, and auxiliary-tool distribution; Tekai supplies the engine
 and build system.
 
-Tekai 0.1.0 supports macOS. Linux portability work is not part of this release.
+Tekai 0.2.0 supports macOS. Linux portability work is not part of this release.
 
 To install from a checkout instead:
 
@@ -57,6 +57,9 @@ cargo run -- build examples/minimal.tex
 Common workflows:
 
 ```sh
+# Create a documented tekai.toml containing every default setting.
+tekai init
+
 # Lint, then build only if lint passes.
 tekai check path/to/main.tex --allow-warnings
 
@@ -77,6 +80,20 @@ tekai clean
 
 See [Usage and configuration](docs/usage.md) for the full command, engine,
 preview, cache, configuration, and lint reference.
+
+## Editor integrations
+
+First-party subprojects provide the same lint/build/preview loop inside VS Code
+and Neovim:
+
+- [`editors/vscode`](editors/vscode/README.md) publishes Tekai diagnostics to
+  the Problems panel and can render a refreshing PDF preview tab;
+- [`editors/nvim`](editors/nvim/README.md) publishes through `vim.diagnostic`
+  and drives a configurable external PDF viewer.
+
+Both integrations support exact builds, fast one-shot previews, live
+`watch --preview`, configurable root files, and `% !TEX root = ...` comments.
+See [Editor integrations](docs/editors.md) for their shared CLI contract.
 
 ## Build modes
 
@@ -172,6 +189,8 @@ Current evidence and known limits are recorded in:
 | `src/lint.rs` | Single-pass TeX-aware linting, safe fixes, prose policy, and suppression handling. |
 | `crates/tekai-engine` | Self-contained exact typesetting engine. |
 | `crates/tekai-pdftex` | Experimental native renderer and next-engine architecture. |
+| `editors/vscode` | VS Code diagnostics, builds, and embedded/system PDF preview. |
+| `editors/nvim` | Neovim diagnostics, commands, and live external PDF preview. |
 | `tests` | CLI and document-workflow integration tests. |
 | `examples` | Minimal, BibLaTeX, and two large real-paper fixtures. |
 

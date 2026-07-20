@@ -3281,7 +3281,7 @@ unsafe extern "C" fn get_input_file_name() -> string {
     }
     return input_file_name;
 }
-static mut long_options: [option; 40] = unsafe {
+static mut long_options: [option; 41] = unsafe {
     [
         option {
             name: DUMP_OPTION.as_ptr(),
@@ -3513,6 +3513,12 @@ static mut long_options: [option; 40] = unsafe {
         },
         option {
             name: b"no-mktex\0" as *const u8 as *const ::core::ffi::c_char,
+            has_arg: 1 as ::core::ffi::c_int,
+            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
+            val: 0 as ::core::ffi::c_int,
+        },
+        option {
+            name: b"synctex\0" as *const u8 as *const ::core::ffi::c_char,
             has_arg: 1 as ::core::ffi::c_int,
             flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
             val: 0 as ::core::ffi::c_int,
@@ -3834,6 +3840,18 @@ unsafe extern "C" fn parse_options(mut argc_0: ::core::ffi::c_int, mut argv_0: *
                 );
                 fflush(__stderrp);
             }
+        } else if !long_options[option_index as usize].name.is_null()
+            && !(b"synctex\0" as *const u8 as *const ::core::ffi::c_char).is_null()
+            && strcmp(
+                long_options[option_index as usize].name,
+                b"synctex\0" as *const u8 as *const ::core::ffi::c_char,
+            ) == 0 as ::core::ffi::c_int
+        {
+            synctexoption = strtol(
+                optarg,
+                ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
+                0 as ::core::ffi::c_int,
+            ) as integer;
         } else if !long_options[option_index as usize].name.is_null()
             && !(b"help\0" as *const u8 as *const ::core::ffi::c_char).is_null()
             && strcmp(

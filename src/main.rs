@@ -7,11 +7,14 @@ use anyhow::{Context, Result, bail};
 use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use serde::Serialize;
-use tekai::cli::{BuildArgs, CheckArgs, CleanArgs, Cli, Command, LintArgs, WatchArgs};
+use tekai::cli::{BuildArgs, CheckArgs, CleanArgs, Cli, Command, InitArgs, LintArgs, WatchArgs};
 use tekai::compiler::{
     BuildOptions, EMBEDDED_ENGINE_RUNNER_ENV, EMBEDDED_ENGINE_SUBCOMMAND, build,
+    tex_source_dependency_paths,
 };
-use tekai::config::{BuildConfig, load_build_config, load_lint_config, load_project_config};
+use tekai::config::{
+    BuildConfig, load_build_config, load_lint_config, load_project_config, write_default_config,
+};
 use tekai::lint::{Diagnostic, Severity, fix_paths, format_diagnostic, has_errors, lint_paths};
 use tekai::watch::{WatchOptions, watch};
 
@@ -27,10 +30,17 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Build(args) => run_build(args, build_flag_sources),
         Command::Clean(args) => run_clean(args),
+        Command::Init(args) => run_init(args),
         Command::Lint(args) => run_lint(args),
         Command::Check(args) => run_check(args, build_flag_sources),
         Command::Watch(args) => run_watch(args, build_flag_sources),
     }
+}
+
+fn run_init(args: InitArgs) -> Result<()> {
+    write_default_config(&args.path, args.force)?;
+    eprintln!("initialized {}", args.path.display());
+    Ok(())
 }
 
 fn enable_embedded_engine_runner() -> Result<()> {
@@ -266,7 +276,8 @@ fn run_lint(args: LintArgs) -> Result<()> {
 fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
     let report_json = args.report_json;
     let config = load_project_config(args.config.as_deref())?;
-    let lint_target = vec![document_root(&args.main)];
+    apply_build_env(&config.build);
+    let lint_target = tex_source_dependency_paths(&args.main)?;
     if args.fix {
         let fix_report = fix_paths(&lint_target, &config.lint)?;
         if fix_report.fixes_applied > 0 {
@@ -278,13 +289,15 @@ fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
         }
     }
     let diagnostics = lint_paths(&lint_target, &config.lint)?;
-    print_lint_diagnostics(&diagnostics, report_json);
-    if has_errors(&diagnostics)
-        || (args.lint_flags.should_fail_on_warnings() && !diagnostics.is_empty())
-    {
+    let lint_failed = has_errors(&diagnostics)
+        || (args.lint_flags.should_fail_on_warnings() && !diagnostics.is_empty());
+    if report_json && lint_failed {
+        print_check_report_json(&diagnostics, None)?;
         std::process::exit(1);
     }
-    apply_build_env(&config.build);
+    if !report_json {
+        print_lint_diagnostics(&diagnostics, false);
+    }
     let mut options = build_options(args.main, args.flags, &config.build, flag_sources);
     if report_json {
         options.quiet = true;
@@ -292,7 +305,7 @@ fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
     }
     let report = build(&options)?;
     if report_json {
-        print_build_report_json(&report)?;
+        print_check_report_json(&diagnostics, Some(&report))?;
     } else if let Some(ref pdf) = report.pdf_path {
         print_build_report(pdf, &report);
     }
@@ -670,6 +683,25 @@ fn print_lint_report_json(diagnostics: &[Diagnostic]) -> Result<()> {
         "{}",
         serde_json::to_string_pretty(&JsonLintReport::from(diagnostics))?
     );
+    Ok(())
+}
+
+fn print_check_report_json(
+    diagnostics: &[Diagnostic],
+    build_report: Option<&tekai::compiler::BuildReport>,
+) -> Result<()> {
+    let mut report = serde_json::to_value(JsonLintReport::from(diagnostics))?;
+    let object = report
+        .as_object_mut()
+        .expect("serialized check report should be a JSON object");
+    if let Some(build_report) = build_report {
+        let build = serde_json::to_value(JsonBuildReport::from(build_report))?;
+        let build = build
+            .as_object()
+            .expect("serialized build report should be a JSON object");
+        object.extend(build.clone());
+    }
+    println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
 

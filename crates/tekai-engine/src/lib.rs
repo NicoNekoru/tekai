@@ -72,6 +72,8 @@ pub unsafe fn run_from_c_args(
     argv: *mut *mut ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
     unsafe {
+        generated::pdftexextra::synctexoption = ::core::ffi::c_int::MAX;
+        synctex::reset_for_run();
         generated::pdftexextra::maininit(argc, argv);
         generated::pdftexini::mainbody();
     }

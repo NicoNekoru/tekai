@@ -52,6 +52,17 @@ Integration tests that depend on optional external programs skip when those
 programs are unavailable. Do not interpret a skipped optional integration as
 proof that the external workflow works on the current machine.
 
+Editor-only changes have focused gates in their package directories:
+
+```sh
+(cd editors/vscode && npm install && npm test)
+(cd editors/nvim && nvim --headless -u NONE -l tests/run.lua)
+```
+
+The VS Code test compiles the complete extension before exercising its JSON and
+watch-output protocol. The Neovim test loads the plugin in a clean headless
+instance and verifies its protocol plus user-command registration.
+
 ## PDF fidelity gate
 
 For changes to the embedded engine, scheduler pass selection, font/image/PDF
@@ -118,6 +129,8 @@ must preserve dependency filtering and structural fallbacks.
   hot-path changes narrow and validate them on real documents.
 - `crates/tekai-pdftex/src/native.rs` is experimental. Unsupported behavior
   should be named or fall back, never silently approximated as exact.
+- `editors/vscode` and `editors/nvim` are thin clients of the public CLI. Keep
+  their diagnostic and build-report decoding aligned with `--report-json`.
 
 The long-term native-engine design is in
 [`crates/tekai-pdftex/ARCHITECTURE.md`](../crates/tekai-pdftex/ARCHITECTURE.md).

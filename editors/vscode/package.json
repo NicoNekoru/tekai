@@ -1,0 +1,182 @@
+{
+  "name": "tekai",
+  "displayName": "Tekai",
+  "description": "Fast LaTeX linting, builds, and live PDF previews powered by Tekai.",
+  "version": "0.2.0",
+  "publisher": "tekai",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NicoNekoru/tekai.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages",
+    "Visualization"
+  ],
+  "keywords": [
+    "latex",
+    "tex",
+    "lint",
+    "pdf",
+    "preview"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:latex",
+    "onLanguage:tex"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "compile": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run compile && node --test dist/test/**/*.test.js",
+    "vscode:prepublish": "npm run clean && npm run compile",
+    "package": "npx @vscode/vsce package"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "tekai.lint",
+        "title": "Lint Current File",
+        "category": "Tekai",
+        "icon": "$(check)"
+      },
+      {
+        "command": "tekai.lintWorkspace",
+        "title": "Lint Workspace",
+        "category": "Tekai"
+      },
+      {
+        "command": "tekai.build",
+        "title": "Build PDF",
+        "category": "Tekai",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "tekai.preview",
+        "title": "Build and Open Fast Preview",
+        "category": "Tekai",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "tekai.watch",
+        "title": "Start Live Preview",
+        "category": "Tekai",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "tekai.stop",
+        "title": "Stop Live Preview",
+        "category": "Tekai",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "tekai.openPdf",
+        "title": "Open Last PDF",
+        "category": "Tekai"
+      },
+      {
+        "command": "tekai.showOutput",
+        "title": "Show Output",
+        "category": "Tekai"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "tekai.build",
+          "when": "resourceExtname == .tex || resourceExtname == .ltx",
+          "group": "navigation@10"
+        },
+        {
+          "command": "tekai.watch",
+          "when": "resourceExtname == .tex || resourceExtname == .ltx",
+          "group": "navigation@11"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Tekai",
+      "properties": {
+        "tekai.executable": {
+          "type": "string",
+          "default": "tekai",
+          "description": "Path to the Tekai executable."
+        },
+        "tekai.mainFile": {
+          "type": "string",
+          "default": "",
+          "description": "Root TeX file, relative to the workspace. When empty, Tekai uses a % !TEX root comment or discovers a document root."
+        },
+        "tekai.configFile": {
+          "type": "string",
+          "default": "",
+          "description": "Optional tekai.toml path, relative to the workspace."
+        },
+        "tekai.lint.run": {
+          "type": "string",
+          "enum": [
+            "onSave",
+            "manual"
+          ],
+          "default": "onSave",
+          "description": "When to run Tekai lint diagnostics."
+        },
+        "tekai.build.onSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Build the root document after saving a TeX file."
+        },
+        "tekai.build.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional arguments appended to Tekai build commands."
+        },
+        "tekai.preview.viewer": {
+          "type": "string",
+          "enum": [
+            "tab",
+            "external"
+          ],
+          "default": "tab",
+          "description": "Open PDFs in a VS Code preview tab or the system viewer."
+        },
+        "tekai.preview.openAfterBuild": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the PDF after a preview build or when live preview first succeeds."
+        },
+        "tekai.preview.finalAfterIdleMs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": 1500,
+          "minimum": 0,
+          "description": "Also make an exact build after this many idle milliseconds during live preview; use null to disable."
+        },
+        "tekai.preview.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional arguments appended to Tekai preview and watch commands."
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "1.96.0",
+    "typescript": "^5.7.2"
+  }
+}
