@@ -16,6 +16,8 @@ versioning.
   engines, runners, and shell escape remain separate opt-ins.
 - Made root-document commands discover the nearest project configuration and
   stopped text-mode checks before compilation when linting fails.
+- Fixed scheduled EPS output names when a document explicitly prioritizes EPS,
+  so opt-in conversion does not require TeX to run another shell command.
 - Added dependency-free package, font, bibliography, and large-paper regression
   tests before optional TeX installation in CI.
 

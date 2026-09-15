@@ -14,10 +14,14 @@ same format, package data, font maps, and settled auxiliary files.
 | arxiv-2605 | 48 | 48 | 0 |
 | arxiv-2511 | 50 | 50 | 0 |
 
-The seven dependency-free integration tests also passed, including the new
+The package and font integration tests also passed, including the new
 conference overlay test. It loads `eso-pic`, `fancyhdr`, and `times`, verifies
 the selected small-cap, bold, and italic font names and embedded outlines, and
 rejects font substitution warnings with no installed tools available.
+
+An additional scheduler regression test requires an explicit opt-in for EPS
+conversion, then verifies that TeX consumes the scheduled PDF without running
+a shell command, even when the document prioritizes EPS over PDF files.
 
 Runtime bundle SHA-256:
 `8a8ffa578ce9af75b0a79b2c5f3265e1351f723ec5401144ede3319006ea107c`.

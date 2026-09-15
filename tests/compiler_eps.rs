@@ -306,12 +306,22 @@ fn direct_runner_honors_declared_graphics_extension_order_for_eps() {
     write_fake_epstopdf(&fake_bin.join("epstopdf"), &fixture_pdf);
     let _path_guard = PathGuard::prepend(&fake_bin);
 
-    let first =
-        build(&options(&main, &out_dir)).expect("initial declared extension EPS build failed");
+    let first = build(&options(&main, &out_dir)).unwrap_or_else(|error| {
+        panic!(
+            "initial declared extension EPS build failed: {error:#}\n{}",
+            fs::read_to_string(out_dir.join("main.log")).unwrap_or_default()
+        )
+    });
     assert_eq!(first.external_runs, 1, "{first:#?}");
     assert_eq!(first.tex_runs, 1, "{first:#?}");
     assert!(out_dir.join("main.pdf").exists());
-    assert!(out_dir.join("fig.pdf").exists());
+    assert!(out_dir.join("fig-eps-converted-to.pdf").exists());
+    let log = fs::read_to_string(out_dir.join("main.log")).expect("failed to read TeX log");
+    assert!(log.contains("fig-eps-converted-to.pdf"), "{log}");
+    assert!(
+        !log.contains("runsystem("),
+        "TeX must not run a converter: {log}"
+    );
     assert_eq!(fake_invocations(&out_dir), 1);
 
     let cached =

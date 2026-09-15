@@ -8537,14 +8537,16 @@ fn resolve_eps_graphic_input(
                 if !candidate.is_file() {
                     continue;
                 }
-                return Ok((declared_extension == "eps").then_some((candidate, false)));
+                // With an explicit extension order TeX still selects the EPS
+                // source, so epstopdf-base expects its suffixed PDF name.
+                return Ok((declared_extension == "eps").then_some((candidate, true)));
             }
         }
         for directory in std::iter::once(PathBuf::new()).chain(graphic_paths.iter().cloned()) {
             let payload = directory.join(requested).to_string_lossy().to_string();
             for declared_extension in declared_extensions {
                 if let Some(path) = resolve_kpathsea_input(doc_dir, &payload, declared_extension)? {
-                    return Ok((declared_extension == "eps").then_some((path, false)));
+                    return Ok((declared_extension == "eps").then_some((path, true)));
                 }
             }
         }
@@ -13940,7 +13942,7 @@ mod tests {
         let resolved = resolve_eps_graphic_input(&root, &[], "fig", Some(&eps_first))
             .expect("EPS-first resolution failed")
             .expect("EPS-first declaration should select EPS");
-        assert_eq!(resolved, (root.join("fig.eps"), false));
+        assert_eq!(resolved, (root.join("fig.eps"), true));
         assert_eq!(
             resolve_eps_graphic_input(&root, &[], "fig", Some(&raster_first))
                 .expect("raster-first resolution failed"),

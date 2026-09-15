@@ -269,6 +269,76 @@ fn check_runs_bibtex_in_process_with_bundled_styles() {
 
 #[cfg(unix)]
 #[test]
+fn declared_eps_conversion_uses_the_scheduled_pdf_without_shell_escape() {
+    use std::os::unix::fs::PermissionsExt;
+    let project = Project::new();
+    project.write(
+        "fixture.tex",
+        "\\documentclass{article}\n\\begin{document}\nConverted graphic.\n\\end{document}\n",
+    );
+    project.success(&["build", "fixture.tex", "--report-json"]);
+    fs::copy(
+        project.0.join("build/fixture.pdf"),
+        project.0.join("fig.pdf"),
+    )
+    .unwrap();
+    project.write(
+        "main.tex",
+        r"\documentclass{article}
+\usepackage{graphicx}
+\DeclareGraphicsExtensions{.eps,.pdf}
+\begin{document}
+\includegraphics[width=1cm]{fig}
+\end{document}
+",
+    );
+    project.write(
+        "fig.eps",
+        "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\n",
+    );
+    project.write(
+        "empty-bin/epstopdf",
+        r#"#!/bin/sh
+set -eu
+for arg in "$@"; do
+  case "$arg" in
+    --outfile=*) /bin/cp build/fixture.pdf "${arg#--outfile=}" ;;
+  esac
+done
+printf invoked >> epstopdf-invocations
+"#,
+    );
+    fs::set_permissions(
+        project.0.join("empty-bin/epstopdf"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+
+    let disabled = project.run(&["build", "main.tex", "--report-json"]);
+    assert!(!disabled.status.success());
+    assert!(String::from_utf8_lossy(&disabled.stderr).contains("--external-tools"));
+    assert!(!project.0.join("epstopdf-invocations").exists());
+
+    let report = project.success(&["build", "main.tex", "--report-json", "--external-tools"]);
+    assert_eq!(report["external_runs"], 1);
+    assert!(project.0.join("build/fig-eps-converted-to.pdf").is_file());
+    let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+    assert!(log.contains("fig-eps-converted-to.pdf"), "{log}");
+    assert!(
+        !log.contains("runsystem("),
+        "TeX must not run a converter: {log}"
+    );
+    assert_eq!(
+        fs::read_to_string(project.0.join("epstopdf-invocations")).unwrap(),
+        "invoked"
+    );
+    let cached = project.success(&["build", "main.tex", "--report-json", "--external-tools"]);
+    assert_eq!(cached["external_runs"], 0);
+    assert_eq!(cached["skipped"], true);
+}
+
+#[cfg(unix)]
+#[test]
 fn check_never_launches_installed_lookup_or_auxiliary_tools_by_default() {
     use std::os::unix::fs::PermissionsExt;
     let project = Project::new();
