@@ -18,9 +18,15 @@ reference system at the repository's dated 144 DPI parity gate.
 Homebrew on macOS:
 
 ```sh
-brew install NicoNekoru/tap/tekai
+brew tap NicoNekoru/tap
+brew trust --formula NicoNekoru/tap/tekai
+brew install tekai
 tekai --version
 ```
+
+Tap setup and formula trust are only needed once. For later upgrades, run
+`brew upgrade tekai`. Homebrew versions without `brew trust` can use
+`brew install NicoNekoru/tap/tekai` for the first installation.
 
 The formula builds `tekai` from source. The executable includes its engine,
 LaTeX format, a pinned package/font bundle, and BibTeX. Default builds and

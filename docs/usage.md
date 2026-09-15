@@ -9,11 +9,19 @@ Every subcommand also supports the equivalent `tekai help <command>` form.
 Install the current release from the public Homebrew tap:
 
 ```sh
-brew install NicoNekoru/tap/tekai
+brew tap NicoNekoru/tap
+brew trust --formula NicoNekoru/tap/tekai
+brew install tekai
 tekai --version
 ```
 
-The 0.2.0 release supports macOS. Linux is not currently a supported target.
+Once the tap and formula are trusted, use the short name for installs and
+upgrades: `brew install tekai` and `brew upgrade tekai`. On Homebrew versions
+without `brew trust`, use `brew install NicoNekoru/tap/tekai` for the first
+installation. The existing `NicoNekoru/tap` repository remains the package
+source; no dedicated `NicoNekoru/tekai` tap is needed.
+
+The 0.3.0 release supports macOS. Linux is not currently a supported target.
 
 For development from a checkout:
 
