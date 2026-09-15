@@ -1,6 +1,59 @@
 # Tekai engine parity report
 
-Initial measurement: 2026-07-05; rendered parity revalidated: 2026-07-17.
+Initial measurement: 2026-07-05; bundled runtime parity revalidated: 2026-09-15.
+
+## 0.3.0 release gate
+
+On 2026-09-15, the optimized 0.3.0 release binary rebuilt both public fixtures
+with an empty `PATH`. All 98 pages matched the pinned upstream pdfTeX reference
+pixel for pixel at 144 DPI, and extracted text matched. The reference used the
+same format, package data, font maps, and settled auxiliary files.
+
+| Case | Candidate pages | Reference pages | Changed pages at 144 DPI |
+| --- | ---: | ---: | ---: |
+| arxiv-2605 | 48 | 48 | 0 |
+| arxiv-2511 | 50 | 50 | 0 |
+
+The seven dependency-free integration tests also passed, including the new
+conference overlay test. It loads `eso-pic`, `fancyhdr`, and `times`, verifies
+the selected small-cap, bold, and italic font names and embedded outlines, and
+rejects font substitution warnings with no installed tools available.
+
+Runtime bundle SHA-256:
+`8a8ffa578ce9af75b0a79b2c5f3265e1351f723ec5401144ede3319006ea107c`.
+Format SHA-256:
+`69de600c88d067beb22b50eeb0ac35bc9b912379811f6dedecdafec4d71e6503`.
+
+## Dependency-free runtime gate
+
+On 2026-09-13, both fixtures built with the optimized release binary and an
+empty `PATH`, using only the
+embedded engine, format, package/font data, and in-process BibTeX. No MacTeX
+or TeX Live installation was present. The reference was the checksum-pinned
+upstream pdfTeX 1.40.29 executable from TeX Live revision 78096, extracted
+temporarily rather than installed. Both engines used the same bundled format,
+package data, font maps, and settled auxiliary files.
+
+| Case | Candidate pages | Reference pages | Changed pages at 144 DPI | Extracted text |
+| --- | ---: | ---: | ---: | --- |
+| arxiv-2605 | 48 | 48 | 0 | Identical |
+| arxiv-2511 | 50 | 50 | 0 | Identical |
+
+Every page's PPM pixels matched exactly. Font listings were inspected, and
+representative first and final pages were checked visually. This is a fidelity
+check, not a performance measurement or a claim that every CTAN package is
+included.
+
+Runtime bundle SHA-256:
+`716e412a636be47ccbd20b38bc74a85d30aef091e3e2d033470e2760ed8df6ad`.
+Format SHA-256:
+`69de600c88d067beb22b50eeb0ac35bc9b912379811f6dedecdafec4d71e6503`.
+
+Reproduce with `python3 tools/verify_bundled_papers.py --engine target/release/tekai`
+after building Tekai in release mode.
+That maintainer gate records the reference URL/checksum, page comparisons,
+`pdfinfo`, and font listings in `target/runtime-parity/report.json`.
+The normal CLI and Cargo build do not download or run that reference.
 
 ## Summary
 

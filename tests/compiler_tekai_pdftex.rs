@@ -503,13 +503,19 @@ fn tekai_pdftex_native_backend_writes_float_lists() {
 
 #[test]
 fn tekai_pdftex_native_backend_writes_index_sidecar() {
+    if !command_available("makeindex") {
+        eprintln!("skipping external MakeIndex integration; makeindex is unavailable");
+        return;
+    }
     let root = unique_temp_dir("tekai-pdftex-native-index");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
     fs::write(&main, NATIVE_INDEX_DOC).expect("failed to write TeX source");
 
-    let report = build(&options(&main, &out_dir)).expect("native tekai-pdftex index build failed");
+    let mut build_options = options(&main, &out_dir);
+    build_options.external_tools = true;
+    let report = build(&build_options).expect("native tekai-pdftex index build failed");
 
     assert!(!report.skipped, "{report:#?}");
     assert!(report.tex_runs >= 1, "{report:#?}");
@@ -526,7 +532,7 @@ fn tekai_pdftex_native_backend_writes_index_sidecar() {
     );
     assert!(out_dir.join("main.ind").exists());
 
-    let cached = build(&options(&main, &out_dir)).expect("cached native index build failed");
+    let cached = build(&build_options).expect("cached native index build failed");
     assert!(cached.skipped, "{cached:#?}");
     assert_eq!(cached.tex_runs, 0, "{cached:#?}");
 
@@ -724,7 +730,9 @@ fn tekai_pdftex_fallback_preserves_pdflatex_bibtex_scheduler() {
     )
     .expect("failed to write bibliography");
 
-    let report = build(&options(&main, &out_dir)).expect("fallback tekai-pdftex build failed");
+    let mut build_options = options(&main, &out_dir);
+    build_options.external_tools = true;
+    let report = build(&build_options).expect("fallback tekai-pdftex build failed");
 
     assert!(!report.skipped, "{report:#?}");
     assert!(report.tex_runs >= 1, "{report:#?}");
@@ -753,6 +761,7 @@ fn options(main: &Path, out_dir: &Path) -> BuildOptions {
         precompile_preamble: false,
         synctex: false,
         shell_escape: false,
+        external_tools: false,
         quiet: true,
         print_command: false,
     }

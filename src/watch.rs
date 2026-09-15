@@ -2271,6 +2271,7 @@ mod tests {
                 precompile_preamble: false,
                 synctex: false,
                 shell_escape: false,
+                external_tools: true,
                 quiet: true,
                 print_command: false,
             },

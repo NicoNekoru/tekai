@@ -24,10 +24,17 @@ target/release/tekai --help
 
 Use `cargo run -- <command>` while developing the CLI itself.
 
-`tekai` requires TeX Live or MacTeX for LaTeX packages, fonts, formats, and
-filename databases. Document-specific workflows also require their own tools,
-such as Biber, MakeIndex, Inkscape, or PythonTeX. The Homebrew formula installs
-the CLI but does not choose a TeX distribution for you.
+The default `tekai-engine` path needs no TeX Live or MacTeX installation.
+The executable embeds a pinned set of packages, fonts, maps, the LaTeX format,
+and a BibTeX implementation. It extracts its bundled data into the engine
+cache on first use, without network access or a helper program. File lookup
+uses project files, explicit search paths, and the bundle, never `kpsewhich`
+or automatic discovery of system TeX trees. See the
+[package manifest](../runtime/packages.lock.json) for the bundled set.
+
+This is not every CTAN package or every TeX auxiliary program. Supply extra
+package files through `TEXINPUTS`. Unsupported auxiliary workflows fail by
+default; `--external-tools` explicitly enables installed compatibility tools.
 
 ## Commands
 
@@ -80,7 +87,7 @@ tekai build paper/main.tex --precompile-preamble
 
 # Select bibliography handling explicitly.
 tekai build paper/main.tex --bib bibtex
-tekai build paper/main.tex --bib biber
+tekai build paper/main.tex --bib biber --external-tools
 tekai build paper/main.tex --bib none
 
 # Choose a single-file output job name.
@@ -168,8 +175,11 @@ the [divergence audit](../output/pdf/pdftex-native-divergence-audit.md).
 
 ## Configuration
 
-`build`, `check`, and `watch` load `tekai.toml` from the current directory by
-default. All commands accept `--config PATH`. Explicit CLI build flags override
+`build`, `check`, and `watch` find the nearest `tekai.toml` at or above the root
+document's directory. This also applies when the document is passed from a
+parent directory, so `check --fix` uses the same lint policy as `check`. `lint`
+and `clean` use `./tekai.toml` by default. All commands accept `--config PATH`;
+an explicit path takes precedence. Explicit CLI build flags override
 configuration; omitted flags retain configured values.
 
 Initialize a documented config containing every effective default with:
@@ -195,6 +205,7 @@ force = false
 precompile_preamble = false
 synctex = false
 shell_escape = false
+external_tools = false
 quiet = false
 print_command = false
 
@@ -342,11 +353,18 @@ the target line.
 
 ## External tools
 
-The direct runner detects and schedules common BibTeX/Biber, index/glossary,
-SVG/EPS, Asymptote, MetaPost, Gnuplot, PythonTeX, minted, and PGF-externalization
-workflows. Each workflow still requires its corresponding executable and TeX
-package installation. Tests skip optional integrations when their program is
-not available; real builds report the missing requirement.
+Ordinary BibTeX runs inside Tekai and uses bundled or project bibliography
+styles. It does not launch `bibtex`. PythonTeX cache metadata is decoded as
+data in Rust, without launching Python or executing pickle reducers.
+
+Biber, BibTeX variants, index/glossary tools, SVG/EPS converters, Asymptote,
+MetaPost, Gnuplot, PythonTeX, and PGF externalization remain optional
+compatibility workflows. They require `--external-tools` or
+`[build].external_tools = true` before Tekai can launch an installed program.
+That opt-in also selects system BibTeX instead of the built-in implementation.
+Without it, Tekai reports an unsupported workflow rather than relying on a
+program in `PATH` or substituting different output. Shell escape remains a
+separate opt-in and can also run external commands.
 
 ## Exit status and troubleshooting
 

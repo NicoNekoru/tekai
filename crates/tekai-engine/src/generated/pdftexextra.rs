@@ -118,6 +118,7 @@ extern "C" {
     static mut kpse_def: kpathsea;
     fn concat(s1: const_string, s2: const_string) -> string;
     fn concat3(_: const_string, _: const_string, _: const_string) -> string;
+    #[link_name = "tekai_xstrdup"]
     fn xstrdup(s: const_string) -> string;
     fn find_suffix(name: const_string) -> const_string;
     fn xputenv(var: const_string, value: const_string);
@@ -125,7 +126,9 @@ extern "C" {
     fn dir_p(fn_0: string) -> boolean;
     fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
     fn xfclose(fp: *mut FILE, filename: const_string);
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
+    #[link_name = "tekai_xrealloc"]
     fn xrealloc(old_address: address, new_size: size_t) -> address;
     fn kpse_set_program_name(argv0: const_string, progname: const_string);
     fn fcntl(_: ::core::ffi::c_int, _: ::core::ffi::c_int, ...) -> ::core::ffi::c_int;

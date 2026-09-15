@@ -2,8 +2,8 @@
 //!
 //! This keeps pdfTeX's generated web2c boundary satisfied without linking the
 //! native kpathsea archive. File lookup starts with explicit/local paths and
-//! then uses TeX Live `ls-R` databases, which is the part of kpathsea that
-//! matters most for fast package/font discovery.
+//! then uses the embedded TeX data bundle. It never discovers a system TeX
+//! installation or runs kpsewhich.
 
 use crate::generated::pdftexextra::{
     cache_entry, const_string, expansion_type, hash_table_type, kpathsea, kpathsea_instance,
@@ -124,13 +124,14 @@ pub struct KpseGlyphFileType {
 }
 
 extern "C" {
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> *mut c_void;
+    #[link_name = "tekai_xstrdup"]
     fn xstrdup(s: const_string) -> string;
 }
 
 static CNF_OVERRIDES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static FILE_INDEX: OnceLock<FileIndex> = OnceLock::new();
-static EXPLICIT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 static FORMAT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 static EMBEDDED_PDFLATEX_FORMAT_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
@@ -138,7 +139,6 @@ const EMBEDDED_PDFLATEX_FORMAT_GZIP: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../formats/pdflatex.fmt"
 ));
-const EMBEDDED_PDFLATEX_FORMAT_ID: &str = "d310c8114167865a";
 
 thread_local! {
     static INDEX_LOOKUP_CACHE: RefCell<HashMap<c_uint, HashMap<String, Option<PathBuf>>>> =
@@ -398,17 +398,15 @@ fn embedded_pdflatex_format(name: &str) -> Option<PathBuf> {
 }
 
 fn materialize_embedded_pdflatex_format() -> io::Result<PathBuf> {
+    let format_id = crate::runtime::FORMAT_ID.trim();
     let root = embedded_engine_cache_root();
     std::fs::create_dir_all(&root)?;
-    let raw = root.join(format!("pdflatex-{EMBEDDED_PDFLATEX_FORMAT_ID}.fmt.raw"));
+    let raw = root.join(format!("pdflatex-{format_id}.fmt.raw"));
     if path_is_readable(&raw) {
         return Ok(raw);
     }
 
-    let tmp = root.join(format!(
-        ".pdflatex-{EMBEDDED_PDFLATEX_FORMAT_ID}-{}.tmp",
-        std::process::id()
-    ));
+    let tmp = root.join(format!(".pdflatex-{format_id}-{}.tmp", std::process::id()));
     let result = (|| {
         let mut decoder = flate2::read::GzDecoder::new(EMBEDDED_PDFLATEX_FORMAT_GZIP);
         let mut output = File::create(&tmp)?;
@@ -465,25 +463,6 @@ fn format_file_is_gzip(path: &Path) -> io::Result<bool> {
     Ok(bytes == 2 && header == [0x1f, 0x8b])
 }
 
-fn explicit_search_dirs() -> &'static [PathBuf] {
-    EXPLICIT_SEARCH_DIRS
-        .get_or_init(build_explicit_search_dirs)
-        .as_slice()
-}
-
-fn build_explicit_search_dirs() -> Vec<PathBuf> {
-    let mut dirs = vec![PathBuf::from(".")];
-    if let Some(texinputs) = std::env::var_os("TEXINPUTS") {
-        for item in std::env::split_paths(&texinputs) {
-            if item.as_os_str().is_empty() {
-                continue;
-            }
-            dirs.push(item);
-        }
-    }
-    dirs
-}
-
 fn format_search_dirs() -> &'static [PathBuf] {
     FORMAT_SEARCH_DIRS
         .get_or_init(build_format_search_dirs)
@@ -513,40 +492,11 @@ fn build_format_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn texlive_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    for key in ["TEXMFCONFIG", "TEXMFVAR", "TEXMFDIST"] {
-        if let Some(value) = std::env::var_os(key) {
-            roots.push(PathBuf::from(value));
-        }
-    }
-    if roots.iter().any(|root| root.join("ls-R").exists()) {
-        return roots;
-    }
-    if let Some(root) = latest_texlive_root() {
-        roots.push(root.join("texmf-config"));
-        roots.push(root.join("texmf-var"));
-        roots.push(root.join("texmf-dist"));
-    }
-    roots
-}
-
-fn latest_texlive_root() -> Option<PathBuf> {
-    let base = Path::new("/usr/local/texlive");
-    let mut versions = std::fs::read_dir(base)
-        .ok()?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.join("texmf-dist/ls-R").exists())
-        .collect::<Vec<_>>();
-    versions.sort();
-    versions.pop()
-}
-
 fn file_index() -> &'static FileIndex {
     FILE_INDEX.get_or_init(|| {
         let mut index = FileIndex::default();
-        for root in texlive_roots() {
-            parse_ls_r(&root, &mut index);
+        if let Ok(root) = crate::runtime::texmf_root() {
+            parse_ls_r(root, &mut index);
         }
         index
     })
@@ -612,7 +562,7 @@ fn find_in_index_uncached(candidate: &str, format: c_uint) -> Option<PathBuf> {
     best_index_match(
         index
             .paths_for(key)
-            .filter(|path| path.to_string_lossy().ends_with(candidate)),
+            .filter(|path| path.ends_with(candidate)),
         format,
     )
 }
@@ -751,14 +701,69 @@ fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
         return embedded_pdflatex_format(name);
     }
 
-    for dir in explicit_search_dirs() {
-        if let Some(found) = with_candidate_names(name, format, |candidate| {
-            check_direct_path(&dir.join(candidate))
-        }) {
-            return Some(found);
-        }
+    if let Some(found) = with_candidate_names(name, format, |candidate| {
+        check_direct_path(Path::new(candidate)).or_else(|| {
+            crate::runtime::find_in_paths(
+                Path::new("."),
+                candidate,
+                format_search_variables(format),
+            )
+        })
+    }) {
+        return Some(found);
     }
     with_candidate_names(name, format, |candidate| find_in_index(candidate, format))
+}
+
+fn format_search_variables(format: c_uint) -> &'static [&'static str] {
+    match format {
+        KPSE_BIB_FORMAT => &["BIBINPUTS"],
+        KPSE_BST_FORMAT => &["BSTINPUTS"],
+        KPSE_TFM_FORMAT => &["TFMFONTS", "TEXFONTS", "TEXINPUTS"],
+        KPSE_VF_FORMAT => &["VFFONTS", "TEXFONTS", "TEXINPUTS"],
+        KPSE_TYPE1_FORMAT => &["T1FONTS", "TEXFONTS", "TEXINPUTS"],
+        KPSE_TRUETYPE_FORMAT => &["TTFONTS", "TEXFONTS", "TEXINPUTS"],
+        KPSE_OPENTYPE_FORMAT => &["OPENTYPEFONTS", "TEXFONTS", "TEXINPUTS"],
+        KPSE_FONTMAP_FORMAT => &["TEXFONTMAPS", "TEXINPUTS"],
+        _ => &["TEXINPUTS"],
+    }
+}
+
+/// Resolve a scheduler input using the same bundled data as the engine.
+/// The caller supplies a base directory, so concurrent builds never chdir.
+pub fn resolve_input(
+    doc_dir: &Path,
+    candidate: &str,
+    extension: &str,
+) -> io::Result<Option<PathBuf>> {
+    crate::runtime::texmf_root()?;
+    let local = doc_dir.join(candidate);
+    if local.is_file() {
+        return Ok(Some(local));
+    }
+    let format = match extension {
+        "bib" => KPSE_BIB_FORMAT,
+        "bst" => KPSE_BST_FORMAT,
+        "tfm" => KPSE_TFM_FORMAT,
+        "vf" => KPSE_VF_FORMAT,
+        "pfb" | "pfa" => KPSE_TYPE1_FORMAT,
+        "ttf" | "ttc" => KPSE_TRUETYPE_FORMAT,
+        "otf" => KPSE_OPENTYPE_FORMAT,
+        "map" => KPSE_FONTMAP_FORMAT,
+        _ => KPSE_TEX_FORMAT,
+    };
+    let variables = if extension == "ist" {
+        &["TEXINDEXSTYLE", "INDEXSTYLE"][..]
+    } else {
+        format_search_variables(format)
+    };
+    // The scheduler has historically searched the document tree recursively.
+    let recursive_doc = format!("{}//", doc_dir.display());
+    Ok(
+        crate::runtime::find_in_path(doc_dir, candidate, Path::new(&recursive_doc))
+            .or_else(|| crate::runtime::find_in_paths(doc_dir, candidate, variables))
+            .or_else(|| find_in_index(candidate, format)),
+    )
 }
 
 #[no_mangle]

@@ -16,6 +16,7 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
     fn deflate(strm: z_streamp, flush: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn deflateEnd(strm: z_streamp) -> ::core::ffi::c_int;

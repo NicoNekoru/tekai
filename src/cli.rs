@@ -12,7 +12,7 @@ use crate::compiler::{BibMode, DraftPrepass, Engine, Runner};
     version,
     propagate_version = true,
     arg_required_else_help = true,
-    after_help = "QUICK START:\n  tekai build main.tex\n  tekai watch main.tex --preview --allow-warnings\n  tekai check main.tex --allow-warnings\n\nProject defaults can be stored in ./tekai.toml. Run `tekai <command> --help` for command-specific examples."
+    after_help = "QUICK START:\n  tekai build main.tex\n  tekai watch main.tex --preview --allow-warnings\n  tekai check main.tex --allow-warnings\n\nProject defaults can be stored in tekai.toml. Root-document commands find the nearest config at or above the document. Run `tekai <command> --help` for command-specific examples."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -83,7 +83,7 @@ pub struct BuildArgs {
     /// Root TeX document to compile.
     pub main: PathBuf,
 
-    /// Configuration file. Defaults to ./tekai.toml when it exists.
+    /// Configuration file. Defaults to the nearest tekai.toml above MAIN.
     #[arg(long)]
     pub config: Option<PathBuf>,
 
@@ -103,7 +103,7 @@ pub struct CheckArgs {
     /// Root TeX document whose referenced source graph is linted and compiled.
     pub main: PathBuf,
 
-    /// Configuration file. Defaults to ./tekai.toml when it exists.
+    /// Configuration file. Defaults to the nearest tekai.toml above MAIN.
     #[arg(long)]
     pub config: Option<PathBuf>,
 
@@ -130,7 +130,7 @@ pub struct WatchArgs {
     /// Root TeX document to rebuild.
     pub main: PathBuf,
 
-    /// Configuration file. Defaults to ./tekai.toml when it exists.
+    /// Configuration file. Defaults to the nearest tekai.toml above MAIN.
     #[arg(long)]
     pub config: Option<PathBuf>,
 
@@ -251,6 +251,10 @@ pub struct BuildFlags {
     /// Pass shell escape to TeX. Use only with trusted documents.
     #[arg(long)]
     pub shell_escape: bool,
+
+    /// Allow installed auxiliary programs instead of the self-contained defaults.
+    #[arg(long)]
+    pub external_tools: bool,
 
     /// Print each engine or auxiliary command before it runs.
     #[arg(long)]

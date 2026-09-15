@@ -3,6 +3,22 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
+## 0.3.0 - 2026-09-15
+
+- Bundled pinned LaTeX packages, fonts, maps, and a matching format so default
+  builds and checks need no TeX Live, MacTeX, `kpsewhich`, or runtime downloads.
+- Added in-process BibTeX and native file lookup, including explicit recursive
+  project search paths. Read PythonTeX cache metadata without running Python.
+- Added ICLR's `eso-pic` dependency and verified Times small caps, bold, and
+  italic fonts without installed TeX tools.
+- Required `--external-tools` for installed auxiliary programs. Unsupported
+  workflows fail explicitly instead of silently changing the output. External
+  engines, runners, and shell escape remain separate opt-ins.
+- Made root-document commands discover the nearest project configuration and
+  stopped text-mode checks before compilation when linting fails.
+- Added dependency-free package, font, bibliography, and large-paper regression
+  tests before optional TeX installation in CI.
+
 ## 0.2.0 - 2026-07-20
 
 - Added first-party VS Code and Neovim integrations for diagnostics, exact and

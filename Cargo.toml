@@ -1,6 +1,6 @@
 [package]
 name = "tekai"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.87"
 description = "Fast, fidelity-preserving LaTeX builds, live previews, caching, and linting"
@@ -33,3 +33,8 @@ tekai-engine = { path = "crates/tekai-engine", default-features = false }
 tekai-pdftex = { path = "crates/tekai-pdftex" }
 toml = "0.8"
 walkdir = "2.5"
+tectonic_engine_bibtex = "0.3.3"
+tectonic_bridge_core = "0.5.2"
+tectonic_io_base = "0.6"
+tectonic_status_base = "0.2"
+serde-pickle = "1.2"

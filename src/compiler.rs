@@ -13,8 +13,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
 
-const BUILD_STATE_VERSION: u32 = 34;
-const BIB_STATE_VERSION: u32 = 10;
+const BUILD_STATE_VERSION: u32 = 35;
+const BIB_STATE_VERSION: u32 = 11;
 const INDEX_STATE_VERSION: u32 = 10;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
 const EXTERNAL_TOOL_STATE_VERSION: u32 = 1;
@@ -30,6 +30,14 @@ const BUILD_ENV_VARS: &[&str] = &[
     "TEXINPUTS",
     "BIBINPUTS",
     "BSTINPUTS",
+    "TFMFONTS",
+    "TEXFONTS",
+    "VFFONTS",
+    "T1FONTS",
+    "TTFONTS",
+    "OPENTYPEFONTS",
+    "TEXFONTMAPS",
+    "TEXFORMATS",
     "INDEXSTYLE",
     "TEXINDEXSTYLE",
     "TEXMFCNF",
@@ -68,7 +76,6 @@ struct KpathseaResolutionKey {
 
 static KPATHSEA_RESOLUTION_CACHE: OnceLock<Mutex<HashMap<KpathseaResolutionKey, Option<PathBuf>>>> =
     OnceLock::new();
-static TEXLIVE_LS_R_ROOTS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 
 fn clear_kpathsea_resolution_cache() {
     if let Some(cache) = KPATHSEA_RESOLUTION_CACHE.get()
@@ -145,6 +152,7 @@ pub struct BuildOptions {
     pub precompile_preamble: bool,
     pub synctex: bool,
     pub shell_escape: bool,
+    pub external_tools: bool,
     pub quiet: bool,
     pub print_command: bool,
 }
@@ -166,6 +174,7 @@ impl BuildOptions {
             precompile_preamble: false,
             synctex: false,
             shell_escape: false,
+            external_tools: false,
             quiet: false,
             print_command: false,
         }
@@ -1741,6 +1750,8 @@ fn tex_direct_base_command(
     }
     if options.shell_escape {
         command.arg("-shell-escape");
+    } else {
+        command.arg("-no-shell-escape");
     }
     if mode.suppress_pdf_output
         && let Some(output_mode_arg) = nonfinal_output_mode_arg(options.engine)
@@ -1903,6 +1914,11 @@ fn prepare_preamble_format_for_kind_with_policy(
         "TEXINPUTS",
         texinputs_env_with_format_dir(doc_dir, out_dir, &format_dir),
     );
+    if options.shell_escape {
+        command.arg("-shell-escape");
+    } else {
+        command.arg("-no-shell-escape");
+    }
     command
         .arg("-ini")
         .arg("-recorder")
@@ -1913,9 +1929,6 @@ fn prepare_preamble_format_for_kind_with_policy(
         .arg("&pdflatex")
         .arg("mylatexformat.ltx")
         .arg(preamble_format_source(doc_dir, file_name, format_kind));
-    if options.shell_escape {
-        command.arg("-shell-escape");
-    }
     if options.print_command {
         eprintln!("{}", display_command(&command));
     }
@@ -2447,7 +2460,7 @@ fn preamble_format_mode_key(
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "missing".to_string());
     Ok(format!(
-        "v{};kind={};main={};job={};engine={:?};shell_escape={};source={:016x};mylatexformat={};env={}",
+        "v{};kind={};main={};job={};engine={:?};shell_escape={};source={:016x};mylatexformat={};env={};bundle={};format={}",
         PREAMBLE_FORMAT_STATE_VERSION,
         kind.key(),
         main.display(),
@@ -2456,7 +2469,9 @@ fn preamble_format_mode_key(
         options.shell_escape,
         content_hash(preamble_format_source(doc_dir, file_name, kind).as_bytes()),
         mylatexformat,
-        environment_signature(BUILD_ENV_VARS)
+        environment_signature(BUILD_ENV_VARS),
+        tekai_engine::runtime::BUNDLE_ID.trim(),
+        tekai_engine::runtime::FORMAT_ID.trim()
     ))
 }
 
@@ -3089,6 +3104,11 @@ fn collect_resolved_source_seed_dependency_path(
 }
 
 fn source_seed_dependency_is_recursable(doc_dir: &Path, path: &Path) -> bool {
+    // The runtime cache may live inside the project. Its packages are build
+    // inputs, never project sources to lint or rewrite with check --fix.
+    if tekai_engine::runtime::texmf_root().is_ok_and(|root| path.starts_with(root)) {
+        return false;
+    }
     path_extension_is_any(
         path,
         &["tex", "ltx", "sty", "cls", "def", "cfg", "clo", "dtx"],
@@ -5122,7 +5142,7 @@ fn run_asymptote(job: &AsymptoteJob, options: &BuildOptions) -> Result<()> {
         .input_path
         .file_name()
         .context("Asymptote file has no filename")?;
-    let mut command = Command::new("asy");
+    let mut command = external_tool_command("asy", options)?;
     command.current_dir(asy_dir).arg(input_name);
     if options.print_command {
         eprintln!("{}", display_command(&command));
@@ -5189,7 +5209,7 @@ fn run_pythontex(job: &PythontexJob, options: &BuildOptions) -> Result<()> {
         .code_path
         .parent()
         .context("PythonTeX code file has no parent directory")?;
-    let mut command = Command::new("pythontex");
+    let mut command = external_tool_command("pythontex", options)?;
     command.current_dir(code_dir).arg(&job.command_arg);
     if options.print_command {
         eprintln!("{}", display_command(&command));
@@ -5260,7 +5280,7 @@ fn run_metapost(job: &MetapostJob, options: &BuildOptions) -> Result<()> {
         .input_path
         .file_name()
         .context("MetaPost file has no filename")?;
-    let mut command = Command::new("mpost");
+    let mut command = external_tool_command("mpost", options)?;
     command.current_dir(mp_dir).arg(input_name);
     if options.print_command {
         eprintln!("{}", display_command(&command));
@@ -5339,7 +5359,7 @@ fn run_gnuplottex(job: &GnuplottexJob, out_dir: &Path, options: &BuildOptions) -
         .script_path
         .strip_prefix(out_dir)
         .unwrap_or(&job.script_path);
-    let mut command = Command::new("gnuplot");
+    let mut command = external_tool_command("gnuplot", options)?;
     command.current_dir(out_dir).arg(script_arg);
     if options.print_command {
         eprintln!("{}", display_command(&command));
@@ -5401,7 +5421,7 @@ fn pgf_external_make_status(
     job: &PgfExternalJob,
     options: &BuildOptions,
 ) -> Result<MakeStatus> {
-    let mut command = Command::new("make");
+    let mut command = external_tool_command("make", options)?;
     command
         .current_dir(out_dir)
         .env("TEXINPUTS", texinputs_env(doc_dir, out_dir))
@@ -5435,7 +5455,7 @@ fn run_pgf_external_make(
     job: &PgfExternalJob,
     options: &BuildOptions,
 ) -> Result<()> {
-    let mut command = Command::new("make");
+    let mut command = external_tool_command("make", options)?;
     command
         .current_dir(out_dir)
         .env("TEXINPUTS", texinputs_env(doc_dir, out_dir))
@@ -5511,7 +5531,7 @@ fn run_bib2gls(job: &Bib2GlsJob, options: &BuildOptions) -> Result<()> {
         .aux_path
         .parent()
         .context("Bib2Gls aux file has no parent directory")?;
-    let mut command = Command::new("bib2gls");
+    let mut command = external_tool_command("bib2gls", options)?;
     command
         .current_dir(aux_dir)
         .arg(&job.command_arg)
@@ -5584,7 +5604,7 @@ fn run_eps_conversion(job: &EpsConversionJob, options: &BuildOptions) -> Result<
             )
         })?;
     }
-    let mut command = Command::new("epstopdf");
+    let mut command = external_tool_command("epstopdf", options)?;
     command
         .arg(&job.input_path)
         .arg(format!("--outfile={}", job.output_path.display()));
@@ -5658,7 +5678,7 @@ fn run_svg_conversion(job: &SvgConversionJob, options: &BuildOptions) -> Result<
             )
         })?;
     }
-    let mut command = Command::new(&job.inkscape_executable);
+    let mut command = external_tool_command(&job.inkscape_executable, options)?;
     command.arg(&job.input_path);
     match job.area {
         SvgExportArea::Drawing => {
@@ -6124,7 +6144,19 @@ fn run_bibtex(
     job: &BibtexJob,
     options: &BuildOptions,
 ) -> Result<()> {
-    let mut command = Command::new(job.program.executable());
+    if !options.external_tools && job.program == BibtexProgram::Bibtex {
+        if options.print_command {
+            eprintln!("built-in BibTeX {}", job.command_arg);
+        }
+        return crate::bibtex::run(
+            doc_dir,
+            out_dir,
+            &job.command_arg,
+            &job.command_options,
+            options.quiet,
+        );
+    }
+    let mut command = external_tool_command(job.program.executable(), options)?;
     command
         .current_dir(out_dir)
         .args(&job.command_options)
@@ -6146,7 +6178,7 @@ fn run_bibtex(
 }
 
 fn run_biber(doc_dir: &Path, out_dir: &Path, job_name: &str, options: &BuildOptions) -> Result<()> {
-    let mut command = Command::new("biber");
+    let mut command = external_tool_command("biber", options)?;
     let out_dir_arg = path_arg_relative_to(doc_dir, out_dir);
     command
         .current_dir(doc_dir)
@@ -6376,7 +6408,7 @@ fn run_makeindex(job: &MakeIndexJob, options: &BuildOptions) -> Result<()> {
         .program
         .unwrap_or(IndexCommandProgram::MakeIndex)
         .executable();
-    let mut command = Command::new(program);
+    let mut command = external_tool_command(program, options)?;
     command.current_dir(index_dir);
     command.args(&job.command_options);
     if job.tool == IndexTool::MakeIndex
@@ -6410,7 +6442,7 @@ fn run_splitindex(job: &SplitIndexJob, options: &BuildOptions) -> Result<()> {
         .input_path
         .file_name()
         .context("split index file has no filename")?;
-    let mut command = Command::new("splitindex");
+    let mut command = external_tool_command("splitindex", options)?;
     command
         .current_dir(index_dir)
         .arg("-m")
@@ -6433,7 +6465,7 @@ fn run_makeglossaries(
     job_name: &str,
     options: &BuildOptions,
 ) -> Result<()> {
-    let mut command = Command::new("makeglossaries");
+    let mut command = external_tool_command("makeglossaries", options)?;
     command.current_dir(doc_dir).arg("-d").arg(out_dir);
     if options.quiet {
         command.arg("-q");
@@ -8942,64 +8974,59 @@ fn pythontex_data_path(job: &PythontexJob) -> PathBuf {
 }
 
 fn pythontex_dependency_report(data_path: &Path) -> Result<PythontexDependencyReport> {
-    let script = r#"
-import json
-import pickle
-import sys
-
-with open(sys.argv[1], "rb") as handle:
-    data = pickle.load(handle)
-
-settings = data.get("settings") or {}
-dependencies = []
-for session_dependencies in (data.get("dependencies") or {}).values():
-    if isinstance(session_dependencies, dict):
-        dependencies.extend(
-            path for path in session_dependencies.keys() if isinstance(path, str)
-        )
-
-pygments_files = data.get("pygments_files") or {}
-if isinstance(pygments_files, dict):
-    dependencies.extend(path for path in pygments_files.keys() if isinstance(path, str))
-
-print(json.dumps({
-    "workingdir": str(settings.get("workingdir") or "."),
-    "dependencies": sorted(set(dependencies)),
-}))
-"#;
-    let mut launch_errors = Vec::new();
-    for interpreter in ["python3", "python"] {
-        match Command::new(interpreter)
-            .arg("-c")
-            .arg(script)
-            .arg(data_path)
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                return serde_json::from_slice(&output.stdout).with_context(|| {
-                    format!(
-                        "failed to parse PythonTeX dependency metadata from {}",
-                        data_path.display()
-                    )
-                });
+    use serde_pickle::{HashableValue, Value};
+    // Decode data only. Unlike Python's pickle.load, this cannot execute a
+    // cached object's reducer or import Python modules.
+    let source = fs::read(data_path)?;
+    let data = serde_pickle::value_from_slice(
+        &source,
+        serde_pickle::DeOptions::new()
+            .decode_strings()
+            .replace_unresolved_globals(),
+    )
+    .with_context(|| format!("failed to read PythonTeX metadata {}", data_path.display()))?;
+    fn field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+        let Value::Dict(dict) = value else {
+            return None;
+        };
+        dict.get(&HashableValue::String(key.to_string()))
+    }
+    let workingdir = field(&data, "settings")
+        .and_then(|value| field(value, "workingdir"))
+        .and_then(|value| {
+            if let Value::String(value) = value {
+                Some(value.clone())
+            } else {
+                None
             }
-            Ok(output) => {
-                launch_errors.push(format!(
-                    "{interpreter} exited with status {}: {}",
-                    output.status,
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ));
-            }
-            Err(error) => {
-                launch_errors.push(format!("{interpreter}: {error}"));
-            }
+        })
+        .unwrap_or_else(default_pythontex_workingdir);
+    let mut dependencies = Vec::new();
+    let mut collect = |value: &Value| {
+        if let Value::Dict(dict) = value {
+            dependencies.extend(dict.keys().filter_map(|key| {
+                if let HashableValue::String(path) = key {
+                    Some(path.clone())
+                } else {
+                    None
+                }
+            }));
+        }
+    };
+    if let Some(Value::Dict(sessions)) = field(&data, "dependencies") {
+        for session in sessions.values() {
+            collect(session);
         }
     }
-    bail!(
-        "failed to inspect PythonTeX dependency metadata {} ({})",
-        data_path.display(),
-        launch_errors.join("; ")
-    )
+    if let Some(pygments) = field(&data, "pygments_files") {
+        collect(pygments);
+    }
+    dependencies.sort();
+    dependencies.dedup();
+    Ok(PythontexDependencyReport {
+        workingdir,
+        dependencies,
+    })
 }
 
 fn pythontex_working_dir(code_dir: &Path, workingdir: &str) -> PathBuf {
@@ -10758,63 +10785,12 @@ fn resolve_kpathsea_input(doc_dir: &Path, name: &str, extension: &str) -> Result
         return Ok(cached.clone());
     }
 
-    let has_explicit_search_path = extension_has_explicit_kpathsea_search_path(extension);
-    if !has_explicit_search_path
-        && let Some(resolved) = resolve_texlive_ls_r_input(&candidate, extension)
-    {
-        if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
-            cache.insert(cache_key, Some(resolved.clone()));
-        }
-        return Ok(Some(resolved));
-    }
-
-    let mut command = Command::new("kpsewhich");
-    command.current_dir(doc_dir);
-    for (variable, value) in kpathsea_env_overrides_for_extension(extension, doc_dir) {
-        command.env(variable, value);
-    }
-    let output = command
-        .arg(&candidate)
-        .output()
-        .with_context(|| format!("failed to launch kpsewhich for {candidate}"))?;
-    let resolved = if !output.status.success() {
-        None
-    } else {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if path.is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(path))
-        }
-    };
-    if resolved.is_none()
-        && has_explicit_search_path
-        && let Some(fallback) = resolve_texlive_ls_r_input(&candidate, extension)
-    {
-        if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
-            cache.insert(cache_key, Some(fallback.clone()));
-        }
-        return Ok(Some(fallback));
-    }
+    let resolved = tekai_engine::kpathsea::resolve_input(doc_dir, &candidate, extension)
+        .with_context(|| format!("failed to resolve bundled TeX input {candidate}"))?;
     if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
         cache.insert(cache_key, resolved.clone());
     }
     Ok(resolved)
-}
-
-fn extension_has_explicit_kpathsea_search_path(extension: &str) -> bool {
-    kpathsea_raw_env_vars_for_extension(extension)
-        .iter()
-        .any(|var| std::env::var_os(var).is_some_and(|value| !value.is_empty()))
-}
-
-fn kpathsea_raw_env_vars_for_extension(extension: &str) -> &'static [&'static str] {
-    match extension {
-        "bib" => &["BIBINPUTS"],
-        "bst" => &["BSTINPUTS"],
-        "ist" => &["TEXINDEXSTYLE", "INDEXSTYLE"],
-        _ => &["TEXINPUTS"],
-    }
 }
 
 fn tex_rerun_reasons(log_path: &Path) -> Result<Vec<String>> {
@@ -10918,9 +10894,19 @@ fn configure_output(command: &mut Command, options: &BuildOptions) {
     }
 }
 
+fn external_tool_command(program: impl AsRef<OsStr>, options: &BuildOptions) -> Result<Command> {
+    if !options.external_tools {
+        bail!(
+            "{} is not included in the self-contained runtime; this document needs an unsupported auxiliary workflow. Use --external-tools only to opt into installed compatibility tools",
+            program.as_ref().to_string_lossy()
+        );
+    }
+    Ok(Command::new(program))
+}
+
 fn direct_mode_key(options: &BuildOptions, main: &Path) -> String {
     format!(
-        "v{};main={};job={};engine={:?};bib={:?};fast={};once={};precompile_preamble={};synctex={};shell_escape={};env={}",
+        "v{};main={};job={};engine={:?};bib={:?};fast={};once={};precompile_preamble={};synctex={};shell_escape={};external_tools={};env={};bundle={};format={}",
         BUILD_STATE_VERSION,
         main.display(),
         options.job_name.as_deref().unwrap_or("<default>"),
@@ -10931,7 +10917,10 @@ fn direct_mode_key(options: &BuildOptions, main: &Path) -> String {
         options.precompile_preamble,
         options.synctex,
         options.shell_escape,
-        environment_signature(BUILD_ENV_VARS)
+        options.external_tools,
+        environment_signature(BUILD_ENV_VARS),
+        tekai_engine::runtime::BUNDLE_ID.trim(),
+        tekai_engine::runtime::FORMAT_ID.trim()
     )
 }
 
@@ -12529,16 +12518,6 @@ fn texformats_env(format_dir: &Path) -> OsString {
     value
 }
 
-fn kpathsea_env_with_fallback_vars(primary: &str, doc_dir: &Path, fallbacks: &[&str]) -> OsString {
-    let existing = std::env::var_os(primary).filter(|value| !value.is_empty());
-    let existing = existing.or_else(|| {
-        fallbacks
-            .iter()
-            .find_map(|fallback| std::env::var_os(fallback).filter(|value| !value.is_empty()))
-    });
-    kpathsea_env_with_existing(doc_dir, existing.as_deref())
-}
-
 fn kpathsea_env_with_existing(doc_dir: &Path, existing: Option<&OsStr>) -> OsString {
     let mut value = OsString::from(format!(
         "{}//{}",
@@ -12549,189 +12528,6 @@ fn kpathsea_env_with_existing(doc_dir: &Path, existing: Option<&OsStr>) -> OsStr
         value.push(existing);
     }
     value
-}
-
-fn kpathsea_env_overrides_for_extension(
-    extension: &str,
-    doc_dir: &Path,
-) -> Vec<(&'static str, OsString)> {
-    match extension {
-        "bib" => vec![("BIBINPUTS", kpathsea_env("BIBINPUTS", doc_dir))],
-        "bst" => vec![("BSTINPUTS", kpathsea_env("BSTINPUTS", doc_dir))],
-        "ist" => vec![
-            (
-                "TEXINDEXSTYLE",
-                kpathsea_env_with_fallback_vars("TEXINDEXSTYLE", doc_dir, &["INDEXSTYLE"]),
-            ),
-            ("INDEXSTYLE", kpathsea_env("INDEXSTYLE", doc_dir)),
-        ],
-        _ => vec![("TEXINPUTS", kpathsea_env("TEXINPUTS", doc_dir))],
-    }
-}
-
-fn resolve_texlive_ls_r_input(candidate: &str, extension: &str) -> Option<PathBuf> {
-    let path = Path::new(candidate);
-    if path.is_absolute() {
-        return None;
-    }
-
-    let basename = path.file_name()?.to_string_lossy();
-    let roots = texlive_ls_r_roots();
-    let mut best: Option<(PathBuf, (u8, u8, usize))> = None;
-    for root in roots {
-        let Some(found) = find_candidate_in_ls_r(root, candidate, &basename, extension) else {
-            continue;
-        };
-        let rank = texlive_ls_r_rank(&found, extension);
-        if best.as_ref().is_none_or(|(_, best_rank)| rank < *best_rank) {
-            best = Some((found, rank));
-        }
-    }
-    best.map(|(path, _)| path)
-}
-
-fn texlive_ls_r_roots() -> &'static [PathBuf] {
-    TEXLIVE_LS_R_ROOTS
-        .get_or_init(|| {
-            let mut roots = Vec::new();
-            for key in ["TEXMFCONFIG", "TEXMFVAR", "TEXMFDIST"] {
-                if let Some(value) = std::env::var_os(key).filter(|value| !value.is_empty()) {
-                    roots.push(PathBuf::from(value));
-                }
-            }
-            if !roots.iter().any(|root| root.join("ls-R").exists())
-                && let Some(root) = latest_texlive_root()
-            {
-                roots.push(root.join("texmf-config"));
-                roots.push(root.join("texmf-var"));
-                roots.push(root.join("texmf-dist"));
-            }
-            roots
-        })
-        .as_slice()
-}
-
-fn latest_texlive_root() -> Option<PathBuf> {
-    let base = Path::new("/usr/local/texlive");
-    let mut versions = fs::read_dir(base)
-        .ok()?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.join("texmf-dist/ls-R").exists())
-        .collect::<Vec<_>>();
-    versions.sort();
-    versions.pop()
-}
-
-fn find_candidate_in_ls_r(
-    root: &Path,
-    candidate: &str,
-    basename: &str,
-    extension: &str,
-) -> Option<PathBuf> {
-    let source = fs::read_to_string(root.join("ls-R")).ok()?;
-    let mut current_dir = root.to_path_buf();
-    let mut current_dir_is_runtime = true;
-    let mut best: Option<(PathBuf, (u8, u8, usize))> = None;
-    for line in source.lines() {
-        if line.is_empty() || line.starts_with('%') {
-            continue;
-        }
-        if let Some(dir) = line.strip_suffix(':') {
-            let dir = dir.strip_prefix("./").unwrap_or(dir);
-            current_dir_is_runtime = texlive_ls_r_dir_is_runtime(dir);
-            if current_dir_is_runtime {
-                current_dir = root.join(dir);
-            }
-            continue;
-        }
-        if !current_dir_is_runtime || line != basename {
-            continue;
-        }
-        let path = current_dir.join(line);
-        if !texlive_ls_r_path_matches_candidate(&path, candidate) || !path.is_file() {
-            continue;
-        }
-        let rank = texlive_ls_r_rank(&path, extension);
-        if best.as_ref().is_none_or(|(_, best_rank)| rank < *best_rank) {
-            best = Some((path, rank));
-        }
-    }
-    best.map(|(path, _)| path)
-}
-
-fn texlive_ls_r_dir_is_runtime(dir: &str) -> bool {
-    !dir.split('/').any(|part| part == "doc" || part == "source")
-}
-
-fn texlive_ls_r_path_matches_candidate(path: &Path, candidate: &str) -> bool {
-    if !candidate.contains('/') {
-        return true;
-    }
-    path.to_string_lossy().ends_with(candidate)
-}
-
-fn texlive_ls_r_rank(path: &Path, extension: &str) -> (u8, u8, usize) {
-    let path = path.to_string_lossy();
-    let format_rank = match extension {
-        "bib" | "bst" => {
-            if path.contains("/bibtex/") {
-                0
-            } else {
-                80
-            }
-        }
-        "ist" => {
-            if path.contains("/makeindex/") {
-                0
-            } else if path.contains("/tex/") {
-                1
-            } else {
-                80
-            }
-        }
-        "tfm" | "gf" | "pk" | "pfb" | "pfa" | "vf" | "ttf" | "ttc" | "otf" => {
-            if path.contains("/fonts/") { 0 } else { 80 }
-        }
-        "map" => {
-            if path.contains("/fonts/map/") {
-                0
-            } else if path.contains("/web2c/") {
-                1
-            } else if path.contains("/tex/") {
-                2
-            } else {
-                80
-            }
-        }
-        _ => {
-            if path.contains("/tex/latex/") {
-                0
-            } else if path.contains("/tex/generic/") {
-                1
-            } else if path.contains("/tex/plain/") {
-                2
-            } else if path.contains("/tex/") {
-                3
-            } else if path.contains("/web2c/") {
-                4
-            } else {
-                80
-            }
-        }
-    };
-    (format_rank, texlive_ls_r_tree_rank(&path), path.len())
-}
-
-fn texlive_ls_r_tree_rank(path: &str) -> u8 {
-    if path.contains("/texmf-config/") {
-        0
-    } else if path.contains("/texmf-var/") {
-        1
-    } else if path.contains("/texmf-dist/") {
-        2
-    } else {
-        3
-    }
 }
 
 fn engine_program(engine: Engine) -> &'static str {
@@ -14292,6 +14088,29 @@ mod tests {
     }
 
     #[test]
+    fn pythontex_metadata_is_decoded_without_python() {
+        let root = unique_temp_dir("tekai-pythontex-metadata");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("pythontex_data.pkl");
+        let data = serde_json::json!({
+            "settings": { "workingdir": "../data" },
+            "dependencies": {
+                "session": { "values.csv": ["hash", "mtime"], "shared.txt": [] }
+            },
+            "pygments_files": { "shared.txt": [], "code.py": [] }
+        });
+        fs::write(
+            &path,
+            serde_pickle::to_vec(&data, serde_pickle::SerOptions::new()).unwrap(),
+        )
+        .unwrap();
+        let report = pythontex_dependency_report(&path).unwrap();
+        assert_eq!(report.workingdir, "../data");
+        assert_eq!(report.dependencies, ["code.py", "shared.txt", "values.csv"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn pythontex_dependency_paths_resolve_against_workingdir() {
         let root = unique_temp_dir("tekai-pythontex-dependencies");
         let out_dir = root.join("out");
@@ -15283,11 +15102,6 @@ mod tests {
 
     #[test]
     fn source_seed_dependencies_follow_kpathsea_texinputs_tree() {
-        if !command_available("kpsewhich") {
-            eprintln!("skipping Kpathsea source seed test; kpsewhich is not available");
-            return;
-        }
-
         let root = unique_temp_dir("tekai-source-kpathsea-seed");
         let paper = root.join("paper");
         let shared = root.join("shared").join("tex");
@@ -16229,17 +16043,10 @@ mod tests {
             precompile_preamble: false,
             synctex: false,
             shell_escape: false,
+            external_tools: true,
             quiet: true,
             print_command: false,
         }
-    }
-
-    fn command_available(program: &str) -> bool {
-        std::env::var_os("PATH")
-            .map(|paths| {
-                std::env::split_paths(&paths).any(|directory| directory.join(program).is_file())
-            })
-            .unwrap_or(false)
     }
 
     struct EnvVarGuard {

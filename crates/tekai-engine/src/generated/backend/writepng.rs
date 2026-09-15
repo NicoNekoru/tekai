@@ -28,6 +28,7 @@ extern "C" {
         __s2: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
     fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
     fn zround(_: ::core::ffi::c_double) -> integer;
     static mut pdfbuf: *mut eightbits;

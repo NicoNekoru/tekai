@@ -59,6 +59,7 @@ pub mod md5;
 pub mod openclose;
 pub mod pdftoepdf;
 pub mod pngshim;
+pub mod runtime;
 pub mod support;
 pub mod synctex;
 pub mod utils;

@@ -22,11 +22,11 @@ brew install NicoNekoru/tap/tekai
 tekai --version
 ```
 
-The formula builds `tekai` from source. TeX Live or MacTeX remains the package,
-font, format-data, and auxiliary-tool distribution; Tekai supplies the engine
-and build system.
+The formula builds `tekai` from source. The executable includes its engine,
+LaTeX format, a pinned package/font bundle, and BibTeX. Default builds and
+checks do not need TeX Live, MacTeX, `kpsewhich`, or a runtime download.
 
-Tekai 0.2.0 supports macOS. Linux portability work is not part of this release.
+Tekai 0.3.0 supports macOS. Linux portability work is not part of this release.
 
 To install from a checkout instead:
 
@@ -36,11 +36,11 @@ cargo install --path . --locked
 
 ## Quick start
 
-Requirements:
-
-- a TeX Live installation for LaTeX packages, fonts, and Kpathsea databases;
-- any auxiliary programs used by the document, such as BibTeX, Biber,
-  MakeIndex, `bib2gls`, or `pythontex`.
+No TeX installation is needed for documents supported by the bundled runtime.
+See [the package manifest](runtime/packages.lock.json) for its contents.
+Additional project packages can be supplied through `TEXINPUTS`. Workflows
+that need Biber, MakeIndex, or converters are not built in; they fail unless
+you explicitly opt into installed programs with `--external-tools`.
 
 Compile a paper:
 
@@ -115,7 +115,7 @@ path and conservatively falls back to a full preview for structural edits.
 The direct runner owns the work normally delegated to `latexmk`:
 
 - TeX rerun detection and bounded convergence;
-- BibTeX and Biber discovery, freshness checks, and reusable outputs;
+- built-in BibTeX, bibliography freshness checks, and reusable outputs;
 - MakeIndex, Xindy, glossaries, nomenclature, and split-index workflows;
 - common source-driven external tools, including SVG/EPS conversion,
   Asymptote, MetaPost, Gnuplot, PythonTeX, minted, and PGF externalization;
@@ -123,13 +123,15 @@ The direct runner owns the work normally delegated to `latexmk`:
 - settled build-state and preamble-format caches;
 - JSON reports for editors, benchmarks, and CI.
 
-If the requested workflow needs a program that is not installed, the build
-reports that missing external dependency instead of silently changing output.
+Installed auxiliary programs run only with `--external-tools`. Without that
+opt-in, unsupported auxiliary workflows fail without launching a program.
+`--shell-escape` and external engines/runners are separate explicit opt-ins.
 
 ## Configuration
 
-Projects may check in `tekai.toml`. CLI arguments explicitly supplied by the
-user override config values.
+Projects may check in `tekai.toml`. Root-document commands find the nearest
+config at or above the document, even when invoked from a parent directory.
+CLI arguments explicitly supplied by the user override config values.
 
 ```toml
 [build]

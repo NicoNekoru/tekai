@@ -6,8 +6,10 @@ font handling, PDF inclusion and writing, compression, image decoding, and the
 runtime interfaces needed by the default `tekai-engine` build path.
 
 The engine is built entirely by Cargo and does not link a system TeX engine,
-Kpathsea, zlib, libpng, or PDF library. An installed TeX distribution remains a
-data source for LaTeX packages, fonts, maps, encodings, and filename databases.
+Kpathsea, libpng, or PDF library. Packages, fonts, maps, encodings, and the
+filename index come from the pinned embedded data in `runtime/texmf.tar.gz`.
+No system TeX distribution or `kpsewhich` is used. Explicit project search
+paths remain supported, including recursive `//` entries.
 
 The default CLI invokes this engine in process through an internal entrypoint.
 For focused debugging, build its standalone executable with:

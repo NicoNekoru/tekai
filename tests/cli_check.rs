@@ -38,6 +38,35 @@ fn check_fix_rewrites_before_reporting_remaining_diagnostics() {
 }
 
 #[test]
+fn check_fix_discovers_config_next_to_nested_root_document() {
+    let root = unique_temp_dir("tekai-cli-check-fix-nested-config");
+    let project = root.join("paper");
+    fs::create_dir_all(&project).expect("failed to create nested project directory");
+    let source = project.join("main.tex");
+    fs::write(&source, "\\begin{enumerate}\n  \\item Item.\n").expect("failed to write TeX source");
+    fs::write(
+        project.join("tekai.toml"),
+        "[lint]\nindent_size = 4\nindent_style = \"tabs\"\n",
+    )
+    .expect("failed to write config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
+        .current_dir(&root)
+        .args(["check", "--fix", "--report-json"])
+        .arg(PathBuf::from("paper").join("main.tex"))
+        .output()
+        .expect("failed to run tekai check --fix from the parent directory");
+
+    assert_eq!(output.status.code(), Some(1), "{output:#?}");
+    assert_eq!(
+        fs::read_to_string(&source).expect("failed to read fixed source"),
+        "\\begin{enumerate}\n\t\\item Item.\n"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn check_lints_only_the_referenced_source_graph() {
     let root = unique_temp_dir("tekai-cli-check-source-graph");
     let chapters = root.join("chapters");

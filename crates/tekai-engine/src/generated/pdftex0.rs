@@ -34,7 +34,9 @@ extern "C" {
     ) -> !;
     static mut kpse_def_inst: kpathsea_instance;
     static mut kpse_def: kpathsea;
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
+    #[link_name = "tekai_xrealloc"]
     fn xrealloc(old_address: address, new_size: size_t) -> address;
     fn uexit(status: ::core::ffi::c_int) -> !;
     fn kpse_init_prog(

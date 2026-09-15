@@ -365,7 +365,7 @@ pub unsafe extern "C" fn setupboundvariable(var: *mut c_int, var_name: *const c_
     }
 }
 
-#[no_mangle]
+#[export_name = "tekai_xmalloc"]
 pub unsafe extern "C" fn xmalloc(size: size_t) -> *mut c_void {
     unsafe {
         let actual = if size == 0 { 1 } else { size };
@@ -379,7 +379,7 @@ pub unsafe extern "C" fn xmalloc(size: size_t) -> *mut c_void {
     }
 }
 
-#[no_mangle]
+#[export_name = "tekai_xrealloc"]
 pub unsafe extern "C" fn xrealloc(old_ptr: *mut c_void, size: size_t) -> *mut c_void {
     unsafe {
         if old_ptr.is_null() {
@@ -396,7 +396,7 @@ pub unsafe extern "C" fn xrealloc(old_ptr: *mut c_void, size: size_t) -> *mut c_
     }
 }
 
-#[no_mangle]
+#[export_name = "tekai_xstrdup"]
 pub unsafe extern "C" fn xstrdup(s: *const c_char) -> *mut c_char {
     unsafe { xstrdup_ptr(s) }
 }

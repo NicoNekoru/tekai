@@ -10,6 +10,7 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
     fn zpdfbegindict(i: integer, pdfoslevel: integer);
     fn pdfenddict();

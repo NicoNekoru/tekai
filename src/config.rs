@@ -28,6 +28,7 @@ force = false
 precompile_preamble = false
 synctex = false
 shell_escape = false
+external_tools = false
 print_command = false
 quiet = false
 
@@ -112,6 +113,7 @@ pub struct BuildConfig {
     pub precompile_preamble: Option<bool>,
     pub synctex: Option<bool>,
     pub shell_escape: Option<bool>,
+    pub external_tools: Option<bool>,
     pub quiet: Option<bool>,
     pub print_command: Option<bool>,
     pub env: HashMap<String, String>,
@@ -140,6 +142,7 @@ struct RawBuildConfig {
     precompile_preamble: Option<bool>,
     synctex: Option<bool>,
     shell_escape: Option<bool>,
+    external_tools: Option<bool>,
     quiet: Option<bool>,
     print_command: Option<bool>,
     env: Option<HashMap<String, String>>,
@@ -186,6 +189,25 @@ pub fn load_lint_config(path: Option<&Path>) -> Result<LintConfig> {
         return Ok(LintConfig::default());
     };
     apply_lint_config(LintConfig::default(), raw.lint)
+}
+
+/// Find the nearest `tekai.toml` at or above a source file's directory.
+pub fn find_project_config(source: &Path) -> Option<PathBuf> {
+    let directory = if source.is_dir() {
+        source
+    } else {
+        source.parent()?
+    };
+    let directory = if directory.is_absolute() {
+        directory.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(directory)
+    };
+
+    directory.ancestors().find_map(|directory| {
+        let candidate = directory.join("tekai.toml");
+        candidate.is_file().then_some(candidate)
+    })
 }
 
 fn load_raw_config(path: Option<&Path>) -> Result<Option<RawConfig>> {
@@ -313,6 +335,7 @@ fn apply_build_config(raw: Option<RawBuildConfig>) -> Result<BuildConfig> {
         precompile_preamble: raw.precompile_preamble,
         synctex: raw.synctex,
         shell_escape: raw.shell_escape,
+        external_tools: raw.external_tools,
         quiet: raw.quiet,
         print_command: raw.print_command,
         env,
@@ -544,6 +567,7 @@ mod tests {
             precompile_preamble = true
             synctex = true
             shell_escape = true
+            external_tools = true
             quiet = true
             print_command = true
 
@@ -569,6 +593,7 @@ mod tests {
         assert_eq!(config.precompile_preamble, Some(true));
         assert_eq!(config.synctex, Some(true));
         assert_eq!(config.shell_escape, Some(true));
+        assert_eq!(config.external_tools, Some(true));
         assert_eq!(config.quiet, Some(true));
         assert_eq!(config.print_command, Some(true));
         assert_eq!(

@@ -5,6 +5,7 @@ pub struct __sFILEX {
 
 extern "C" {
     fn free(_: *mut ::core::ffi::c_void);
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
     static mut t3_file: *mut FILE;
     fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;

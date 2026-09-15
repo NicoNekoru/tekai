@@ -1,6 +1,6 @@
 [package]
 name = "tekai-pdftex"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Experimental pdfTeX-compatible engine contract and rewrite plan for tekai."
 license = "MIT"
@@ -17,3 +17,4 @@ flate2 = "1.0"
 lopdf = { version = "0.35", default-features = false, features = ["nom_parser"] }
 md-5 = "0.10"
 png = "0.17"
+tekai-engine = { path = "../tekai-engine", default-features = false }

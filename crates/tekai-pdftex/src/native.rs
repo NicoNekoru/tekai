@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+#[cfg(test)]
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Cursor, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
@@ -20,9 +20,9 @@ use lopdf::{
 use crate::expand::expand_to_source_with_file_context;
 use crate::trace::{TraceEvent, TraceWriter};
 
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 const KPATHSEA_PATH_SEPARATOR: &str = ";";
-#[cfg(not(windows))]
+#[cfg(all(test, not(windows)))]
 const KPATHSEA_PATH_SEPARATOR: &str = ":";
 
 #[derive(Debug, Clone)]
@@ -1593,36 +1593,16 @@ fn resolve_kpathsea_candidate(
         return Ok(Some(path));
     }
 
-    let mut command = Command::new("kpsewhich");
-    command
-        .current_dir(base_dir)
-        .env(env_var, kpathsea_env(env_var, base_dir))
-        .arg(candidate);
-    let output = match command.output() {
-        Ok(output) => output,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(format!(
-                "native backend could not launch kpsewhich for {description} `{}`: {error}",
-                candidate.display()
-            ));
-        }
+    let extension = match env_var {
+        "BIBINPUTS" => "bib",
+        "BSTINPUTS" => "bst",
+        _ => candidate
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("tex"),
     };
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        return Ok(None);
-    }
-    let path = PathBuf::from(path);
-    let canonical = fs::canonicalize(&path).map_err(|error| {
-        format!(
-            "native backend could not canonicalize Kpathsea input `{}`: {error}",
-            path.display()
-        )
-    })?;
-    Ok(Some(canonical))
+    tekai_engine::kpathsea::resolve_input(base_dir, &candidate.to_string_lossy(), extension)
+        .map_err(|error| format!("native backend could not resolve {description}: {error}"))
 }
 
 fn resolve_native_kpathsea_candidate(
@@ -1730,18 +1710,6 @@ fn canonical_existing_file(candidate: &Path, description: &str) -> Result<Option
         )
     })?;
     Ok(Some(canonical))
-}
-
-fn kpathsea_env(var: &str, base_dir: &Path) -> OsString {
-    let mut value = OsString::from(format!(
-        "{}//{}",
-        base_dir.display(),
-        KPATHSEA_PATH_SEPARATOR
-    ));
-    if let Some(existing) = std::env::var_os(var).filter(|value| !value.is_empty()) {
-        value.push(existing);
-    }
-    value
 }
 
 #[derive(Debug, Clone)]
@@ -8511,6 +8479,8 @@ fn push_pdf_arrow(
     .unwrap();
 }
 
+// Keep compatibility with Rust 1.87, before slice::as_chunks was stabilized.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn decode_png_image(data: &[u8]) -> Result<(u16, u16, ImagePayload), String> {
     if let Some(payload) = png_flate_passthrough(data)? {
         return Ok(payload);
@@ -15520,19 +15490,11 @@ fn type1_font_files(base_font: &str) -> Option<Type1FontFiles> {
 }
 
 fn resolve_tex_font_file(file_name: &str) -> io::Result<Option<PathBuf>> {
-    let output = match Command::new("kpsewhich").arg(file_name).output() {
-        Ok(output) => output,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        return Ok(None);
-    }
-    fs::canonicalize(path).map(Some)
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+    tekai_engine::kpathsea::resolve_input(&std::env::current_dir()?, file_name, extension)
 }
 
 fn parse_pfb_program(data: &[u8]) -> Option<Type1Program> {

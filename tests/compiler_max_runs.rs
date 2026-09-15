@@ -67,6 +67,7 @@ fn options(main: &Path, out_dir: &Path, max_runs: usize) -> BuildOptions {
         precompile_preamble: false,
         synctex: false,
         shell_escape: false,
+        external_tools: true,
         quiet: true,
         print_command: false,
     }

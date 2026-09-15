@@ -38,6 +38,7 @@ extern "C" {
         filename: const_string,
     );
     fn xftell(fp: *mut FILE, filename: const_string) -> ::core::ffi::c_long;
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
     static mut pdfbuf: *mut eightbits;
     static mut pdfbufsize: integer;

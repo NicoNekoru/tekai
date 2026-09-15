@@ -71,6 +71,22 @@ code, or output-affecting caches, compare the real large examples:
 - `examples/arXiv-2605.26379v1/main.tex` (48 pages in the reference build);
 - `examples/arXiv-2511.08544v3/main.tex` (50 pages in the reference build).
 
+The bundled-runtime gate needs no TeX installation:
+
+```sh
+cargo test --locked --test cli_self_contained -- --include-ignored --test-threads=1
+cargo build --release --locked
+python3 tools/verify_bundled_papers.py --engine target/release/tekai
+```
+
+The first command includes both large-paper builds with an empty `PATH`.
+CI runs it before installing optional compatibility tools. The second command
+uses Poppler and a small, checksum-pinned upstream pdfTeX reference extracted
+temporarily. It compares all pages with the same bundled format, packages,
+fonts, and auxiliary files. These are verification tools, not CLI dependencies.
+See [`runtime/README.md`](../runtime/README.md) for rebuilding the data and
+matching format without MacTeX.
+
 Build a system-pdfTeX reference and the candidate with equivalent source,
 environment, auxiliary state, and options. Render both at a fixed 144 DPI:
 

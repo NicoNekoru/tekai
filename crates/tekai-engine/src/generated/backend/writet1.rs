@@ -61,10 +61,13 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
+    #[link_name = "tekai_xstrdup"]
     fn xstrdup(s: const_string) -> string;
     fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
     fn xfclose(fp: *mut FILE, filename: const_string);
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
+    #[link_name = "tekai_xrealloc"]
     fn xrealloc(old_address: address, new_size: size_t) -> address;
     fn open_input(_: *mut *mut FILE, _: ::core::ffi::c_int, fopen_mode: const_string) -> boolean;
     fn recorder_record_input(_: const_string);

@@ -23,7 +23,9 @@ extern "C" {
     ) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     static mut kpse_def: kpathsea;
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
+    #[link_name = "tekai_xrealloc"]
     fn xrealloc(old_address: address, new_size: size_t) -> address;
     fn uexit(status: ::core::ffi::c_int) -> !;
     fn open_output(_: *mut *mut FILE, fopen_mode: const_string) -> boolean;

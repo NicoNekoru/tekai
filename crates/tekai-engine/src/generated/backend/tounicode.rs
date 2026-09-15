@@ -56,7 +56,9 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
+    #[link_name = "tekai_xstrdup"]
     fn xstrdup(s: const_string) -> string;
+    #[link_name = "tekai_xmalloc"]
     fn xmalloc(size: size_t) -> address;
     static mut _DefaultRuneLocale: _RuneLocale;
     fn makecstring(s: integer) -> *mut ::core::ffi::c_char;

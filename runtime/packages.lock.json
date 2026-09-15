@@ -1,0 +1,2740 @@
+{
+  "repository": "https://ctan.math.illinois.edu/systems/texlive/tlnet",
+  "database_sha512": "2edc230a45064a2c3e03555ab7e26c2f22c6c0c8f1b03e65d784a4f1fb7362afe21c89b5944ab8039b92ca375d024c0f09aa40fc8d075dad8528cbc37d7390fe",
+  "packages": [
+    {
+      "name": "algorithmicx",
+      "revision": "78101",
+      "license": "lppl",
+      "ctan": "/macros/latex/contrib/algorithmicx",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/algorithmicx.tar.xz",
+          "sha512": "f3f66dcbc7d8e361cb1c1fc6dff51c1174e6dc369323915b62bdff75f73264737aed5374f90abb149973d67b8c6fb21c07ce39ec9e5c9e60e0001035098d3d8e",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/algorithmicx.doc.tar.xz",
+          "sha512": "4ea19d0d9b7de8edb2add0ec0b6788facf3c68664e52413ae3bc0942f7a0089294eaaa1c6cc699198e00fd59600c7cabfe4ec5c300b57916a6a9c9c549822a46",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "amscls",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/required/amscls",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/amscls.tar.xz",
+          "sha512": "84f4f0dcd7844ed51c6f2ab5bfb97b78e4beabd77f6f037ba2b853fd048646f746a4b39218a0b36e5f67a63d563046a2c4aa2169c3131577f369927659531792",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/amscls.doc.tar.xz",
+          "sha512": "5ff54709e3d2071ab7e6121de366334dc942cea2f32a70a81f9c55c3720d990aa9f77b91975cdbc29918523c646efcd472d568fcb4fcafef7064e0d6cad6d7b6",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/amscls.source.tar.xz",
+          "sha512": "cce18b4529df7b39d72bf41a99a0dda9688933c4af1454d74f1165d5f69e8917da5de982d1a3ff3ca3577211083a870a3d2de0e8f41f2d2c8f9b3b3e36a9a10b",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "amsfonts",
+      "revision": "77682",
+      "license": "ofl",
+      "ctan": "/fonts/amsfonts",
+      "maps": [
+        "euler.map",
+        "cm.map",
+        "cmextra.map",
+        "cyrillic.map",
+        "latxfont.map",
+        "symbols.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/amsfonts.tar.xz",
+          "sha512": "be514397b9844ae4a4f2e4f8c79d78e8b3b434bacffc18ccde3cbca462bfc49cbf7affd75b70fb013266c00f8f9be8636729ee18ee1274b0241ad74293751450",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/amsfonts.doc.tar.xz",
+          "sha512": "d92f76ffd3049776bd0f8e80ce9cf7d46a55a5988eaccb9c8982f63b80490af1983a5600724501f6431f401b22a9a34d8f9dca20c6f2b8ccf85ddef0a65a063b",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/amsfonts.source.tar.xz",
+          "sha512": "6e0c10317625b82374e3dc22ee9ba9fcfef5bebf7b51005907f96ae6ce80a631db0d88909f8251942bb1286100c9dc02f618608795bf7259930514f623b7a103",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "amsmath",
+      "revision": "79234",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/required/amsmath",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/amsmath.tar.xz",
+          "sha512": "5d6768eea6404bcde83f6fdd7025f6f63dfafc633c689a308f1465ffbeb74385daddc4cd2cf4eb6f0152e8a2c9f8ee1cdc94aa8ad796051155a299d355503c4c",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/amsmath.doc.tar.xz",
+          "sha512": "99e5f424bb7c657f08df7e512dc720143005c05a23c75dbce009fa75c8c235791afd8b799b1277e434bf5a22e30282ac5b75e11fdb61ba94f1381970cee433c2",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/amsmath.source.tar.xz",
+          "sha512": "26b09000b9e073b0dad7fd4936bf2bc98613420e3ec40484eaa8bfc65dbeaf3e5d351cd6d060ceb4991e40b9e12f20a6decdf78bfc421d4e7b4bce2c1d05c266",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "appendix",
+      "revision": "79461",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/appendix",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/appendix.tar.xz",
+          "sha512": "65e13258e2c37749dc24a8c81c9bef2e6498be67b4595b0f8af897fa6b0308dfb46d8bca2209fecfa232057e5147cfe45617ac9c5803d17d6565405de4287ac5",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/appendix.doc.tar.xz",
+          "sha512": "32accc6919ad3c56157307efa5fb16b4d81d318796b69cda7eee2bb13579df1308630f973065929404f9ae235b515b216b73b4e261517874c0710bf176ec2810",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/appendix.source.tar.xz",
+          "sha512": "aa125462d3a01fe3998f427d25c69a94033890f33d8c196750a5483e3335563a33512d593856c25055af8c28fb3f11a5faec23e48848df35a0f391f5c3d3a730",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "atbegshi",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/atbegshi",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/atbegshi.tar.xz",
+          "sha512": "35d16e9d0566ec7bf7928fc443f763a942e9e93499dbed4d83416bfa33cf39dd0a6003dfb3f220cac5b28b950bb3224887ffeeab94ba744098b63d23187fd66b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/atbegshi.doc.tar.xz",
+          "sha512": "5ffa79a26cf09b2ee5655fc296566d9d3064e0be1b8b668a475d6b0b002823d2a73d38e90ee3e73e390f1961ad80c83b6e45fcb185f8aa62f2af405cfffa26dd",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/atbegshi.source.tar.xz",
+          "sha512": "804e82f181e5d4404696c72c1600815dca7c4f85e157f44b2779a291c365593e71df07c058aabc35d215a9285452f012d192143b046d68fc14a0e90dcd7b2ec9",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "atveryend",
+      "revision": "79461",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/atveryend",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/atveryend.tar.xz",
+          "sha512": "bf4e066a4b8c3a346471234ba1708a9c770d5ec761bfdd04beadff150b6b2be93bfc9f5756b4213059f65f8dc514d395afa021c1581dc786cc4fab5e0415fd15",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/atveryend.doc.tar.xz",
+          "sha512": "3bb1c18c9f8154f171d9a75fdb323c8051d7608e55ddb12ffc092e4cf872982be1491ed106a828e0e69ff48d28b9cc1edf0acb4d9f93fafcf8b0973ae2f2c486",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/atveryend.source.tar.xz",
+          "sha512": "7855f420d5a99caf4add9e8c7f48b9a576774e160572e3a15b05170d75552a78bdd4fa1368beea8369ec0d8b57254364026f365308cf9efd04df3aead5773628",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "auxhook",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/auxhook",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/auxhook.tar.xz",
+          "sha512": "0a81cff4887cad14b89839c85ef3ed7be06eebbe4c105b28b17f58198d04d630ea2351b9bc6bd7a10a5590bf2a1a660cd5d388b45a9180e01d72dbaada53742b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/auxhook.doc.tar.xz",
+          "sha512": "f39be8eaaae14ba92d47a13ec3031ad9af5d4e584a0861941fb71a80171fd995f0e77ee0281cb591a9580131cda37d46a0730f86d6cd2e82d572d82113e8fdfd",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/auxhook.source.tar.xz",
+          "sha512": "1d17f29a91ccbd016dd5ab59e1a92be403cc78f9a9ff5e9daf9630a154dc0fe1bda1f95f0ad355f9158902c72e328cf0b24744339aa12d06a0130bd2281f9899",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "bbm",
+      "revision": "77682",
+      "license": "other-free",
+      "ctan": "/fonts/cm/bbm",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bbm.tar.xz",
+          "sha512": "e9397d8e750d506117b05dec412228e685f04c5778a6233774bc519d6d77b74d0306b9c409b13ea76254a026af4f6e6617e4580c7afb302671d4bda516bc5180",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bbm.doc.tar.xz",
+          "sha512": "8c72866ff9a3d9494fbb4d584a7e8997a54572fc64ff0e195d67c703ec9a22ede7359e63c845f2444679f882d6be31e59f6f311706fe50c617ebd6a9c746e5ba",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "bbm-macros",
+      "revision": "79618",
+      "license": "lppl1",
+      "ctan": "/macros/latex/contrib/bbm",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bbm-macros.tar.xz",
+          "sha512": "ffddddbb0913d04ad63411f84c052affdc46751b70f3d0365479e102ad8cd3884b7112799bf7311fce817ca90caad909b8d003e05693098f50d58836c944a305",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bbm-macros.doc.tar.xz",
+          "sha512": "841d25a9a7e1e824b7379e67f6de5c43d0ff2aeec39679deac56a336190f8fd101cf593894095e323b2e063cf10c04c05b84cad64a32c00f43cfaa63aaba7121",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bbm-macros.source.tar.xz",
+          "sha512": "eb1e74947d9799414281a13dc0879a1237d54839c0ea43d59dd442f1abc4b6f7d2e092cda960cb73ceaac1a895753bb2b96879242f30252ae0ed19be91f478ad",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "bibtex",
+      "revision": "77830",
+      "license": "knuth",
+      "ctan": "/biblio/bibtex/base",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bibtex.tar.xz",
+          "sha512": "caf442c0fd7cf927741171f53a765d94b2c9547a866061cf496f5051bac4decabfc35bb9c81eeb9d9c0ac60f8c8e0adbe044e5d02bba8b96cdecb2119d48dd38",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bibtex.doc.tar.xz",
+          "sha512": "693b76cbe44e383d61e9ebc4f56af8225af243f6590fa3b2ad128efd9a6055c5908b97048a418fc1691e020a396510c1218754164df468307396a0df72cc2695",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "bigintcalc",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/bigintcalc",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bigintcalc.tar.xz",
+          "sha512": "e7230b29a08d1ef9d84254eff59c4db1dce1a9afd2a8d70f8e71c14f34a2d8fdd7f87840d2df055fba1821170504a2519bc7d73e719cca33cc03e74e171a62c1",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bigintcalc.doc.tar.xz",
+          "sha512": "33075f396249a59b56226cde6fab76ebf68b204eb7570b92365de6461141a664ed318692f978fbf72188e3acbe0b7e7efdea0f0489ac818e0786a9a09d90ff82",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bigintcalc.source.tar.xz",
+          "sha512": "27368745ba5bd2db04f61c237390e8bdda68dcde82c1c0a2700212193cb78a39f75854270f812ea842e7ab8cca163c1e5370b3d7c10ad7393425c1416a825534",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "bitset",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/bitset",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bitset.tar.xz",
+          "sha512": "fec1098a0affe5ac333cf813ed2183b7c2975ffd9f1dc281bcc7f9c608592ce5139b40b5b65363378d079b9bb77ae4a837916d6641476f312f681815ad4141fa",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bitset.doc.tar.xz",
+          "sha512": "9be10d230bf477b054833e7b6a672f88ef6e383a9b439592e7b2d16364597d7654901ef21b096e16fcc51c8e09a1db7b601a30e58ff88b3b0f7be23e79ad14f3",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/bitset.source.tar.xz",
+          "sha512": "f5937c31e52d5ee3b0fffd8ea86fb2673a021cf1765a08308170bc3cb2f48dc4418ae5a6e6a75fd82b3d0d3dada64a3907471f2d6e3220f7e5bfea0a4d98040e",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "booktabs",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/booktabs",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/booktabs.tar.xz",
+          "sha512": "9e0175d459c29cb5c13cbcdb966c45ef253c775f45d156ac5874bdf0b866e89652851411d9425e09c19287fb35bc255d588a3c59237b9d03179c0b91ba36ace7",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/booktabs.doc.tar.xz",
+          "sha512": "4497220e0f7c0bdd3bd7da794eb1b1c86d2bca371d7a703dbbe73cb9024e51bc36716a06c9d8f7abc62d9f9647dff7b2734e104257ff44445fdc052ac7ef6493",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/booktabs.source.tar.xz",
+          "sha512": "6a1d3530671a7f173bd724a19d01f510f1472af0d3bc5b0b5f0d0680707f588502fa1214dbc00a78cade6a18b35fe7063f42a8e7e1fcff3a7685975dafedfc1e",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "capt-of",
+      "revision": "79618",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/capt-of",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/capt-of.tar.xz",
+          "sha512": "9efd83277da2b92149d6516ea6860bf09137a0bd62075a53759b09aaf3a8aa439cbd72d71592a4cf52919257961f7d3dd0ff002f1355ca9263efefdfc6bc9a1e",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/capt-of.doc.tar.xz",
+          "sha512": "88e5ebd2e6855ee2ee52dfd164b11b17f6d82089769fd8678b4f0dabd086b4fbd0edd3c13ad0c3451d7e60fab4afa1c77ce8b04c6b866e3732076c2650335837",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/capt-of.source.tar.xz",
+          "sha512": "bce1c0e2c3b4f799a76919a57fe5d599d080bf7c8d81c9b441fafedeb8563de2b6183f9fc54e3cc7f09bd84dd30f76654035119ac1fd95ef3b5ff67e1bbe8f2c",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "caption",
+      "revision": "79618",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/caption",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/caption.tar.xz",
+          "sha512": "1d6fc7c2ca079fdeb6c6680d1cd7da86877fc4d4bfbca269fc4ebd58718e210856d52b17bc7599e6c3fb181c41ae8e45302ba86fe056f6c83fdfb513227041fe",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/caption.doc.tar.xz",
+          "sha512": "9cde792974a1baf78c3bb3a71f71b77a0a9ce00c967a9e536dd067acc323292cf83849e9c89c5844e477604336315d3e67d3eda6cd6b80aa824ca6fc92ce124c",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/caption.source.tar.xz",
+          "sha512": "ad2b490f8f81d497d124a778cbfb0526a083c402eeada24077d40f0a6973ebf8ceeb189043fc99731d30b5ad5a956b34fad85ae83da26c912cd2af89b873df85",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "carlisle",
+      "revision": "79618",
+      "license": "lppl1",
+      "ctan": "/macros/latex/contrib/carlisle",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/carlisle.tar.xz",
+          "sha512": "d3ae69795c55ddfc5c5e61da322fcb9f33ab54315a32bc8c774a84301a7f78fabb2192d2774039e648843169b3403e322aba6b34a14e0e77a5117e9880ed332a",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/carlisle.doc.tar.xz",
+          "sha512": "44156003f05214fe0d1a27c1b7d8da7707a596da2053e86c2961f97cb6cf6e4f3125079aa7452f1d4a2541576b89cf691131c7d7b28750ad3c8cf6a971d125e0",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/carlisle.source.tar.xz",
+          "sha512": "d7d83883f9c31ec719e334b35f44b0999f2a0a413cf9c4f0ec0cd36879cafeca9bdc8f1be3b3c06da4530b80f274593fdc21236bd395adcd121402cbf65f4d29",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "catchfile",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/catchfile",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/catchfile.tar.xz",
+          "sha512": "bc23e44c676a7b45a5e7eca5b03ab76544273a3da93dde2d68c4ba631cf0bf23c7f07046f5a84456e71552bbf84c25f6fb17f2666ef400f096f9a1084443e316",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/catchfile.doc.tar.xz",
+          "sha512": "b686d073f89f8cea6318a168dbb0f624d58bf535d2c3adfc8a3a239e1391b61b7f23b4ef2190908f3da95aaed71ad61a14f49076e284fcc227a4e2942c2f490d",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/catchfile.source.tar.xz",
+          "sha512": "349c66480749b33f7451e3c8662229ddb0fbd1fa0134d01f5d9407a9f7a710c3363a033da80a57e04baf45c9589965912e883175024492db616aca2c8d3bbc5c",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "cleveref",
+      "revision": "79618",
+      "license": "lppl1.2",
+      "ctan": "/macros/latex/contrib/cleveref",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cleveref.tar.xz",
+          "sha512": "bd41ee9c370a3b2b7211397067970b0826571ef8c662526173f60b5f40c78ab10e771304e50d4e0d4c32413bbb229ba34cad49a04f601faf59af9d44edd8e17e",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cleveref.doc.tar.xz",
+          "sha512": "6906226eb95ed52588a543a75408e5430677405c00d8430edf759a7a043b5b6ac7438a8f27ae4ce34794010cf67d88b625f01f1d9862c14dcb85b64ff645c25d",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cleveref.source.tar.xz",
+          "sha512": "630d9899735f4684b52234d835c44b7ff8a3c9fdf652d47166e2d610e03c94c6b44d8174a735a700ccf141d82885507bc1ff32055c9d634302ff41a9371f2eb7",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "cm",
+      "revision": "57963",
+      "license": "knuth",
+      "ctan": "/fonts/cm",
+      "maps": [
+        "cmtext-bsr-interpolated.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cm.tar.xz",
+          "sha512": "e65b2096ca183ca21d8ff987489223bc98750fcbaf4f9f9a9996f5153a76c5587d1ad77693234d02f80753b8b8cb86fd957514f82065bd7aab9eb64bad9003a3",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cm.doc.tar.xz",
+          "sha512": "39ccdee82d86f01e11aaeb53844639b4f976677c0baef7675817fafe4263e8e44cfec144f6fce265c9c80d9a9373a2f46ac8a55b7f20923c680eaddd0222a045",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "cm-super",
+      "revision": "15878",
+      "license": "gpl",
+      "ctan": "/fonts/ps-type1/cm-super",
+      "maps": [
+        "cm-super-t1.map",
+        "cm-super-t2a.map",
+        "cm-super-t2b.map",
+        "cm-super-t2c.map",
+        "cm-super-ts1.map",
+        "cm-super-x2.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cm-super.tar.xz",
+          "sha512": "45638ebf4ef2ffb7c4b74669ea089a9f8d3ab4b98e555b3f9b2e9bd9732b48fdba61dc91188e2c8962b8bfa3caaab31c10d1ccd3e0aa9e26197b148e59576f8f",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cm-super.doc.tar.xz",
+          "sha512": "5b524c55dbcfa1db87484d3437156ca9987fcca66e2c2e6d69e562c48ae708e51f089051524f324cbafb72a29e08f90e70c408d7fea7341e9ef0b5d53288b7d3",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "cmbright",
+      "revision": "79618",
+      "license": "lppl1.3",
+      "ctan": "/fonts/cmbright",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cmbright.tar.xz",
+          "sha512": "7be071dec6380725ff9b76c468b3c73a4efaf1d87bacad53b5b676429a8ea17776ca27aef5258a4f869790e90d04f3e235dbd59a3be7bcd8defaba7d6b07b0a6",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cmbright.doc.tar.xz",
+          "sha512": "e3666f7e4a8b7c818417f15e1a2bb7242e8d89a28c58ff0bf675df447ae005e62a2a0da089819085595951cbf12655821701898d5c92ff375fb1b0e00510b1c1",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/cmbright.source.tar.xz",
+          "sha512": "bd68a334744bcd1000a5f8f0c4c5d83c8ee726270f7713bac0a45ee1d95d14fa30f94e6760f971acaed66ffa76c0929caf381db272635b2cc8d711b59e140ef4",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "colortbl",
+      "revision": "79618",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/colortbl",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/colortbl.tar.xz",
+          "sha512": "f149830c0fe4fb4612aba7ade37c970565386f91063370a85daf1a5c765d614fd4b0b7733dd1064e47b8d94a2c41bf9d2fb868d1c730b26380954e65e698eb7b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/colortbl.doc.tar.xz",
+          "sha512": "5afdc17e2275e9322acd903b63e89add9f327c1818072e052e171109f350ad64c1f15042028703ccf9fc0a9024cf1398eedd661dae0346c3413021aace5dfffa",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/colortbl.source.tar.xz",
+          "sha512": "3759e152a2dfdc4ea7971f7580bd5c670a4dabea268b4e50f5e0b6ff60e5ef9435c4e9c6f95030389d903ace83a894d816732b4ddef8cc6e4fb317252a3b1918",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "courier",
+      "revision": "77161",
+      "license": "gpl",
+      "ctan": "/fonts/urw/base35",
+      "maps": [
+        "ucr.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/courier.tar.xz",
+          "sha512": "ee1362c4cfc812f733caa3e110703da940b2baeaa64e9d55592d281b1d45c028f16dbd34d763eb34c3cc5c0468db80ae32ce0c70fe129f06bdc0f2c6e00c2586",
+          "kind": "run"
+        }
+      ]
+    },
+    {
+      "name": "currfile",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/currfile",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/currfile.tar.xz",
+          "sha512": "1f6452c0ee5861938ca693ee37f4fc46a61ccbdeb4273a75d416f5d28b421b0eeda3250c385cb2eb806d7d87661876f96582947a4fd1e62cc9497706908368de",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/currfile.doc.tar.xz",
+          "sha512": "d2a0e08fab0994e97e71efb81ee6bed52446f28871bfb61a32fe77d69f0780172a43aea190eea8f48255ba1a08c2e6ea6a82cf0dc2344da6c640ea9a01c0a9e1",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/currfile.source.tar.xz",
+          "sha512": "52218c6e7f3356de2fe63d375d544310a980eafca7f19b7ac005f191633b36233cb90b7dce2bfa36530d25a91b3c761b55e0a6045c1e2170cfeb2b2ef447c5d8",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "dblfloatfix",
+      "revision": "77682",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/dblfloatfix",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/dblfloatfix.tar.xz",
+          "sha512": "695ff90512babd3e4a39ebc52703a3a16e2eb12985a11e7af58fed8460a32153ff29b185d2eab70ce9c054b0563e8adfaff4fbefe183a2c32ed022345e74fb39",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/dblfloatfix.doc.tar.xz",
+          "sha512": "ed695c061339956a8fb55a777a58614a54a1efc259aa15dcb285133f5b4bc594869d410be41d4d72b9392807d1af67fd1c8bdda8f9b16dc4248459720080dc82",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "dvips",
+      "revision": "77830",
+      "license": "other-free",
+      "ctan": "",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/dvips.tar.xz",
+          "sha512": "609a450ea68e4444c6a893747dc03a64c718cdc91d5c79787a973474c4d8a015db346f0b8a5ea39108e3e0ee0b310719363b73c55001f4d18ab4107e8aee5af1",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/dvips.doc.tar.xz",
+          "sha512": "8f28739505a1be85af41f727a882c1eafed17a6b3f7d1e0c2f1c919c2ca63a5e1b24246ac39b642347e7846bbddd7c2326382700d99fe2c135fa2f39db42004a",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "ec",
+      "revision": "25033",
+      "license": "other-free",
+      "ctan": "/fonts/ec",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ec.tar.xz",
+          "sha512": "a967804b42bcc11e766d5b74de28c54d167625d2b108a34bc5e49351533ddcfe3334e4a7a34966f8d159bbde6a80f84b4d216553ce03fbcfb7a4b6267574538f",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ec.doc.tar.xz",
+          "sha512": "bcf6617cf66af91312aea98f6c4a034f3af4ada14687414e7c3572e319fa4bd957dd25ebf557078297950d8ba8fd02229c5ad53464077feda462263b52536f29",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "enumitem",
+      "revision": "79618",
+      "license": "mit",
+      "ctan": "/macros/latex/contrib/enumitem",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/enumitem.tar.xz",
+          "sha512": "6bbdd89a92a18e8b59c9a9f1a2da203da7c34a73fefd4974a5b4dcd8c9ab457c20e8555a2f6c01eb55ef722ae8ee4a943dbca41b905d83c8eceba2b87917baa0",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/enumitem.doc.tar.xz",
+          "sha512": "3fa51446d8a8dd7860b96770faeb3197d59055683fe42263ddaaab9f0b0c1af43ec8e886d84cc49ec09655496b4b5af98b32496d45ab1266fee4911dacdcbbf1",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "environ",
+      "revision": "79618",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/environ",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/environ.tar.xz",
+          "sha512": "3205affa1fa7c1295488fbd81ced85dfda5f8d0e06566111a7c1001493b8e3ecf68c8ae7a98fcdb4b634af4444a220505751e21c6c595efa972e322158d8ffdd",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/environ.doc.tar.xz",
+          "sha512": "b45af94e677781f4a6ed53d8f2505668eed89f5acaecaf61f713a653c89c285ca9746759cd9667f8ce74de25f33088a8d388e3e391672495901643fa82c5d38f",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/environ.source.tar.xz",
+          "sha512": "c9873e32b644311bf6f8b771324b99e381d8b96076fd833d6247540c10f75d20d05e5d6a961f8b220dfff6f6ce09afd8f1e2d324391a8b74eefe30c60acfd501",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "epstopdf-pkg",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/epstopdf-pkg",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/epstopdf-pkg.tar.xz",
+          "sha512": "4a5121f3bc7e268b4e3201c2d441052cbc595b372bb49401844d313d24014e0021bef983b2ad1051cbc3ff165c93de0b8160548281e89e67a4abc3a8da5e12ee",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/epstopdf-pkg.doc.tar.xz",
+          "sha512": "887777ca338f0379608242da90e4dd4cbf9f5d34be5a12529a0fafb3d14a8f0894fe2ce8e24bd7b8041408a83c6640a5964767e92f8836e0ad1c70bc7a697df8",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/epstopdf-pkg.source.tar.xz",
+          "sha512": "91fdc0d2df43685496e39d946113aeda19f43ed52c4f0c9290e676e63eb98a1e3e695d6299d65611b6d336739777cf1d9aed6468f558ef8cef6081357d537f47",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "eso-pic",
+      "revision": "79229",
+      "license": "lppl1.2",
+      "ctan": "/macros/latex/contrib/eso-pic",
+      "database_sha512": "7b245e750b476539a20b92d04d558ed4db651b5f183ebc3fe671e966ac31e08780bd431d4fa614616951d5097f3a4bce757c2046ba29e90870b229b2ac5a05a1",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/eso-pic.tar.xz",
+          "sha512": "17e419b43677d0fb1994cab4a105067f509acb620251969796dbf81cbde09789174a3efb256fd5842811a233a664705c88da243918ae79d78885991ee738140a",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/eso-pic.doc.tar.xz",
+          "sha512": "2015f8065c92570a8322b918244a92b7bee5c59788ece0d156eb0168f42dadceb212a18e336ef5ffe7a854975b6e9a7d4fedf0b7192b955946b99a3a91890c1c",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/eso-pic.source.tar.xz",
+          "sha512": "d89bc7128bdfa26cdf7ba6dd276e1258d3f0fa2b418a12312fed9d9d633e6f4cfe084ed3a0e0b46dfbb645acaf79b94fbe3bea063fa2be1f94bd0a8c6c2c0dbd",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "etexcmds",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/etexcmds",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/etexcmds.tar.xz",
+          "sha512": "5d9d3fc05a3e097f4cf6bb486fde026e94d539fe3e7c3939468ab00127ce781308a12ab1bf58ffcac6dabe720e2f7176954baa46095b424b3c5b685a64a6ec33",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/etexcmds.doc.tar.xz",
+          "sha512": "b2c9435bc8f85daca0a8c1bb071ffa473de142101cf2ca65caefb0ecd54a9c7014ca5c6593b27e4baf2b836b3197c1ab6e65e4bcc103542483346273f5dca16b",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/etexcmds.source.tar.xz",
+          "sha512": "d91524c80d154a1d8c1c4d9859f0b8c5cf436153e316a53173ced8a3ef370431e25265c69fc46c8f212e57298ec5f52dcdc195c985a1da4077301347373fe5fe",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "etoolbox",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/etoolbox",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/etoolbox.tar.xz",
+          "sha512": "0de30a7f0329add368a764d28d5be57b23a5c552e80472d48b5e0c78be6c13c6e032bd09620ad2690198f88dbfcaa723dd22bdbf3054da1b63a8e115f7a45ecb",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/etoolbox.doc.tar.xz",
+          "sha512": "e651ce2ca135318712626a4dec1a4b1e039835fa37a59e3ab2817e48d37ff77db041c069aeb48fef7ea1d1a70ac08d1f2783e4209078e00c0116b5b489a2b146",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "fancyhdr",
+      "revision": "78348",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/fancyhdr",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/fancyhdr.tar.xz",
+          "sha512": "2c27b7438d234a18f0128c52d43dce97dbba730db21f03ac61a33340cb2d2bdddd0447407920b51bfa3b3fc935048024ee0b7094fd184b079bb6ea38d76a0c70",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/fancyhdr.doc.tar.xz",
+          "sha512": "c4ea0ae7041d51616685465d4560dd13f6b0c2702a840e40e0efad7fef99801df51e1bd7c20cd1c640da07a355f883e38da3444c13c40fbe4bc9d7787e719c96",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/fancyhdr.source.tar.xz",
+          "sha512": "333ab08361fcbd5cfe892e745de95e34b61da27dd30e349135666aec0018a8cf24dda585e7d926c653afb118714c23a7adadd138c405858837099155dc0e924b",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "fancyvrb",
+      "revision": "79962",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/fancyvrb",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/fancyvrb.tar.xz",
+          "sha512": "ce3477324b29212e55d0575c53384b3a7ccb47569102d1bab5725d73cc3c3d268df3f3cbc015dc4bffa6d4a7178717ecb08ed7d5af6decd4f099476cd102d796",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/fancyvrb.doc.tar.xz",
+          "sha512": "b49fe413d46d615c68f9d8d6232e3b432b6d43a22d22612a2d93758afa4bf010ca9e90371d733cb66b4bf132d83461a06f78e7b4f4310708bebe53d811489a27",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "firstaid",
+      "revision": "79234",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/required/firstaid",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/firstaid.tar.xz",
+          "sha512": "64baa443979a09b6c5eb7a27c53ed040cd04f146edb2af7f037d9d4ef7d98eb637cbc85f59eaac149bb5f1d2cc4bbf9426f47c93add55f6aa41a104e669c8af8",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/firstaid.doc.tar.xz",
+          "sha512": "6bbcde5f3575e388f51237aee91e280a562f41fb7f7b030b4e5512280db0316184f58bace5a5fb9ad5059009aef82c7ddd189114aaebc5f50b8dfe3980c05ac1",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/firstaid.source.tar.xz",
+          "sha512": "fcaf5d6c5d8e24aa28621a8f905fd9e69996087c3baadcc1d4d3b274c9c26eb754d5eb6a001cf8ee81bc3ec6158f4b0ed093eac4bfeb9106296fbd4d1f35b36f",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "float",
+      "revision": "79618",
+      "license": "lppl1",
+      "ctan": "/macros/latex/contrib/float",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/float.tar.xz",
+          "sha512": "6dcc29a7a08c5f6cd0bb7235e3cd59688283909018e516074931d0c2761f9d6e29dfbddb9c97a6a95f3ab08e9dac6338e7a02d152b05be53c5b0de025eebb4e3",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/float.doc.tar.xz",
+          "sha512": "6cd9f0e27a2e6868cb4069f3864e9aef74769b25816f470440b7c989b83556691258a2da97e5d479ac4ed08db01912eec3c370da15abcad4d55e8701fd243521",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/float.source.tar.xz",
+          "sha512": "7493ef00b1357c54d2912f5ed2b638a6e1fb408fd8d50dd18e6d95db1e8eac8f5ae5b72d5623b13d8b26a20fceb94af49a5cbea964d23d53c1f9dd72f7ce2136",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "fontaxes",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/fontaxes",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/fontaxes.tar.xz",
+          "sha512": "54970390d95e0e510bfc25e258d28b31b61094c7f43b28a574372688041f0be02d5e9f5faba87f730949e07d6e8f40d26a772afb20266f4a366a3f198ac3ae8b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/fontaxes.doc.tar.xz",
+          "sha512": "fa195f5bad5724c8eec68374b440b5f621bf08f96ff8ab36c00bebf51c4ce3b39f94e9e417e40b514c8c413082c59733ce887970c785519cf16e127301fee5dc",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/fontaxes.source.tar.xz",
+          "sha512": "699a2beea46da73c0981646d372481b23b131c79e22e40ac199f173594e69bb38767267b936d87b1a4298bf6075021066e96e1e1d5016c98c6f08e04b22129fb",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "framed",
+      "revision": "77682",
+      "license": "other-free",
+      "ctan": "/macros/latex/contrib/framed",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/framed.tar.xz",
+          "sha512": "be2a3ba0a9dc5a6b7aba0c4dfdb2e8e6e767b9d744383a94ebb9e9ed50c2feadf3e958c7a4bcbc20d098426ea50a05b962863ac8b9460bbbb0fa4b9ca62138bc",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/framed.doc.tar.xz",
+          "sha512": "d0f1e253980116d1de34f3c4357b8e068213cbed8bded90cadf8f3821e952c2d53d5d17087394d9fa0356ffbea7b7eb5206306190e816fe7a4b60c99dba70aec",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "geometry",
+      "revision": "78315",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/geometry",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/geometry.tar.xz",
+          "sha512": "1c7120b50db68c40ae22b9cbd138189474c9c6e000742b65654097c0d9838aa23d81be3414fb621a7515d083e2d92f6b4d68e0f3a96c2073d10bf756482b6812",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/geometry.doc.tar.xz",
+          "sha512": "54a32f1b7850715b56b0c8f11a8bdd094bf3013bb6b11dd8067c16aff3327de603d89eee801849b6774297dff5d7b20439a746068ec775ce0ff236907c0d6827",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/geometry.source.tar.xz",
+          "sha512": "d13e71c192730a761983c31e6f9c7dce395b7b666bd26ab0f527b9bf2785f486b13e097cde7b3a460dfc6ba83ba74d13d184537bc5934568785795ea3d48df24",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "gettitlestring",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/gettitlestring",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/gettitlestring.tar.xz",
+          "sha512": "b61409ca66ce462be691d0a263e2ea161a8faeab8e6f63dcd2a5bfb8a73ac331795e82af8b8a36b74ba6560edfee2899661b8057ede71dcbc76460c85b272efb",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/gettitlestring.doc.tar.xz",
+          "sha512": "c4d0d0a438af8a3bc499976d0c0b27f8e4eac506877685bd6aa2c173d934c469dbcb771d8c13951178de1c6ec8a9c3cebbb6b342c75ae5eed1105107d3af7c0c",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/gettitlestring.source.tar.xz",
+          "sha512": "e9e870850188b4685abce4534f3508b2f5233211deb8f9f8094581fbc9ef6f76c9d651842cda6ab9d68780a5854cd2feeb5e9b202e467a5a7d0b35d688e2a6d6",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "graphics",
+      "revision": "79234",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/required/graphics",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/graphics.tar.xz",
+          "sha512": "1fce8c76d1cc65eb416c1b40bb8b872ec886384c1a42c02110756ff08d4c5909a3675cf1098499aa9e743eb2f4df18c6487bc0849208bf3ef9efc17dd27cb7ae",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/graphics.doc.tar.xz",
+          "sha512": "8af396b51d073c000ef2b53d38d2b23b610297b2608c9d0a432b1a72abbe7684f45b10af8dbdb036e0162d27d51bfeaac3518ca8e8515b680e0db68224336f8c",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/graphics.source.tar.xz",
+          "sha512": "97ac67859c9bb8e5f2b12f0b9acff095596df455ecc20a194fc3df8f504cdf9868dabb0677a444c21e3af3637ca4d75e6cc7f620e88c139a768df810992b0c51",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "graphics-cfg",
+      "revision": "41448",
+      "license": "pd",
+      "ctan": "/macros/latex/contrib/graphics-cfg",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/graphics-cfg.tar.xz",
+          "sha512": "e1015d360b56f63f1b9790daf16e2101e6af995bd1e45288ea604ae94e20196cab22e7e54d318aa79fa386123032a928be70a57154d409321e04f03ecf97ab75",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/graphics-cfg.doc.tar.xz",
+          "sha512": "dbcfdf635c2816f305205915119e1f6acba816c17b683622a8a32c361d75338376426b258c1fa3271abc1d7ad2a520ac85092a7b3bfbac6463106449bc906ae4",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "graphics-def",
+      "revision": "76719",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/graphics-def",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/graphics-def.tar.xz",
+          "sha512": "5fedc5bd4ac2313c920b23addb5753f6f90ec5def0b9f7e8fa6b31248c01a5246331f0d266d367d806931f61e824925099d9bf61f805f81c21385007f7f832b3",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/graphics-def.doc.tar.xz",
+          "sha512": "3d63e17a5899452abda47a1dbf19630100384eacec9f7bbda564f10c49e3a93fe3fa59b6256df96704cbddcb7361c1a2887706c26e1167abacfe30c5e8ea6bf3",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "grfext",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/grfext",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/grfext.tar.xz",
+          "sha512": "af508fefd126606889f40d0cfeb7dc0aa7558acc2b4903717b557c7c507dfac52a12f7bdd6c1936a277b2ab6630a3b2edfe1e83ca33bd2c73f4667936a2f4905",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/grfext.doc.tar.xz",
+          "sha512": "30621a6e5dc084a50c0224c0f2670bcab27537c792a00dbfd2c1eef78c54ecde441cbed90e4979c36067001e532c4cccd11ecd033fe30374ee2c4b32701096e3",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/grfext.source.tar.xz",
+          "sha512": "034fb27ddbc2506c689878a64fac3ea9851f122e6563f9ae3baa504cf2a302e682221e685f9a0c011f96f73ec156c336287dafa567a6891074a8aed72492b4c6",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "helvetic",
+      "revision": "77161",
+      "license": "gpl",
+      "ctan": "/fonts/urw/base35",
+      "maps": [
+        "uhv.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/helvetic.tar.xz",
+          "sha512": "931f91344575e545590c1ab037c094ae1bb3cad8b81d8dcdf28fce87b237c1013d20e841cc1fd334c488ad0c6a08b82c7fdaa14ec162f55c31df780c7a3bb849",
+          "kind": "run"
+        }
+      ]
+    },
+    {
+      "name": "hycolor",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/hycolor",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hycolor.tar.xz",
+          "sha512": "2da57e41723e7db7d610425d59eb290a1e20b6bcb0052fda9694fcd082f85d7d27e25f076932c1082ab608a7a6dcf2746cbc3fbfe51a0790b06298efdd48a6be",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hycolor.doc.tar.xz",
+          "sha512": "f3b33618849d07d11071c545936f5ba02740203d9db519e90228a722e8f1dae811ca1d9abd2e39e2a02ef65993633d570970f65e0dffaee71ef0a21a3ab4c3a6",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hycolor.source.tar.xz",
+          "sha512": "af1b3c0c85a9972db2610d968cbe8086cb9fa2f0f21de0a7f57ed3d0eb0db5d3476f5e81a1bca4f9046b8717bd7897e7d448d8f57b2e9158ddc8237710bb9216",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "hyperref",
+      "revision": "79408",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/hyperref",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hyperref.tar.xz",
+          "sha512": "7e9fa871862b9b42131839bea9cabae35dd4a65128192eecf70a00611b51775a83f3e86f450267685289e29e69243a722fee302d744d61bebef93c481ee22740",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hyperref.doc.tar.xz",
+          "sha512": "a53522bf9c99c68d5275904c90cd82d3689a8946b9efb8da781cf460dabb442566246cadf7a4dcfa806dd1304125cdcc079836d4f796ce7063de742622946ff3",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hyperref.source.tar.xz",
+          "sha512": "75453e4b3dfa41be9f87466f088024de669c4e31e4acdfefe4c2964ebaaa06fe86983d7a642b97b01960188098c719355409e6dc0b43740fa3f71c8f2633f38c",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "hyph-utf8",
+      "revision": "79618",
+      "license": "mit",
+      "ctan": "/language/hyph-utf8",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hyph-utf8.tar.xz",
+          "sha512": "8474e12b06d1f0c4cf10932d0d85510de8953b82196eba930fcffbfb28e259a5591186260b3aa85c40185445d73babb7e9d553c21a0bd8cfd99c3eeecc1af927",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hyph-utf8.doc.tar.xz",
+          "sha512": "97fb658eba1a7ec0aaeb2bda9505e400cf2310fd361cad78b78c26b058b28e4a870577574cdf96baac72480af1189a67d31eae6e75598943f0046d70630d9dcb",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hyph-utf8.source.tar.xz",
+          "sha512": "9eb97662bbed75da83f79ffa078d51d9e7a79f82d734bb4bed88a55ae4e77d288134f12057f71fc8e7887d7d03312265186cc63dfe47018d1d696ea9ed9d059b",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "hyphen-base",
+      "revision": "78076",
+      "license": "See upstream files",
+      "ctan": "",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/hyphen-base.tar.xz",
+          "sha512": "dc110200707c395dd61dcf30ed32b8eb4dd648fbb98eaa897e473ff683fe79af05464028a4b0a4685c9c17ebf61f19c592825f2a778d512ad68e1a57925a033f",
+          "kind": "run"
+        }
+      ]
+    },
+    {
+      "name": "ifplatform",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/ifplatform",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ifplatform.tar.xz",
+          "sha512": "b62aafbcc01a338ddaac050c2806042203fbffec82def3cfa15587b9b254915b8718f085dde74e88dffc9e5b2e94ed17d9c06a82f8fc03382cd9ae66422e4a89",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ifplatform.doc.tar.xz",
+          "sha512": "e7f3e55f33d45e741c4163700c11f6f412b2f4bf857316280f52e8ca948922679b3616964ed59b9b06131b777a391a4f8bfc281c2c9c299e13ee23d776de66a3",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ifplatform.source.tar.xz",
+          "sha512": "6a8df680499a81972ba01f12b6c61f5e5917e2cbea0154c4a4eae144ce025e9cc14942bf2760a9e4898469a73b0bc0cc2937311d79dcf4d7342816ddaa9343f8",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "iftex",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/generic/iftex",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/iftex.tar.xz",
+          "sha512": "76181d60fb7c52af3d87b44a3f3147d45a6fe28030c160ba41c98bcfa8be5cd6c4dc449806530186ba6e52233543ed808e18c248557b1d5b9ce2305a506361d8",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/iftex.doc.tar.xz",
+          "sha512": "e3a4d5ef49f75ed4901c09b24741ff1bbfb59b81bbe260a09438c0c52b8b82d3a6fff11abdc003e2d7d5f56e773829cbc5aeccd4f07361bf28c1f67557ffdc22",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "inconsolata",
+      "revision": "79618",
+      "license": "ofl apache2 lppl1.3",
+      "ctan": "/fonts/inconsolata",
+      "maps": [
+        "zi4.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/inconsolata.tar.xz",
+          "sha512": "a502ec67e7a1f45a3326cd57d2fef68b642a167810e797c80c4e708bec96f481c80d79a5ab6e767f63abe68c79c267a7dbc78514decb2ed4f9735d47d43065a6",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/inconsolata.doc.tar.xz",
+          "sha512": "bcbe0ee8f5d4733e61befab8576c062df6613ff13bdef29ab534895266dc9341c7eb29f6ef9b3a79e5438fecc94cfef11ca26c58618b043989ea2c404a1922fc",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "infwarerr",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/infwarerr",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/infwarerr.tar.xz",
+          "sha512": "646b6a43b4fe964192bcfe0b0af7149bcfdefbb1bd6f44806176c07e41fb3be17a6227329745e195649342a371f4044505c829f2075d5efb232ea93e5d535fa2",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/infwarerr.doc.tar.xz",
+          "sha512": "e925acc13f4f6777be08b8a20fc24c00cb599a3cbb52352b7b3923196f5791bf05e9e54225153c1992277a8a0a01f54864907950c21d3a27487772cf5acd3d5d",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/infwarerr.source.tar.xz",
+          "sha512": "275179f6a7c380555be0f1f71b65749c18090d11eb16958544bd3baf3471fdd80305642973a68afb4d0cc3083433a5b00d3bdf647abffc356c77c39412a67eaf",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "intcalc",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/intcalc",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/intcalc.tar.xz",
+          "sha512": "94515d10212baead746e1fa1b39baca6146bf42eea09579a5b6c06a3649b08cc37a4dd0f9f4d2e4d1644e04ceaabdee0d26cc6c317e20450c06ddecd0e988bdb",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/intcalc.doc.tar.xz",
+          "sha512": "e100f58fad144069c22d488c515d5f0181978e494487bed283bcf6d0028d8109e40387e796b599db0db65756958fd1cf7365f076e30912bd030ae9409bfdc9c6",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/intcalc.source.tar.xz",
+          "sha512": "0b397bf5705f3e5069ef309797d18a4740b498fb1bc1c38f00d7d850b1ec5960b705e2c17ce45c1191f764335cf5447c08a6b360b663c0dbd057388659e45f3b",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "kastrup",
+      "revision": "15878",
+      "license": "other-free",
+      "ctan": "/macros/generic/kastrup",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kastrup.tar.xz",
+          "sha512": "d7cbd22ead6633284e9d114d90b2cb47924bfeb10c15eb350e4c2f82b883930c953410362313cdf8ac476a68cfa3a9b020217097909504b97a8ecd7addbc8d97",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kastrup.doc.tar.xz",
+          "sha512": "32883a008b0f44c341fbd5f65f9783e403fb5751201235b0c4a2dfd9af8400e1a36adaf4573165688d78cacdaad3c8b2ac1b92ba87ef6951d3bc5330537d1f9e",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kastrup.source.tar.xz",
+          "sha512": "60390a053fe2fa53685403df1d67a2bf8795f49db0f4eaa5a147ccaed951a55c1ed50c9cc5802bcdb5e356b694c2b4be78715022842c958f784908cab89a3f75",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "kvdefinekeys",
+      "revision": "79461",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/kvdefinekeys",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kvdefinekeys.tar.xz",
+          "sha512": "31c04dd6f185fdc807b4dc1901a04bdbba306ad4af95669ace38f9809bc15da5e60725993d16af60612797d5f74f1a09c40003a167293756abd4dffdb9afa1d7",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kvdefinekeys.doc.tar.xz",
+          "sha512": "89d25a033ec08cc2920acc82ef35ace633c31bfdac3fb15e12eec183ffcf76cfaa845ac88b3a16c26e207a722062126c2d3ca449bc6b628e1d0a3d42f33459df",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kvdefinekeys.source.tar.xz",
+          "sha512": "66b40f046474ebd7ecf07a90aed786b1cca756bce5c67fa3296158f352a243fc6998f547ccf276ea79708336292e199e0eb7743c3ae33d6fe08758638f31308f",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "kvoptions",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/kvoptions",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kvoptions.tar.xz",
+          "sha512": "57b7e13f9750526835a381f58f745ab37c1fff32971deb4185a83df94942a54ad4f5bc949610e548a1e817456fe1339c0160455fd94b99e9c1f1a661fbbb353a",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kvoptions.doc.tar.xz",
+          "sha512": "feaa9ddf224b64676d5ae8d8d5a8a4698ad7f8e2a8a389a7c9752e04922a06e703af38f4dfd0ac52bc88ecb918ecd6977220a215b83c4c17383ee227f48ae54e",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kvoptions.source.tar.xz",
+          "sha512": "45287bed8460453fd8d8d7a0435ed06c32c9d343553c6182d4ce7231a13610f89219fcb5d7723226d5db2a0436fd0b9c0eb0ef3f4b626bd697cdd94092b2bf20",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "kvsetkeys",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/kvsetkeys",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kvsetkeys.tar.xz",
+          "sha512": "2ed2a56d262ef1d14ad7de4ce580aa3dc12fa0d9358fabe56e1346617e7c8bd86aaa6e04d6101b3bf7515fbd7b4b48f0b8767f14f70db67c1c058c3af90ecfb1",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kvsetkeys.doc.tar.xz",
+          "sha512": "4f0995e87a518ba5f867604d14d300e7dd3d708e260fe210ce8d0d79cf8782df337eb5cb2d09c38f12e34c234223b67a97a5697231c1395bb2edd9b37bc9126b",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/kvsetkeys.source.tar.xz",
+          "sha512": "3a734a79b2176ed72fbec82f77fac12cb09bd95db738e956b1af1d065b85dcd06711c87c31afe6c71a59f14c889dc200a5fb10cb166b1765654e21044f902c1e",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "l3kernel",
+      "revision": "80015",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/required/l3kernel",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/l3kernel.tar.xz",
+          "sha512": "3c1feab3c6aa5bcc09cd5ca92f613571557f39f250e43c4f7663d216c01d794d38abeff544f5de83151540861b9423adcbffb9ba09758b30ca8ac56c50ae7085",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/l3kernel.doc.tar.xz",
+          "sha512": "d62b1de00f8e135385decda9c0c69ce6e245ea525dada8816f2f432e0c306b9ae2ccc3e0dc0c4757ccfec50ec0f4fb8179e77c4ab18ed863a8a9911272d4149a",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/l3kernel.source.tar.xz",
+          "sha512": "cfce4491dd0eb44d4e79ea2e47333a22e09ea26c1f427c93d91be883a1ab570426f20085863ce2b514b27c4a97f7a124376146cf4988c74687fbc52835ddf2fc",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "l3packages",
+      "revision": "76637",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/l3packages",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/l3packages.tar.xz",
+          "sha512": "47a7365cb7d3c00ccc6a88917d7500d45cc5c1eb5faa6a6ea9b263dfe43426284fa6f2091a7f20b6a8cc82313ec8248f6137f97853c0a36049ca0f20a13cdc8c",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/l3packages.doc.tar.xz",
+          "sha512": "26b1ea0535f5073033e652c8765ce81814101ea4813bca1e910d6ecc27b24b6953c060f5ea717b87e7b9b789fd3b8761de5eb8b1735b4cd5897614be303a629f",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/l3packages.source.tar.xz",
+          "sha512": "799558793930588481129fe455a73006d3629f5710a3bcf0c54c2178e61983fcaeaf5e7f9912766a9a305586906b6208c31815d5aa18ff7717d29a9dd9540a8c",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "latex",
+      "revision": "79618",
+      "license": "lppl1.3c",
+      "ctan": "",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/latex.tar.xz",
+          "sha512": "04d6380ef7c023f63192749080c15e6e47b873aa151e838a946439f5de4455cce1a872e688cf8a366363d09ddcf03cf6b588f3db0573160486afe9cbe0f514e1",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/latex.doc.tar.xz",
+          "sha512": "22d9659d0c69649a93b2b5386f9502e5b4cfedd71042f0b312e04f4757b3849630b3bc92c787a0ca3a0853ea4ca90a1983e9001484ae85ab7e691777eab993f1",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/latex.source.tar.xz",
+          "sha512": "cde635a3602c5de04292e053c0f375074992ca51cb2e82efd534be6f975f7788599d5cd45091049181ca448a1369d59d5adbc2b8a919f8af690fc630f32efcd2",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "latex-fonts",
+      "revision": "79618",
+      "license": "lppl1.2",
+      "ctan": "/fonts/latex",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/latex-fonts.tar.xz",
+          "sha512": "64915845acf0218c69802c9602ceb126412cc02cf856f430dd89e915536c318c61f53801db8a888b2eb1d03ef252eb3cd2563612f4ee26891ff261737ceabd1e",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/latex-fonts.doc.tar.xz",
+          "sha512": "71d9af041af1de0d5907d8bf92a2c611d68a5c7d96b6463f9d4c4c16e92ba42e5978d65f0c59bf323e3adedbb790e4824cc996f9725114a74976d9d2b9c3d785",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "latexconfig",
+      "revision": "68923",
+      "license": "See upstream files",
+      "ctan": "",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/latexconfig.tar.xz",
+          "sha512": "22e233cad5742691da573249b3f9cd4ea0c6ccf4e31a757837d710ca863e0cccd089106e523e40fb541255f3795d963273ccdf70211f19ff3caecb30d7fefcbe",
+          "kind": "run"
+        }
+      ]
+    },
+    {
+      "name": "letltxmacro",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/letltxmacro",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/letltxmacro.tar.xz",
+          "sha512": "7deeb4f044579ea2e80886fcedf12630f889ac40ca468c3195c3008d9258ca6212e96b10f3afb2c64c7f96d84291d23f85577415897e72faa5936ef2a82be7ff",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/letltxmacro.doc.tar.xz",
+          "sha512": "6901171271cc1ec28aee34383de53abf7782a435d7573260041e2e8f40eb74967ae87591610fb8169b1c7c07d95a9d08b7bd9bd445344422f970eb09580d60d6",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/letltxmacro.source.tar.xz",
+          "sha512": "4c2e01216f2b86c180f82828cc89d4d9834b8236295520638de38916f11d8d4f10091c0063e5e9029105119df648a432be2c6923929b743b698dbcde83aed0ea",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "lineno",
+      "revision": "79618",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/lineno",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/lineno.tar.xz",
+          "sha512": "316f18f9c432690dd9d0d3cd6031f5d6efb244f878f02fa6b57113683207f669fa945d1df0f618b9f1e1efd26c7daf259687b692fa0342d8704ffaf608685573",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/lineno.doc.tar.xz",
+          "sha512": "2b5fccc2ce05b4f09312abe0ed0cf08d0ce6d9cd8d43b2a4cc4ce27781a8c4a564f997210f23cbe2a2abd5c6e797466038cbe938d1ed008d1d31f69971f1943a",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "listings",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/listings",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/listings.tar.xz",
+          "sha512": "8426c11e86671f3f7c9e7bea477b56ba36111b562606737785eb96abb8fc26b872da6e78a4ec0c77a79de57fa7686bf664f5e672415b121a7e8296ac702c962e",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/listings.doc.tar.xz",
+          "sha512": "eee0d931274c3f190b3b860a957aa1ba0476f307759a1e8a5176f24a5dfdc8eb2b505b7cdc678241cb18957bbcc27371170b65a3aac410da7582ec1258864fb3",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/listings.source.tar.xz",
+          "sha512": "f09f3b3b5c05fdc34ebb80aab0b2db15944a541942829ca52637c3f7f381f999c75e78ddc138089943b2f4dabfa10f5729cdeb380b61f52dd881856c9464fd1c",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "listingsutf8",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/listingsutf8",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/listingsutf8.tar.xz",
+          "sha512": "d5e844b184389d19497162685ef0407fd8a911d4a4937c9956b0c4de18c0f2e0f5b8e23295036ebb1bdb6129a602961b6db202860a128c2e952fef36fd08ddd6",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/listingsutf8.doc.tar.xz",
+          "sha512": "516273501ccfe675d07ce375615795f444423bbf5eb9d85118c3a9576e27f2f714ef5c13fa9489b28bfaa2a02d6d24e8c8b5b26e89044478d7adc26ff5662b44",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/listingsutf8.source.tar.xz",
+          "sha512": "bc3fe122a33805ec8025590a957517d3944c8a1633f5d139f88e3551cb6326d70807a16616574e46872c23427d7d228a4e1624469570804a8fec221b0f2ddf43",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "lm",
+      "revision": "77682",
+      "license": "gfl",
+      "ctan": "/fonts/lm",
+      "maps": [
+        "lm.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/lm.tar.xz",
+          "sha512": "c4fae36dbf06177583c2dd3431176deca7f6fc1919a2aa9d7dbef89b77f26501e7d323dbda3a72fb3c9644074f8c4aec90d0389d72d87ab4dd38efd99b757d5b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/lm.doc.tar.xz",
+          "sha512": "45fac0159b7e8a29df305902af04835fc339556ee3b791ddc69bab2ba742371be1cd08bd425fdc73d065bce8cb1cff91809b2fa0ce4723e2d30a1c7f8f697782",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "ltxcmds",
+      "revision": "79461",
+      "license": "lppl1.3c",
+      "ctan": "/macros/generic/ltxcmds",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ltxcmds.tar.xz",
+          "sha512": "e123a338ecffc630d5f2447e4f2fd5df05b1ee06d0a2d7630625b4528b83ae6e4972aa9417d51efbc0a41621611c5020e50d50b62d985991d22dcd08c55441d1",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ltxcmds.doc.tar.xz",
+          "sha512": "ef30a95dc33c20dcc9803b4dddd55bbcb0f952d8aef2b852948b43f08c69ef2b4528af0ba1f95474c711cf3e8d24a86e6d78936d6506b2ec30847c1accd4a6ad",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ltxcmds.source.tar.xz",
+          "sha512": "f10d9233a71a98df9913809a82e26a77dcba90e6599e02efb9a7456ddd6176eb9dc049bd73e2899f1f9468b43aca912f57d51e070ec72727c6a9f1366e5aa6d0",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "makecell",
+      "revision": "78101",
+      "license": "lppl",
+      "ctan": "/macros/latex/contrib/makecell",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/makecell.tar.xz",
+          "sha512": "4b4a86d0d71d34838f76f35cae3ebdbbd7d1a9604193bd050878bb44b56389ab01a9a3d405592e8aa0b6ffeb39df476c4b50640733d6696cb5ab9d6ce59bedd0",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/makecell.doc.tar.xz",
+          "sha512": "c26522642147eaa013dd70b4db11e9bd1d5138eb53e671d0bceb22a10eac693e806adcf294939e33c5428965f1661f3a1832a16441809d1563a2b9f62cd43188",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/makecell.source.tar.xz",
+          "sha512": "ece8634cfe65f58129a894f6304634952e785c040ca5bfd9adb6aadf40002410994f2833d8a34645cbf03fa73c615c378953e46955984e518252db80cccf0051",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "mathtools",
+      "revision": "78251",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/mathtools",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mathtools.tar.xz",
+          "sha512": "a321e1279b6cb4ae2b6a751916b289dd5117a368578e9dfd2627d49b4446227ae35438578363a27aed8a6325f01fe1d72abe811562b146dfc156e279045aaa5b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mathtools.doc.tar.xz",
+          "sha512": "9e384a03db00763c06e09751230b30854f3f86bbdfb7428360b414bbe8bdaae62604daa2b90809998a9d9abfba3d464ce946e7a4540ef92dab85f218a0b59dc7",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mathtools.source.tar.xz",
+          "sha512": "c64a635aab8bee4d5305bb910b971f6a6682b25a6e15d3aae1340cf514660dcb73dcebb8bfc4bb558b27f029e1048b6cd1d142deecc21da08314f97dff0de842",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "mdframed",
+      "revision": "79618",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/mdframed",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mdframed.tar.xz",
+          "sha512": "2bcd5e2aeeacfffdf572f18e98772d86d93d46b17ca6c2f4c8039f0e80dcdd0fe3afd0e32d03b92c2b795db4ae4dbf9e7723d4cf631e6b19c7284534e8001176",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mdframed.doc.tar.xz",
+          "sha512": "2dd96e4017f14ee1a27e5d30455e888b4599053f6f7149dc454869eb9e3d817c485984bdbdc6a9434db9f6878877e95f100b9793f4b1b4c6ccf145eb487529a1",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mdframed.source.tar.xz",
+          "sha512": "d96e918c1e4c783917cb5f5d9fc9ee30bee21a4eff1b13b12f6681d3e9500ddc414f5f99bf2e61777279d4b441606e831de754500f986f4f2130335afe8d3597",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "microtype",
+      "revision": "78228",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/microtype",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/microtype.tar.xz",
+          "sha512": "ef69aab2e7cca9492a4e245f28428689140a627a44241b6ce0eaa9ba961856c32a81165c10cd6b8c3f7b00a8a173a1b15dc7b04a3f0996ba6c875b0707577c4a",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/microtype.doc.tar.xz",
+          "sha512": "376e4976b1355c7f25a76b5fe7b5610912be717b1a6b6b1a4044302c77ab2b62b00088009774059b9e072eb8c44c03d5700eb15fcebab0bcf6cb4c97edf46491",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/microtype.source.tar.xz",
+          "sha512": "2597f77d31a7043b454c968a4c5158f95964c712a391dbae95827886449f74e001798920575ed53e5b4093709b0efcdc5730be03db300765c02236161aa175a5",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "minitoc",
+      "revision": "77682",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/minitoc",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/minitoc.tar.xz",
+          "sha512": "53f60676378be98246299d0d6b5696a0a737f7cf3febe3fd2d75174bbd74b09c815eb79f92d080d962447400032270006a0a16cf23eda156f21a3eb418e149d8",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/minitoc.doc.tar.xz",
+          "sha512": "6527c533a7563b731c492f2aadf26f6ed3023fa11dfca75547f12f80038b5a62aae62c1682359a0a5baffea1b943085cac7240c0320cf49fbeedee0f12d6bc1b",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "multirow",
+      "revision": "77682",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/multirow",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/multirow.tar.xz",
+          "sha512": "8997335f17c8820bac7daa385166c7c5dad5b7cb6107c5962bbe2b3dd42a3f0851f64ad664d538207222361dc33718d8c367198e5a0d10efa9478fc9fef19332",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/multirow.doc.tar.xz",
+          "sha512": "d2ac97bc04518b277669c02afddba938b7eeb7b68ed85f9e14c13fdcb758e871cbf23a998f6463d85163ff596ae6247d89240a0dee3745b4994f7a74a448b975",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/multirow.source.tar.xz",
+          "sha512": "7375bbfdac8edc2ef5d7112b5d51e55f606c421a4a5ab4369d0fa2ef3843b1ca9eee9e2c38c04bfbe86e025e8a1dac55df4bb0fdcd51addf57e9421833f4b34c",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "mweights",
+      "revision": "77682",
+      "license": "lppl",
+      "ctan": "/macros/latex/contrib/mweights",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mweights.tar.xz",
+          "sha512": "7bdc19cdd77309d56cc6f0428d48e268a79ddef7fb437a007b8ac1a7c11691395d6f10554d510a5a266404190944d02fde3b6c591565b084ac9d46f62546b66c",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mweights.doc.tar.xz",
+          "sha512": "b7875126d02ee5e83f9dff30164b84cc54718ff4ec8e47edc6f7810fd97fc96c9501b16b64f5568068939bc54b92efc88f1f657e3237958b26a2c5eff3607640",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "mylatexformat",
+      "revision": "21392",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/mylatexformat",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mylatexformat.tar.xz",
+          "sha512": "476e2c739c9a99a53a9f6bb7eb32e6122c149fe224497cd8e777af0ebd139ffadfa792090d8673ff96b4e17466e918f9af4ecb7a12c608d4c33d4e17f2b26f0a",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mylatexformat.doc.tar.xz",
+          "sha512": "c0754ef147a457e7c91b16a50dab2220fbf2f5385e126e796b1c65025f0fd998371b4e58d96ae72b8c6eb21b2030906729270c88c0914b1748714455e78d1bbb",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mylatexformat.source.tar.xz",
+          "sha512": "4f172517cd3e0bec77bc9003201a4488acfedcbddbca217ecac4878d3df9ab86719c5d9fc645671bbf3a5d5b66a1c4e80f9acc01ef27c82a3eaf13aeed45f857",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "natbib",
+      "revision": "79618",
+      "license": "lppl1",
+      "ctan": "/macros/latex/contrib/natbib",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/natbib.tar.xz",
+          "sha512": "0527994cc2d6c24595ade08021400126fb9d08abbc19f6e6252d0c56dad3daf7343e92014753b31b064c9cedc452fc2c6cb57b71f213e1ba429e89ce17347c9d",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/natbib.doc.tar.xz",
+          "sha512": "a51145ad4c45a7ff70cd1938d1bfb20532a89c7b05386f8804c902f6f246ac65b78da57869e3f87fe9c2a4ceff23c380ea4f49f3f4e354cd7b16b5a061a12ccf",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/natbib.source.tar.xz",
+          "sha512": "2acf3ed26155273ed668a633e2ab61695de2ea7258d0c95553035373129206e342899ad829c65a956b27a1a5949fa1db33affc3ba998db988308f1bd20601a61",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "needspace",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/needspace",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/needspace.tar.xz",
+          "sha512": "e77a8261444cde90394b4de0e53702f09420ea869c68b30c12f27db2f5ed2aaa1a9b5e8e0bd94bb1592b567d3176f5a37a5e60516c837433277f224e5510f0f6",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/needspace.doc.tar.xz",
+          "sha512": "6e3f4e74d401fecc36ca0be05b9d68faf54cc1b3590f1e54976f0d17717ec7885a9de4e1cd006d7019108d876909ceff62cae7bacaad940dbfc618d6405a08e6",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/needspace.source.tar.xz",
+          "sha512": "28e1c19932f13d9b3e9d58d427f89adc1e941b5160b4812b14eeb5ade956392e80ca48c1e4c6f4b00dc18f3b190e30439a015ba998afd2058cdead1908f906a5",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "newpx",
+      "revision": "79618",
+      "license": "lppl1.3 gfl",
+      "ctan": "/fonts/newpx",
+      "maps": [
+        "newpx.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/newpx.tar.xz",
+          "sha512": "f05482979bcd526dd8e35fb95761aa02b90fda2024d86dc27b0a49b2051203ee2533b8d6691afd87ef7990c49c7e91fba446d57e63e18c37b8fb056c06c7c7cf",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/newpx.doc.tar.xz",
+          "sha512": "5bdc2f0fa03b4240f98f6bcdc237bb72bdac74ca8ec896a524fdc8c9a1f7a815d73f2dac63f8b33eef6330547c41623d1684842da34c5877d7129c2e580ce67c",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/newpx.source.tar.xz",
+          "sha512": "0f113c9dfeec17178029a3813e11ea893516fba851e12d7a02e09339c5edc67048b7b87c2d8b21bc9572c85c6f6f204ae0c4c3cfe4ffd12289f9fc7c689dac8f",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "newtx",
+      "revision": "78101",
+      "license": "lppl1.3",
+      "ctan": "/fonts/newtx",
+      "maps": [
+        "newtx.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/newtx.tar.xz",
+          "sha512": "0ad536f62eba6a38da9dad5e9a14dfe931eb5c185ead490e67a959f8720944e36747e145bc30c2cb17f3b69b8bdde4f645e7022b3d76a2cd8bdd3ff1b22b1120",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/newtx.doc.tar.xz",
+          "sha512": "2625dc8ca25284a0d09070431e816236f6861a76ca3673b3cd9948a3aba9fc03f7729523960a43312a8933a0bbbea8ec252dced5716481999d48a9fb2f4c71a5",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "oberdiek",
+      "revision": "79461",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/oberdiek",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/oberdiek.tar.xz",
+          "sha512": "8984f4dcdf7623fda25c80d0da9b687e8c29ba9ae746085c302adb6c6a165f5d1859896ca6dfd5e590665d7245fc72d402ae22830d3f91e0bdf5c09b9779d405",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/oberdiek.doc.tar.xz",
+          "sha512": "daaf69a25a39fe20b2b37a1025022bc35be0c3f7d9fd4423fab52a72057115bc10945ad0343dc8577a210a08ebe83fb39a410bc2660c8510108c55833b6c7358",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/oberdiek.source.tar.xz",
+          "sha512": "df3dd80ceaab19c418f811055303c6e79e79fada41e59f090731a72b2e6632dbb2071a02b148f61bbc446f7d09eb8325c0c67c0bffe5f29aafcfcf2d63a50d15",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "pdfcol",
+      "revision": "79618",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/pdfcol",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdfcol.tar.xz",
+          "sha512": "dd39b6c4a353726e10741c3adbc5483a32b7d3ab87bf29186893935e977b706d248783f9750a39bb0c547d8c796a1ac37cc77d333beb4bd7694c3a91a05dea89",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdfcol.doc.tar.xz",
+          "sha512": "63b5fb6d32f9224cad3c7f4c6c6465c0ce0f0715e2677b6016c100731c034ff296d9ee168769216f9fcf5bf257008fe480487b6e5b03db43d9c8af2cd7ebc76e",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdfcol.source.tar.xz",
+          "sha512": "809ff5d55efa2fc61a63e7d115d77ac0c5ad5833a91bfb6c93175860303fc06d54b044c6d53c0b42dcd5ab2f752211f717de71538afd01f585e03da4df0a79bb",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "pdfescape",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/pdfescape",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdfescape.tar.xz",
+          "sha512": "25e9c69209cde2be2cbed5afeee2912023883ad245c7b69a817df1b7ce0ff0d9a47bcc4d0d5e9592f6f8b03db612ac5a24616ca86d08bcab9f44723b966ad890",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdfescape.doc.tar.xz",
+          "sha512": "f80eda7f75ce5883cbba38896a9ec5f06b4f17be5668c81a27e8c16adc05f86eb68e2109cda4fbde5f0efe6f4d9f18b0c3d64168ffba209f0ede968e2ee4dd20",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdfescape.source.tar.xz",
+          "sha512": "6bb5b3aa1ade105f317a75267e41d1075579e37c63936c15e6802daa07986b189e7f0ce7bcdefb4f75df70a3c8ac610febc12cc5d94eebd63dcc91d0b17b298d",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "pdftex",
+      "revision": "79618",
+      "license": "gpl",
+      "ctan": "/systems/doc/pdftex",
+      "maps": [
+        "dummy-space.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdftex.tar.xz",
+          "sha512": "1df1a9eea3632b5ed9ef4ec742b9745a80e0764784affbc872c6a4156f0239945a0c26f9003f1178bff70a09c8cf13735dd42f33c8ab8ebe0cae8e7c91fc5987",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdftex.doc.tar.xz",
+          "sha512": "a8240fe4eba4e5b23d1cafc51f501099c7d451712b21f678eb2e3bceb194d0405c755888e0a005aa3a99f7e67fcdfc5afb6d993ff89b5cddf677c50d22e1b394",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "pdftexcmds",
+      "revision": "79461",
+      "license": "lppl1.3c",
+      "ctan": "/macros/generic/pdftexcmds",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdftexcmds.tar.xz",
+          "sha512": "d4179f248170d08fffd6d4d80479c00bfe3cf27c9c2101db02c13a4ff07255a37627861288d6634fdc3bd13dcc2a126f393f279b5aa0a0ebc64bc665874ced92",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdftexcmds.doc.tar.xz",
+          "sha512": "7005fa376b10ac4146ea1b42504e51abbf01845dcf4371b71bcc9a583558b27d6e0fc67a92eb8d6ba5704585b4866498fc43863070814d16ae7fc1fd4724de18",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pdftexcmds.source.tar.xz",
+          "sha512": "aec11ec0c7ea8922793ff121660a8bc412c673c57e355d4243979a826abb5d8131d4509bc338fdfc40fcebc7098bc364f91ad2b5b99411a8458c8542aaec6a8c",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "pgf",
+      "revision": "79866",
+      "license": "lppl1.3c gpl2 fdl",
+      "ctan": "/graphics/pgf/base",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pgf.tar.xz",
+          "sha512": "03b616664e33bbe6dcf54e6cfe86fce58d4e08175c2b1d7dc37d493f61dfd0797ed0abcadafbd591c08c33b117dcee4362f82bf39787fd388dccb2117462dd0a",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pgf.doc.tar.xz",
+          "sha512": "5fac17dce996635271c4c4aa9204a7915d9f370d4257b6ed3cf9a6e6b6ca9c9a840c72728063a35b7151405c96b0c1b0a2309ed34665199a29d7ddc43e0becb4",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "pgfopts",
+      "revision": "77682",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/pgfopts",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pgfopts.tar.xz",
+          "sha512": "72001c958cdc1287232905ad49db68592fc607bffba126f90176a7253935d9b067b78ddcdb8f7a902d9fb9e4eeb5e05c263e36a790d7ca3bf228af9c6790a33f",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pgfopts.doc.tar.xz",
+          "sha512": "23e718292dc411502ca8059a2f6d3e843911df0193753b998c3d64dd45107522693495de4e87dd62eb3e165bc58a72e1cf3ddce729c1f7191d99c80226bdad8f",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pgfopts.source.tar.xz",
+          "sha512": "017d77449da1e6182172ecb9555e6ce9de9ea9f7f0d24a6b0d6c5cdf6c46c78c2502dd6d575fe88f15e1ddf1ef9d6c10810ee99ae9eaa6338e5fa79254293a37",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "placeins",
+      "revision": "77682",
+      "license": "pd",
+      "ctan": "/macros/latex/contrib/placeins",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/placeins.tar.xz",
+          "sha512": "d1118e03582a9ed993ad610e16084e6b6ab85e95182eb01894edd823be9ef10d0bcd5786a85f1f6ab920da61dc85a068a7286c2f669df5e34f65218d0704118a",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/placeins.doc.tar.xz",
+          "sha512": "478f780b6411ff32f80a8ff2e3225bc02ff50cf4fcf982835f394dbc4ec1a52feba3d0e54330e333cc2e105a83359ac348f05dad2e3fc9af24dc44040acf2790",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "psnfss",
+      "revision": "79618",
+      "license": "lppl1.2",
+      "ctan": "/macros/latex/required/psnfss",
+      "maps": [
+        "charter.map",
+        "fpls.map",
+        "pazo.map",
+        "utopia.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/psnfss.tar.xz",
+          "sha512": "5f24616f65b3b441938f192bf61599abbce128f2c9bddcb0d41fa1d062e77f8dea6eff8d2b194f99f73f4656eee08385fa67728a5a06cb23dc927955fd41d5d1",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/psnfss.doc.tar.xz",
+          "sha512": "f9a8b2a79310863a0aa66ae68e84d1e3a07232226af1a45d3d262d87c4219d5c07e60fb98d90e3b92146a05583b93b720b3e533271230091bdb14bf00b5a007f",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/psnfss.source.tar.xz",
+          "sha512": "85984424cd972ab88b181ccaf34bba735d274e0c2dbcb30270de28c035a07a0e5924388015b8022f3169dcae2202df646b7e7e96b7e4266b7f407c687367dc9a",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "pxfonts",
+      "revision": "77682",
+      "license": "gpl",
+      "ctan": "/fonts/pxfonts",
+      "maps": [
+        "pxfonts.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pxfonts.tar.xz",
+          "sha512": "faaeef224b241fe4cf3935417cdbd30e68b2ebdbde0757627aec7d86c8d48a0e3bfb1bd24ca013e0e80eeb14008600c3e1d878f61a9cd7b57bad61966651a67b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/pxfonts.doc.tar.xz",
+          "sha512": "84027b3a6b84a1e7510afcb62689318b3db778fd1bbf195e5fec0ac356438987bdf99d290592b7f94b6f776b82257fd7d7a3ac45290e72b996c13e300a6ae92c",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "refcount",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/refcount",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/refcount.tar.xz",
+          "sha512": "a3cf2f2dcea4641d19f96cee5631f3c218770f33eb4ffb9560f2c33e1e7911911039680c89aae98807f9509f2fdaa6c76ff8d2e240b1c7e99b99284b5628191c",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/refcount.doc.tar.xz",
+          "sha512": "19d5dd6af8605839c7eaa87b06a9aab73cc7b75f1089d3527009415d0f37bc537500ab14afdde8e644dd5fc9622291567afdb6bee83f34269252489872ce7fbe",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/refcount.source.tar.xz",
+          "sha512": "246d639f414ef2032dc5d82374f680b9d943a92d6a17197c175f510e8a03769945a211780f779ba4044b292f5dff06c9a4e29fea6c5b64a207bd23ee6f25c27b",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "rerunfilecheck",
+      "revision": "79461",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/rerunfilecheck",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/rerunfilecheck.tar.xz",
+          "sha512": "bdca3107b24a51cdc5b8284b25822a6f235723967a5dce8055ed34299b5ce4cb7cbd14f359f11c6ff7dbdce558ccdf5e2626adbd5f36bba83b26e37382b8d598",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/rerunfilecheck.doc.tar.xz",
+          "sha512": "01716193d622a4569e08610b41358bb4337e3c423f3f03378b979513259d4f8d5866632eacff936aa87315be784d6c26a4575fd8af8ede4fba37ead33e726fc1",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/rerunfilecheck.source.tar.xz",
+          "sha512": "a84357f22babc5aee5e8aed883fd5dd7851173d2e15b8f4d67d787fed3f517ec65fdd8cd213bacc6e3be685da41c878495add0e80626b08fe4012726141eddb3",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "setspace",
+      "revision": "77682",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/setspace",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/setspace.tar.xz",
+          "sha512": "84ebbfe27f1eb70f76eba8397cd235868ea8a23d692e4b817bf81740e70f9cf273022ed763f2a23bc8a01b4de20c066d86880767426b63da7687cb005e7d456f",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/setspace.doc.tar.xz",
+          "sha512": "85371993318d9dafeba9b2293fa34b2aa0bbc4fbda9d8ab678abe1f7864068672dbef4b74123515742320924be968a7c14cec18a3f509a9b804384ac62ade607",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "siunitx",
+      "revision": "80206",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/siunitx",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/siunitx.tar.xz",
+          "sha512": "824a4140eabb3ef811eccaa96c9fd0a94216472dc2ae27fef548dee34ad83f0dbf3c9c1ff194c5922453ca689d83ea66cbf562dd9297f6d6910b13bad9a2f851",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/siunitx.doc.tar.xz",
+          "sha512": "c6ed4b1cb08144cedbf60e9c16804118a3cbfdb968f2c305680397d1caad25e457408b7058af0f59eaedbcac4025ec9aa91617042d7e58c4ae87c7461e27a2eb",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/siunitx.source.tar.xz",
+          "sha512": "c031f5c8c5c0035afbf1130b7d24f42acf5488b52c0d56130b43eb531213cd5102076044063726590710161413f390f047535b8a1fa168155e1e2aefcc3d5814",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "stringenc",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/stringenc",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/stringenc.tar.xz",
+          "sha512": "581007b261584771dcaedefa982511c8e9869a085ae6da15b13fad86ec5b832ea17c96067eaa66c302f1af7624de0b4f3edf402abf54d8993b2d8e32ef73d1b2",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/stringenc.doc.tar.xz",
+          "sha512": "3d791e47ffeebedd90339f3f6de94cac093e12c4904ab4fafb2865113efca22d59865403079463b03312e8035ef8b7ded70d1e7fd5e68bcb6b4a23ab95b20a92",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/stringenc.source.tar.xz",
+          "sha512": "7fbd68204d876adf100fb8d600b5d2eb554a52348c0ffa8069afbf3623d6a0e6444439344f7c23771762d0daa4f634d56e91a4b291b08c4f5779cf9989f796d7",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "sttools",
+      "revision": "77682",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/sttools",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/sttools.tar.xz",
+          "sha512": "1aec9639771d08f2c6af2112ee227e9c88a93e9325535c5a41272d67fb29383cb7d22938c1b2dd7c24dd961a333374b525f8ec4cfd69eb070f9985476b64a38c",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/sttools.doc.tar.xz",
+          "sha512": "f50ca8a6022ee2344eaecc8c266bd126b8ddbc2516790ec3679d367d6ef539c496cb299d050c6af4b62d91224849caaffd57ba328f812763a349b597e0e28ae0",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/sttools.source.tar.xz",
+          "sha512": "9e8f811aab43df0a9131e3171fb9c2b3daac1e9e167881e56295537ac7ccd99aa6b5118283100d9d13a7bfeb4027caceada77b3cf79d279402730a66f91aa406",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "subfigure",
+      "revision": "79618",
+      "license": "lppl1.2",
+      "ctan": "/obsolete/macros/latex/contrib/subfigure",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/subfigure.tar.xz",
+          "sha512": "be272480ef4d4f2f52cbdc0073eeef89aee817d7302ca34c7cf667b62d5e0ae000c61b3aa34ccd6cf16ef772bed87326bd6056b1b536de222e8d148ce33f3a55",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/subfigure.doc.tar.xz",
+          "sha512": "f148ef68cc8472074fb6f6e7c35ca1df4b6f5962c73a768900477ae33e95800c1df8cae92a680b8a57e73aa0745277e2c5e7c5800fce1a89a1d411d31730cec7",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/subfigure.source.tar.xz",
+          "sha512": "42ba0745bc102cd47fcbc9cfd1ded3350e15f4c48c87589f4c35dc9771aaa2de09f9d08d0eaec19025ea3d9cb1fbe786e485c142bc91ac5f02cfac33733d6b26",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "tcolorbox",
+      "revision": "79191",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/tcolorbox",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tcolorbox.tar.xz",
+          "sha512": "ba3fc6a6ccd7dfae91199f4bdc429d201178c2ce71f076fee4af2583896a0c86a7d8cc3368fc3f788fc08cd8c0a46638db023fe396c9cd08ec1d65f461395a9b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tcolorbox.doc.tar.xz",
+          "sha512": "428f56a2cd9cd548175603cdfec148eebd6f7362698510b16ca7f999a0dc5bfc2e8d36abcc177a81028fbba68a1c9399df7f11387dd500fd3ad629d34c8d68d9",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "tex-gyre",
+      "revision": "68624",
+      "license": "gfl",
+      "ctan": "/fonts/tex-gyre",
+      "maps": [
+        "qag.map",
+        "qbk.map",
+        "qcr.map",
+        "qcs.map",
+        "qhv.map",
+        "qpl.map",
+        "qtm.map",
+        "qzc.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tex-gyre.tar.xz",
+          "sha512": "5422f349d15233e6f49576fe3a65f8afb5cae6a3c51e5ad7cb56617d7d064e9cf574f233f789c029c04bbfc24e5948c115b2d33569e881373d68615ac709153f",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tex-gyre.doc.tar.xz",
+          "sha512": "db2bcc8da6d3bfb6f2165c1fb127b2b4a7471e41a0cebb851ce5465a18740d34948ce8292b4f6bd359621166602cf62a978bb179346dbd1dcfada49cc7972686",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tex-gyre.source.tar.xz",
+          "sha512": "e958408e6e64a54b25fa89b38de181c96fffb9eb8762959209799c39cead7a5525f220b7b3cd278e35cb9e3e49c1c85d565d518ffacb0695b0c3c09ede935266",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "tex-ini-files",
+      "revision": "78524",
+      "license": "pd",
+      "ctan": "/macros/generic/tex-ini-files",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tex-ini-files.tar.xz",
+          "sha512": "bb60c588186061ea9489ca7c2778d0cb2ddc9d6628d39433938596b3a5ba6d688cce7fed1840a7fb281ea3379df897303d6e1bd33cc5d2bc46e7395416739627",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tex-ini-files.doc.tar.xz",
+          "sha512": "e82eca90c5c9ac70d928a2c67682714b9a3ede07ca0c32dae2d0f05066b287f41c18fce279a188238efaf5dd2671d0efe49a2349c060300730324807a5e3ac04",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "tikzfill",
+      "revision": "78793",
+      "license": "lppl1.3",
+      "ctan": "/graphics/pgf/contrib/tikzfill",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tikzfill.tar.xz",
+          "sha512": "d789e63670c5e13148af52d1fd7d151f9d07a350ba9b5b9f74c7067a8860d2826f0ccb8ac9080567fdb1c2b5ae5859f3dc9f7883ddf3859891cdc69a74bbf238",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tikzfill.doc.tar.xz",
+          "sha512": "571410c38179f28fdc5a40b921dee7d71d7c7aa1eed4ced58c60731bae606fcd6ebe19e5eea7217553ae0c11b86a1223b84620d7704a88a5796ad30aee09cb86",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "times",
+      "revision": "77161",
+      "license": "gpl",
+      "ctan": "/fonts/urw/base35",
+      "maps": [
+        "utm.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/times.tar.xz",
+          "sha512": "74488187fdda4db0343f11f225ca97ba27d9e612a6670673f907d8859fd9b22d6fd99edff0e91ee612ad1d879ada94d8f34ea9c8197e58d6e6e988b67ae42931",
+          "kind": "run"
+        }
+      ]
+    },
+    {
+      "name": "titlesec",
+      "revision": "77682",
+      "license": "mit",
+      "ctan": "/macros/latex/contrib/titlesec",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/titlesec.tar.xz",
+          "sha512": "28a8326efdce33ae5f957c19488db30c45d332be0c7f8912a3f98cf7025d5ec04eb52024ae18e825d98af7ddaffe985248f4974a0499e81be505945b262065b0",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/titlesec.doc.tar.xz",
+          "sha512": "d273a255c7f3597400af8584914a3e68c4e8f39bdd1999afebffa3d314aee17ec7cf1eaf06dd924f34d7a0b80e3b6e9f794f3144d22e074961f19ca199507de4",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "tools",
+      "revision": "79234",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/required/tools",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tools.tar.xz",
+          "sha512": "9bcf59a34fda40574fedd88583787937d33601fc1f505f12ec30e6ddb2095a5d5c52dd431e6ca354fedcd09cd1311acaed35ea858b429ba631cef7e58262d221",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tools.doc.tar.xz",
+          "sha512": "147ee9fde90c207f07089c959e7ae3703f18029e719ec1037911b1e7cc9257d1f5e90f9cefdbe4684f0a86f1ca8e667f4b92bd691538fd3b23cbe98a9f6a2855",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/tools.source.tar.xz",
+          "sha512": "801c0fec8dc1bcdcaa37b08071bcfa86aaa30935180523d628746c4bd64200afbf3cda016ed9297dffb1bcb098d9630a9c67e2db8f2eaac940e9dbb0f07f1e12",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "translations",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/translations",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/translations.tar.xz",
+          "sha512": "a311798b8df505906d850d0941daf12c86fd80c0f41711e5d49f66fe97ffe273963ffb2903a878976c5eecfc27ad298f504c11459442b67b4b67070d48f7f412",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/translations.doc.tar.xz",
+          "sha512": "e9f3812ea59bffd9b043cdffb021de00aa1ad9257416dd057d77ee900202f76f565ad08a5ee717250728e0fc33e87a81068fa9577ec6fc925f9131c23fa13395",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "trimspaces",
+      "revision": "77682",
+      "license": "lppl",
+      "ctan": "/macros/latex/contrib/trimspaces",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/trimspaces.tar.xz",
+          "sha512": "999b334584d7a6114a9fba35fc8151b8874582bbb4cfb806c9027128ad7d7236187fc6da30cf9576e07f5bb33bacac12aebead1dc39482f1a9142fa71d4a7aa8",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/trimspaces.doc.tar.xz",
+          "sha512": "f121960f51a856a6da8b124b0eef6eb272daddf449c6c138b5718d20684f90f115586c848c9300611be100e1a7ef17522db6380b65665778b13346037e0d145b",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/trimspaces.source.tar.xz",
+          "sha512": "b36a7236d8e2dbf6a6050e29301f216883a4f4918b2f26652c6932ff8c08fc416885df0d24af225ea8e4f35c2f308fb94c10525d1fed632edecfea954af5bf8b",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "txfonts",
+      "revision": "77682",
+      "license": "gpl",
+      "ctan": "/fonts/txfonts",
+      "maps": [
+        "txfonts.map"
+      ],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/txfonts.tar.xz",
+          "sha512": "07b13c960e843dd41b7fcb60a53ea98d9a5e34f83459b0100b08d942c78ebbd5805e16ad806abbe78edcd0beaecd8746e4a483dafb5d987cfd911f901a6a5c67",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/txfonts.doc.tar.xz",
+          "sha512": "65e2ee3699318fd2d4dcb03d1916b75a934fc75c71b4e104d8d5e7bf3093d987cd427e6fd9696d6025f35f3863c4dc3c719cda53750c945ec22e992a6c8bfbb5",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "ulem",
+      "revision": "78931",
+      "license": "other-free",
+      "ctan": "/macros/latex/contrib/ulem",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ulem.tar.xz",
+          "sha512": "885857de612d2c43f05bae93653efa52b7ae658b3d1ddd83f5c39afb9a87cfab82872a65c99da1dde539bab02fb04628b80a4214f2b5d749606395493dade86b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/ulem.doc.tar.xz",
+          "sha512": "2ee9035d0269cc7bbd3b1383a0246e94c35b40f4c018aa94f509eed71a80796c3f9ca4b9fa1b3f4e3a50bd28cce187a17a3932c6f440f08523a05a5c4ddc70ef",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "unicode-data",
+      "revision": "79913",
+      "license": "lppl1.3c other-free",
+      "ctan": "/macros/generic/unicode-data",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/unicode-data.tar.xz",
+          "sha512": "9a288afe4b904243e56135c1cd9f799c8f28fcad95592107804de1f19d56279b04cc91cb381e3ff4b2d0775bbf8c0a9f30551173c3fbbe6b82935a725a83446b",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/unicode-data.doc.tar.xz",
+          "sha512": "a9bedf80877e52292dd8583d984b1dad19205194145a4de021eb927ec9f0a9ec9bd77fe9c2e2060e54cbf53c653c3fcd938be18e5ecff157b544ec8221adcc3b",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "uniquecounter",
+      "revision": "79461",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/uniquecounter",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/uniquecounter.tar.xz",
+          "sha512": "37e18ccc52fbb4c8acb84226af85da37d4ccc0775b5bf52cdac0568841e3c67bb26ee29711c60cbe01cbfc7a295ea584965b80c072c1bb793bc464de04436f90",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/uniquecounter.doc.tar.xz",
+          "sha512": "7388faa91681ea7119b739a2f90e062f7c9c5f636a2403be2450e90e347d0e2ff32d1aed1a7cca4336bfe0f37d89f12819809387616e5022cfe9cf4e88be0ca2",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/uniquecounter.source.tar.xz",
+          "sha512": "e1e345bf31fd5b5c751adadbf9a6990753db2ee62341c48cc95a650222cb00b23b2aa6fb58798464ff3b1315e7fc8196c6508f4fc6d8d7c5ba85e53a81c40118",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "upquote",
+      "revision": "77682",
+      "license": "lppl1.2",
+      "ctan": "/macros/latex/contrib/upquote",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/upquote.tar.xz",
+          "sha512": "61b68a05012a7f32a8452cb658b29f54d7322d1046118a9f42e8aa9ea6e3cff49f1a72cb2305ee9467bfaf859aabc7838e4799a83705a78717b83a8a2bc13fa4",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/upquote.doc.tar.xz",
+          "sha512": "ca5d9c434db314ef7e999d45aeccc75ecc6f6e800db93b55ad52d96c13e2dcdb17033cef71817c8dc567e2e6800d70b8867c4880bd3a2742b977537a0f3fa793",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/upquote.source.tar.xz",
+          "sha512": "504ac314466137576647f3569a6d8e8fe75583e36617d1305bde36d737c632aa4c6102167c963ea49693589a4df6f2116075eb06911d4429c8708d8563b91a83",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "url",
+      "revision": "77682",
+      "license": "lppl",
+      "ctan": "/macros/latex/contrib/url",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/url.tar.xz",
+          "sha512": "4d036b664abd4917c9237aaa84bd5f93baa5589fda698543ac31fe18ab686ec25926a127733435a0cb5f4230d0d3be05b392c0395eb57991e3e9f0b93fe4a35a",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/url.doc.tar.xz",
+          "sha512": "56ea7a79181156a61ec34ecd75d7fc420b3e31a475a5d39448edfab0a73bc0cade5d6480cd65cda69af0db5bfb3cb5013b686153e63101e817745ad3e0389ab1",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "varwidth",
+      "revision": "79618",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/varwidth",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/varwidth.tar.xz",
+          "sha512": "48f220230ba90114afc5765154cbfc9c5cdd4dbf75e7240631a2def3e2557914a010c9006a4ca7a25f6d779cafde6670168fc329670ec830a090de9aad268518",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/varwidth.doc.tar.xz",
+          "sha512": "0196b92a932acf8f8761f3714c5b0d14ae27301e833cc7c3ae1de32d1ab2ea7168e53427cb754196a93f1ab162249942f8524b687a50bdb0b3dc396dd122b4d7",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "wrapfig",
+      "revision": "77682",
+      "license": "lppl",
+      "ctan": "/macros/latex/contrib/wrapfig",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/wrapfig.tar.xz",
+          "sha512": "ffa00259e8829c70cd76278c74c52807f174324e291ccdaa9e895b65d6fbeb77533bf85d5c0925ee224ffb6d0248e20f286fba9a3e8bbafdf24e7b93be332f2a",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/wrapfig.doc.tar.xz",
+          "sha512": "79deaffd84c468ead0cf7f942dca579d1547c8dc00a7b31f2286ebeea92ffffa1136c344ff6779cd2549c1c31e53bc3c4509d376dd5d8b159e5df1abccf378c2",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "xcolor",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/xcolor",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xcolor.tar.xz",
+          "sha512": "3ba03742b310e82e5d51df140ac1322afd46d0e18700e3b827f6d5771fd94ee2d82e3d284c548c8159f1360a8ec0c085c65e33c03dc71fb9f308ad66e4f930aa",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xcolor.doc.tar.xz",
+          "sha512": "300988b2d84b97365c95063552c1bf1c8eb2a4b2e5be1819c1f1e81026ff775855fed33b67f8bb8d1f6e837dde95e2dd95e78159674134c143917c6c54cd148b",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xcolor.source.tar.xz",
+          "sha512": "fabf3014ede7786ddbd3588ad4fa2859fa9c1d451e4e12c01137be342440ffc4d8fea2b90cea48917a1b460c5c2c02dd3f7b89e849b9e8db2b8b3f92c2ecccf5",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "xkeyval",
+      "revision": "77682",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/xkeyval",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xkeyval.tar.xz",
+          "sha512": "e4f77650932e1ce95396fdf884dbda84ce3e95bb494825d231ab9e8441392efe3df5e1f5214e741ebf276619ab700fb313ea7304ab0be93121ec89a11377d8a8",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xkeyval.doc.tar.xz",
+          "sha512": "f206ddba63537bd6bbb1ccd1a86ccb2f4c476f8a928060f5ca21b0cb97c6b7342c434cdf5b075a8636b9f1309321f6e01690c913ceeb6653bb954f6cb0667a8f",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xkeyval.source.tar.xz",
+          "sha512": "792a0d18513907b7ec1d0bd191cfc58957164963d35aac52529b0977722d056c2691ac79d0565f6c900b2f1b2499b0fb0052395907c63408541186c91d5d28fb",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "xpatch",
+      "revision": "77682",
+      "license": "lppl1.3",
+      "ctan": "/macros/latex/contrib/xpatch",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xpatch.tar.xz",
+          "sha512": "05b299a20058aca84f0d953977dd6463a053394d663ed3e71f4bccee3d0ab3e398214856c07b84184a0843f541e92ef8f89e5fdb11249914860bd717ac2c2aee",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xpatch.doc.tar.xz",
+          "sha512": "507546f508639abd56ff0451be062a7b872842decbc8860c4db09fa7c5854767d04a1c9acc90bb1d387cdc4a47c6edbf8d0f48ae02953bea9b57554134d36362",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xpatch.source.tar.xz",
+          "sha512": "def8a2b56f8f3ae35b11f2e5b7a897e0e6d7de5ea049ce033fe80ae04711e8ccf75ea4daa57125e9532fcaca05e6d48927b03e5e649085ff54523446f310aea2",
+          "kind": "src"
+        }
+      ]
+    },
+    {
+      "name": "xstring",
+      "revision": "77682",
+      "license": "lppl1.3c",
+      "ctan": "/macros/generic/xstring",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xstring.tar.xz",
+          "sha512": "213f663184838c2113939b8c3bfbeb344ed37db5dd040e0f21834675136310ed7256cc50f827f29695feb758031b9c6f859e1696c15ac57a6d3e157b7c894dc5",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/xstring.doc.tar.xz",
+          "sha512": "4b18f3d63b301a60e1a5b501b24fa08b1b09024f112f225a2ab9855f8308c187ff763344a5921ffede13112a23e06920957259ca5e8b4420f092bcfd4aacaa35",
+          "kind": "doc"
+        }
+      ]
+    },
+    {
+      "name": "zref",
+      "revision": "79461",
+      "license": "lppl1.3c",
+      "ctan": "/macros/latex/contrib/zref",
+      "maps": [],
+      "archives": [
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/zref.tar.xz",
+          "sha512": "d90f2f2a1ab889078332eabdb23aa9c88f3fb079b73a21efb80ccb9f8e7b5a09d08b21b8a9c8473007d7dfd2cea1c4af9acdd5bc3f41ae7a7f2a3aebc1f1a917",
+          "kind": "run"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/zref.doc.tar.xz",
+          "sha512": "61b5245f97b0d3441062b17bd94221124608d6eee2100447b05648cbcf879adeaaa2c77e859b6ad8221c950eb420c0df0cbbd0be982dec1dfc277b0324069725",
+          "kind": "doc"
+        },
+        {
+          "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/zref.source.tar.xz",
+          "sha512": "59cf5c324ddd25145afbaf22e2fadfe4e10c9b46726ca186182676214c97769fdf925346ada6745f53d121962804bf4f904b1fd812daa7d836993ee85f4b493f",
+          "kind": "src"
+        }
+      ]
+    }
+  ]
+}

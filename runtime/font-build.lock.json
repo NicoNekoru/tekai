@@ -1,0 +1,54 @@
+{
+  "packages": [
+    {
+      "name": "metafont",
+      "revision": "77830",
+      "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/metafont.tar.xz",
+      "sha512": "15646d8dc1222bc3368bab15b67fde99eb6402e821320416f50ebb04e9c75ab42dfafa850c05acf9d01f64180eb090d56c395775211d588edb428f26525b982a",
+      "kind": "run",
+      "programs": []
+    },
+    {
+      "name": "metafont.universal-darwin",
+      "revision": "77928",
+      "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/metafont.universal-darwin.tar.xz",
+      "sha512": "16d22b8f84a8df23fca0e4d2c6a05731f7f8b4ddd8376e85bb9589896269c3e8d6206b6d4dca13431f69038aeeaaf26a1b0fe590788749d23196b94706c26799",
+      "kind": "run",
+      "programs": [
+        "mf-nowin"
+      ]
+    },
+    {
+      "name": "mfware.universal-darwin",
+      "revision": "77928",
+      "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/mfware.universal-darwin.tar.xz",
+      "sha512": "e8d2f3dbc7ec923221118658f3c5d20a01dedebc32e4d7aaf5e539959228f5e6b95c7d0dceef4a663bb308e30833b0b75c5e3bbb871fb557bb765c64dca5ddf0",
+      "kind": "run",
+      "programs": [
+        "gftopk"
+      ]
+    },
+    {
+      "name": "modes",
+      "revision": "77365",
+      "url": "https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/modes.tar.xz",
+      "sha512": "8cc8477bb125e5a8254283e54cddb5ce1a8d1b968b89bf5ba6f2d28c1d91cdbaac61d47322db0803c2a6d82ecbe00da65be511e5898136e94640e9cb414f9302",
+      "kind": "run",
+      "programs": []
+    }
+  ],
+  "resolutions": [
+    300,
+    360,
+    432,
+    480,
+    500,
+    600,
+    657,
+    720,
+    864,
+    1037,
+    1244,
+    1493
+  ]
+}

@@ -6,6 +6,7 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
+    #[link_name = "tekai_xstrdup"]
     fn xstrdup(s: const_string) -> string;
     fn pdfnewobjnum() -> integer;
     fn avl_create(

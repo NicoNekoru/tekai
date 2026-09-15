@@ -13,7 +13,8 @@ use tekai::compiler::{
     tex_source_dependency_paths,
 };
 use tekai::config::{
-    BuildConfig, load_build_config, load_lint_config, load_project_config, write_default_config,
+    BuildConfig, find_project_config, load_build_config, load_lint_config, load_project_config,
+    write_default_config,
 };
 use tekai::lint::{Diagnostic, Severity, fix_paths, format_diagnostic, has_errors, lint_paths};
 use tekai::watch::{WatchOptions, watch};
@@ -55,6 +56,7 @@ fn enable_embedded_engine_runner() -> Result<()> {
 }
 
 fn run_embedded_engine() -> Result<()> {
+    tekai_engine::runtime::texmf_root().context("failed to prepare bundled TeX data")?;
     let mut args = Vec::new();
     args.push(CString::new("pdflatex").expect("static pdfTeX program name contains no NUL"));
     for arg in std::env::args_os().skip(2) {
@@ -201,6 +203,7 @@ struct BuildFlagSources {
     precompile_preamble: bool,
     synctex: bool,
     shell_escape: bool,
+    external_tools: bool,
     quiet: bool,
     print_command: bool,
 }
@@ -228,6 +231,7 @@ impl BuildFlagSources {
             precompile_preamble: is_command_line_arg(subcommand, "precompile_preamble"),
             synctex: is_command_line_arg(subcommand, "synctex"),
             shell_escape: is_command_line_arg(subcommand, "shell_escape"),
+            external_tools: is_command_line_arg(subcommand, "external_tools"),
             quiet: is_command_line_arg(subcommand, "quiet"),
             print_command: is_command_line_arg(subcommand, "print_command"),
         }
@@ -240,7 +244,8 @@ fn is_command_line_arg(matches: &ArgMatches, id: &str) -> bool {
 
 fn run_build(args: BuildArgs, flag_sources: BuildFlagSources) -> Result<()> {
     let report_json = args.report_json;
-    let build_config = load_build_config(args.config.as_deref())?;
+    let config_path = root_document_config_path(args.config.as_deref(), &args.main);
+    let build_config = load_build_config(config_path.as_deref())?;
     apply_build_env(&build_config);
     let mut options = build_options(args.main, args.flags, &build_config, flag_sources);
     if report_json {
@@ -275,7 +280,8 @@ fn run_lint(args: LintArgs) -> Result<()> {
 
 fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
     let report_json = args.report_json;
-    let config = load_project_config(args.config.as_deref())?;
+    let config_path = root_document_config_path(args.config.as_deref(), &args.main);
+    let config = load_project_config(config_path.as_deref())?;
     apply_build_env(&config.build);
     let lint_target = tex_source_dependency_paths(&args.main)?;
     if args.fix {
@@ -297,6 +303,9 @@ fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
     }
     if !report_json {
         print_lint_diagnostics(&diagnostics, false);
+    }
+    if lint_failed {
+        std::process::exit(1);
     }
     let mut options = build_options(args.main, args.flags, &config.build, flag_sources);
     if report_json {
@@ -323,7 +332,8 @@ fn print_lint_diagnostics(diagnostics: &[tekai::lint::Diagnostic], stderr: bool)
 }
 
 fn run_watch(args: WatchArgs, flag_sources: BuildFlagSources) -> Result<()> {
-    let config = load_project_config(args.config.as_deref())?;
+    let config_path = root_document_config_path(args.config.as_deref(), &args.main);
+    let config = load_project_config(config_path.as_deref())?;
     apply_build_env(&config.build);
     let root = args
         .root
@@ -347,6 +357,12 @@ fn run_watch(args: WatchArgs, flag_sources: BuildFlagSources) -> Result<()> {
         lint: !args.no_lint,
         fail_on_warnings: args.lint_flags.should_fail_on_warnings(),
     })
+}
+
+fn root_document_config_path(explicit: Option<&Path>, main: &Path) -> Option<PathBuf> {
+    explicit
+        .map(Path::to_path_buf)
+        .or_else(|| find_project_config(main))
 }
 
 fn apply_build_env(config: &BuildConfig) {
@@ -411,6 +427,9 @@ fn apply_build_config(options: &mut BuildOptions, config: &BuildConfig) {
     if let Some(value) = config.shell_escape {
         options.shell_escape = value;
     }
+    if let Some(value) = config.external_tools {
+        options.external_tools = value;
+    }
     if let Some(value) = config.quiet {
         options.quiet = value;
     }
@@ -462,6 +481,9 @@ fn apply_build_flags(
     }
     if sources.shell_escape {
         options.shell_escape = flags.shell_escape;
+    }
+    if sources.external_tools {
+        options.external_tools = flags.external_tools;
     }
     if sources.quiet {
         options.quiet = flags.quiet;

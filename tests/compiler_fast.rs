@@ -582,6 +582,7 @@ fn fast_preview_disables_tikz_externalization_without_shell_escape() {
         fast: true,
         once: true,
         shell_escape: false,
+        external_tools: true,
         ..options(&main, &out_dir)
     })
     .expect("fast preview should disable TikZ externalization");
@@ -708,6 +709,7 @@ fn options(main: &Path, out_dir: &Path) -> BuildOptions {
         precompile_preamble: false,
         synctex: false,
         shell_escape: false,
+        external_tools: true,
         quiet: true,
         print_command: false,
     }
