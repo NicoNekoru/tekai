@@ -1,9 +1,10 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { parseMagicRoot } from "./protocol";
+import { stripComments } from "./tex";
 
 function workspaceFolderFor(uri: vscode.Uri): vscode.WorkspaceFolder | undefined {
-  return vscode.workspace.getWorkspaceFolder(uri) ?? vscode.workspace.workspaceFolders?.[0];
+  return vscode.workspace.getWorkspaceFolder(uri);
 }
 
 function configuredMain(document: vscode.TextDocument): vscode.Uri | undefined {
@@ -28,7 +29,8 @@ function magicMain(document: vscode.TextDocument): vscode.Uri | undefined {
 }
 
 function looksLikeRoot(source: string): boolean {
-  return /\\documentclass(?:\[[^\]]*\])?\s*\{/.test(source) && /\\begin\s*\{document\}/.test(source);
+  const clean = stripComments(source);
+  return /\\documentclass(?:\[[^\]]*\])?\s*\{/.test(clean) && /\\begin\s*\{document\}/.test(clean);
 }
 
 async function discoverCandidates(document: vscode.TextDocument): Promise<vscode.Uri[]> {
@@ -44,8 +46,9 @@ async function discoverCandidates(document: vscode.TextDocument): Promise<vscode
   const candidates: vscode.Uri[] = [];
   for (const uri of uris) {
     try {
-      const candidate = await vscode.workspace.openTextDocument(uri);
-      if (looksLikeRoot(candidate.getText())) {
+      const open = vscode.workspace.textDocuments.find((item) => item.uri.toString() === uri.toString());
+      const source = open?.getText() ?? Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
+      if (looksLikeRoot(source)) {
         candidates.push(uri);
       }
     } catch {
@@ -80,6 +83,15 @@ export async function resolveMainDocument(
   if (looksLikeRoot(document.getText())) {
     return document.uri;
   }
+  const boundary = workspaceFolderFor(document.uri)?.uri.fsPath;
+  for (let directory = path.dirname(document.uri.fsPath); ; directory = path.dirname(directory)) {
+    const uri = vscode.Uri.file(path.join(directory, "main.tex"));
+    try {
+      const source = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
+      if (looksLikeRoot(source)) { return uri; }
+    } catch { /* Keep looking upward. */ }
+    if (directory === boundary || path.dirname(directory) === directory) { break; }
+  }
   const candidates = await discoverCandidates(document);
   const preferred = preferCandidate(candidates, document);
   if (preferred) {
@@ -101,5 +113,8 @@ export async function resolveMainDocument(
 }
 
 export function commandCwd(main: vscode.Uri): string {
+  if (vscode.workspace.getConfiguration("tekai", main).get<string>("workingDirectory", "workspace") === "document") {
+    return path.dirname(main.fsPath);
+  }
   return workspaceFolderFor(main)?.uri.fsPath ?? path.dirname(main.fsPath);
 }

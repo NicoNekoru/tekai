@@ -50,6 +50,41 @@ fn lint_report_json_emits_machine_readable_diagnostics() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn strict_lint_accepts_brace_continuations_with_project_tab_config() {
+    let root = unique_temp_dir("tekai-cli-lint-brace-indent");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    let source = root.join("paper.tex");
+    let config = root.join("tekai.toml");
+    fs::write(&source, "\\hypersetup{\n\tcolorlinks=true,\n\tlinkcolor=KomoriPink,\n\tcitecolor=KomoriCite,\n\turlcolor=KomoriHref,\n\tfilecolor=KomoriViolet,\n\tpdfborder={0 0 0}\n}\n").unwrap();
+    fs::write(
+        &config,
+        "[lint]\nindent_size = 1\nindent_style = \"tabs\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
+        .arg("lint")
+        .arg(&source)
+        .arg("--report-json")
+        .arg("--config")
+        .arg(&config)
+        .output()
+        .expect("failed to run tekai lint");
+    assert!(
+        output.status.success(),
+        "stdout {}\nstderr {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("invalid JSON lint report");
+    assert_eq!(report["warning_count"], 0, "{report:#}");
+    assert_eq!(report["error_count"], 0, "{report:#}");
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+
+    let _ = fs::remove_dir_all(root);
+}
+
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     let unique = format!(
         "{}-{}-{}",

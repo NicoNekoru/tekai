@@ -147,6 +147,45 @@ fn fix_paths_rewrites_safe_issues_and_skips_style_files() {
 }
 
 #[test]
+fn fix_paths_preserve_valid_brace_continuations_and_repair_excess_indent() {
+    let root = unique_temp_dir("tekai-lint-fix-brace-indentation");
+    fs::create_dir_all(&root).expect("failed to create temp directory");
+    let source = root.join("paper.tex");
+    let config = LintConfig {
+        indent_size: 1,
+        indent_style: IndentStyle::Tabs,
+        ..LintConfig::default()
+    };
+    let valid = "\\hypersetup{\n\tcolorlinks=true,\n\tpdfborder={0 0 0}\n}\n\\newcommand{\\example}[1]{%\nUnindented body #1.\n}\n";
+    fs::write(&source, valid).expect("failed to write TeX source");
+
+    let report = fix_paths(std::slice::from_ref(&source), &config).expect("fix failed");
+    assert_eq!(report.fixes_applied, 0, "{report:#?}");
+    assert_eq!(fs::read_to_string(&source).unwrap(), valid);
+
+    fs::write(&source, "\\hypersetup{\n\t\tcolorlinks=true\n\t}\n").unwrap();
+    let report = fix_paths(std::slice::from_ref(&source), &config).expect("fix failed");
+    assert_eq!(report.fixes_applied, 2, "{report:#?}");
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        "\\hypersetup{\n\tcolorlinks=true\n}\n"
+    );
+    assert!(
+        lint_paths(std::slice::from_ref(&source), &config)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        fix_paths(std::slice::from_ref(&source), &config)
+            .unwrap()
+            .fixes_applied,
+        0
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn fix_paths_leave_suppressed_math_unchanged() {
     let root = unique_temp_dir("tekai-lint-fix-suppressed");
     fs::create_dir_all(&root).expect("failed to create temp directory");

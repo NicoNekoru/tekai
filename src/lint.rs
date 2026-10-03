@@ -244,6 +244,7 @@ struct LintState {
     nested_math_env_stack: Vec<EnvFrame>,
     env_stack: Vec<EnvFrame>,
     indent_level: usize,
+    brace_depth: usize,
     verbatim_env: Option<String>,
 }
 
@@ -601,10 +602,10 @@ pub fn lint_source(path: &Path, source: &str, config: &LintConfig) -> Vec<Diagno
         nested_math_env_stack: Vec::new(),
         env_stack: Vec::new(),
         indent_level: 0,
+        brace_depth: 0,
         verbatim_env: None,
     };
     let mut previous_line_is_prose = false;
-    let mut brace_depth = 0;
 
     for (index, raw_line) in source.lines().enumerate() {
         let line_no = index + 1;
@@ -613,7 +614,7 @@ pub fn lint_source(path: &Path, source: &str, config: &LintConfig) -> Vec<Diagno
         let uncommented = strip_comment(&masked);
         let line_is_prose = state.verbatim_env.is_none()
             && state.math_mode.is_none()
-            && brace_depth == 0
+            && state.brace_depth == 0
             && is_prose_line(uncommented);
         let starts_new_prose_paragraph = starts_new_prose_paragraph(uncommented);
         lint_line_length(path, line, line_no, config, line_is_prose, &mut diagnostics);
@@ -673,7 +674,7 @@ pub fn lint_source(path: &Path, source: &str, config: &LintConfig) -> Vec<Diagno
         );
         update_verbatim_state(uncommented, &mut state);
         previous_line_is_prose = line_is_prose && !uncommented.trim_end().ends_with(r"\par");
-        brace_depth = updated_brace_depth(uncommented, brace_depth);
+        state.brace_depth = updated_brace_depth(uncommented, state.brace_depth);
     }
 
     if let Some(mode) = state.math_mode.take() {
@@ -1641,7 +1642,7 @@ fn lint_environments_and_indent(
     state: &mut LintState,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let trimmed = line.scan.trim_start_matches(' ');
+    let trimmed = line.scan.trim_start();
     if trimmed.is_empty() {
         return;
     }
@@ -1659,14 +1660,26 @@ fn lint_environments_and_indent(
     }
     if config.indent_environments {
         let prefix_closes = leading_closing_indent_events(&events, ignored);
-        let expected_level =
+        let base_level =
             state.indent_level.saturating_sub(prefix_closes) + display_math_indent.unwrap_or(0);
-        let expected = indentation_prefix(config, expected_level);
         let actual_end = leading_indentation_end(line.source);
         let actual = &line.source[..actual_end];
         let width = config.indent_size.max(1);
-        let expected_width = expected_level * width;
         let actual_width = indentation_visual_width(actual, width);
+
+        // Braced arguments may add a continuation level per open brace without
+        // requiring it in existing unindented macro bodies. Closing braces align
+        // with their opener, and environment/display-math indentation still applies.
+        let closing_braces = trimmed
+            .chars()
+            .take_while(|ch| *ch == '}' || ch.is_whitespace())
+            .filter(|ch| *ch == '}')
+            .count();
+        let continuation_depth = state.brace_depth.saturating_sub(closing_braces);
+        let expected_level =
+            (actual_width / width).clamp(base_level, base_level + continuation_depth);
+        let expected = indentation_prefix(config, expected_level);
+        let expected_width = expected_level * width;
         if actual_width != expected_width {
             let (expected_units, actual_units, unit_name, help) = match config.indent_style {
                 IndentStyle::Spaces => (
@@ -1674,7 +1687,7 @@ fn lint_environments_and_indent(
                     actual_width,
                     "spaces",
                     format!(
-                        "Indent nested environments by {} spaces.",
+                        "Indent nested environments by {} spaces per level. Braced continuations allow up to one extra level per open brace.",
                         config.indent_size
                     ),
                 ),
@@ -1682,7 +1695,7 @@ fn lint_environments_and_indent(
                     expected_level,
                     actual_width / width,
                     "tabs",
-                    "Indent nested environments with one tab per level.".to_string(),
+                    "Indent nested environments with one tab per level. Braced continuations allow up to one extra level per open brace.".to_string(),
                 ),
             };
             diagnostics.push(Diagnostic::warning(
@@ -1854,15 +1867,15 @@ fn display_math_indent_extra(
 }
 
 fn line_starts_with_display_bracket_open(line: &str) -> bool {
-    line.trim_start_matches(' ').starts_with(r"\[")
+    line.trim_start().starts_with(r"\[")
 }
 
 fn line_starts_with_display_bracket_close(line: &str) -> bool {
-    line.trim_start_matches(' ').starts_with(r"\]")
+    line.trim_start().starts_with(r"\]")
 }
 
 fn line_starts_with_display_dollar(line: &str) -> bool {
-    let trimmed = line.trim_start_matches(' ');
+    let trimmed = line.trim_start();
     trimmed.starts_with("$$")
 }
 
@@ -2828,6 +2841,81 @@ mod tests {
             )),
             "{diagnostics:#?}"
         );
+    }
+
+    #[test]
+    fn brace_continuations_accept_tabs_and_spaces() {
+        let cases = [
+            "\\hypersetup{\n\tcolorlinks=true,\n\tpdfborder={0 0 0}\n}\n",
+            "\\setup{\n\tnested={\n\t\tvalue\n\t},\n\tother=true\n}\n",
+            "\\setup{{\n\t\tvalue\n}}\n",
+            "\\newcommand{\\example}[1]{%\nUnindented body #1.\n}\n",
+            "\\begin{theorem}\n\t\\textbf{\n\t\tClaim.\n\t}\n\\end{theorem}\n",
+            "\\wrapper{\n\t\\begin{itemize}\n\t\t\\item Nested\n\t\\end{itemize}\n}\n",
+            "\\setup{\n\t\\verb|}| \\{ literal \\} % }\n\t% }\n\t\n\tvalue\n}\n",
+            "\\wrapper{\n\t\\begin{verbatim}\n{{{ literal }\n\t\\end{verbatim}\n\tvalue\n}\n",
+            "\\[\n\t\\frac{\n\t\ta + b\n\t}{\n\t\tc + d\n\t}\n\\]\n",
+            "\\wrapper{\n\t\\[\n\t\tx = y\n\t\\]\n}\n",
+        ];
+        for (style, size) in [
+            (IndentStyle::Spaces, 2),
+            (IndentStyle::Spaces, 4),
+            (IndentStyle::Tabs, 1),
+            (IndentStyle::Tabs, 2),
+        ] {
+            let config = LintConfig {
+                indent_style: style,
+                indent_size: size,
+                ..LintConfig::default()
+            };
+            for case in cases {
+                let source = match style {
+                    IndentStyle::Spaces => case.replace('\t', &" ".repeat(size)),
+                    IndentStyle::Tabs => case.to_string(),
+                };
+                let diagnostics = lint_source(Path::new("sample.tex"), &source, &config);
+                assert!(
+                    diagnostics.is_empty(),
+                    "{style:?}/{size} {source:?}\n{diagnostics:#?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn brace_continuations_still_reject_wrong_indentation() {
+        let cases: &[(&str, &[(usize, usize)])] = &[
+            (
+                "\\setup{\n    too deep\n  }\n  outside\n",
+                &[(2, 2), (3, 0), (4, 0)],
+            ),
+            (
+                "\\begin{theorem}\n  \\textbf{\nClaim.\n  }\n\\end{theorem}\n",
+                &[(3, 2)],
+            ),
+            ("\\setup{\n   partial level\n}\n", &[(2, 2)]),
+            ("\\command{balanced}\n  outside\n", &[(2, 0)]),
+            ("\\{ % {\n  outside\n", &[(2, 0)]),
+            ("\\verb|{|\n  outside\n", &[(2, 0)]),
+            (
+                "\\begin{verbatim}\n{\n\\end{verbatim}\n  outside\n",
+                &[(4, 0)],
+            ),
+        ];
+        for (source, expected) in cases {
+            let diagnostics = lint_source(Path::new("sample.tex"), source, &LintConfig::default());
+            let actual = diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.rule == "indent/size")
+                .map(|diagnostic| {
+                    (
+                        diagnostic.line,
+                        expected_indentation_units(&diagnostic.message).unwrap(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(&actual, expected, "{source:?}\n{diagnostics:#?}");
+        }
     }
 
     #[test]

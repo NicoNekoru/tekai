@@ -1626,9 +1626,43 @@ fn run_tex_direct(
     configure_output(&mut command, options);
     let status = command.status().context("failed to launch TeX engine")?;
     if !status.success() {
-        bail!("TeX engine failed with status {status}");
+        let log_path = out_dir.join(format!("{job_name}.log"));
+        let detail = fs::read(&log_path)
+            .ok()
+            .map(|bytes| tex_failure_excerpt(&String::from_utf8_lossy(&bytes)))
+            .unwrap_or_default();
+        bail!(
+            "TeX engine failed with status {status}\n{detail}TeX log: {}",
+            log_path.display()
+        );
     }
     Ok(TexInvocationReport::default())
+}
+
+// Quiet/JSON builds suppress the engine's console output. Keep the first
+// error and its source context visible without dumping the whole log.
+fn tex_failure_excerpt(log: &str) -> String {
+    let lines: Vec<_> = log.lines().collect();
+    let start = lines.iter().position(|line| {
+        line.starts_with("! ")
+            || line.split(':').collect::<Vec<_>>().windows(2).any(|parts| {
+                let file = parts[0].trim_end();
+                [".tex", ".ltx", ".sty", ".cls", ".aux", ".bbl"]
+                    .iter()
+                    .any(|extension| file.ends_with(extension))
+                    && parts[1].parse::<usize>().is_ok()
+            })
+    });
+    let Some(start) = start else {
+        return String::new();
+    };
+    let excerpt: String = lines[start..]
+        .iter()
+        .take(8)
+        .take_while(|line| !line.is_empty())
+        .map(|line| format!("{line}\n"))
+        .collect();
+    excerpt.chars().take(2000).collect()
 }
 
 enum TekaiPdftexRun {
@@ -12735,6 +12769,26 @@ mod tests {
     use super::*;
 
     static TEXINPUTS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn tex_failure_excerpt_keeps_first_error_and_context() {
+        assert_eq!(tex_failure_excerpt("No errors here\n"), "");
+        assert_eq!(
+            tex_failure_excerpt(
+                "preamble\nsections/6_prediction.tex:6: Missing \\endcsname inserted.\n<to be read again>\n                   \\protect\nl.6 citation\n\nMemory usage\n"
+            ),
+            "sections/6_prediction.tex:6: Missing \\endcsname inserted.\n<to be read again>\n                   \\protect\nl.6 citation\n"
+        );
+        assert_eq!(
+            tex_failure_excerpt("! Emergency stop.\n<*> main.tex\n\n"),
+            "! Emergency stop.\n<*> main.tex\n"
+        );
+        assert_eq!(
+            tex_failure_excerpt("C:\\paper space\\main.tex:12: Undefined control sequence.\n"),
+            "C:\\paper space\\main.tex:12: Undefined control sequence.\n"
+        );
+        assert!(tex_failure_excerpt(&format!("! {}", "x".repeat(3000))).len() <= 2000);
+    }
 
     #[test]
     fn build_options_for_main_uses_direct_final_build_defaults() {

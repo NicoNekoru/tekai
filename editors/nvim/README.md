@@ -34,7 +34,7 @@ or set `executable` to an absolute development build.
 | `:TekaiLint [file]` | Populate `vim.diagnostic` from Tekai JSON output. |
 | `:TekaiLintWorkspace [dir]` | Lint a whole project. |
 | `:TekaiBuild [main]` | Make an exact build. |
-| `:TekaiCheck [main]` | Check the root source graph, replace diagnostics with that exact result, build, and open the PDF. |
+| `:TekaiCheck [main]` | Check the root source graph, replace diagnostics with that exact result, build, and open the PDF. Warnings block the build by default. |
 | `:TekaiFastPreview [main]` | Make a one-pass fast build and open it. |
 | `:TekaiPreview [main]` | Start `tekai watch --preview` and open the first PDF. |
 | `:TekaiStop` | Stop live preview. |
@@ -51,6 +51,7 @@ require("tekai").setup({
   config_file = "tekai.toml",
   lint = { on_open = true, on_save = true },
   build = { on_save = false, extra_args = {} },
+  -- Add "--allow-warnings" to extra_args only when warnings should not block.
   check = { open_on_success = true, extra_args = {} },
   preview = {
     open_on_start = true,

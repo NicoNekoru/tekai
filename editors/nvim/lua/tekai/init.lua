@@ -125,7 +125,7 @@ function M.lint(filename, options)
   end
   target = absolute(target, vim.uv.cwd())
   local cwd = root.project_dir(target)
-  local args = { "lint", target, "--report-json", "--allow-warnings" }
+  local args = { "lint", target, "--report-json" }
   extend(args, config_args(cwd))
   local full_command = command(config.options.executable, args)
   log_command(full_command)
@@ -225,7 +225,7 @@ function M.check(main_override, options)
     return
   end
   local cwd = root.command_cwd(main)
-  local args = { "check", main, "--report-json", "--allow-warnings" }
+  local args = { "check", main, "--report-json" }
   extend(args, config_args(cwd))
   extend(args, config.options.check.extra_args)
   local full_command = command(config.options.executable, args)

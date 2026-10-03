@@ -166,6 +166,48 @@ fn check_report_json_contains_the_diagnostics_that_gate_the_build() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn quiet_build_failures_keep_tex_error_context_and_check_diagnostics() {
+    let root = unique_temp_dir("tekai-cli-engine-error");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("main.tex"),
+        "\\documentclass{article}\n\\begin{document}\n\\input{chapter}\n\\end{document}\n",
+    )
+    .unwrap();
+    fs::write(root.join("chapter.tex"), "\\UndefinedTekaiTestCommand\n").unwrap();
+    for command in ["build", "check"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
+            .current_dir(&root)
+            .args([
+                command,
+                "main.tex",
+                "--engine",
+                "tekai-engine",
+                "--report-json",
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("chapter.tex:1: Undefined control sequence."),
+            "{stderr}"
+        );
+        assert!(stderr.contains("UndefinedTekaiTestCommand"), "{stderr}");
+        assert!(
+            stderr.contains("TeX log: ") && stderr.contains("main.log"),
+            "{stderr}"
+        );
+        if command == "check" {
+            let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["error_count"], 0);
+            assert!(report.get("pdf_path").is_none());
+        }
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     let unique = format!(
         "{}-{}-{}",

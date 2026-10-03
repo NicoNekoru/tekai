@@ -1,0 +1,13 @@
+{
+  "Environment": { "prefix": ["begin", "env"], "body": ["\\begin{${1:environment}}", "\t$0", "\\end{$1}"], "description": "Paired LaTeX environment" },
+  "Section": { "prefix": "section", "body": ["\\section{${1:Title}}", "\\label{sec:${2:label}}", "$0"] },
+  "Subsection": { "prefix": "subsection", "body": "\\subsection{${1:Title}}\n$0" },
+  "Figure": { "prefix": "figure", "body": ["\\begin{figure}[${1:htbp}]", "\t\\centering", "\t\\includegraphics[width=${2:0.8}\\linewidth]{${3:file}}", "\t\\caption{${4:Caption}}", "\t\\label{fig:${5:label}}", "\\end{figure}", "$0"] },
+  "Equation": { "prefix": "equation", "body": ["\\begin{equation}", "\t\\label{eq:${1:label}}", "\t$0", "\\end{equation}"] },
+  "Align": { "prefix": "align", "body": ["\\begin{align}", "\t$0", "\\end{align}"] },
+  "Itemize": { "prefix": "itemize", "body": ["\\begin{itemize}", "\t\\item $0", "\\end{itemize}"] },
+  "Citation": { "prefix": "cite", "body": "\\cite{$0}" },
+  "Reference": { "prefix": "ref", "body": "\\ref{$0}" },
+  "Bold": { "prefix": "textbf", "body": "\\textbf{${1:$TM_SELECTED_TEXT}}$0" },
+  "Italic": { "prefix": "textit", "body": "\\textit{${1:$TM_SELECTED_TEXT}}$0" }
+}

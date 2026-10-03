@@ -3,6 +3,14 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
+## Unreleased
+
+- Include the first TeX error, source context, and log path in direct-build
+  failures, including quiet and JSON builds.
+- Preserve check diagnostics in JSON when lint passes but compilation fails.
+- Accept continuation indentation in multiline braced arguments without
+  requiring it in unindented macro bodies or stripping it during auto-fix.
+
 ## 0.3.0 - 2026-09-15
 
 - Bundled pinned LaTeX packages, fonts, maps, and a matching format so default

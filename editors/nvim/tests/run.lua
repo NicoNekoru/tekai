@@ -54,16 +54,31 @@ local blocked_check, blocked_check_err = protocol.decode_check(vim.json.encode({
 assert(blocked_check, blocked_check_err)
 equal(blocked_check.elapsed_ms, nil, "blocked check has no build")
 
-require("tekai").setup({ lint = { on_open = false, on_save = false } })
+local tekai = require("tekai").setup({ lint = { on_open = false, on_save = false } })
 equal(vim.fn.exists(":TekaiBuild"), 2, "build command")
 equal(vim.fn.exists(":TekaiCheck"), 2, "check command")
 equal(vim.fn.exists(":TekaiPreview"), 2, "preview command")
+
+local original_system = vim.system
+local captured_command
+vim.system = function(args)
+  captured_command = vim.deepcopy(args)
+  return { kill = function() end }
+end
+local local_fixture = vim.fs.normalize(vim.fs.joinpath(vim.fn.getcwd(), "tests", "run.lua"))
+tekai.lint(local_fixture)
+assert(not vim.tbl_contains(captured_command, "--allow-warnings"), "editor lint must retain Tekai's warning policy")
+tekai._state.lint_jobs = {}
+tekai.check(local_fixture, { open = false })
+assert(not vim.tbl_contains(captured_command, "--allow-warnings"), "editor check must fail when annotations warn")
+tekai._state.build_job = nil
+vim.system = original_system
 
 local executable = vim.env.TEKAI_TEST_EXECUTABLE
 if executable and executable ~= "" then
   local fixture = vim.fs.normalize(vim.fs.joinpath(vim.fn.getcwd(), "..", "..", "examples", "arXiv-2511.08544v3", "content", "abstract.tex"))
   vim.cmd.edit(vim.fn.fnameescape(fixture))
-  local tekai = require("tekai").setup({
+  tekai = require("tekai").setup({
     executable = executable,
     lint = { on_open = false, on_save = false },
   })

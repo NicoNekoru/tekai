@@ -1,0 +1,10 @@
+html, body { margin: 0; height: 100%; overflow: hidden; color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font: var(--vscode-font-size) var(--vscode-font-family); }
+nav { height: 42px; display: flex; align-items: center; gap: 6px; padding: 0 8px; overflow-x: auto; white-space: nowrap; }
+button, input { color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, #666); border-radius: 3px; padding: 4px 6px; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+#page { width: 44px; }
+#search { width: 130px; }
+#status { margin-left: auto; font-size: 11px; }
+#container { position: absolute; inset: 42px 0 0; overflow: auto; background: #525659; }
+.sync-marker { position: absolute; width: 110px; height: 22px; transform: translate(-8px, -16px); background: #ffd54f80; border: 2px solid #e3a800; pointer-events: none; z-index: 10; }

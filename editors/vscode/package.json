@@ -2,7 +2,7 @@
   "name": "tekai",
   "displayName": "Tekai",
   "description": "Fast LaTeX linting, builds, and live PDF previews powered by Tekai.",
-  "version": "0.2.0",
+  "version": "0.3.4",
   "publisher": "tekai",
   "license": "MIT",
   "repository": {
@@ -32,14 +32,79 @@
   ],
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
-    "compile": "tsc -p tsconfig.json",
+    "compile": "tsc -p tsconfig.json && node scripts/copy-assets.cjs",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run compile && node --test dist/test/**/*.test.js",
+    "test": "npm run compile && node --test dist/test/**/*.test.js scripts/*.test.mjs",
+    "test:integration": "npm run compile && node scripts/test-integration.cjs",
     "vscode:prepublish": "npm run clean && npm run compile",
     "package": "npx @vscode/vsce package"
   },
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "tekai.pdfPreview",
+        "displayName": "Tekai PDF preview",
+        "selector": [
+          {
+            "filenamePattern": "*.pdf"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "tekai.build",
+        "key": "ctrl+alt+b",
+        "mac": "cmd+alt+b",
+        "when": "editorLangId == latex || editorLangId == tex"
+      },
+      {
+        "command": "tekai.check",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "editorLangId == latex || editorLangId == tex"
+      },
+      {
+        "command": "tekai.forwardSync",
+        "key": "ctrl+alt+j",
+        "mac": "cmd+alt+j",
+        "when": "editorLangId == latex || editorLangId == tex"
+      },
+      {
+        "command": "tekai.toggleWatch",
+        "key": "ctrl+alt+w",
+        "mac": "cmd+alt+w",
+        "when": "editorLangId == latex || editorLangId == tex"
+      }
+    ],
     "commands": [
+      {
+        "command": "tekai.check",
+        "title": "Check, Build, and Open PDF",
+        "category": "Tekai"
+      },
+      {
+        "command": "tekai.checkAllowWarnings",
+        "title": "Check and Build with Warnings Once",
+        "category": "Tekai"
+      },
+      {
+        "command": "tekai.forwardSync",
+        "title": "SyncTeX: Show Cursor in PDF",
+        "category": "Tekai",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "tekai.toggleWatch",
+        "title": "Toggle Live Preview",
+        "category": "Tekai"
+      },
+      {
+        "command": "tekai.health",
+        "title": "Check Installation",
+        "category": "Tekai"
+      },
       {
         "command": "tekai.lint",
         "title": "Lint Current File",
@@ -89,6 +154,11 @@
     "menus": {
       "editor/title": [
         {
+          "command": "tekai.forwardSync",
+          "when": "resourceExtname == .tex || resourceExtname == .ltx",
+          "group": "navigation@12"
+        },
+        {
           "command": "tekai.build",
           "when": "resourceExtname == .tex || resourceExtname == .ltx",
           "group": "navigation@10"
@@ -103,20 +173,87 @@
     "configuration": {
       "title": "Tekai",
       "properties": {
+        "tekai.workingDirectory": {
+          "type": "string",
+          "enum": ["workspace", "document"],
+          "default": "workspace",
+          "description": "Run builds from the workspace folder or the root TeX document's directory. Relative output paths in tekai.toml are resolved from this directory.",
+          "scope": "resource"
+        },
+        "tekai.languageFeatures": {
+          "type": "string",
+          "enum": ["auto", "native", "off"],
+          "default": "auto",
+          "enumDescriptions": [
+            "Use Tekai's editing features unless LaTeX Workshop is enabled.",
+            "Always use Tekai's editing features, even alongside other providers.",
+            "Leave completions, snippets, hover, definitions, and outlines to another extension."
+          ],
+          "description": "Choose who provides LaTeX editing features. Builds, diagnostics, the PDF viewer, and SyncTeX always remain available.",
+          "scope": "window"
+        },
+        "tekai.synctex.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Generate SyncTeX data for builds, checks, and live previews.",
+          "scope": "resource"
+        },
+        "tekai.synctex.executable": {
+          "type": "string",
+          "default": "synctex",
+          "description": "Path to the SyncTeX command-line executable for source/PDF navigation.",
+          "scope": "resource"
+        },
+        "tekai.completion.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Complete bibliography citations and labels from the root document and its included files.",
+          "scope": "resource"
+        },
+        "tekai.lint.onOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Lint TeX files on open unless lint.run is manual.",
+          "scope": "resource"
+        },
+        "tekai.build.openAfterBuild": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the PDF after an exact build.",
+          "scope": "resource"
+        },
+        "tekai.check.openOnSuccess": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the PDF after a successful check.",
+          "scope": "resource"
+        },
+        "tekai.check.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional check arguments. Warnings block builds unless --allow-warnings is set explicitly.",
+          "scope": "resource"
+        },
         "tekai.executable": {
           "type": "string",
           "default": "tekai",
-          "description": "Path to the Tekai executable."
+          "description": "Path to the Tekai executable.",
+          "scope": "resource"
         },
         "tekai.mainFile": {
           "type": "string",
           "default": "",
-          "description": "Root TeX file, relative to the workspace. When empty, Tekai uses a % !TEX root comment or discovers a document root."
+          "description": "Root TeX file, relative to the workspace. When empty, Tekai uses a % !TEX root comment or discovers a document root.",
+          "scope": "resource"
         },
         "tekai.configFile": {
           "type": "string",
           "default": "",
-          "description": "Optional tekai.toml path, relative to the workspace."
+          "description": "Optional config override, relative to the workspace or absolute. When empty, lint uses the nearest tekai.toml above each source file; builds, checks, and watch use the nearest config above the root TeX document.",
+          "scope": "resource"
         },
         "tekai.lint.run": {
           "type": "string",
@@ -125,12 +262,14 @@
             "manual"
           ],
           "default": "onSave",
-          "description": "When to run Tekai lint diagnostics."
+          "description": "When to run Tekai lint diagnostics.",
+          "scope": "resource"
         },
         "tekai.build.onSave": {
           "type": "boolean",
           "default": false,
-          "description": "Build the root document after saving a TeX file."
+          "description": "Build the root document after saving a TeX file.",
+          "scope": "resource"
         },
         "tekai.build.extraArgs": {
           "type": "array",
@@ -138,7 +277,8 @@
             "type": "string"
           },
           "default": [],
-          "description": "Additional arguments appended to Tekai build commands."
+          "description": "Additional arguments appended to Tekai build commands.",
+          "scope": "resource"
         },
         "tekai.preview.viewer": {
           "type": "string",
@@ -147,12 +287,14 @@
             "external"
           ],
           "default": "tab",
-          "description": "Open PDFs in a VS Code preview tab or the system viewer."
+          "description": "Open PDFs in a VS Code preview tab or the system viewer.",
+          "scope": "resource"
         },
         "tekai.preview.openAfterBuild": {
           "type": "boolean",
           "default": true,
-          "description": "Open the PDF after a preview build or when live preview first succeeds."
+          "description": "Open the PDF after a preview build or when live preview first succeeds.",
+          "scope": "resource"
         },
         "tekai.preview.finalAfterIdleMs": {
           "type": [
@@ -161,7 +303,8 @@
           ],
           "default": 1500,
           "minimum": 0,
-          "description": "Also make an exact build after this many idle milliseconds during live preview; use null to disable."
+          "description": "Also make an exact build after this many idle milliseconds during live preview; use null to disable.",
+          "scope": "resource"
         },
         "tekai.preview.extraArgs": {
           "type": "array",
@@ -169,7 +312,8 @@
             "type": "string"
           },
           "default": [],
-          "description": "Additional arguments appended to Tekai preview and watch commands."
+          "description": "Additional arguments appended to Tekai preview and watch commands.",
+          "scope": "resource"
         }
       }
     }
@@ -177,6 +321,22 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "1.96.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0",
+    "pdfjs-dist": "6.3.289",
     "typescript": "^5.7.2"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Citation completion and PDF viewing work in Restricted Mode; compiler and SyncTeX commands require a trusted workspace.",
+      "restrictedConfigurations": [
+        "tekai.executable",
+        "tekai.synctex.executable",
+        "tekai.build.extraArgs",
+        "tekai.preview.extraArgs",
+        "tekai.check.extraArgs"
+      ]
+    }
   }
 }

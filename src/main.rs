@@ -312,11 +312,15 @@ fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
         options.quiet = true;
         options.print_command = false;
     }
-    let report = build(&options)?;
+    let result = build(&options);
     if report_json {
-        print_check_report_json(&diagnostics, Some(&report))?;
-    } else if let Some(ref pdf) = report.pdf_path {
-        print_build_report(pdf, &report);
+        print_check_report_json(&diagnostics, result.as_ref().ok())?;
+    }
+    let report = result?;
+    if !report_json {
+        if let Some(ref pdf) = report.pdf_path {
+            print_build_report(pdf, &report);
+        }
     }
     Ok(())
 }

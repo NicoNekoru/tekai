@@ -337,6 +337,12 @@ environment level, or set `indent_style = "tabs"` to require one tab per level.
 In tab mode, `indent_size` is the visual width used when `check --fix` converts
 existing space indentation.
 
+Multiline braced arguments such as `\hypersetup{...}` may use up to one extra
+indentation level per open brace. Continuation indentation is optional, so
+unindented macro bodies remain valid. Leading closing braces remove their
+continuation levels. Comments, escaped braces, and verbatim content do not affect
+brace depth. Environment and display-math indentation still apply.
+
 Set `prose_wrap = "hardwrap"` to require prose source lines to stay within
 `max_line_length`. Set it to `"unwrapped"` to require one physical source line
 per prose paragraph; prose is then exempt from `line/length`. If `prose_wrap`
