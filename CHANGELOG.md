@@ -3,7 +3,7 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
-## Unreleased
+## 0.4.0 - 2026-10-03
 
 - Add `tekai format [PATH ...]` to apply safe lint fixes without compiling,
   with read-only `--check`, JSON reports, quiet output, and lint warning policy.
@@ -13,6 +13,11 @@ versioning.
 - Preserve check diagnostics in JSON when lint passes but compilation fails.
 - Accept continuation indentation in multiline braced arguments without
   requiring it in unindented macro bodies or stripping it during auto-fix.
+- Expand the VS Code integration with a PDF.js viewer, SyncTeX navigation,
+  project-aware editing features, per-paper config lookup, compiler diagnostics,
+  and an explicit one-time warning override.
+- Keep editor checks strict by default, including Neovim checks.
+- Document shorter Homebrew install and upgrade commands.
 
 ## 0.3.0 - 2026-09-15
 

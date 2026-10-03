@@ -32,7 +32,7 @@ The formula builds `tekai` from source. The executable includes its engine,
 LaTeX format, a pinned package/font bundle, and BibTeX. Default builds and
 checks do not need TeX Live, MacTeX, `kpsewhich`, or a runtime download.
 
-Tekai 0.3.0 supports macOS. Linux portability work is not part of this release.
+Tekai 0.4.0 supports macOS. Linux portability work is not part of this release.
 
 To install from a checkout instead:
 

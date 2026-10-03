@@ -1,6 +1,30 @@
 # Tekai engine parity report
 
-Initial measurement: 2026-07-05; bundled runtime parity revalidated: 2026-09-15.
+Initial measurement: 2026-07-05. Bundled runtime parity revalidated on 2026-10-03.
+
+## 0.4.0 release gate
+
+On 2026-10-03, the optimized 0.4.0 release binary rebuilt both public fixtures
+with an empty `PATH`. All 98 pages matched the checksum-pinned upstream
+pdfTeX 1.40.29 reference pixel for pixel at 144 DPI. Extracted text matched.
+Both engines used the same bundled format, package data, font maps, and settled
+auxiliary files. Representative first and final pages were also checked visually.
+
+| Case | Candidate pages | Reference pages | Changed pages at 144 DPI | Extracted text |
+| --- | ---: | ---: | ---: | --- |
+| arxiv-2605 | 48 | 48 | 0 | Identical |
+| arxiv-2511 | 50 | 50 | 0 | Identical |
+
+The dependency-free runtime tests passed, including both large-paper builds,
+package and font loading, in-process bibliography, recursive search paths,
+and scheduled EPS conversion. The new formatter passed 14 CLI regression tests
+for read-only previews, file selection, configuration, suppressions, JSON
+reports, exit policy, text preservation, and idempotence.
+
+Runtime bundle SHA-256:
+`8a8ffa578ce9af75b0a79b2c5f3265e1351f723ec5401144ede3319006ea107c`.
+Format SHA-256:
+`69de600c88d067beb22b50eeb0ac35bc9b912379811f6dedecdafec4d71e6503`.
 
 ## 0.3.0 release gate
 

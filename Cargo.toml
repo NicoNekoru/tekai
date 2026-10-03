@@ -1,9 +1,9 @@
 [package]
 name = "tekai"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.87"
-description = "Fast, fidelity-preserving LaTeX builds, live previews, caching, and linting"
+description = "Fast, fidelity-preserving LaTeX builds, live previews, caching, linting, and formatting"
 default-run = "tekai"
 license = "MIT"
 repository = "https://github.com/NicoNekoru/tekai"
