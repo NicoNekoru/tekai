@@ -4,8 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `tekai` is a self-contained typesetting engine and Rust CLI for fast,
-fidelity-preserving LaTeX builds, live previews, dependency-aware caching, and
-opinionated TeX linting.
+fidelity-preserving LaTeX builds, live previews, dependency-aware caching,
+TeX linting, and safe source formatting.
 
 The default `tekai-engine` + `direct` path runs Tekai's exact engine inside the
 `tekai` executable. It owns typesetting and explicit convergence, bibliography,
@@ -71,6 +71,12 @@ tekai check path/to/main.tex --allow-warnings
 
 # Apply safe lint fixes, then lint and build.
 tekai check path/to/main.tex --fix
+
+# Apply safe lint fixes without compiling.
+tekai format path/to/paper --config path/to/paper/tekai.toml
+
+# Check formatting and lint policy without changing files.
+tekai format path/to/paper --check --config path/to/paper/tekai.toml
 
 # Fast live preview; produce an exact final build after 1.5 seconds of idle time.
 tekai watch path/to/main.tex \
@@ -138,6 +144,8 @@ opt-in, unsupported auxiliary workflows fail without launching a program.
 Projects may check in `tekai.toml`. Root-document commands find the nearest
 config at or above the document, even when invoked from a parent directory.
 CLI arguments explicitly supplied by the user override config values.
+`lint` and `format` use the current directory's `tekai.toml` by default.
+Pass `--config path/to/paper/tekai.toml` when targeting a paper from elsewhere.
 
 ```toml
 [build]
@@ -164,9 +172,16 @@ prose_wrap = "unwrapped" # or "hardwrap"; omit for neutral behavior
 ```
 
 The linter scans `.tex`, `.ltx`, and `.cls` sources, while package `.sty` files
-remain build/watch dependencies without becoming lint targets. `check --fix`
-applies conservative math-delimiter and indentation fixes before linting and
-building; prose wrapping is reported but never rewritten automatically.
+remain build/watch dependencies without becoming lint targets. `format` applies
+conservative math-delimiter and indentation fixes without compiling.
+`format --check` reports needed changes without writing files. `check --fix`
+applies the same fixes to the root document's source graph before linting and
+building. Prose wrapping is reported but never rewritten automatically.
+Both commands respect disabled rules and suppression comments. Remaining lint
+errors fail the command, as do warnings unless `--allow-warnings` is passed.
+Needed formatting changes always fail `format --check`, even when warnings are
+allowed. See [the formatting reference](docs/usage.md#formatting) for options,
+file selection, and JSON reports.
 
 The checked-in [tekai.toml](tekai.toml) is a complete starting point.
 

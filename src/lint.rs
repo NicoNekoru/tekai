@@ -125,6 +125,12 @@ pub struct FixReport {
     pub files_changed: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct FixPreview {
+    pub fixes_available: usize,
+    pub files_would_change: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct TextEdit {
     start: usize,
@@ -288,8 +294,21 @@ pub fn lint_paths(paths: &[PathBuf], config: &LintConfig) -> Result<Vec<Diagnost
 }
 
 pub fn fix_paths(paths: &[PathBuf], config: &LintConfig) -> Result<FixReport> {
+    let preview = process_fixes(paths, config, true)?;
+    Ok(FixReport {
+        fixes_applied: preview.fixes_available,
+        files_changed: preview.files_would_change,
+    })
+}
+
+/// Compute the same fixes as `fix_paths` without writing any source files.
+pub fn preview_fixes(paths: &[PathBuf], config: &LintConfig) -> Result<FixPreview> {
+    process_fixes(paths, config, false)
+}
+
+fn process_fixes(paths: &[PathBuf], config: &LintConfig, write: bool) -> Result<FixPreview> {
     let files = lint_files(paths)?;
-    let mut report = FixReport::default();
+    let mut report = FixPreview::default();
 
     for file in files {
         let source = fs::read_to_string(&file)
@@ -298,10 +317,12 @@ pub fn fix_paths(paths: &[PathBuf], config: &LintConfig) -> Result<FixReport> {
         if fixes_applied == 0 {
             continue;
         }
-        fs::write(&file, fixed)
-            .with_context(|| format!("failed to write fixed TeX source {}", file.display()))?;
-        report.fixes_applied += fixes_applied;
-        report.files_changed.push(file);
+        if write {
+            fs::write(&file, fixed)
+                .with_context(|| format!("failed to write fixed TeX source {}", file.display()))?;
+        }
+        report.fixes_available += fixes_applied;
+        report.files_would_change.push(file);
     }
 
     Ok(report)
@@ -318,8 +339,17 @@ fn lint_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
         collect_tex_files(&target, &mut files)?;
     }
     files.sort();
-    files.dedup();
-    Ok(files)
+    let mut seen = HashSet::new();
+    let mut unique = Vec::new();
+    for file in files {
+        let canonical = file
+            .canonicalize()
+            .with_context(|| format!("failed to resolve TeX source {}", file.display()))?;
+        if seen.insert(canonical) {
+            unique.push(file);
+        }
+    }
+    Ok(unique)
 }
 
 fn fix_source(path: &Path, source: &str, config: &LintConfig) -> (String, usize) {

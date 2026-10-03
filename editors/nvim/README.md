@@ -64,6 +64,14 @@ require("tekai").setup({
 
 Run `:checkhealth tekai` to verify that the CLI is available.
 
+## Source formatting
+
+For safe lint fixes without a build, save your buffers and run
+`tekai format FILE --config path/to/tekai.toml` in a terminal.
+Use `--check` to report needed repairs without writing. The plugin does not add
+a formatting command. See [the formatting reference](../../docs/usage.md#formatting)
+for supported fixes and exit policy.
+
 ## Development
 
 ```sh

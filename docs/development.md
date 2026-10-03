@@ -41,7 +41,7 @@ Focused commands are useful during iteration:
 ```sh
 cargo test --lib watch::tests
 cargo test --lib lint::tests
-cargo test --test lint --test cli_lint --test cli_check
+cargo test --test lint --test cli_lint --test cli_format --test cli_check --test cli_help
 cargo test --test compiler_cache
 cargo test --test compiler_tekai_pdftex
 cargo test -p tekai-engine
@@ -141,6 +141,9 @@ must preserve dependency filtering and structural fallbacks.
   idempotent, suppression-aware, and conservative around ambiguous TeX. Validate
   fixer changes on copies of the large examples, confirm non-TeX files are
   unchanged, and use rendered parity when whitespace edits are broad.
+  `format`, `format --check`, and `check --fix` share the same fix computation.
+  Test read-only previews, idempotence, file selection, config overrides,
+  suppressions, JSON reports, and exit policy when changing that contract.
 - `crates/tekai-engine/src/generated` is the checked-in Rust engine core. Keep
   hot-path changes narrow and validate them on real documents.
 - `crates/tekai-pdftex/src/native.rs` is experimental. Unsupported behavior

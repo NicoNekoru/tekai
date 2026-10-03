@@ -5,6 +5,9 @@ versioning.
 
 ## Unreleased
 
+- Add `tekai format [PATH ...]` to apply safe lint fixes without compiling,
+  with read-only `--check`, JSON reports, quiet output, and lint warning policy.
+- Deduplicate overlapping lint and format targets by their resolved file paths.
 - Include the first TeX error, source context, and log path in direct-build
   failures, including quiet and JSON builds.
 - Preserve check diagnostics in JSON when lint passes but compilation fails.

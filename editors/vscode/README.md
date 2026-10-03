@@ -207,6 +207,15 @@ viewer. Embedded SyncTeX navigation still uses the Tekai tab. Restricted Mode
 permits completion and PDF viewing but never launches compiler or SyncTeX
 processes.
 
+## Source formatting
+
+For safe lint fixes without a build, save your buffers and run
+`tekai format FILE --config path/to/tekai.toml` in a terminal.
+Use `--check` for a read-only check. This CLI command is separate from VS Code's
+Format Document action and does not add a formatting provider. See
+[the formatting reference](../../docs/usage.md#formatting) for supported fixes
+and exit policy.
+
 ## Development
 
 ```sh

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tekai::lint::{IndentStyle, LintConfig, fix_paths, lint_paths, lint_source};
+use tekai::lint::{IndentStyle, LintConfig, fix_paths, lint_paths, lint_source, preview_fixes};
 
 #[test]
 fn bracket_math_is_accepted() {
@@ -109,6 +109,25 @@ fn lint_paths_skip_style_files() {
         lint_paths(std::slice::from_ref(&root), &LintConfig::default()).expect("lint failed");
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn preview_fixes_matches_writing_without_changing_sources() {
+    let root = unique_temp_dir("tekai-lint-preview-fixes");
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("paper.tex");
+    let contents = "\\begin{proof}\n\tClaim $x$.\n\\end{proof}\n";
+    fs::write(&source, contents).unwrap();
+    let paths = vec![root.clone(), source.clone()];
+    let config = LintConfig::default();
+
+    let preview = preview_fixes(&paths, &config).unwrap();
+    assert_eq!(fs::read_to_string(&source).unwrap(), contents);
+    let applied = fix_paths(&paths, &config).unwrap();
+    assert_eq!(preview.fixes_available, applied.fixes_applied);
+    assert_eq!(preview.files_would_change, applied.files_changed);
+    assert_eq!(preview_fixes(&paths, &config).unwrap().fixes_available, 0);
     let _ = fs::remove_dir_all(root);
 }
 

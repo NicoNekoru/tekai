@@ -8,11 +8,11 @@ use crate::compiler::{BibMode, DraftPrepass, Engine, Runner};
 #[command(
     name = "tekai",
     about = "Fast, fidelity-preserving LaTeX builds and live previews",
-    long_about = "tekai builds, watches, checks, and lints LaTeX projects. Its self-contained engine converges references and auxiliary tools, preserves final PDF rendering, and caches settled builds for fast repeat runs.",
+    long_about = "tekai builds, watches, checks, lints, and formats LaTeX projects. Its self-contained engine converges references and auxiliary tools, preserves final PDF rendering, and caches settled builds for fast repeat runs.",
     version,
     propagate_version = true,
     arg_required_else_help = true,
-    after_help = "QUICK START:\n  tekai build main.tex\n  tekai watch main.tex --preview --allow-warnings\n  tekai check main.tex --allow-warnings\n\nProject defaults can be stored in tekai.toml. Root-document commands find the nearest config at or above the document. Run `tekai <command> --help` for command-specific examples."
+    after_help = "QUICK START:\n  tekai build main.tex\n  tekai watch main.tex --preview --allow-warnings\n  tekai check main.tex --allow-warnings\n  tekai format main.tex\n\nProject defaults can be stored in tekai.toml. Root-document commands find the nearest config at or above the document. Run `tekai <command> --help` for command-specific examples."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -29,6 +29,8 @@ pub enum Command {
     Init(InitArgs),
     /// Lint TeX sources for structural and style issues.
     Lint(LintArgs),
+    /// Apply safe lint fixes to TeX sources without compiling.
+    Format(FormatArgs),
     /// Lint a root document and its referenced TeX sources, then build.
     Check(CheckArgs),
     /// Watch dependencies and rebuild after relevant changes.
@@ -172,6 +174,34 @@ pub struct LintArgs {
     /// Emit a machine-readable JSON lint report to stdout.
     #[arg(long)]
     pub report_json: bool,
+
+    #[command(flatten)]
+    pub flags: LintFlags,
+}
+
+#[derive(Debug, Args, Clone)]
+#[command(
+    after_help = "EXAMPLES:\n  tekai format\n  tekai format paper --allow-warnings\n  tekai format main.tex chapter.tex --config paper/tekai.toml\n  tekai format paper --check --report-json\n\nUses the same conservative fixes as `tekai check --fix`, but never compiles. Remaining lint errors and, by default, warnings return exit code 1. Check mode also fails when a file would change, even with --allow-warnings."
+)]
+pub struct FormatArgs {
+    /// Files or directories to format. Defaults to the current directory.
+    pub paths: Vec<PathBuf>,
+
+    /// Configuration file. Defaults to ./tekai.toml when it exists.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+
+    /// Report available fixes without writing files. Fail if changes are needed.
+    #[arg(long)]
+    pub check: bool,
+
+    /// Emit fix counts, changed paths, and lint diagnostics as JSON.
+    #[arg(long)]
+    pub report_json: bool,
+
+    /// Suppress text output. JSON reports are still emitted.
+    #[arg(short, long)]
+    pub quiet: bool,
 
     #[command(flatten)]
     pub flags: LintFlags,
@@ -343,6 +373,48 @@ impl From<RunnerArg> for Runner {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    #[test]
+    fn format_defaults_to_writing_with_strict_lint_policy() {
+        let cli = Cli::try_parse_from(["tekai", "format"]).expect("format should parse");
+        let Command::Format(args) = cli.command else {
+            panic!("expected format command");
+        };
+        assert!(args.paths.is_empty());
+        assert!(!args.check);
+        assert!(args.flags.should_fail_on_warnings());
+    }
+
+    #[test]
+    fn format_accepts_multiple_paths_and_read_only_reporting() {
+        let cli = Cli::try_parse_from([
+            "tekai",
+            "format",
+            "main.tex",
+            "chapters",
+            "--check",
+            "--report-json",
+            "--config",
+            "paper/tekai.toml",
+            "--allow-warnings",
+        ])
+        .expect("format options should parse");
+        let Command::Format(args) = cli.command else {
+            panic!("expected format command");
+        };
+        assert_eq!(
+            args.paths,
+            vec![PathBuf::from("main.tex"), PathBuf::from("chapters")]
+        );
+        assert_eq!(args.config, Some(PathBuf::from("paper/tekai.toml")));
+        assert!(args.check);
+        assert!(args.report_json);
+        assert!(!args.flags.should_fail_on_warnings());
+        assert!(
+            Cli::try_parse_from(["tekai", "format", "--allow-warnings", "--fail-on-warnings",])
+                .is_err()
+        );
+    }
 
     #[test]
     fn build_accepts_no_images_alias() {

@@ -7,7 +7,9 @@ use anyhow::{Context, Result, bail};
 use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use serde::Serialize;
-use tekai::cli::{BuildArgs, CheckArgs, CleanArgs, Cli, Command, InitArgs, LintArgs, WatchArgs};
+use tekai::cli::{
+    BuildArgs, CheckArgs, CleanArgs, Cli, Command, FormatArgs, InitArgs, LintArgs, WatchArgs,
+};
 use tekai::compiler::{
     BuildOptions, EMBEDDED_ENGINE_RUNNER_ENV, EMBEDDED_ENGINE_SUBCOMMAND, build,
     tex_source_dependency_paths,
@@ -16,7 +18,10 @@ use tekai::config::{
     BuildConfig, find_project_config, load_build_config, load_lint_config, load_project_config,
     write_default_config,
 };
-use tekai::lint::{Diagnostic, Severity, fix_paths, format_diagnostic, has_errors, lint_paths};
+use tekai::lint::{
+    Diagnostic, FixReport, Severity, fix_paths, format_diagnostic, has_errors, lint_paths,
+    preview_fixes,
+};
 use tekai::watch::{WatchOptions, watch};
 
 fn main() -> Result<()> {
@@ -33,6 +38,7 @@ fn main() -> Result<()> {
         Command::Clean(args) => run_clean(args),
         Command::Init(args) => run_init(args),
         Command::Lint(args) => run_lint(args),
+        Command::Format(args) => run_format(args),
         Command::Check(args) => run_check(args, build_flag_sources),
         Command::Watch(args) => run_watch(args, build_flag_sources),
     }
@@ -272,6 +278,52 @@ fn run_lint(args: LintArgs) -> Result<()> {
         print_lint_diagnostics(&diagnostics, false);
     }
     if has_errors(&diagnostics) || (args.flags.should_fail_on_warnings() && !diagnostics.is_empty())
+    {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn run_format(args: FormatArgs) -> Result<()> {
+    let config = load_lint_config(args.config.as_deref())?;
+    let (applied, available) = if args.check {
+        (FixReport::default(), preview_fixes(&args.paths, &config)?)
+    } else {
+        (fix_paths(&args.paths, &config)?, Default::default())
+    };
+    let diagnostics = lint_paths(&args.paths, &config)?;
+    if args.report_json {
+        let report = JsonFormatReport {
+            check: args.check,
+            fixes_applied: applied.fixes_applied,
+            files_changed: applied.files_changed,
+            fixes_available: available.fixes_available,
+            files_would_change: available.files_would_change,
+            lint: JsonLintReport::from(diagnostics.as_slice()),
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if !args.quiet {
+        if args.check {
+            eprintln!(
+                "would fix {} issue(s) in {} file(s)",
+                available.fixes_available,
+                available.files_would_change.len()
+            );
+            for file in &available.files_would_change {
+                eprintln!("would format {}", file.display());
+            }
+        } else {
+            eprintln!(
+                "fixed {} issue(s) in {} file(s)",
+                applied.fixes_applied,
+                applied.files_changed.len()
+            );
+        }
+        print_lint_diagnostics(&diagnostics, false);
+    }
+    if available.fixes_available > 0
+        || has_errors(&diagnostics)
+        || (args.flags.should_fail_on_warnings() && !diagnostics.is_empty())
     {
         std::process::exit(1);
     }
@@ -658,6 +710,17 @@ struct JsonLintReport {
     diagnostics: Vec<JsonDiagnostic>,
     error_count: usize,
     warning_count: usize,
+}
+
+#[derive(Serialize)]
+struct JsonFormatReport {
+    check: bool,
+    fixes_applied: usize,
+    files_changed: Vec<PathBuf>,
+    fixes_available: usize,
+    files_would_change: Vec<PathBuf>,
+    #[serde(flatten)]
+    lint: JsonLintReport,
 }
 
 #[derive(Serialize)]

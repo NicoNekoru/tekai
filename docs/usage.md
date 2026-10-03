@@ -53,11 +53,12 @@ default; `--external-tools` explicitly enables installed compatibility tools.
 | `check MAIN` | Lint `MAIN` and its referenced TeX source graph, then build if lint passes; add `--fix` to apply safe fixes first. |
 | `watch MAIN` | Watch relevant source/dependency files and rebuild. |
 | `lint [PATH ...]` | Lint files or directories; defaults to the current directory. |
+| `format [PATH ...]` | Apply safe lint fixes without compiling. Add `--check` to report needed changes without writing. Defaults to the current directory. |
 | `clean` | Safely remove the configured output directory. |
 
-`build`, `check`, and `watch` share the build flags. `check`, `watch`, and
-`lint` also accept `--allow-warnings` or `--fail-on-warnings`. Warnings fail by
-default; `--allow-warnings` is the convenient interactive setting.
+`build`, `check`, and `watch` share the build flags. `check`, `watch`, `lint`,
+and `format` also accept `--allow-warnings` or `--fail-on-warnings`. Warnings
+fail by default. `--allow-warnings` is the convenient interactive setting.
 
 ## Final builds
 
@@ -185,10 +186,13 @@ the [divergence audit](../output/pdf/pdftex-native-divergence-audit.md).
 
 `build`, `check`, and `watch` find the nearest `tekai.toml` at or above the root
 document's directory. This also applies when the document is passed from a
-parent directory, so `check --fix` uses the same lint policy as `check`. `lint`
-and `clean` use `./tekai.toml` by default. All commands accept `--config PATH`;
-an explicit path takes precedence. Explicit CLI build flags override
-configuration; omitted flags retain configured values.
+parent directory, so `check --fix` uses the same lint policy as `check`. `lint`,
+`format`, and `clean` use `./tekai.toml` by default. Directory formatting uses
+that one lint config for every selected file, including files in subdirectories.
+Pass `--config paper/tekai.toml` when formatting a paper from its parent directory.
+All commands except `init` accept `--config PATH`. An explicit path takes
+precedence. Explicit CLI build flags override configuration. Omitted flags
+retain configured values.
 
 Initialize a documented config containing every effective default with:
 
@@ -287,6 +291,8 @@ Advanced users can override individual roots with `TEKAI_FORMAT_CACHE`,
 tekai build paper/main.tex --report-json
 tekai check paper/main.tex --report-json --allow-warnings
 tekai lint paper --report-json --allow-warnings
+tekai format paper --report-json --allow-warnings
+tekai format paper --check --report-json
 tekai clean --dry-run --report-json
 ```
 
@@ -296,6 +302,74 @@ and preflight/preamble-format usage. `check --report-json` always includes the
 lint diagnostics and counts that gated the build. When lint passes, the same
 object is augmented with the normal build-report fields; when lint blocks the
 build, it exits with status 1 and omits those build fields.
+
+Format reports include `check`, `fixes_applied`, `files_changed`,
+`fixes_available`, and `files_would_change`, along with the same `diagnostics`,
+`error_count`, and `warning_count` fields as lint reports. Normal formatting
+reports applied edits and changed paths, with zero available fixes and an empty
+would-change list. Check mode reports available edits and would-change paths,
+with zero applied fixes and an empty changed-file list. Diagnostics describe
+the updated sources in normal mode and the unchanged sources in check mode.
+JSON is the only stdout output in either mode, including when lint policy or
+needed formatting changes return exit code 1. File and config errors go to
+stderr and may prevent a JSON report.
+
+## Formatting
+
+```sh
+# Format all supported sources below the current directory.
+tekai format
+
+# Format a directory using its project rules, without building a PDF.
+tekai format paper --config paper/tekai.toml
+
+# Format selected files only.
+tekai format main.tex chapters/intro.tex
+
+# Read-only CI gate for required edits and lint diagnostics.
+tekai format paper --check --config paper/tekai.toml
+
+# Apply safe fixes while accepting any remaining lint warnings.
+tekai format paper --allow-warnings
+```
+
+`format` uses the existing lint fixer. It repairs dollar-math delimiters,
+indentation style, and environment/display-math indentation. It preserves
+valid braced continuation indentation, Unicode text, line endings, and the
+presence or absence of a final newline. Disabled rules, suppression comments,
+and verbatim content are respected. Prose wrapping, long lines, prime notation,
+and structurally ambiguous math are reported without automatic rewrites.
+Formatting never invokes TeX or other build tools.
+
+File selection matches `lint`. It scans `.tex`, `.ltx`, and `.cls` extensions
+case-insensitively and recursively visits directory arguments. It skips
+`.git`, `target`, `build`, `.latexmk`, and `.tekai` directories, and leaves
+`.sty` and other file types alone. Overlapping targets are processed once.
+An explicitly named supported file is processed even inside an otherwise
+ignored directory. A file argument formats that file only, without following
+`\input` or `\include`. Use a directory to include its chapters, or use
+`check MAIN --fix` to fix only a root document's referenced source graph.
+
+| Option | Behavior |
+| --- | --- |
+| `--config PATH` | Use this lint config instead of `./tekai.toml`. |
+| `--check` | Compute safe fixes and list files that would change, without writing. |
+| `--report-json` | Emit the format report and lint diagnostics as JSON. |
+| `-q`, `--quiet` | Suppress text summaries and diagnostics. JSON reports and file/config errors are still emitted. |
+| `--allow-warnings` | Accept remaining lint warnings. Errors still fail. |
+| `--fail-on-warnings` | Fail on lint warnings, which is already the default. Conflicts with `--allow-warnings`. |
+
+After applying safe fixes, normal mode lints the updated sources. It exits
+with status 0 when those sources pass lint policy, even if files changed.
+Remaining errors or disallowed warnings return status 1. Fixes stay applied
+when other diagnostics remain. Files are written in place, so an error on a
+later file can leave earlier files formatted.
+
+`--check` returns status 1 if any file would change, regardless of
+`--allow-warnings`. It also applies lint policy to the unchanged sources.
+It returns status 0 only when no fixes are needed and diagnostics pass that
+policy. Invalid arguments return status 2. No formatting-specific TOML section
+is needed, since both formatting modes use `[lint]` and `[lint.rules]`.
 
 ## Linting
 
@@ -314,13 +388,13 @@ explicit root, follows the TeX sources referenced by that document, and ignores
 unreferenced sibling files. Project build environment such as `TEXINPUTS` is
 applied before resolving this source graph.
 
-`check --fix` follows the Ruff-style check/fix loop: it rewrites deterministic,
-safe fixes, lints the updated sources, and builds only when the remaining
-diagnostics pass. It currently fixes dollar-math delimiters, indentation style,
-and environment/display-math indentation. It does not rewrite prose, long lines,
+`check --fix` rewrites deterministic, safe fixes, lints the updated sources,
+and builds only when the remaining diagnostics pass. It currently fixes
+dollar-math delimiters, indentation style, and environment/display-math
+indentation. It does not rewrite prose, long lines,
 prime notation, or structurally ambiguous math. Suppression comments and disabled
-rules are respected; if non-fixable warnings remain, pass `--allow-warnings` to
-continue to the build.
+rules are respected. If non-fixable warnings remain, pass `--allow-warnings` to
+continue to the build. Use `format` for the same repairs without a build.
 
 Rule identifiers currently include:
 
@@ -334,8 +408,8 @@ Rule identifiers currently include:
 
 Set `indent_style = "spaces"` (the default) to use `indent_size` spaces per
 environment level, or set `indent_style = "tabs"` to require one tab per level.
-In tab mode, `indent_size` is the visual width used when `check --fix` converts
-existing space indentation.
+In tab mode, `indent_size` is the visual width used when `format` or
+`check --fix` converts existing space indentation.
 
 Multiline braced arguments such as `\hypersetup{...}` may use up to one extra
 indentation level per open brace. Continuation indentation is optional, so
@@ -349,8 +423,8 @@ per prose paragraph; prose is then exempt from `line/length`. If `prose_wrap`
 is omitted, the linter preserves the previous neutral behavior and only applies
 the general `line/length` rule. The prose scanner is deliberately conservative:
 it ignores command-only lines, environment boundaries, display math, comments,
-and verbatim content. Neither prose mode is auto-fixable: `check --fix` reports
-violations without reflowing TeX source.
+and verbatim content. Neither prose mode is auto-fixable. `format` and
+`check --fix` report violations without reflowing TeX source.
 
 Set a rule to `off`, `warn`, or `error` under `[lint.rules]`. Suppress a specific
 source line when needed:

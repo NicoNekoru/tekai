@@ -56,6 +56,13 @@ exact source graph and policy that gated the accompanying build. Editors should
 replace their Tekai diagnostic namespace from that array so annotations cannot
 drift from the explicit check result.
 
+Safe source repairs are available through `tekai format FILE --config CONFIG`.
+It changes files on disk without compiling, so save editor buffers first.
+`format --check --report-json` reports available repairs without writing.
+Its JSON includes the standard lint diagnostics plus fix counts and paths.
+These are CLI commands, not editor formatting providers. See
+[Formatting](usage.md#formatting) for file selection, config lookup, and exit codes.
+
 Build clients consume `pdf_path` from `tekai build MAIN --report-json`. Live
 preview uses the CLI's own watcher and dependency graph:
 
