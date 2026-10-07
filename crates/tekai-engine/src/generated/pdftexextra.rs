@@ -188,6 +188,12 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: ::core::ffi::c_int,
     ) -> ::core::ffi::c_int;
+    // The generated structure uses 64-bit inode fields. Intel macOS exposes
+    // that layout through a distinct symbol; its plain stat uses the legacy ABI.
+    #[cfg_attr(
+        all(target_os = "macos", target_arch = "x86_64"),
+        link_name = "stat$INODE64"
+    )]
     fn stat(_: *const ::core::ffi::c_char, _: *mut stat) -> ::core::ffi::c_int;
     fn md5_init(pms: *mut md5_state_t);
     fn md5_append(pms: *mut md5_state_t, data: *const md5_byte_t, nbytes: ::core::ffi::c_int);
@@ -5559,5 +5565,41 @@ pub fn main() {
             (args_ptrs.len() - 1) as ::core::ffi::c_int,
             args_ptrs.as_mut_ptr() as *mut string,
         ) as i32)
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod metadata_tests {
+    use super::stat;
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn generated_stat_binding_matches_filesystem_metadata() {
+        let path = std::env::temp_dir().join(format!(
+            "tekai-stat-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"abc").unwrap();
+        let expected = std::fs::metadata(&path).unwrap();
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let mut actual = MaybeUninit::<stat>::zeroed();
+        // SAFETY: name is NUL-terminated and actual has the structure layout
+        // required by the selected macOS stat symbol.
+        let status = unsafe { super::stat(name.as_ptr(), actual.as_mut_ptr()) };
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(status, 0);
+        // SAFETY: stat succeeded and initialized the zeroed structure.
+        let actual = unsafe { actual.assume_init() };
+        assert_eq!(actual.st_size as u64, expected.len());
+        assert_eq!(actual.st_ino, expected.ino());
+        assert_eq!(actual.st_mtimespec.tv_sec, expected.mtime());
+        assert_eq!(actual.st_mtimespec.tv_nsec, expected.mtime_nsec());
     }
 }

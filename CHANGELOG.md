@@ -12,6 +12,8 @@ versioning.
   when new shared packages shadow previous inputs.
 - Require real BasicTeX lookup and compilation comparisons in CI on macOS
   Apple Silicon and Intel, while retaining the no-TeX large-paper gate.
+- Fix native file size and modification-date primitives on Intel macOS by
+  linking the metadata function matching its 64-bit inode structure.
 
 - Reduce debug-build disk usage by embedding TeX archives and the format as
   read-only object data instead of duplicating them in compiler metadata on
