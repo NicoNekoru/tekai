@@ -22,6 +22,7 @@ const TERMS_BIB: &str = r#"@entry{sample,
 #[test]
 #[cfg(unix)]
 fn direct_runner_builds_and_caches_bib2gls_resources() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("glossaries-extra.sty") {
         eprintln!("skipping Bib2Gls test; pdflatex or glossaries-extra.sty is unavailable");
         return;

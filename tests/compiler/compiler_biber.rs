@@ -59,6 +59,7 @@ static BIBER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn direct_runner_builds_and_caches_biber_output() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("biber")
         || !tex_file_available("biblatex.sty")
@@ -114,6 +115,7 @@ fn direct_runner_builds_and_caches_biber_output() {
 
 #[test]
 fn direct_runner_auto_runs_current_bibtex_aux_and_biber_control_files() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("bibtex")
         || !command_available("biber")
@@ -158,6 +160,7 @@ fn direct_runner_auto_runs_current_bibtex_aux_and_biber_control_files() {
 
 #[test]
 fn direct_runner_skips_tex_when_biber_preflight_output_is_unchanged() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("biber")
         || !tex_file_available("biblatex.sty")
@@ -207,6 +210,7 @@ fn direct_runner_skips_tex_when_biber_preflight_output_is_unchanged() {
 
 #[test]
 fn direct_runner_auto_prefers_current_bibtex_aux_over_stale_bcf() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("bibtex")
         || !command_available("biber")
@@ -254,6 +258,7 @@ fn direct_runner_auto_prefers_current_bibtex_aux_over_stale_bcf() {
 
 #[test]
 fn direct_runner_ignores_stale_bcf_when_current_tex_run_has_no_biber_control_file() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("biber")
         || !tex_file_available("biblatex.sty")

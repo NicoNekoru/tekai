@@ -135,11 +135,6 @@ static FILE_INDEX: OnceLock<FileIndex> = OnceLock::new();
 static FORMAT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 static EMBEDDED_PDFLATEX_FORMAT_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
-const EMBEDDED_PDFLATEX_FORMAT_GZIP: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../formats/pdflatex.fmt"
-));
-
 thread_local! {
     static INDEX_LOOKUP_CACHE: RefCell<HashMap<c_uint, HashMap<String, Option<PathBuf>>>> =
         RefCell::new(HashMap::new());
@@ -408,7 +403,7 @@ fn materialize_embedded_pdflatex_format() -> io::Result<PathBuf> {
 
     let tmp = root.join(format!(".pdflatex-{format_id}-{}.tmp", std::process::id()));
     let result = (|| {
-        let mut decoder = flate2::read::GzDecoder::new(EMBEDDED_PDFLATEX_FORMAT_GZIP);
+        let mut decoder = flate2::read::GzDecoder::new(crate::embedded::pdflatex_format_bytes());
         let mut output = File::create(&tmp)?;
         io::copy(&mut decoder, &mut output)?;
         output.flush()?;
@@ -1053,7 +1048,8 @@ mod tests {
 
     #[test]
     fn embedded_pdflatex_format_is_gzip_data() {
-        assert_eq!(&EMBEDDED_PDFLATEX_FORMAT_GZIP[..2], &[0x1f, 0x8b]);
-        assert!(EMBEDDED_PDFLATEX_FORMAT_GZIP.len() > 1_000_000);
+        let bytes = crate::embedded::pdflatex_format_bytes();
+        assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+        assert!(bytes.len() > 1_000_000);
     }
 }

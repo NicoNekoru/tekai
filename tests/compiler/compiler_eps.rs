@@ -102,6 +102,7 @@ static EPS_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 #[cfg(unix)]
 fn direct_runner_builds_and_caches_eps_conversions() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("epstopdf") {
         eprintln!("skipping EPS conversion test; pdflatex or epstopdf is unavailable");
         return;
@@ -163,6 +164,7 @@ fn direct_runner_builds_and_caches_eps_conversions() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_converts_eps_discovered_through_kpathsea() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("epstopdf") {
         eprintln!("skipping Kpathsea EPS conversion test; pdflatex or epstopdf is unavailable");
         return;
@@ -219,6 +221,7 @@ fn direct_runner_converts_eps_discovered_through_kpathsea() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_detects_starred_multiline_graphics_commands_for_eps_conversion() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("epstopdf") {
         eprintln!(
             "skipping starred multiline EPS conversion test; pdflatex or epstopdf is unavailable"
@@ -273,6 +276,7 @@ fn direct_runner_detects_starred_multiline_graphics_commands_for_eps_conversion(
 #[test]
 #[cfg(unix)]
 fn direct_runner_honors_declared_graphics_extension_order_for_eps() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("epstopdf") {
         eprintln!(
             "skipping declared graphics extension EPS test; pdflatex or epstopdf is unavailable"
@@ -336,6 +340,7 @@ fn direct_runner_honors_declared_graphics_extension_order_for_eps() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_converts_eps_discovered_through_subfile_sources() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("epstopdf") {
         eprintln!("skipping subfile EPS conversion test; pdflatex or epstopdf is unavailable");
         return;
@@ -386,6 +391,7 @@ fn direct_runner_converts_eps_discovered_through_subfile_sources() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_converts_eps_discovered_through_if_file_exists_sources() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("epstopdf") {
         eprintln!("skipping IfFileExists EPS conversion test; pdflatex or epstopdf is unavailable");
         return;
@@ -436,6 +442,7 @@ fn direct_runner_converts_eps_discovered_through_if_file_exists_sources() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_converts_eps_discovered_through_import_sources() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("epstopdf") {
         eprintln!("skipping import EPS conversion test; pdflatex or epstopdf is unavailable");
         return;
@@ -486,6 +493,7 @@ fn direct_runner_converts_eps_discovered_through_import_sources() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_ignores_eps_in_includeonly_excluded_sources() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("epstopdf") {
         eprintln!("skipping includeonly EPS exclusion test; pdflatex or epstopdf is unavailable");
         return;

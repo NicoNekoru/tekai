@@ -35,6 +35,7 @@ After.
 
 #[test]
 fn direct_runner_builds_pgf_externalized_figures_from_makefile() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("make")
         || !tex_file_available("tikz.sty")
@@ -71,6 +72,7 @@ fn direct_runner_builds_pgf_externalized_figures_from_makefile() {
 
 #[test]
 fn direct_runner_forces_pgf_list_and_make_without_shell_escape() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("make")
         || !tex_file_available("tikz.sty")

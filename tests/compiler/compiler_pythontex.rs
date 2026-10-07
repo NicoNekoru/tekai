@@ -3,49 +3,67 @@ use std::path::{Path, PathBuf};
 
 use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
-const ASYMPTOTE_DOC: &str = r#"\documentclass{article}
-\usepackage{asymptote}
+const PYTHONTEX_DOC: &str = r#"\documentclass{article}
+\usepackage{pythontex}
+\setpythontexworkingdir{..}
 \begin{document}
-Figure:
-\begin{asy}
-size(1cm);
-draw((0,0)--(1,1));
-\end{asy}
+\begin{pycode}
+pytex.add_dependencies('data.txt')
+def read_value():
+    with open('data.txt') as handle:
+        return handle.read().strip()
+\end{pycode}
+Value: \py{read_value()}
 \end{document}
 "#;
 
 #[test]
-fn direct_runner_builds_and_caches_asymptote_figures() {
+fn direct_runner_builds_and_caches_pythontex_output() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
-        || !command_available("asy")
-        || !tex_file_available("asymptote.sty")
+        || !command_available("pythontex")
+        || !tex_file_available("pythontex.sty")
     {
-        eprintln!("skipping Asymptote test; pdflatex, asy, or asymptote.sty is unavailable");
+        eprintln!("skipping PythonTeX test; pdflatex, pythontex, or pythontex.sty is unavailable");
         return;
     }
 
-    let root = unique_temp_dir("tekai-asymptote-test");
+    let root = unique_temp_dir("tekai-pythontex-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
-    fs::write(&main, ASYMPTOTE_DOC).expect("failed to write Asymptote document");
+    fs::write(&main, PYTHONTEX_DOC).expect("failed to write PythonTeX document");
+    fs::write(root.join("data.txt"), "alpha\n").expect("failed to write PythonTeX data");
 
-    let first = build(&options(&main, &out_dir)).expect("initial Asymptote build failed");
+    let first = build(&options(&main, &out_dir)).expect("initial PythonTeX build failed");
     assert_eq!(first.external_runs, 1, "{first:#?}");
     assert_eq!(first.tex_runs, 2, "{first:#?}");
     assert!(out_dir.join("main.pdf").exists());
-    assert!(out_dir.join("main-1.pdf").exists());
+    assert!(out_dir.join("pythontex-files-main/main.pytxmcr").exists());
     let log = fs::read_to_string(out_dir.join("main.log")).expect("failed to read TeX log");
-    assert!(log.contains("main-1.pdf Graphic file"), "{log}");
-    assert!(!log.contains("file `main-1.pdf' not found"), "{log}");
+    let compact_log = log.split_whitespace().collect::<String>();
+    assert!(
+        compact_log.contains("pythontex-files-main/main.pytxmcr"),
+        "{log}"
+    );
+    assert!(!log.contains("Run PythonTeX to create it"), "{log}");
+    assert!(!log.contains("Missing autoprint content"), "{log}");
 
-    let cached = build(&options(&main, &out_dir)).expect("cached Asymptote build failed");
+    let cached = build(&options(&main, &out_dir)).expect("cached PythonTeX build failed");
     assert!(cached.skipped, "{cached:#?}");
     assert_eq!(cached.external_runs, 0, "{cached:#?}");
 
-    fs::write(&main, ASYMPTOTE_DOC.replace("(1,1)", "(1,0)"))
-        .expect("failed to update Asymptote source");
-    let edited = build(&options(&main, &out_dir)).expect("edited Asymptote build failed");
+    fs::write(root.join("data.txt"), "beta\n").expect("failed to update PythonTeX data");
+    let data_edit = build(&options(&main, &out_dir)).expect("data-edited PythonTeX build failed");
+    assert_eq!(data_edit.external_runs, 1, "{data_edit:#?}");
+    assert!(data_edit.tex_runs >= 1, "{data_edit:#?}");
+
+    fs::write(
+        &main,
+        PYTHONTEX_DOC.replace(r"Value: \py{read_value()}", r"Value: \py{'source-edit'}"),
+    )
+    .expect("failed to update PythonTeX source");
+    let edited = build(&options(&main, &out_dir)).expect("edited PythonTeX build failed");
     assert_eq!(edited.external_runs, 1, "{edited:#?}");
     assert_eq!(edited.tex_runs, 2, "{edited:#?}");
 

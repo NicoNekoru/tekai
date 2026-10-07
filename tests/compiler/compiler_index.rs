@@ -62,6 +62,7 @@ const UPDATED_CUSTOM_INDEX_STYLE: &str = r#"delim_0 " RESTYLE "
 
 #[test]
 fn direct_runner_builds_and_caches_makeindex_output() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("makeindex") {
         eprintln!("skipping MakeIndex build test; pdflatex or makeindex is not available");
         return;
@@ -105,6 +106,7 @@ fn direct_runner_builds_and_caches_makeindex_output() {
 
 #[test]
 fn direct_runner_ignores_stale_index_files_not_recorded_by_latest_tex_run() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("makeindex") {
         eprintln!("skipping stale index artifact test; pdflatex or makeindex is not available");
         return;
@@ -139,6 +141,7 @@ fn direct_runner_ignores_stale_index_files_not_recorded_by_latest_tex_run() {
 
 #[test]
 fn direct_runner_uses_xindy_requested_by_imakeidx_log_command() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("texindy")
         || !command_available("xindy")
@@ -173,6 +176,7 @@ fn direct_runner_uses_xindy_requested_by_imakeidx_log_command() {
 
 #[test]
 fn direct_runner_uses_makeindex_style_requested_by_imakeidx_log_command() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("makeindex")
         || !tex_file_available("imakeidx.sty")
@@ -228,6 +232,7 @@ fn direct_runner_uses_makeindex_style_requested_by_imakeidx_log_command() {
 
 #[test]
 fn direct_runner_splits_splitidx_raw_index_before_makeindex() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("splitindex")
         || !command_available("makeindex")

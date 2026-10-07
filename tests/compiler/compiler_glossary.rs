@@ -26,6 +26,7 @@ Use \gls{sample}.
 
 #[test]
 fn direct_runner_builds_and_caches_glossary_makeindex_output() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("makeindex")
         || !tex_file_available("glossaries.sty")
@@ -73,6 +74,7 @@ fn direct_runner_builds_and_caches_glossary_makeindex_output() {
 
 #[test]
 fn direct_runner_builds_and_caches_xindy_glossaries_via_makeglossaries() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("makeglossaries")
         || !command_available("xindy")
@@ -128,6 +130,7 @@ fn direct_runner_builds_and_caches_xindy_glossaries_via_makeglossaries() {
 
 #[test]
 fn direct_runner_ignores_stale_xdy_when_current_glossary_uses_makeindex() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("makeindex")
         || !command_available("makeglossaries")

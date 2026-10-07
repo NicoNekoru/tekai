@@ -34,6 +34,7 @@ static INDEXSTYLE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn direct_runner_builds_and_caches_nomenclature_makeindex_output() {
+    let _test_guard = super::lock();
     let _env_guard = indexstyle_test_guard();
     if !command_available("pdflatex")
         || !command_available("makeindex")
@@ -84,6 +85,7 @@ fn direct_runner_builds_and_caches_nomenclature_makeindex_output() {
 
 #[test]
 fn direct_runner_builds_multiple_makeindex_family_outputs() {
+    let _test_guard = super::lock();
     let _env_guard = indexstyle_test_guard();
     if !command_available("pdflatex")
         || !command_available("makeindex")
@@ -121,6 +123,7 @@ fn direct_runner_builds_multiple_makeindex_family_outputs() {
 
 #[test]
 fn direct_runner_tracks_external_nomenclature_style_from_indexstyle() {
+    let _test_guard = super::lock();
     let _env_guard = indexstyle_test_guard();
     if !command_available("pdflatex")
         || !command_available("makeindex")

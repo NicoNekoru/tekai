@@ -23,6 +23,7 @@ const REFS: &str = r#"@book{knuth,
 
 #[test]
 fn direct_runner_honors_custom_job_name_for_outputs_and_aux_tools() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping custom job-name test; pdflatex or bibtex is not available");
         return;
@@ -69,6 +70,7 @@ fn direct_runner_honors_custom_job_name_for_outputs_and_aux_tools() {
 
 #[test]
 fn default_job_name_preserves_dotted_root_stem() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping dotted root-stem job-name test; pdflatex is not available");
         return;
@@ -106,6 +108,7 @@ Dotted default job name: \jobname.
 
 #[test]
 fn custom_job_name_must_be_a_single_filename_component() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-jobname-invalid-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");

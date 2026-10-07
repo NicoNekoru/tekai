@@ -3,6 +3,15 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
+## Unreleased
+
+- Reduce debug-build disk usage by embedding TeX archives and the format as
+  read-only object data instead of duplicating them in compiler metadata on
+  macOS/Linux ARM64 and x86-64. Keep full debug information and all runtime files.
+- Consolidate the 105 compiler integration tests into one executable so they
+  share one embedded engine. Use `cargo test --test compiler compiler_cache`
+  (or another module filter) for focused compiler suites.
+
 ## 0.4.0 - 2026-10-03
 
 - Add `tekai format [PATH ...]` to apply safe lint fixes without compiling,

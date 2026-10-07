@@ -22,6 +22,7 @@ Hello.
 
 #[test]
 fn direct_runner_creates_output_subdirectories_for_included_aux_files() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping include-directory test; pdflatex is not available");
         return;
@@ -52,6 +53,7 @@ fn direct_runner_creates_output_subdirectories_for_included_aux_files() {
 
 #[test]
 fn direct_runner_creates_output_subdirectories_for_multiline_include() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping multiline include-directory test; pdflatex is not available");
         return;

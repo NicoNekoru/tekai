@@ -18,6 +18,7 @@ See Section~\ref{sec:intro}.
 
 #[test]
 fn generated_output_dir_artifacts_do_not_invalidate_noop_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping cache test; pdflatex is not available");
         return;
@@ -47,6 +48,7 @@ fn generated_output_dir_artifacts_do_not_invalidate_noop_cache() {
 
 #[test]
 fn scheduler_policy_changes_do_not_invalidate_settled_final_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping scheduler policy cache test; pdflatex is not available");
         return;
@@ -83,6 +85,7 @@ fn scheduler_policy_changes_do_not_invalidate_settled_final_cache() {
 
 #[test]
 fn fresh_output_dir_restores_settled_pdf_artifact_from_shared_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping shared artifact cache test; pdflatex is not available");
         return;
@@ -132,6 +135,7 @@ fn fresh_output_dir_restores_settled_pdf_artifact_from_shared_cache() {
 
 #[test]
 fn trailing_content_after_end_document_does_not_invalidate_root_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping root effective-source cache test; pdflatex is not available");
         return;
@@ -167,6 +171,7 @@ fn trailing_content_after_end_document_does_not_invalidate_root_cache() {
 
 #[test]
 fn trailing_content_after_endinput_does_not_invalidate_tex_input_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping endinput cache test; pdflatex is not available");
         return;
@@ -215,6 +220,7 @@ fn trailing_content_after_endinput_does_not_invalidate_tex_input_cache() {
 
 #[test]
 fn physical_trailing_spaces_do_not_invalidate_tex_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping trailing-space cache test; pdflatex is not available");
         return;
@@ -256,6 +262,7 @@ fn physical_trailing_spaces_do_not_invalidate_tex_cache() {
 
 #[test]
 fn column_zero_comment_text_does_not_invalidate_tex_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping full-line comment cache test; pdflatex is not available");
         return;
@@ -303,6 +310,7 @@ fn column_zero_comment_text_does_not_invalidate_tex_cache() {
 
 #[test]
 fn ordinary_comment_text_does_not_invalidate_tex_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping ordinary comment cache test; pdflatex is not available");
         return;
@@ -374,6 +382,7 @@ fn ordinary_comment_text_does_not_invalidate_tex_cache() {
 
 #[test]
 fn verbatim_percent_text_does_invalidate_tex_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping verbatim percent cache test; pdflatex is not available");
         return;
@@ -407,6 +416,7 @@ fn verbatim_percent_text_does_invalidate_tex_cache() {
 
 #[test]
 fn inline_verb_does_not_disable_safe_effective_tex_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping inline verb cache test; pdflatex is not available");
         return;
@@ -449,6 +459,7 @@ fn inline_verb_does_not_disable_safe_effective_tex_cache() {
 
 #[test]
 fn lstinline_does_not_disable_safe_effective_tex_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("listings.sty") {
         eprintln!("skipping lstinline cache test; pdflatex or listings.sty is not available");
         return;
@@ -491,6 +502,7 @@ fn lstinline_does_not_disable_safe_effective_tex_cache() {
 
 #[test]
 fn percent_lines_with_explicit_catcode_do_invalidate_tex_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping percent catcode cache test; pdflatex is not available");
         return;

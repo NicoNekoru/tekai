@@ -277,6 +277,7 @@ Hash \nativehash.
 
 #[test]
 fn tekai_pdftex_native_backend_builds_minimal_document() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-pdftex-native");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let main = root.join("main.tex");
@@ -299,6 +300,7 @@ fn tekai_pdftex_native_backend_builds_minimal_document() {
 
 #[test]
 fn tekai_pdftex_certified_backend_uses_pdflatex_final_artifact() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping certified tekai-pdftex test; pdflatex is not available");
         return;
@@ -337,6 +339,7 @@ fn tekai_pdftex_certified_backend_uses_pdflatex_final_artifact() {
 
 #[test]
 fn tekai_pdftex_native_backend_handles_pdftex_primitive_registers() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-pdftex-native-pdf-primitives");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let main = root.join("main.tex");
@@ -429,6 +432,7 @@ fn tekai_pdftex_native_backend_handles_pdftex_primitive_registers() {
 
 #[test]
 fn tekai_pdftex_native_backend_writes_table_of_contents() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-pdftex-native-toc");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let main = root.join("main.tex");
@@ -464,6 +468,7 @@ fn tekai_pdftex_native_backend_writes_table_of_contents() {
 
 #[test]
 fn tekai_pdftex_native_backend_writes_float_lists() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-pdftex-native-float-lists");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let main = root.join("main.tex");
@@ -503,6 +508,7 @@ fn tekai_pdftex_native_backend_writes_float_lists() {
 
 #[test]
 fn tekai_pdftex_native_backend_writes_index_sidecar() {
+    let _test_guard = super::lock();
     if !command_available("makeindex") {
         eprintln!("skipping external MakeIndex integration; makeindex is unavailable");
         return;
@@ -541,6 +547,7 @@ fn tekai_pdftex_native_backend_writes_index_sidecar() {
 
 #[test]
 fn tekai_pdftex_native_backend_writes_pdf_metadata() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-pdftex-native-pdf-metadata");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let main = root.join("main.tex");
@@ -585,6 +592,7 @@ fn tekai_pdftex_native_backend_writes_pdf_metadata() {
 
 #[test]
 fn tekai_pdftex_native_backend_writes_hyperref_out() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-pdftex-native-hyperref-out");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let main = root.join("main.tex");
@@ -626,6 +634,7 @@ fn tekai_pdftex_native_backend_writes_hyperref_out() {
 
 #[test]
 fn tekai_pdftex_native_auto_mode_stays_single_pass_without_external_bibtex() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-pdftex-native-single-pass");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let main = root.join("main.tex");
@@ -659,6 +668,7 @@ fn tekai_pdftex_native_auto_mode_stays_single_pass_without_external_bibtex() {
 
 #[test]
 fn tekai_pdftex_falls_back_to_real_pdflatex_for_unsupported_documents() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping tekai-pdftex fallback test; pdflatex is not available");
         return;
@@ -683,6 +693,7 @@ fn tekai_pdftex_falls_back_to_real_pdflatex_for_unsupported_documents() {
 
 #[test]
 fn tekai_pdftex_native_backend_writes_synctex_when_requested() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-pdftex-native-synctex");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let main = root.join("main.tex");
@@ -713,6 +724,7 @@ fn tekai_pdftex_native_backend_writes_synctex_when_requested() {
 
 #[test]
 fn tekai_pdftex_fallback_preserves_pdflatex_bibtex_scheduler() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping tekai-pdftex fallback BibTeX test; pdflatex or bibtex is unavailable");
         return;

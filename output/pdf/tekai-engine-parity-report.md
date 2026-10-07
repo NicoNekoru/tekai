@@ -2,6 +2,17 @@
 
 Initial measurement: 2026-07-05. Bundled runtime parity revalidated on 2026-10-03.
 
+## Debug build-size optimization gate
+
+On 2026-10-03, the build-size optimization changed asset embedding and grouped
+compiler integration tests without changing the bundled data, format, or
+typesetting code. The release build passed the same empty-`PATH` comparison:
+48 and 50 pages respectively, zero changed pages at 144 DPI, and identical
+extracted text. Representative first and final pages were checked visually.
+The bundle and format digests remain those recorded below.
+See [build disk usage](../../docs/development.md#build-disk-usage) for the
+separate fresh-build size measurements; this gate is not a new release.
+
 ## 0.4.0 release gate
 
 On 2026-10-03, the optimized 0.4.0 release binary rebuilt both public fixtures
@@ -162,7 +173,7 @@ The PDFs are not byte-identical, but their rendered PNG pages are byte-identical
 ## Commands
 
 ```bash
-cargo test --test compiler_tekai_pdftex
+cargo test --test compiler compiler_tekai_pdftex
 cargo test -p tekai-pdftex icml_line_breaking_uses_active_body_metric
 cargo test -p tekai-pdftex native_neurips_pdf_embeds_nimbus_type1_fonts_when_available
 cargo build --release

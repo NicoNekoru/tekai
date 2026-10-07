@@ -152,6 +152,7 @@ static BIBINPUTS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn direct_runner_builds_bibliographies_from_included_aux_files() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping included-aux BibTeX test; pdflatex or bibtex is not available");
         return;
@@ -203,6 +204,7 @@ fn direct_runner_builds_bibliographies_from_included_aux_files() {
 
 #[test]
 fn direct_runner_builds_multiple_included_bibliographies() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping multi-aux BibTeX test; pdflatex or bibtex is not available");
         return;
@@ -240,6 +242,7 @@ fn direct_runner_builds_multiple_included_bibliographies() {
 
 #[test]
 fn direct_runner_ignores_stale_bibtex_aux_excluded_by_includeonly() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!(
             "skipping includeonly stale-aux BibTeX test; pdflatex or bibtex is not available"
@@ -290,6 +293,7 @@ fn direct_runner_ignores_stale_bibtex_aux_excluded_by_includeonly() {
 
 #[test]
 fn direct_runner_discovers_recorded_bibtex_aux_not_linked_from_root_aux() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping recorded hidden-aux BibTeX test; pdflatex or bibtex is unavailable");
         return;
@@ -343,6 +347,7 @@ fn direct_runner_discovers_recorded_bibtex_aux_not_linked_from_root_aux() {
 
 #[test]
 fn direct_runner_preserves_existing_bibinputs_and_tracks_external_bibs() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping BIBINPUTS BibTeX test; pdflatex or bibtex is not available");
         return;
@@ -432,6 +437,7 @@ fn direct_runner_preserves_existing_bibinputs_and_tracks_external_bibs() {
 
 #[test]
 fn direct_runner_honors_biblatex_logreq_bibtex8_command() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("bibtex8")
         || !tex_file_available("biblatex.sty")
@@ -475,6 +481,7 @@ fn direct_runner_honors_biblatex_logreq_bibtex8_command() {
 
 #[test]
 fn direct_runner_skips_tex_when_bibtex_preflight_output_is_unchanged() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping unchanged BibTeX output test; pdflatex or bibtex is not available");
         return;
@@ -521,6 +528,7 @@ fn direct_runner_skips_tex_when_bibtex_preflight_output_is_unchanged() {
 
 #[test]
 fn direct_runner_does_not_add_tex_pass_when_post_tex_bibtex_output_is_unchanged() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!(
             "skipping post-TeX unchanged BibTeX output test; pdflatex or bibtex is not available"
@@ -570,6 +578,7 @@ fn direct_runner_does_not_add_tex_pass_when_post_tex_bibtex_output_is_unchanged(
 
 #[test]
 fn direct_runner_builds_bibliographies_from_included_aux_files_in_subdirectories() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping included-subdir BibTeX test; pdflatex or bibtex is not available");
         return;
@@ -613,6 +622,7 @@ fn direct_runner_builds_bibliographies_from_included_aux_files_in_subdirectories
 
 #[test]
 fn auto_draft_prepass_does_not_add_passes_to_bibliography_edit_rebuilds() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping auto-prepass BibTeX edit test; pdflatex or bibtex is not available");
         return;
@@ -670,6 +680,7 @@ fn auto_draft_prepass_does_not_add_passes_to_bibliography_edit_rebuilds() {
 
 #[test]
 fn auto_no_pdf_prepass_converges_text_only_multipass_documents() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !command_available("bibtex") {
         eprintln!("skipping auto no-pdf BibTeX test; pdflatex or bibtex is not available");
         return;
@@ -723,6 +734,7 @@ fn auto_no_pdf_prepass_converges_text_only_multipass_documents() {
 
 #[test]
 fn auto_no_pdf_prepass_does_not_expand_simple_one_pass_documents() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping simple auto no-pdf test; pdflatex is not available");
         return;
@@ -750,6 +762,7 @@ fn auto_no_pdf_prepass_does_not_expand_simple_one_pass_documents() {
 
 #[test]
 fn auto_draft_prepass_switches_to_final_after_backref_outputs_stabilize() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("bibtex")
         || !tex_file_available("natbib.sty")
@@ -812,6 +825,7 @@ fn auto_draft_prepass_switches_to_final_after_backref_outputs_stabilize() {
 
 #[test]
 fn forced_build_reuses_bibtex_session_freshness_within_single_build() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("bibtex")
         || !tex_file_available("natbib.sty")

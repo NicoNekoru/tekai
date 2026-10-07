@@ -9,8 +9,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const BUNDLE_ID: &str = include_str!("../../../runtime/bundle-id.txt");
 pub const FORMAT_ID: &str = include_str!("../../../formats/format-id.txt");
-const BUNDLE: &[u8] = include_bytes!("../../../runtime/texmf.tar.gz");
-const FONT_OUTLINES: &[u8] = include_bytes!("../../../runtime/font-outlines.tar.gz");
 static TEXMF_ROOT: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 
 pub fn texmf_root() -> io::Result<&'static Path> {
@@ -54,8 +52,8 @@ fn install_bundle(cache: &Path) -> io::Result<PathBuf> {
     let staging = cache.join(format!(".texmf-{}-{nonce}", std::process::id()));
     fs::create_dir(&staging)?;
     let result = (|| {
-        unpack_bundle(BUNDLE, &staging)?;
-        unpack_bundle(FONT_OUTLINES, &staging)?;
+        unpack_bundle(crate::embedded::texmf_bytes(), &staging)?;
+        unpack_bundle(crate::embedded::font_outlines_bytes(), &staging)?;
         fs::write(staging.join(".complete"), BUNDLE_ID)?;
         match fs::rename(&staging, &destination) {
             Ok(()) => {}

@@ -67,6 +67,7 @@ See Figure~\ref{fig:box}.
 
 #[test]
 fn direct_runner_tracks_generated_output_changes_even_when_log_is_silent() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping convergence test; pdflatex is not available");
         return;
@@ -90,6 +91,7 @@ fn direct_runner_tracks_generated_output_changes_even_when_log_is_silent() {
 
 #[test]
 fn direct_runner_promotes_after_stale_file_change_warning_without_standard_file_changes() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("example-image.pdf") {
         eprintln!(
             "skipping stale file-change convergence test; pdflatex or example-image is unavailable"
@@ -132,6 +134,7 @@ fn direct_runner_promotes_after_stale_file_change_warning_without_standard_file_
 
 #[test]
 fn direct_runner_reruns_when_promoted_pdf_changes_standard_sidecars() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("example-image.pdf") {
         eprintln!(
             "skipping changed standard-sidecar convergence test; pdflatex or example-image is unavailable"

@@ -112,6 +112,7 @@ After.
 
 #[test]
 fn fast_preview_uses_demo_graphics_even_when_document_requests_final_graphicx() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping fast graphicx test; pdflatex is not available");
         return;
@@ -139,6 +140,7 @@ fn fast_preview_uses_demo_graphics_even_when_document_requests_final_graphicx() 
 
 #[test]
 fn fast_preview_precompile_preamble_reuses_format_after_body_edit() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("mylatexformat.ltx") {
         eprintln!("skipping precompiled preamble test; pdflatex or mylatexformat is unavailable");
         return;
@@ -189,6 +191,7 @@ fn fast_preview_precompile_preamble_reuses_format_after_body_edit() {
 
 #[test]
 fn fast_preview_precompile_preamble_falls_back_for_predocument_inputs() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("mylatexformat.ltx") {
         eprintln!(
             "skipping unsafe precompiled preamble test; pdflatex or mylatexformat is unavailable"
@@ -225,6 +228,7 @@ fn fast_preview_precompile_preamble_falls_back_for_predocument_inputs() {
 
 #[test]
 fn full_build_precompile_preamble_reuses_format_after_body_edit() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("mylatexformat.ltx") {
         eprintln!(
             "skipping full precompiled preamble test; pdflatex or mylatexformat is unavailable"
@@ -273,6 +277,7 @@ fn full_build_precompile_preamble_reuses_format_after_body_edit() {
 
 #[test]
 fn full_build_does_not_opportunistically_build_preamble_format_without_draft_prepass() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping no-draft opportunistic preamble test; pdflatex is unavailable");
         return;
@@ -300,6 +305,7 @@ fn full_build_does_not_opportunistically_build_preamble_format_without_draft_pre
 
 #[test]
 fn fast_preview_replaces_svg_includes_without_image_lookup() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("svg.sty") {
         eprintln!("skipping fast SVG test; pdflatex or svg.sty is unavailable");
         return;
@@ -328,6 +334,7 @@ fn fast_preview_replaces_svg_includes_without_image_lookup() {
 
 #[test]
 fn fast_preview_replaces_pdfpages_includes_without_pdf_lookup() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("pdfpages.sty") {
         eprintln!("skipping fast pdfpages test; pdflatex or pdfpages.sty is unavailable");
         return;
@@ -357,6 +364,7 @@ fn fast_preview_replaces_pdfpages_includes_without_pdf_lookup() {
 
 #[test]
 fn fast_preview_uses_minted_placeholder_without_highlighting_cache() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("minted.sty") {
         eprintln!("skipping fast minted test; pdflatex or minted.sty is unavailable");
         return;
@@ -387,6 +395,7 @@ fn fast_preview_uses_minted_placeholder_without_highlighting_cache() {
 
 #[test]
 fn fast_preview_replaces_inputminted_without_source_lookup() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("minted.sty") {
         eprintln!("skipping fast inputminted test; pdflatex or minted.sty is unavailable");
         return;
@@ -417,6 +426,7 @@ fn fast_preview_replaces_inputminted_without_source_lookup() {
 
 #[test]
 fn fast_preview_replaces_animategraphics_without_frame_lookup() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("animate.sty") {
         eprintln!("skipping fast animate test; pdflatex or animate.sty is unavailable");
         return;
@@ -446,6 +456,7 @@ fn fast_preview_replaces_animategraphics_without_frame_lookup() {
 
 #[test]
 fn fast_preview_replaces_includestandalone_without_subdocument_lookup() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("standalone.sty") {
         eprintln!("skipping fast standalone test; pdflatex or standalone.sty is unavailable");
         return;
@@ -475,6 +486,7 @@ fn fast_preview_replaces_includestandalone_without_subdocument_lookup() {
 
 #[test]
 fn fast_preview_replaces_includemedia_without_media_lookup() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("media9.sty") {
         eprintln!("skipping fast media9 test; pdflatex or media9.sty is unavailable");
         return;
@@ -504,6 +516,7 @@ fn fast_preview_replaces_includemedia_without_media_lookup() {
 
 #[test]
 fn fast_preview_replaces_attachfile2_without_attachment_lookup() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("attachfile2.sty") {
         eprintln!("skipping fast attachfile2 test; pdflatex or attachfile2.sty is unavailable");
         return;
@@ -534,6 +547,7 @@ fn fast_preview_replaces_attachfile2_without_attachment_lookup() {
 
 #[test]
 fn fast_preview_replaces_attachfile_without_attachment_lookup() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("attachfile.sty") {
         eprintln!("skipping fast attachfile test; pdflatex or attachfile.sty is unavailable");
         return;
@@ -564,6 +578,7 @@ fn fast_preview_replaces_attachfile_without_attachment_lookup() {
 
 #[test]
 fn fast_preview_disables_tikz_externalization_without_shell_escape() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !tex_file_available("tikz.sty")
         || !tex_file_available("tikzlibraryexternal.code.tex")
@@ -598,6 +613,7 @@ fn fast_preview_disables_tikz_externalization_without_shell_escape() {
 
 #[test]
 fn draft_prepass_precompile_preamble_builds_format_for_final_pass() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !tex_file_available("mylatexformat.ltx")
         || !tex_file_available("mwe/example-image.pdf")
@@ -647,6 +663,7 @@ fn draft_prepass_precompile_preamble_builds_format_for_final_pass() {
 
 #[test]
 fn draft_prepass_opportunistically_builds_safe_preamble_format_for_final_pass() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !tex_file_available("mylatexformat.ltx")
         || !tex_file_available("mwe/example-image.pdf")

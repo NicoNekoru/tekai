@@ -20,6 +20,13 @@ and `LICENSE.TeX-Live` for the distribution's copying guidance.
 
 The matching LaTeX format is embedded separately from `formats/pdflatex.fmt`.
 Its SHA-256 digest in `formats/format-id.txt` also invalidates build caches.
+On macOS/Linux ARM64 and x86-64, the engine build script places all three files
+directly in read-only object data to avoid copying them into Rust compiler
+metadata and incremental caches. Other targets use static byte slices. This
+changes neither the archive contents nor offline operation, and it does not
+remove debug information. See [build disk usage](../docs/development.md#build-disk-usage)
+for measurements and the contributor workflow.
+
 Additional project files can be provided through explicit `TEXINPUTS`,
 `BIBINPUTS`, `BSTINPUTS`, and font search paths. Native lookup supports path
 lists and recursive `//` entries. It does not invoke `kpsewhich`, scan system

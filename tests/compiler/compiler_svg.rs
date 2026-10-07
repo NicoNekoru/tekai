@@ -64,6 +64,7 @@ static SVG_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 #[cfg(unix)]
 fn direct_runner_builds_and_caches_svg_conversions() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("inkscape")
         || !tex_file_available("svg.sty")
@@ -134,6 +135,7 @@ fn direct_runner_builds_and_caches_svg_conversions() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_honors_svgsetup_for_raw_page_exports() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("inkscape")
         || !tex_file_available("svg.sty")
@@ -201,6 +203,7 @@ fn direct_runner_honors_svgsetup_for_raw_page_exports() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_honors_svgsetup_png_exports() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("inkscape")
         || !tex_file_available("svg.sty")
@@ -280,6 +283,7 @@ fn direct_runner_honors_svgsetup_png_exports() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_honors_svgextension_for_source_and_output_suffix() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("inkscape")
         || !tex_file_available("svg.sty")
@@ -351,6 +355,7 @@ fn direct_runner_honors_svgextension_for_source_and_output_suffix() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_honors_svgsetup_inkscapename() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("inkscape")
         || !tex_file_available("svg.sty")
@@ -418,6 +423,7 @@ fn direct_runner_honors_svgsetup_inkscapename() {
 #[test]
 #[cfg(unix)]
 fn direct_runner_honors_svgsetup_inkscapeexe_command_name() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
         || !command_available("inkscape")
         || !tex_file_available("svg.sty")

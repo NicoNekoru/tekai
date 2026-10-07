@@ -15,6 +15,7 @@ const DATA_SOURCE: &str = "Recorded data dependency.\n";
 
 #[test]
 fn lint_source_graph_contains_only_referenced_lintable_sources() {
+    let _test_guard = super::lock();
     let root = unique_temp_dir("tekai-lint-source-graph-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
@@ -43,6 +44,7 @@ fn lint_source_graph_contains_only_referenced_lintable_sources() {
 
 #[test]
 fn direct_build_state_tracks_nonstandard_source_dependencies() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") {
         eprintln!("skipping dependency test; pdflatex is not available");
         return;

@@ -58,7 +58,7 @@ for evaluating that design without claiming it is production typesetting.
 
 ```sh
 cargo test -p tekai-pdftex
-cargo test --test compiler_tekai_pdftex
+cargo test --test compiler compiler_tekai_pdftex
 cargo clippy -p tekai-pdftex --all-targets --locked -- -D warnings
 ```
 

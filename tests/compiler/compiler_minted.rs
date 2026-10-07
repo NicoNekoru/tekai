@@ -3,62 +3,50 @@ use std::path::{Path, PathBuf};
 
 use tekai::compiler::{BibMode, BuildOptions, DraftPrepass, Engine, Runner, build};
 
-const FEYNMP_DOC: &str = r#"\documentclass{article}
-\usepackage{feynmp}
-\DeclareGraphicsRule{*}{mps}{*}{}
-\unitlength=1mm
+const MINTED_DOC: &str = r#"\documentclass{article}
+\usepackage{minted}
 \begin{document}
 Before.
-\begin{fmffile}{diagram}
-\begin{fmfgraph}(30,20)
-  \fmfleft{i}
-  \fmfright{o}
-  \fmf{plain}{i,o}
-\end{fmfgraph}
-\end{fmffile}
+\begin{minted}{python}
+print("highlighted")
+\end{minted}
 After.
 \end{document}
 "#;
 
 #[test]
-fn direct_runner_builds_and_caches_metapost_figures() {
+fn direct_runner_reruns_after_cold_minted_cache_generation() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex")
-        || !command_available("mpost")
-        || !tex_file_available("feynmp.sty")
+        || !command_available("latexminted")
+        || !tex_file_available("minted.sty")
+        || !minted_supports_v3_cache_index()
     {
-        eprintln!("skipping MetaPost test; pdflatex, mpost, or feynmp.sty is unavailable");
+        eprintln!(
+            "skipping minted v3 cache test; pdflatex, latexminted, or minted v3 is unavailable"
+        );
         return;
     }
 
-    let root = unique_temp_dir("tekai-metapost-test");
+    let root = unique_temp_dir("tekai-minted-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
     let main = root.join("main.tex");
     let out_dir = root.join("out");
-    fs::write(&main, FEYNMP_DOC).expect("failed to write MetaPost document");
+    fs::write(&main, MINTED_DOC).expect("failed to write minted document");
 
-    let first = build(&options(&main, &out_dir)).expect("initial MetaPost build failed");
-    assert_eq!(first.external_runs, 1, "{first:#?}");
+    let options = options(&main, &out_dir);
+    let first = build(&options).expect("initial minted build failed");
     assert_eq!(first.tex_runs, 2, "{first:#?}");
+    assert_eq!(first.external_runs, 0, "{first:#?}");
     assert!(out_dir.join("main.pdf").exists());
-    assert!(out_dir.join("diagram.mp").exists());
-    assert!(out_dir.join("diagram.1").exists());
-    let log = fs::read_to_string(out_dir.join("main.log")).expect("failed to read TeX log");
-    assert!(log.contains("diagram.1 Graphic file"), "{log}");
-    assert!(!log.contains("File diagram.1 not found"), "{log}");
-    assert!(!log.contains("Process diagram.mp with MetaPost"), "{log}");
+    assert!(out_dir.join("_minted").is_dir());
+    let fls = fs::read_to_string(out_dir.join("main.fls")).expect("failed to read recorder file");
+    assert!(fls.contains(".index.minted"), "{fls}");
+    assert!(fls.contains(".highlight.minted"), "{fls}");
 
-    let cached = build(&options(&main, &out_dir)).expect("cached MetaPost build failed");
+    let cached = build(&options).expect("cached minted build failed");
     assert!(cached.skipped, "{cached:#?}");
-    assert_eq!(cached.external_runs, 0, "{cached:#?}");
-
-    fs::write(
-        &main,
-        FEYNMP_DOC.replace(r"\fmf{plain}{i,o}", r"\fmf{dashes}{i,o}"),
-    )
-    .expect("failed to update MetaPost source");
-    let edited = build(&options(&main, &out_dir)).expect("edited MetaPost build failed");
-    assert_eq!(edited.external_runs, 1, "{edited:#?}");
-    assert_eq!(edited.tex_runs, 2, "{edited:#?}");
+    assert_eq!(cached.tex_runs, 0, "{cached:#?}");
 
     let _ = fs::remove_dir_all(root);
 }
@@ -98,6 +86,21 @@ fn tex_file_available(name: &str) -> bool {
         .arg(name)
         .status()
         .is_ok_and(|status| status.success())
+}
+
+fn minted_supports_v3_cache_index() -> bool {
+    let Ok(output) = std::process::Command::new("kpsewhich")
+        .arg("minted.sty")
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    fs::read_to_string(path)
+        .is_ok_and(|source| source.contains("placeholder/.is if=minted@placeholder"))
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {

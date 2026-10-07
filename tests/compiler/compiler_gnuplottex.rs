@@ -21,6 +21,7 @@ static GNUPLOTTEX_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 #[cfg(unix)]
 fn direct_runner_builds_and_caches_gnuplottex_outputs() {
+    let _test_guard = super::lock();
     if !command_available("pdflatex") || !tex_file_available("gnuplottex.sty") {
         eprintln!("skipping gnuplottex test; pdflatex or gnuplottex.sty is unavailable");
         return;

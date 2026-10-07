@@ -42,8 +42,8 @@ Focused commands are useful during iteration:
 cargo test --lib watch::tests
 cargo test --lib lint::tests
 cargo test --test lint --test cli_lint --test cli_format --test cli_check --test cli_help
-cargo test --test compiler_cache
-cargo test --test compiler_tekai_pdftex
+cargo test --test compiler compiler_cache
+cargo test --test compiler compiler_tekai_pdftex
 cargo test -p tekai-engine
 cargo test -p tekai-pdftex
 ```
@@ -51,6 +51,14 @@ cargo test -p tekai-pdftex
 Integration tests that depend on optional external programs skip when those
 programs are unavailable. Do not interpret a skipped optional integration as
 proof that the external workflow works on the current machine.
+
+Compiler integration suites live under `tests/compiler/` and are registered
+as modules in `tests/compiler.rs`. They share one executable rather than
+linking the embedded engine into each suite. Add new compiler suites there;
+retain the shared test guard at the start of each test, since some tests
+temporarily change process-wide environment variables. Module-name filters
+replace the former individual `--test compiler_*` targets. CLI and lint test
+targets, including the dependency-free `cli_self_contained` gate, are unchanged.
 
 Editor-only changes have focused gates in their package directories:
 
@@ -129,6 +137,49 @@ whole-preview fallback.
 Performance changes are accepted only with the relevant correctness gate. In
 particular, final-build optimizations require rendered parity, and watch changes
 must preserve dependency filtering and structural fallbacks.
+
+## Build disk usage
+
+Measure a fresh build directory, not a long-lived `target/debug` containing
+old crate versions, feature combinations, test executables, and incremental
+compilation caches. Do not clear another developer's cache to measure a change:
+
+```sh
+size_target=$(mktemp -d "${TMPDIR:-/tmp}/tekai-size.XXXXXX")
+cargo build --locked --target-dir "$size_target"
+du -sk "$size_target/debug"
+cargo test --workspace --locked --no-run --target-dir "$size_target"
+du -sk "$size_target/debug"
+```
+
+On 2026-10-03, matched fresh ARM64 macOS builds with Rust 1.98.1, the locked
+dependencies, and the default debug profile gave these results against 0.4.0:
+
+| Artifact/workflow | Before | After |
+| --- | ---: | ---: |
+| Debug directory after `cargo build --locked` | 2.73 GiB | 1.55 GiB |
+| Debug directory after build + workspace test compilation | 9.57 GiB | 3.64 GiB |
+| Engine `.rlib` | 725,666,456 bytes | 168,645,152 bytes |
+| Engine `lib.rmeta` inside that `.rlib` | 559,786,456 bytes | 2,767,936 bytes |
+
+Directory figures are allocated disk space from `du`, counting hard-linked
+files once, and exclude executing tests, release builds, and runtime caches.
+Test compilation is about 62% smaller. No debug information was disabled and
+no package, font, source, or license file was removed. The CLI executable stays
+about the same size: its pinned embedded assets are still required offline.
+These are dated measurements, not cross-platform size limits.
+
+`tekai-engine/build.rs` embeds the three large immutable files directly into
+read-only object data on macOS/Linux ARM64 and x86-64. Cargo tracks all three
+inputs; the assembler records each embedded region's actual byte length rather
+than using a separately measured length that could become stale during
+compilation. Other targets retain a static `include_bytes!` fallback. Do not
+reintroduce large `const` byte slices: they copy asset data
+into Rust metadata and incremental caches. The engine test compares every
+embedded byte with the checked-in inputs.
+
+Old generated artifacts are not removed by this change. An explicitly chosen
+cache cleanup can reclaim those separately, at the cost of recompilation.
 
 ## Code organization
 
