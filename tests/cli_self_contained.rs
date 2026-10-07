@@ -30,6 +30,7 @@ impl Project {
             .current_dir(&self.0)
             .env_clear()
             .env("PATH", self.0.join("empty-bin"))
+            .env("TEKAI_TEXMF_MODE", "bundled")
             .env("TEKAI_ENGINE_CACHE", self.0.join("cache/engine"))
             .env("TEKAI_FORMAT_CACHE", self.0.join("cache/formats"))
             .env("TEKAI_AUX_CACHE", self.0.join("cache/aux"))

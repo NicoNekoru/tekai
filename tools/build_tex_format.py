@@ -27,6 +27,7 @@ def main():
             "-jobname=pdflatex", "pdflatex.ini",
         ], cwd=work, env={
             "PATH": "", "TEKAI_ENGINE_CACHE": str(work / "cache"),
+            "TEKAI_TEXMF_MODE": "bundled",
             "SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1",
         }, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         sys.stdout.buffer.write(result.stdout)

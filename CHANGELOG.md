@@ -5,6 +5,12 @@ versioning.
 
 ## Unreleased
 
+- Share standard personal and site-wide TeX addition trees with installed TeX
+  tools. Add Kpathsea-style path expansion, ordered default insertion,
+  database-only lookup, and an isolated `TEKAI_TEXMF_MODE=bundled` setting.
+- Add `tekai locate` with JSON lookup diagnostics and invalidate build caches
+  when new shared packages shadow previous inputs.
+
 - Reduce debug-build disk usage by embedding TeX archives and the format as
   read-only object data instead of duplicating them in compiler metadata on
   macOS/Linux ARM64 and x86-64. Keep full debug information and all runtime files.

@@ -8,8 +8,11 @@ runtime interfaces needed by the default `tekai-engine` build path.
 The engine is built entirely by Cargo and does not link a system TeX engine,
 Kpathsea, libpng, or PDF library. Packages, fonts, maps, encodings, and the
 filename index come from the pinned embedded data in `runtime/texmf.tar.gz`.
-No system TeX distribution or `kpsewhich` is used. Explicit project search
-paths remain supported, including recursive `//` entries.
+No system TeX distribution or `kpsewhich` is used. Personal `TEXMFHOME` and
+site-wide `TEXMFLOCAL` addition trees are shared with installed TeX tools.
+`TEKAI_TEXMF_MODE=bundled` disables their automatic lookup. Explicit search
+paths support recursive `//`, variable/tilde/brace expansion, default insertion,
+and database-only `!!` lookup. See the [runtime reference](../../runtime/README.md).
 
 `build.rs` embeds the checked-in archives and format as read-only object data
 on macOS/Linux ARM64 and x86-64, keeping their bytes out of Rust compiler

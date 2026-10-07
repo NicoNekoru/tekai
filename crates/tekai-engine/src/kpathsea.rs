@@ -2,8 +2,8 @@
 //!
 //! This keeps pdfTeX's generated web2c boundary satisfied without linking the
 //! native kpathsea archive. File lookup starts with explicit/local paths and
-//! then uses the embedded TeX data bundle. It never discovers a system TeX
-//! installation or runs kpsewhich.
+//! then uses shared addition trees and the embedded TeX data bundle. It never
+//! imports a system distribution's kernel/format or runs kpsewhich.
 
 use crate::generated::pdftexextra::{
     cache_entry, const_string, expansion_type, hash_table_type, kpathsea, kpathsea_instance,
@@ -28,6 +28,7 @@ const KPSE_GF_FORMAT: c_uint = 0;
 const KPSE_PK_FORMAT: c_uint = 1;
 const KPSE_ANY_GLYPH_FORMAT: c_uint = 2;
 const KPSE_TFM_FORMAT: c_uint = 3;
+const KPSE_AFM_FORMAT: c_uint = 4;
 const KPSE_BIB_FORMAT: c_uint = 6;
 const KPSE_BST_FORMAT: c_uint = 7;
 const KPSE_FMT_FORMAT: c_uint = 10;
@@ -38,6 +39,8 @@ const KPSE_TYPE1_FORMAT: c_uint = 32;
 const KPSE_VF_FORMAT: c_uint = 33;
 const KPSE_TRUETYPE_FORMAT: c_uint = 36;
 const KPSE_WEB2C_FORMAT: c_uint = 38;
+const KPSE_ENC_FORMAT: c_uint = 44;
+const KPSE_SFD_FORMAT: c_uint = 46;
 const KPSE_OPENTYPE_FORMAT: c_uint = 47;
 const KPSE_PDFTEX_CONFIG_FORMAT: c_uint = 48;
 const KPSE_GLYPH_SOURCE_NORMAL: c_uint = 0;
@@ -271,6 +274,9 @@ fn format_suffixes(format: c_uint) -> &'static [&'static str] {
         KPSE_GF_FORMAT => &[".gf"],
         KPSE_PK_FORMAT | KPSE_ANY_GLYPH_FORMAT => &[".pk", ".gf"],
         KPSE_TFM_FORMAT => &[".tfm"],
+        KPSE_AFM_FORMAT => &[".afm"],
+        KPSE_ENC_FORMAT => &[".enc"],
+        KPSE_SFD_FORMAT => &[".sfd"],
         KPSE_BIB_FORMAT => &[".bib"],
         KPSE_BST_FORMAT => &[".bst"],
         KPSE_FMT_FORMAT => &[".fmt"],
@@ -578,6 +584,9 @@ fn index_path_is_runtime(path: &Path, format: c_uint) -> bool {
             | KPSE_BIB_FORMAT
             | KPSE_BST_FORMAT
             | KPSE_TFM_FORMAT
+            | KPSE_AFM_FORMAT
+            | KPSE_ENC_FORMAT
+            | KPSE_SFD_FORMAT
             | KPSE_GF_FORMAT
             | KPSE_PK_FORMAT
             | KPSE_ANY_GLYPH_FORMAT
@@ -628,6 +637,9 @@ fn index_path_rank(path: &Path, format: c_uint) -> (u8, u8, usize) {
                 }
             }
             KPSE_TFM_FORMAT
+            | KPSE_AFM_FORMAT
+            | KPSE_ENC_FORMAT
+            | KPSE_SFD_FORMAT
             | KPSE_GF_FORMAT
             | KPSE_PK_FORMAT
             | KPSE_ANY_GLYPH_FORMAT
@@ -671,18 +683,20 @@ fn texlive_tree_rank(path: &str) -> u8 {
 }
 
 fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
-    if let Some(found) = with_candidate_names(name, format, |candidate| {
-        let path = Path::new(candidate);
-        if path.is_absolute() || candidate.contains('/') {
-            return if format == KPSE_FMT_FORMAT {
+    let requested = Path::new(name);
+    if requested.is_absolute()
+        || name.starts_with("./")
+        || name.starts_with("../")
+        || (format == KPSE_FMT_FORMAT && name.contains('/'))
+    {
+        return with_candidate_names(name, format, |candidate| {
+            let path = Path::new(candidate);
+            if format == KPSE_FMT_FORMAT {
                 check_format_path(path)
             } else {
                 check_direct_path(path)
-            };
-        }
-        None
-    }) {
-        return Some(found);
+            }
+        });
     }
 
     if format == KPSE_FMT_FORMAT {
@@ -696,18 +710,10 @@ fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
         return embedded_pdflatex_format(name);
     }
 
-    if let Some(found) = with_candidate_names(name, format, |candidate| {
-        check_direct_path(Path::new(candidate)).or_else(|| {
-            crate::runtime::find_in_paths(
-                Path::new("."),
-                candidate,
-                format_search_variables(format),
-            )
-        })
-    }) {
-        return Some(found);
-    }
-    with_candidate_names(name, format, |candidate| find_in_index(candidate, format))
+    with_candidate_names(name, format, |candidate| {
+        search_input(Path::new("."), candidate, format, search_paths(format))
+            .map(|found| found.path)
+    })
 }
 
 fn format_search_variables(format: c_uint) -> &'static [&'static str] {
@@ -715,50 +721,123 @@ fn format_search_variables(format: c_uint) -> &'static [&'static str] {
         KPSE_BIB_FORMAT => &["BIBINPUTS"],
         KPSE_BST_FORMAT => &["BSTINPUTS"],
         KPSE_TFM_FORMAT => &["TFMFONTS", "TEXFONTS", "TEXINPUTS"],
+        KPSE_AFM_FORMAT => &["AFMFONTS", "TEXFONTS", "TEXINPUTS"],
+        KPSE_ENC_FORMAT => &["ENCFONTS", "TEXINPUTS"],
+        KPSE_SFD_FORMAT => &["SFDFONTS", "TEXINPUTS"],
+        KPSE_PK_FORMAT | KPSE_ANY_GLYPH_FORMAT => &["PKFONTS", "TEXFONTS", "TEXINPUTS"],
+        KPSE_GF_FORMAT => &["GFFONTS", "TEXFONTS", "TEXINPUTS"],
         KPSE_VF_FORMAT => &["VFFONTS", "TEXFONTS", "TEXINPUTS"],
         KPSE_TYPE1_FORMAT => &["T1FONTS", "TEXFONTS", "TEXINPUTS"],
         KPSE_TRUETYPE_FORMAT => &["TTFONTS", "TEXFONTS", "TEXINPUTS"],
         KPSE_OPENTYPE_FORMAT => &["OPENTYPEFONTS", "TEXFONTS", "TEXINPUTS"],
         KPSE_FONTMAP_FORMAT => &["TEXFONTMAPS", "TEXINPUTS"],
+        KPSE_WEB2C_FORMAT | KPSE_PDFTEX_CONFIG_FORMAT => &["WEB2C", "TEXINPUTS"],
         _ => &["TEXINPUTS"],
     }
 }
 
-/// Resolve a scheduler input using the same bundled data as the engine.
-/// The caller supplies a base directory, so concurrent builds never chdir.
-pub fn resolve_input(
-    doc_dir: &Path,
+fn search_paths(format: c_uint) -> Vec<crate::search::SearchPath> {
+    let subdirs: &[&str] = match format {
+        KPSE_BIB_FORMAT => &["bibtex/bib"],
+        KPSE_BST_FORMAT => &["bibtex/bst"],
+        KPSE_TFM_FORMAT => &["fonts/tfm"],
+        KPSE_AFM_FORMAT => &["fonts/afm"],
+        KPSE_ENC_FORMAT => &["fonts/enc"],
+        KPSE_SFD_FORMAT => &["fonts/sfd"],
+        KPSE_VF_FORMAT => &["fonts/vf"],
+        KPSE_TYPE1_FORMAT => &["fonts/type1"],
+        KPSE_TRUETYPE_FORMAT => &["fonts/truetype"],
+        KPSE_OPENTYPE_FORMAT => &["fonts/opentype"],
+        KPSE_FONTMAP_FORMAT => &["fonts/map/pdftex", "fonts/map/dvips", "fonts/map"],
+        KPSE_PK_FORMAT | KPSE_GF_FORMAT | KPSE_ANY_GLYPH_FORMAT => &["fonts/pk", "fonts/gf"],
+        KPSE_WEB2C_FORMAT | KPSE_PDFTEX_CONFIG_FORMAT => &["web2c"],
+        _ => &["tex/latex", "tex/generic", "tex"],
+    };
+    crate::search::paths(format_search_variables(format), subdirs)
+}
+
+#[derive(Debug)]
+pub struct InputLocation {
+    pub path: PathBuf,
+    pub source: &'static str,
+}
+
+fn search_input(
+    base: &Path,
     candidate: &str,
-    extension: &str,
-) -> io::Result<Option<PathBuf>> {
-    crate::runtime::texmf_root()?;
-    let local = doc_dir.join(candidate);
-    if local.is_file() {
-        return Ok(Some(local));
-    }
-    let format = match extension {
+    format: c_uint,
+    paths: Vec<crate::search::SearchPath>,
+) -> Option<InputLocation> {
+    paths.into_iter().find_map(|entry| {
+        let found = if entry.bundled {
+            find_in_index(candidate, format)
+        } else {
+            crate::runtime::find_in_path(base, candidate, Path::new(&entry.path))
+        };
+        found.map(|path| InputLocation {
+            path,
+            source: entry.source,
+        })
+    })
+}
+
+fn input_format(extension: &str) -> c_uint {
+    match extension {
         "bib" => KPSE_BIB_FORMAT,
         "bst" => KPSE_BST_FORMAT,
         "tfm" => KPSE_TFM_FORMAT,
+        "afm" => KPSE_AFM_FORMAT,
+        "enc" => KPSE_ENC_FORMAT,
+        "sfd" => KPSE_SFD_FORMAT,
+        "pk" => KPSE_PK_FORMAT,
+        "gf" => KPSE_GF_FORMAT,
         "vf" => KPSE_VF_FORMAT,
         "pfb" | "pfa" => KPSE_TYPE1_FORMAT,
         "ttf" | "ttc" => KPSE_TRUETYPE_FORMAT,
         "otf" => KPSE_OPENTYPE_FORMAT,
         "map" => KPSE_FONTMAP_FORMAT,
         _ => KPSE_TEX_FORMAT,
-    };
-    let variables = if extension == "ist" {
-        &["TEXINDEXSTYLE", "INDEXSTYLE"][..]
+    }
+}
+
+pub fn input_search_paths(extension: &str) -> Vec<crate::search::SearchPath> {
+    if extension == "ist" {
+        crate::search::paths(&["TEXINDEXSTYLE", "INDEXSTYLE"], &["makeindex"])
     } else {
-        format_search_variables(format)
-    };
-    // The scheduler has historically searched the document tree recursively.
-    let recursive_doc = format!("{}//", doc_dir.display());
-    Ok(
-        crate::runtime::find_in_path(doc_dir, candidate, Path::new(&recursive_doc))
-            .or_else(|| crate::runtime::find_in_paths(doc_dir, candidate, variables))
-            .or_else(|| find_in_index(candidate, format)),
-    )
+        search_paths(input_format(extension))
+    }
+}
+
+/// Resolve a scheduler input using the same search paths as the engine.
+/// The caller supplies a base directory, so concurrent builds never chdir.
+pub fn resolve_input(
+    doc_dir: &Path,
+    candidate: &str,
+    extension: &str,
+) -> io::Result<Option<PathBuf>> {
+    Ok(locate_input(doc_dir, candidate, extension)?.map(|found| found.path))
+}
+
+pub fn locate_input(
+    doc_dir: &Path,
+    candidate: &str,
+    extension: &str,
+) -> io::Result<Option<InputLocation>> {
+    crate::runtime::texmf_root()?;
+    let requested = Path::new(candidate);
+    if requested.is_absolute() || candidate.starts_with("./") || candidate.starts_with("../") {
+        let path = doc_dir.join(requested);
+        return Ok(path.is_file().then_some(InputLocation {
+            path,
+            source: "direct",
+        }));
+    }
+    Ok(search_input(
+        doc_dir,
+        candidate,
+        input_format(extension),
+        input_search_paths(extension),
+    ))
 }
 
 #[no_mangle]

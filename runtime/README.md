@@ -29,9 +29,25 @@ for measurements and the contributor workflow.
 
 Additional project files can be provided through explicit `TEXINPUTS`,
 `BIBINPUTS`, `BSTINPUTS`, and font search paths. Native lookup supports path
-lists and recursive `//` entries. It does not invoke `kpsewhich`, scan system
-TeX installations, expand arbitrary Kpathsea configuration, or install missing
-packages automatically.
+lists, environment variables, `~`, nested brace alternatives, recursive `//`
+entries, and `!!` filename-database-only entries. An empty path element inserts
+the defaults at that position. Without one, the explicit path replaces defaults.
+
+Default lookup reads personal `TEXMFHOME` and site-wide `TEXMFLOCAL` addition
+trees before the bundle, using their TeX Directory Structure subdirectories.
+On macOS the defaults are `~/Library/texmf` and
+`/usr/local/texlive/texmf-local`. Personal additions are found on disk. Site
+additions require an updated `ls-R` database, as in TeX Live. Set
+`TEKAI_TEXMF_MODE=bundled` for isolated builds with only project files, explicit
+paths, and pinned bundled data. Maintainer format and fidelity tools use this
+setting so local overrides never enter the embedded format.
+
+Lookup does not invoke `kpsewhich`, import system distribution trees, read
+arbitrary `texmf.cnf` configuration, expand `~otheruser`, or install missing
+packages. The bundle and its LaTeX format remain paired. Additional packages
+can still require a newer kernel or an unavailable auxiliary tool. Use an
+explicit system runner for full distribution compatibility, rather than
+putting an entire foreign `texmf-dist` ahead of the embedded kernel.
 
 The bundle includes the package and font data used by the two large arXiv
 fixtures, including LaTeX's first-aid compatibility layer, PSNFSS/URW outlines,

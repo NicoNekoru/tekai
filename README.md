@@ -44,7 +44,10 @@ cargo install --path . --locked
 
 No TeX installation is needed for documents supported by the bundled runtime.
 See [the package manifest](runtime/packages.lock.json) for its contents.
-Additional project packages can be supplied through `TEXINPUTS`. Workflows
+Personal and site-wide packages in `TEXMFHOME` and `TEXMFLOCAL` are shared with
+other TeX installations. `TEKAI_TEXMF_MODE=bundled` disables these automatic
+addition trees. Explicit project packages can be supplied through `TEXINPUTS`.
+Use `tekai locate package.sty --report-json` to inspect native file lookup. Workflows
 that need Biber, MakeIndex, or converters are not built in; they fail unless
 you explicitly opt into installed programs with `--external-tools`.
 

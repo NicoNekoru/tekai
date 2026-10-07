@@ -36,8 +36,9 @@ The default `tekai-engine` path needs no TeX Live or MacTeX installation.
 The executable embeds a pinned set of packages, fonts, maps, the LaTeX format,
 and a BibTeX implementation. It extracts its bundled data into the engine
 cache on first use, without network access or a helper program. File lookup
-uses project files, explicit search paths, and the bundle, never `kpsewhich`
-or automatic discovery of system TeX trees. See the
+uses project files, explicit search paths, standard personal/site addition
+trees, and the bundle. It never invokes `kpsewhich` or imports a system
+distribution's kernel or format. See the
 [package manifest](../runtime/packages.lock.json) for the bundled set.
 
 This is not every CTAN package or every TeX auxiliary program. Supply extra
@@ -49,6 +50,7 @@ default; `--external-tools` explicitly enables installed compatibility tools.
 | Command | Behavior |
 | --- | --- |
 | `init [PATH]` | Create a complete default config at `PATH` (default `tekai.toml`); use `--force` to replace one. |
+| `locate NAME` | Resolve a native TeX input and print its absolute path. Add `--report-json` for its source and search paths. |
 | `build MAIN` | Compile a root TeX document. |
 | `check MAIN` | Lint `MAIN` and its referenced TeX source graph, then build if lint passes; add `--fix` to apply safe fixes first. |
 | `watch MAIN` | Watch relevant source/dependency files and rebuild. |
@@ -59,6 +61,46 @@ default; `--external-tools` explicitly enables installed compatibility tools.
 `build`, `check`, and `watch` share the build flags. `check`, `watch`, `lint`,
 and `format` also accept `--allow-warnings` or `--fail-on-warnings`. Warnings
 fail by default. `--allow-warnings` is the convenient interactive setting.
+
+## Shared packages and lookup diagnostics
+
+Install personal LaTeX packages under `TEXMFHOME/tex/latex`, with their package
+subdirectories intact. The macOS default is `~/Library/texmf`, so a personal
+package can live at `~/Library/texmf/tex/latex/mypackage/mypackage.sty`.
+The site-wide default is `/usr/local/texlive/texmf-local`. Site trees use their
+`ls-R` database and require `mktexlsr` or `texhash` after manual additions.
+Both roots can be overridden with environment variables, including brace
+lists of multiple trees. Bibliographies, styles, and fonts use their corresponding
+TDS subdirectories, such as `bibtex/bib`, `bibtex/bst`, and `fonts/tfm`.
+
+The native engine shares those addition trees without requiring installed TeX.
+Its default distribution remains the bundled snapshot. Choose an installed
+system runner with `--runner latexmk` when the document needs the full installed
+distribution and its matching LaTeX kernel. Do not graft an entire foreign
+distribution onto the embedded format with `TEXINPUTS`.
+
+```sh
+tekai locate hyperref.sty
+tekai locate mypackage.sty --directory paper --report-json
+TEKAI_TEXMF_MODE=bundled tekai build main.tex
+```
+
+`locate` reads the nearest project configuration above `--directory`, or an
+explicit `--config`. Its JSON output includes `path`, `source`, `mode`, and
+`search_paths`. A missing input returns exit code 1 with a null JSON path.
+Shared-tree changes and newly added overrides invalidate settled build caches.
+The command resolves source/package, bibliography, and font inputs, not `.fmt`
+engine dumps.
+
+Explicit path variables support `$NAME`, `${NAME}`, `~`, brace alternatives,
+and recursive `//` entries. `!!` searches only an `ls-R` database. An empty
+element inserts the native defaults where it occurs, preferring a leading,
+then trailing, then doubled separator. A path without an empty element replaces
+defaults. `TEXINPUTS_pdflatex` takes precedence over `TEXINPUTS`. Tekai does not
+read arbitrary system `texmf.cnf` files or expand named-user tildes.
+
+Set `TEKAI_TEXMF_MODE=bundled` in `[build.env]` to disable automatic shared
+trees while retaining explicit paths. The default mode is `shared`.
 
 ## Final builds
 

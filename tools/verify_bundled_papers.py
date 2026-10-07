@@ -72,7 +72,8 @@ def main():
         for case, suffix in CASES:
             source = bundle.ROOT / "examples" / case
             candidate = bundle.ROOT / f"target/runtime-complete-paper-{suffix}"
-            env = {"PATH": "", "TEKAI_ENGINE_CACHE": str(work / "cache")}
+            env = {"PATH": "", "TEKAI_ENGINE_CACHE": str(work / "cache"),
+                   "TEKAI_TEXMF_MODE": "bundled"}
             command([args.engine.resolve(), "build", source / "main.tex",
                      "--out-dir", candidate, "--force", "--quiet"], env=env)
             tree = next((work / "cache").glob("texmf-*/texmf-dist"))

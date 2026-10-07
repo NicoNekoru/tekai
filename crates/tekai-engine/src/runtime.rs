@@ -1,5 +1,5 @@
-//! Bundled TeX data and native search-path handling. No system TeX lookup or
-//! subprocess is used here. Runtime data is pinned when the binary is built.
+//! Bundled TeX data and native file lookup. Shared addition trees are read
+//! without subprocesses; distribution data is pinned when the binary is built.
 
 use std::fs;
 use std::io;
@@ -12,6 +12,7 @@ pub const FORMAT_ID: &str = include_str!("../../../formats/format-id.txt");
 static TEXMF_ROOT: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 
 pub fn texmf_root() -> io::Result<&'static Path> {
+    crate::search::mode()?;
     TEXMF_ROOT
         .get_or_init(|| install_bundle(&cache_root()).map_err(|error| error.to_string()))
         .as_ref()
@@ -98,50 +99,118 @@ fn unpack_bundle(bytes: &[u8], destination: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Search explicitly configured paths in order, including `//` recursion.
-/// Empty entries are left for the caller's bundled-data fallback.
-pub fn find_in_paths(base: &Path, candidate: &str, variables: &[&str]) -> Option<PathBuf> {
-    for variable in variables {
-        let Some(value) = std::env::var_os(variable) else {
-            continue;
-        };
-        for entry in std::env::split_paths(&value) {
-            if let Some(path) = find_in_path(base, candidate, &entry) {
-                return Some(path);
-            }
-        }
-    }
-    None
-}
-
 pub(crate) fn find_in_path(base: &Path, candidate: &str, entry: &Path) -> Option<PathBuf> {
     let entry = entry.to_string_lossy();
-    let entry = entry.strip_prefix("!!").unwrap_or(&entry);
+    if let Some(entry) = entry.strip_prefix("!!") {
+        return find_in_database(base, candidate, entry);
+    }
     if entry.is_empty() {
         return None;
     }
     if let Some((prefix, suffix)) = entry.split_once("//") {
-        let root = base.join(prefix);
+        // Walk absolute paths so a relative default like .// cannot bypass
+        // exclusion of the extracted bundle and accidentally load its manuals.
+        let root = base.join(prefix).canonicalize().ok()?;
         let bundle = TEXMF_ROOT.get().and_then(|result| result.as_ref().ok());
         for dir in walkdir::WalkDir::new(root)
-            .follow_links(false)
+            .follow_links(true)
             .sort_by_file_name()
             .into_iter()
-            .filter_entry(|entry| !bundle.is_some_and(|path| entry.path() == path))
+            .filter_entry(|entry| {
+                !bundle.is_some_and(|path| {
+                    entry.path() == path
+                        || (entry.path_is_symlink()
+                            && entry.path().canonicalize().ok().as_deref() == Some(path))
+                })
+            })
         {
             let Ok(dir) = dir else { continue };
             if dir.file_type().is_dir() {
-                let path = dir.path().join(suffix).join(candidate);
-                if path.is_file() {
+                if let Some(path) = find_in_path(
+                    dir.path(),
+                    candidate,
+                    Path::new(if suffix.is_empty() { "." } else { suffix }),
+                ) {
                     return Some(path);
                 }
             }
         }
         None
     } else {
-        let path = base.join(entry).join(candidate);
+        let path = if entry == "." {
+            base.join(candidate)
+        } else {
+            base.join(entry.as_ref()).join(candidate)
+        };
         path.is_file().then_some(path)
     }
+}
+
+fn find_in_database(base: &Path, candidate: &str, entry: &str) -> Option<PathBuf> {
+    let pattern = base.join(entry).to_string_lossy().into_owned();
+    let prefix = base.join(entry.split("//").next().unwrap_or(entry));
+    // A search may start below the tree root containing its filename database.
+    let (root, text) = prefix.ancestors().find_map(|root| {
+        fs::read_to_string(root.join("ls-R"))
+            .ok()
+            .map(|text| (root, text))
+    })?;
+    let requested = Path::new(candidate);
+    let name = requested.file_name()?;
+    let mut directory = root.to_path_buf();
+    for line in text.lines() {
+        if let Some(dir) = line.strip_suffix(':') {
+            // A filename database must not redirect the search outside its tree.
+            if Path::new(dir)
+                .components()
+                .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
+            {
+                directory = root.join(dir);
+            } else {
+                directory = PathBuf::new();
+            }
+        } else if std::ffi::OsStr::new(line) == name && !directory.as_os_str().is_empty() {
+            let path = directory.join(line);
+            if path.ends_with(requested) {
+                let mut search_dir = path.clone();
+                for _ in requested.components() {
+                    search_dir.pop();
+                }
+                if directory_matches(&search_dir, &pattern) && path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn directory_matches(directory: &Path, pattern: &str) -> bool {
+    let directory = directory
+        .components()
+        .map(|part| part.as_os_str().to_os_string())
+        .collect::<Vec<_>>();
+    let mut parts = Vec::new();
+    for (i, part) in pattern.split("//").enumerate() {
+        if i > 0 {
+            parts.push(None);
+        }
+        parts.extend(
+            Path::new(part)
+                .components()
+                .map(|part| Some(part.as_os_str().to_os_string())),
+        );
+    }
+    fn matches(directory: &[std::ffi::OsString], parts: &[Option<std::ffi::OsString>]) -> bool {
+        match parts.split_first() {
+            None => directory.is_empty(),
+            Some((None, rest)) => (0..=directory.len()).any(|i| matches(&directory[i..], rest)),
+            Some((Some(part), rest)) => {
+                directory.first() == Some(part) && matches(&directory[1..], rest)
+            }
+        }
+    }
+    matches(&directory, &parts)
 }
 
 #[cfg(test)]
@@ -153,6 +222,8 @@ mod tests {
         let root = std::env::temp_dir().join(format!("tekai-native-search-{}", std::process::id()));
         let child = root.join("tree/deep/tex");
         fs::create_dir_all(&child).unwrap();
+        let root = root.canonicalize().unwrap();
+        let child = child.canonicalize().unwrap();
         fs::write(child.join("shared.sty"), "test").unwrap();
         assert_eq!(
             find_in_path(&root, "shared.sty", Path::new("tree//tex")),
@@ -160,6 +231,19 @@ mod tests {
         );
         assert_eq!(
             find_in_path(&root, "shared.sty", Path::new("!!tree//")),
+            None
+        );
+        fs::write(root.join("tree/ls-R"), "./deep/tex:\nshared.sty\n").unwrap();
+        assert_eq!(
+            find_in_path(&root, "shared.sty", Path::new("!!tree//")),
+            Some(child.join("shared.sty"))
+        );
+        assert_eq!(
+            find_in_path(&root, "shared.sty", Path::new("!!tree//tex//")),
+            Some(child.join("shared.sty"))
+        );
+        assert_eq!(
+            find_in_path(&root, "shared.sty", Path::new("tree//tex//")),
             Some(child.join("shared.sty"))
         );
         assert_eq!(find_in_path(&root, "shared.sty", Path::new("tree")), None);

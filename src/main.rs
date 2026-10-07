@@ -8,7 +8,8 @@ use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use serde::Serialize;
 use tekai::cli::{
-    BuildArgs, CheckArgs, CleanArgs, Cli, Command, FormatArgs, InitArgs, LintArgs, WatchArgs,
+    BuildArgs, CheckArgs, CleanArgs, Cli, Command, FormatArgs, InitArgs, LintArgs, LocateArgs,
+    WatchArgs,
 };
 use tekai::compiler::{
     BuildOptions, EMBEDDED_ENGINE_RUNNER_ENV, EMBEDDED_ENGINE_SUBCOMMAND, build,
@@ -37,11 +38,61 @@ fn main() -> Result<()> {
         Command::Build(args) => run_build(args, build_flag_sources),
         Command::Clean(args) => run_clean(args),
         Command::Init(args) => run_init(args),
+        Command::Locate(args) => run_locate(args),
         Command::Lint(args) => run_lint(args),
         Command::Format(args) => run_format(args),
         Command::Check(args) => run_check(args, build_flag_sources),
         Command::Watch(args) => run_watch(args, build_flag_sources),
     }
+}
+
+fn run_locate(args: LocateArgs) -> Result<()> {
+    let directory = args
+        .directory
+        .canonicalize()
+        .context("failed to open project directory")?;
+    let config_path = root_document_config_path(args.config.as_deref(), &directory);
+    let config = load_build_config(config_path.as_deref())?;
+    apply_build_env(&config);
+    let extension = Path::new(&args.name)
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or("tex");
+    if extension == "fmt" {
+        bail!("locate resolves package, bibliography, and font inputs, not engine format files");
+    }
+    let location = tekai_engine::kpathsea::locate_input(&directory, &args.name, extension)?;
+    let path = location.as_ref().map(|found| {
+        found
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| found.path.clone())
+    });
+    if args.report_json {
+        let paths = tekai_engine::kpathsea::input_search_paths(extension)
+            .into_iter()
+            .map(|entry| serde_json::json!({ "path": entry.path, "source": entry.source }))
+            .collect::<Vec<_>>();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "name": args.name,
+                "mode": tekai_engine::search::mode()?,
+                "path": path.as_ref().map(|path| path.to_string_lossy()),
+                "source": location.as_ref().map(|found| found.source),
+                "search_paths": paths,
+            }))?
+        );
+    } else if let Some(path) = &path {
+        println!("{}", path.display());
+    }
+    if location.is_none() {
+        bail!(
+            "TeX input {} was not found; use --report-json to inspect its search paths",
+            args.name
+        );
+    }
+    Ok(())
 }
 
 fn run_init(args: InitArgs) -> Result<()> {

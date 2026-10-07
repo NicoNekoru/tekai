@@ -39,6 +39,9 @@ quiet = false
 # BSTINPUTS = "bst//:"
 # INDEXSTYLE = "styles//:"
 # TEXINDEXSTYLE = "styles//:"
+# TEXMFHOME = "~/Library/texmf"
+# TEXMFLOCAL = "/usr/local/texlive/texmf-local"
+# TEKAI_TEXMF_MODE = "bundled" # disable automatic personal/site trees
 
 [lint]
 indent_size = 2

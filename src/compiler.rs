@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
 
-const BUILD_STATE_VERSION: u32 = 35;
+const BUILD_STATE_VERSION: u32 = 36;
 const BIB_STATE_VERSION: u32 = 11;
 const INDEX_STATE_VERSION: u32 = 10;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
@@ -28,15 +28,24 @@ const KPATHSEA_PATH_SEPARATOR: &str = ":";
 
 const BUILD_ENV_VARS: &[&str] = &[
     "TEXINPUTS",
+    "TEXINPUTS_pdflatex",
+    "TEKAI_TEXMF_MODE",
+    "HOME",
     "BIBINPUTS",
     "BSTINPUTS",
     "TFMFONTS",
+    "AFMFONTS",
+    "ENCFONTS",
+    "SFDFONTS",
+    "PKFONTS",
+    "GFFONTS",
     "TEXFONTS",
     "VFFONTS",
     "T1FONTS",
     "TTFONTS",
     "OPENTYPEFONTS",
     "TEXFONTMAPS",
+    "WEB2C",
     "TEXFORMATS",
     "INDEXSTYLE",
     "TEXINDEXSTYLE",
@@ -50,6 +59,8 @@ const BUILD_ENV_VARS: &[&str] = &[
     "TEXMFSYSVAR",
 ];
 const BIB_ENV_VARS: &[&str] = &[
+    "TEKAI_TEXMF_MODE",
+    "HOME",
     "BIBINPUTS",
     "BSTINPUTS",
     "TEXINPUTS",
@@ -2503,7 +2514,7 @@ fn preamble_format_mode_key(
         options.shell_escape,
         content_hash(preamble_format_source(doc_dir, file_name, kind).as_bytes()),
         mylatexformat,
-        environment_signature(BUILD_ENV_VARS),
+        environment_signature(BUILD_ENV_VARS, doc_dir),
         tekai_engine::runtime::BUNDLE_ID.trim(),
         tekai_engine::runtime::FORMAT_ID.trim()
     ))
@@ -3156,7 +3167,9 @@ fn texinputs_source_seed_roots(doc_dir: &Path) -> Vec<PathBuf> {
     let Some(value) = std::env::var_os("TEXINPUTS") else {
         return Vec::new();
     };
-    std::env::split_paths(&value)
+    tekai_engine::search::expand_path(&value.to_string_lossy())
+        .into_iter()
+        .map(PathBuf::from)
         .filter_map(|entry| kpathsea_path_entry_root(doc_dir, entry))
         .collect()
 }
@@ -3164,7 +3177,7 @@ fn texinputs_source_seed_roots(doc_dir: &Path) -> Vec<PathBuf> {
 fn kpathsea_path_entry_root(doc_dir: &Path, entry: PathBuf) -> Option<PathBuf> {
     let entry = entry.to_string_lossy();
     let entry = entry.strip_prefix("!!").unwrap_or(&entry);
-    let entry = entry.strip_suffix("//").unwrap_or(entry);
+    let entry = entry.split("//").next().unwrap_or(entry);
     if entry.is_empty() {
         return None;
     }
@@ -5772,7 +5785,7 @@ fn run_bibtex_job_if_stale(
         return Ok(false);
     }
 
-    let signature = bibtex_aux_signature_from_source(&source, job);
+    let signature = bibtex_aux_signature_from_source(&source, job, doc_dir);
     let session_key = bibtex_session_key(job, &signature);
 
     if job.bbl_path.exists() && aux_session_cache.bibtex_job_is_fresh(&session_key) {
@@ -5912,7 +5925,7 @@ fn refresh_bibtex_state_if_available(doc_dir: &Path, out_dir: &Path, job_name: &
         if !source.contains(r"\bibdata") {
             continue;
         }
-        let signature = bibtex_aux_signature_from_source(&source, &job);
+        let signature = bibtex_aux_signature_from_source(&source, &job, doc_dir);
         write_bibtex_state_from_source(&job, &signature, &source, doc_dir, out_dir)?;
     }
     Ok(())
@@ -6244,7 +6257,7 @@ fn run_biber_if_stale(
     let Some(bcf_path) = biber_control_file_from_latest_run(doc_dir, out_dir, job_name)? else {
         return Ok(0);
     };
-    let signature = biber_signature(&bcf_path)?;
+    let signature = biber_signature(&bcf_path, doc_dir)?;
     let bbl_path = out_dir.join(format!("{job_name}.bbl"));
     let state_path = out_dir.join(format!(".tekai-{job_name}.biberstate.toml"));
 
@@ -6265,15 +6278,15 @@ fn refresh_biber_state_if_available(doc_dir: &Path, out_dir: &Path, job_name: &s
     if !bbl_path.exists() {
         return Ok(());
     }
-    let signature = biber_signature(&bcf_path)?;
+    let signature = biber_signature(&bcf_path, doc_dir)?;
     let state_path = out_dir.join(format!(".tekai-{job_name}.biberstate.toml"));
     write_biber_state(&state_path, &signature, &bbl_path, &bcf_path, doc_dir)
 }
 
-fn biber_signature(bcf_path: &Path) -> Result<String> {
+fn biber_signature(bcf_path: &Path, doc_dir: &Path) -> Result<String> {
     let mut signature = fs::read_to_string(bcf_path)
         .with_context(|| format!("failed to read biber control file {}", bcf_path.display()))?;
-    signature.push_str(&environment_signature(BIB_ENV_VARS));
+    signature.push_str(&environment_signature(BIB_ENV_VARS, doc_dir));
     Ok(signature)
 }
 
@@ -9745,7 +9758,7 @@ fn bib2gls_signature(job: &Bib2GlsJob) -> Result<String> {
     signature.push_str("\n%% tekai bib2gls command\n");
     signature.push_str(&job.command_arg);
     signature.push('\n');
-    signature.push_str(&environment_signature(BIB_ENV_VARS));
+    signature.push_str(&environment_signature(BIB_ENV_VARS, &job.doc_dir));
     Ok(signature)
 }
 
@@ -10022,7 +10035,7 @@ fn path_arg_relative_to(cwd: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(cwd).unwrap_or(path).to_path_buf()
 }
 
-fn bibtex_aux_signature_from_source(source: &str, job: &BibtexJob) -> String {
+fn bibtex_aux_signature_from_source(source: &str, job: &BibtexJob, doc_dir: &Path) -> String {
     let mut signature = String::new();
     let mut citation_keys = Vec::new();
     let mut seen_citation_keys = HashSet::new();
@@ -10055,7 +10068,7 @@ fn bibtex_aux_signature_from_source(source: &str, job: &BibtexJob) -> String {
             signature.push('\n');
         }
     }
-    signature.push_str(&environment_signature(BIB_ENV_VARS));
+    signature.push_str(&environment_signature(BIB_ENV_VARS, doc_dir));
     signature
 }
 
@@ -10822,7 +10835,7 @@ fn resolve_kpathsea_input(doc_dir: &Path, name: &str, extension: &str) -> Result
     }
 
     let resolved = tekai_engine::kpathsea::resolve_input(doc_dir, &candidate, extension)
-        .with_context(|| format!("failed to resolve bundled TeX input {candidate}"))?;
+        .with_context(|| format!("failed to resolve TeX input {candidate}"))?;
     if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
         cache.insert(cache_key, resolved.clone());
     }
@@ -10954,19 +10967,37 @@ fn direct_mode_key(options: &BuildOptions, main: &Path) -> String {
         options.synctex,
         options.shell_escape,
         options.external_tools,
-        environment_signature(BUILD_ENV_VARS),
+        environment_signature(BUILD_ENV_VARS, main.parent().unwrap_or(Path::new("."))),
         tekai_engine::runtime::BUNDLE_ID.trim(),
         tekai_engine::runtime::FORMAT_ID.trim()
     )
 }
 
-fn environment_signature(vars: &[&str]) -> String {
+fn environment_signature(vars: &[&str], doc_dir: &Path) -> String {
     let mut signature = String::new();
     for var in vars {
         let value = std::env::var_os(var)
             .map(|value| format!("{:016x}", content_hash(value.to_string_lossy().as_bytes())))
             .unwrap_or_else(|| "unset".to_string());
         let _ = write!(&mut signature, "{var}={value};");
+    }
+    let trees = tekai_engine::search::tree_signature(doc_dir);
+    let _ = write!(
+        &mut signature,
+        "shared_trees={:016x};",
+        content_hash(trees.as_bytes())
+    );
+    // Referenced environment variables can change while the raw path string
+    // stays the same, for example TEXINPUTS=$SHARED/tex//:.
+    for var in vars {
+        if let Ok(value) = std::env::var(var) {
+            let expanded = tekai_engine::search::expand_path(&value);
+            let _ = write!(
+                &mut signature,
+                "{var}_expanded={:016x};",
+                content_hash(format!("{expanded:?}").as_bytes())
+            );
+        }
     }
     signature
 }
@@ -13343,7 +13374,7 @@ mod tests {
             "\\begin{thebibliography}{1}\n\\bibitem{x} X.\n",
         )
         .expect("failed to write source bbl");
-        let signature = bibtex_aux_signature_from_source(aux_source, &source_job);
+        let signature = bibtex_aux_signature_from_source(aux_source, &source_job, &root);
         save_global_bibtex_cache(&root, &source_out, &source_job, &signature, aux_source)
             .expect("failed to save global bibliography cache");
 
@@ -14561,7 +14592,7 @@ mod tests {
         let aux_path = out_dir.join("main.aux");
         let job = bibtex_job(&out_dir, &aux_path, None);
         let aux_source = "\\relax\n\\citation{knuth1984}\n\\bibdata{refs}\n";
-        let signature = bibtex_aux_signature_from_source(aux_source, &job);
+        let signature = bibtex_aux_signature_from_source(aux_source, &job, &root);
 
         write_bibtex_state_from_source(&job, &signature, aux_source, &root, &out_dir)
             .expect("state writer should use supplied aux source");
@@ -14602,8 +14633,8 @@ mod tests {
              \\bibdata{refs}\n";
 
         assert_eq!(
-            bibtex_aux_signature_from_source(synthetic, &job),
-            bibtex_aux_signature_from_source(actual, &job)
+            bibtex_aux_signature_from_source(synthetic, &job, &root),
+            bibtex_aux_signature_from_source(actual, &job, &root)
         );
 
         let _ = fs::remove_dir_all(root);

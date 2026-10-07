@@ -27,6 +27,8 @@ pub enum Command {
     Clean(CleanArgs),
     /// Create a complete tekai.toml with the default settings.
     Init(InitArgs),
+    /// Show where the native engine finds a package, font, or bibliography file.
+    Locate(LocateArgs),
     /// Lint TeX sources for structural and style issues.
     Lint(LintArgs),
     /// Apply safe lint fixes to TeX sources without compiling.
@@ -35,6 +37,27 @@ pub enum Command {
     Check(CheckArgs),
     /// Watch dependencies and rebuild after relevant changes.
     Watch(WatchArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+#[command(
+    after_help = "EXAMPLES:\n  tekai locate hyperref.sty\n  tekai locate refs.bib --directory paper\n  tekai locate cmr10.tfm --report-json"
+)]
+pub struct LocateArgs {
+    /// Filename to resolve, including its extension.
+    pub name: String,
+
+    /// Project directory used for relative paths and config discovery.
+    #[arg(long, default_value = ".")]
+    pub directory: PathBuf,
+
+    /// Configuration file. Defaults to the nearest tekai.toml above DIRECTORY.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+
+    /// Emit the selected path, its source, and effective search paths as JSON.
+    #[arg(long)]
+    pub report_json: bool,
 }
 
 #[derive(Debug, Args, Clone)]

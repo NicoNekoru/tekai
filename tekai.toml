@@ -22,6 +22,7 @@ print_command = false
 # BSTINPUTS = "bst//:"
 # INDEXSTYLE = "styles//:"
 # TEXINDEXSTYLE = "styles//:"
+# TEKAI_TEXMF_MODE = "bundled" # opt out of automatic personal/site trees
 
 [lint]
 indent_size = 2
