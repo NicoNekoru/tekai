@@ -52,6 +52,24 @@ Integration tests that depend on optional external programs skip when those
 programs are unavailable. Do not interpret a skipped optional integration as
 proof that the external workflow works on the current machine.
 
+The `cli_texmf` suite exercises native shared-tree lookup without installed TeX.
+CI runs it on macOS 15 ARM64 and Intel, then installs BasicTeX and runs its real
+reference gate with `TEKAI_REQUIRE_SYSTEM_TEX=1`. That gate fails rather than
+skipping when `kpsewhich`, `pdflatex`, `mktexlsr`, or the CTAN `xspace` package
+is missing. It compares selected package/font filenames, path ordering, brace/tilde
+expansion, and database-only lookup, then compiles a real package with both
+engines. Fixture trees and filename databases are temporary and separate from
+the paper directory, so recursive project lookup cannot hide a broken test.
+
+```sh
+cargo test --locked --test cli_texmf -- --test-threads=1
+TEKAI_REQUIRE_SYSTEM_TEX=1 cargo test --locked --test cli_texmf real_tex_installation -- --nocapture
+```
+
+The workflow also supports manual dispatch. Local runs without TeX verify the
+native cases and explicitly skip the reference case. No TeX installation is
+needed to develop the resolver or run the bundled large-paper gate.
+
 Compiler integration suites live under `tests/compiler/` and are registered
 as modules in `tests/compiler.rs`. They share one executable rather than
 linking the embedded engine into each suite. Add new compiler suites there;
