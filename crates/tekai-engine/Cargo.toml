@@ -1,6 +1,6 @@
 [package]
 name = "tekai-engine"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Self-contained exact TeX engine used by tekai."
 license = "MIT"

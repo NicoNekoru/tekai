@@ -21,7 +21,7 @@ without `brew trust`, use `brew install NicoNekoru/tap/tekai` for the first
 installation. The existing `NicoNekoru/tap` repository remains the package
 source; no dedicated `NicoNekoru/tekai` tap is needed.
 
-The 0.4.0 release supports macOS. Linux is not currently a supported target.
+The 0.5.0 release supports macOS. Linux is not currently a supported target.
 
 For development from a checkout:
 

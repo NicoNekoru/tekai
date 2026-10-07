@@ -1,6 +1,17 @@
 # Tekai engine parity report
 
-Initial measurement: 2026-07-05. Bundled runtime parity revalidated on 2026-10-03.
+Initial measurement: 2026-07-05. Bundled runtime parity revalidated on 2026-10-07.
+
+## 0.5.0 release gate
+
+On 2026-10-07, the optimized 0.5.0 release binary rebuilt both public fixtures
+with an empty `PATH` and isolated bundled lookup. All 48 and 50 pages matched
+the checksum-pinned upstream pdfTeX reference pixel-for-pixel at 144 DPI, and
+extracted text matched for both papers. The bundle and format digests are
+unchanged. The temporary reference executable required no TeX installation.
+The required BasicTeX lookup and compilation comparison is a separate CI gate
+on Apple Silicon and Intel; it exercises shared addition trees instead of
+mixing a system distribution into the bundled format.
 
 ## Debug build-size optimization gate
 

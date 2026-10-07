@@ -3,7 +3,7 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
-## Unreleased
+## 0.5.0 - 2026-10-07
 
 - Share standard personal and site-wide TeX addition trees with installed TeX
   tools. Add Kpathsea-style path expansion, ordered default insertion,
@@ -14,7 +14,6 @@ versioning.
   Apple Silicon and Intel, while retaining the no-TeX large-paper gate.
 - Fix native file size and modification-date primitives on Intel macOS by
   linking the metadata function matching its 64-bit inode structure.
-
 - Reduce debug-build disk usage by embedding TeX archives and the format as
   read-only object data instead of duplicating them in compiler metadata on
   macOS/Linux ARM64 and x86-64. Keep full debug information and all runtime files.
