@@ -597,11 +597,12 @@ impl HotPreviewState {
             let source = fs::read_to_string(&canonical).with_context(|| {
                 format!("failed to read changed TeX source {}", canonical.display())
             })?;
-            let edit_offset = self
-                .snapshots
-                .get(&canonical)
-                .map(|previous| first_diff_offset(previous, &source))
-                .unwrap_or_else(|| default_hot_preview_offset(&canonical, main, &source));
+            let edit_offset = match self.snapshots.get(&canonical) {
+                // Duplicate notifications need the normal build/cache path, not an EOF snippet.
+                Some(previous) if previous == &source => return Ok(None),
+                Some(previous) => first_diff_offset(previous, &source),
+                None => default_hot_preview_offset(&canonical, main, &source),
+            };
             return Ok(Some(HotPreviewTarget {
                 path: canonical,
                 source,
@@ -2354,6 +2355,144 @@ mod tests {
 
         assert!(snippet.contains("\\section{Introduction}"), "{snippet}");
         assert!(!snippet.contains("\\end{abstract}"), "{snippet}");
+    }
+
+    fn target_test_state() -> HotPreviewState {
+        HotPreviewState {
+            snapshots: HashMap::new(),
+            static_document: None,
+            warmed: false,
+        }
+    }
+
+    #[test]
+    fn hot_preview_target_rejects_identical_sources_after_synchronization() {
+        let root = unique_temp_dir("tekai-hot-preview-duplicate-target");
+        fs::create_dir_all(&root).unwrap();
+        let main = root.join("main.tex");
+        let body = root.join("body.tex");
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}\\input{body}\\end{document}\n",
+        )
+        .unwrap();
+        fs::write(&body, "Original body.\n").unwrap();
+        let main = main.canonicalize().unwrap();
+        let body = body.canonicalize().unwrap();
+        let dependencies = [main.clone(), body.clone()];
+        let mut state = target_test_state();
+        state.synchronize_paths(dependencies.iter());
+
+        for path in [&main, &body] {
+            for _ in 0..3 {
+                assert!(
+                    state
+                        .select_target(&main, &root.join("out"), std::slice::from_ref(path))
+                        .unwrap()
+                        .is_none()
+                );
+            }
+        }
+        assert_eq!(state.snapshots.len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hot_preview_target_keeps_genuine_body_edits() {
+        let root = unique_temp_dir("tekai-hot-preview-body-target");
+        fs::create_dir_all(&root).unwrap();
+        let main = root.join("main.tex");
+        let before = "\\documentclass{article}\n\\begin{document}\nBefore edit.\n\\end{document}\n";
+        fs::write(&main, before).unwrap();
+        let main = main.canonicalize().unwrap();
+        let mut state = target_test_state();
+        state.synchronize_paths(std::iter::once(&main));
+        let after = before.replace("Before", "After");
+        fs::write(&main, &after).unwrap();
+
+        let target = state
+            .select_target(&main, &root.join("out"), std::slice::from_ref(&main))
+            .unwrap()
+            .expect("a genuine body edit must still select a target");
+        assert_eq!(target.path, main);
+        assert_eq!(target.source, after);
+        assert_eq!(target.edit_offset, after.find("After edit").unwrap());
+        let snippet = hot_preview_snippet(&main, &target).unwrap().unwrap();
+        assert!(snippet.contains("After edit."), "{snippet}");
+        assert_eq!(state.snapshots.get(&main).unwrap(), before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hot_preview_target_keeps_unknown_snapshots_and_prewarm_defaults() {
+        let root = unique_temp_dir("tekai-hot-preview-unknown-target");
+        fs::create_dir_all(&root).unwrap();
+        let main = root.join("main.tex");
+        let body = root.join("body.tex");
+        let source = "\\documentclass{article}\n\\begin{document}Body\\end{document}\n";
+        let body_source = "Unknown body source.\n";
+        fs::write(&main, source).unwrap();
+        fs::write(&body, body_source).unwrap();
+        let main = main.canonicalize().unwrap();
+        let body = body.canonicalize().unwrap();
+        let mut state = target_test_state();
+        let root_offset = source.find("\\begin{document}").unwrap() + "\\begin{document}".len();
+
+        for changed in [vec![main.clone()], Vec::new()] {
+            let target = state
+                .select_target(&main, &root.join("out"), &changed)
+                .unwrap()
+                .expect("an unknown root or prewarm must retain its default target");
+            assert_eq!(target.path, main);
+            assert_eq!(target.source, source);
+            assert_eq!(target.edit_offset, root_offset);
+        }
+        let target = state
+            .select_target(&main, &root.join("out"), std::slice::from_ref(&body))
+            .unwrap()
+            .expect("an unknown included source must retain its default target");
+        assert_eq!(target.path, body);
+        assert_eq!(target.source, body_source);
+        assert_eq!(target.edit_offset, body_source.len() / 2);
+        assert!(state.snapshots.is_empty());
+        state.synchronize_paths([main.clone(), body].iter());
+        let target = state
+            .select_target(&main, &root.join("out"), &[])
+            .unwrap()
+            .expect("prewarm must remain available with synchronized snapshots");
+        assert_eq!(target.edit_offset, root_offset);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hot_preview_target_rejects_duplicate_after_preamble_fallback() {
+        let root = unique_temp_dir("tekai-hot-preview-preamble-duplicate");
+        fs::create_dir_all(&root).unwrap();
+        let main = root.join("main.tex");
+        let before = "\\documentclass{article}\n\\newcommand{\\rotation}{1}\n\\begin{document}\n\\input{body}\n\\end{document}\n";
+        fs::write(&main, before).unwrap();
+        let main = main.canonicalize().unwrap();
+        let mut state = target_test_state();
+        state.synchronize_paths(std::iter::once(&main));
+        let after = before.replace("{1}", "{2}");
+        fs::write(&main, &after).unwrap();
+
+        let target = state
+            .select_target(&main, &root.join("out"), std::slice::from_ref(&main))
+            .unwrap()
+            .expect("the preamble edit must be detected before fallback");
+        assert!(target.edit_offset < after.find("\\begin{document}").unwrap());
+        assert!(hot_preview_snippet(&main, &target).unwrap().is_none());
+        // Watch refreshes the snapshot after the ordinary full-build fallback.
+        state.synchronize_paths(std::iter::once(&main));
+        assert!(
+            state
+                .select_target(&main, &root.join("out"), std::slice::from_ref(&main))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(state.snapshots.get(&main).unwrap(), &after);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
