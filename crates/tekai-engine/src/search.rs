@@ -310,6 +310,7 @@ fn hash_metadata(path: &Path, signature: &mut impl std::hash::Hasher) {
     if let Ok(metadata) = std::fs::metadata(path) {
         metadata.modified().ok().hash(signature);
         metadata.len().hash(signature);
+        crate::file_identity::change_identity(&metadata).hash(signature);
     }
 }
 
@@ -376,5 +377,54 @@ mod tests {
         std::fs::write(root.join("ls-R"), "./tex/latex:\nnot-in-database.sty\n").unwrap();
         assert_ne!(signature_for_roots(Path::new("."), &roots), before);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_signatures_observe_edits_and_replacements_with_preserved_mtime() {
+        use std::fs::{self, File, FileTimes};
+
+        let root = std::env::temp_dir().join(format!(
+            "tekai-database-signature-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let database = root.join("ls-R");
+        let roots = [SearchPath {
+            path: format!("!!{}", root.display()),
+            source: "test",
+            bundled: false,
+        }];
+        for atomic in [false, true] {
+            fs::write(&database, "./tex/latex/old:\nchoice.sty\n").unwrap();
+            let initial = fs::metadata(&database).unwrap();
+            let before = signature_for_roots(Path::new("."), &roots);
+            let destination = if atomic {
+                root.join("ls-R.replacement")
+            } else {
+                database.clone()
+            };
+            fs::write(&destination, "./tex/latex/new:\nchoice.sty\n").unwrap();
+            File::open(&destination)
+                .unwrap()
+                .set_times(FileTimes::new().set_modified(initial.modified().unwrap()))
+                .unwrap();
+            if atomic {
+                fs::rename(destination, &database).unwrap();
+            }
+            let current = fs::metadata(&database).unwrap();
+            assert_eq!(current.len(), initial.len());
+            assert_eq!(current.modified().unwrap(), initial.modified().unwrap());
+            assert_ne!(signature_for_roots(Path::new("."), &roots), before);
+            assert_eq!(
+                signature_for_roots(Path::new("."), &roots),
+                signature_for_roots(Path::new("."), &roots)
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }

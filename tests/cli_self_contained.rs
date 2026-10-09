@@ -223,6 +223,65 @@ fn bundled_cache_observes_source_edits_with_preserved_mtime() {
     assert_eq!(project.success(&args)["skipped"], true);
 }
 
+#[cfg(unix)]
+#[test]
+fn bundled_cache_observes_shared_database_replacement_with_preserved_mtime() {
+    use std::fs::{File, FileTimes};
+
+    let project = Project::new();
+    let shared = Project::new();
+    for (directory, word) in [("z", "OLD"), ("a", "NEW")] {
+        shared.write(
+            &format!("tex/latex/{directory}/auditchoice.sty"),
+            &format!("\\ProvidesPackage{{auditchoice}}\n\\newcommand{{\\choiceword}}{{{word}}}\n"),
+        );
+    }
+    shared.write("ls-R", "./tex/latex/z:\nauditchoice.sty\n");
+    project.write(
+        "tekai.toml",
+        &format!(
+            "[build.env]\nTEKAI_TEXMF_MODE = 'shared'\nTEXMFHOME = ''\nTEXMFLOCAL = '{}'\n",
+            shared.0.display()
+        ),
+    );
+    project.write(
+        "main.tex",
+        "\\documentclass{article}\n\\usepackage{auditchoice}\n\\begin{document}\n\\choiceword\n\\end{document}\n",
+    );
+    let args = ["build", "main.tex", "--report-json"];
+    project.success(&args);
+    assert_eq!(project.success(&args)["skipped"], true);
+    let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+    assert!(
+        log.split_whitespace()
+            .collect::<String>()
+            .contains("tex/latex/z/auditchoice.sty")
+    );
+
+    let database = shared.0.join("ls-R");
+    let initial = fs::metadata(&database).unwrap();
+    let replacement = shared.0.join("ls-R.replacement");
+    fs::write(&replacement, "./tex/latex/a:\nauditchoice.sty\n").unwrap();
+    File::open(&replacement)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(initial.modified().unwrap()))
+        .unwrap();
+    fs::rename(replacement, &database).unwrap();
+    let current = fs::metadata(database).unwrap();
+    assert_eq!(current.len(), initial.len());
+    assert_eq!(current.modified().unwrap(), initial.modified().unwrap());
+    let built = project.success(&args);
+    assert_eq!(built["skipped"], false);
+    assert!(built["tex_runs"].as_u64().unwrap() > 0);
+    let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+    assert!(
+        log.split_whitespace()
+            .collect::<String>()
+            .contains("tex/latex/a/auditchoice.sty")
+    );
+    assert_eq!(project.success(&args)["skipped"], true);
+}
+
 #[test]
 #[ignore = "large-paper gate; CI runs it explicitly before installing optional TeX tools"]
 fn bundled_runtime_builds_large_papers_without_external_tools() {

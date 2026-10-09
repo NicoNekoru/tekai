@@ -118,7 +118,7 @@ to ignored comments can therefore still hit the content cache.
 
 Entries without an identity rehash instead of trusting mtime. Platforms
 without the Unix change-time identity also rehash. The build-state version
-is now 37. Regression tests cover same-length and longer edits, atomic
+is now 38. Regression tests cover same-length and longer edits, atomic
 replacement, legacy entries, unchanged-content reuse, and the metadata-only
 fast path. A bundled CLI test checks actual rebuilds after preserved-mtime
 edits and cache hits after an identical replacement.
@@ -157,17 +157,24 @@ in a writable cache. Do not modify shared installation trees merely to read a
 format. The confirmed code is `crates/tekai-engine/src/kpathsea.rs` in
 `check_format_path` and `materialize_raw_format_companion`.
 
-### Database identity checks disagree across caches
+### Resolver and build cache now share database identity checks
 
 An external shared tree contains old and new versions of `auditchoice.sty`.
 Replacing its `ls-R` atomically with a same-length database and preserving
 mtime changes the resolver result. The ordinary build still skips and retains
 the old PDF. A forced build uses the new package.
 
-`lookup.rs` checks device, inode, ctime, mtime, and size. The shared-tree
-signature in `search.rs` checks only path, mtime, and size. Both caches should
-use one identity definition. Where identity cannot establish content
-stability, use a content digest or conservative invalidation.
+The shared-tree signature previously checked only path, mtime, and size,
+while the resolver checked device, inode, and ctime as well. The compiler,
+resolver, and shared-tree signature now use `file_identity::change_identity`
+for those identity fields. Database-only signatures still inspect the database
+rather than walking the installation tree.
+
+A signature regression checks in-place edits and atomic replacement with
+preserved size and mtime. A bundled CLI regression switches the database
+between two packages in a separate fixture-owned tree. It verifies a rebuild,
+the newly selected package path in the log, and a subsequent cache hit.
+The higher-priority project-file case remains open.
 
 ## Confirmed process and preview failures
 

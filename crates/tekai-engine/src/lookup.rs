@@ -19,8 +19,7 @@ const INDEX_LIMIT: usize = 128;
 struct FileStamp {
     modified: Option<SystemTime>,
     len: u64,
-    #[cfg(unix)]
-    identity: (u64, u64, i64, i64),
+    identity: Option<crate::file_identity::ChangeIdentity>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -126,7 +125,9 @@ impl LookupSession {
             let key = IndexKey::Database(db.clone());
             let stamp = file_stamp(&db);
             if let Some(index) = self.indices.get(&key) {
-                if index.stamp == stamp {
+                if stamp.as_ref().is_some_and(|stamp| stamp.identity.is_some())
+                    && index.stamp == stamp
+                {
                     return index.find(requested, &pattern);
                 }
             }
@@ -320,18 +321,10 @@ fn disk_entries(root: &Path) -> impl Iterator<Item = walkdir::DirEntry> {
 
 fn file_stamp(path: &Path) -> Option<FileStamp> {
     let metadata = fs::metadata(path).ok()?;
-    #[cfg(unix)]
-    use std::os::unix::fs::MetadataExt;
     Some(FileStamp {
         modified: metadata.modified().ok(),
         len: metadata.len(),
-        #[cfg(unix)]
-        identity: (
-            metadata.dev(),
-            metadata.ino(),
-            metadata.ctime(),
-            metadata.ctime_nsec(),
-        ),
+        identity: crate::file_identity::change_identity(&metadata),
     })
 }
 

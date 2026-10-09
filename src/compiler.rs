@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
 
-const BUILD_STATE_VERSION: u32 = 37;
+const BUILD_STATE_VERSION: u32 = 38;
 const BIB_STATE_VERSION: u32 = 11;
 const INDEX_STATE_VERSION: u32 = 10;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
@@ -287,21 +287,15 @@ struct FileFingerprint {
 struct FileMetadataFingerprint {
     len: u64,
     modified_ns: u64,
-    #[cfg(unix)]
-    dev: u64,
-    #[cfg(unix)]
-    ino: u64,
-    #[cfg(unix)]
-    changed_sec: i64,
-    #[cfg(unix)]
-    changed_nsec: i64,
+    #[serde(default)]
+    identity: Option<tekai_engine::file_identity::ChangeIdentity>,
 }
 
 impl FileMetadataFingerprint {
     fn matches(self, input: &FileFingerprint) -> bool {
         // Without a change-time identity, an edit preserving length and mtime
         // cannot be distinguished from an unchanged file. Hash it instead.
-        cfg!(unix) && input.metadata == Some(self)
+        self.identity.is_some() && input.metadata == Some(self)
     }
 }
 
@@ -12551,19 +12545,10 @@ fn file_metadata_fingerprint(path: &Path) -> Result<Option<FileMetadataFingerpri
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
-    #[cfg(unix)]
-    use std::os::unix::fs::MetadataExt;
     Ok(Some(FileMetadataFingerprint {
         len: metadata.len(),
         modified_ns,
-        #[cfg(unix)]
-        dev: metadata.dev(),
-        #[cfg(unix)]
-        ino: metadata.ino(),
-        #[cfg(unix)]
-        changed_sec: metadata.ctime(),
-        #[cfg(unix)]
-        changed_nsec: metadata.ctime_nsec(),
+        identity: tekai_engine::file_identity::change_identity(&metadata),
     }))
 }
 
