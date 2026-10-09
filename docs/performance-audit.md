@@ -24,6 +24,9 @@ as a preview edit and replace a valid PDF with a placeholder.
 Hot preview preparation now selects the embedded engine rather than depending
 on a separate development executable. JPEG resolution metadata now uses a
 checked slice parser with bounded APP1 storage.
+Type 1 subroutine cleanup now releases unused entries beyond the emitted
+prefix. Duplicate PDF object index entries release their rejected allocations,
+and the TrueType reader no longer allocates an unused cmap entry array.
 The other confirmed failures below remain open unless their section says otherwise.
 
 ## Measurement conditions
@@ -37,7 +40,8 @@ reported by `/usr/bin/time -l`.
 The bounded runtime refactor passed the local Rust, standalone-engine, editor,
 and bundled-paper gates before its commit. The 99-page reference comparison
 was pixel-identical. Those gates did not exercise the cases below. This audit
-does not establish remote CI success or a leak-free runtime.
+does not establish a leak-free runtime. Remote results are recorded separately
+below and apply only to their tested commits.
 
 `tools/audit_runtime.py` recreates these fixtures with isolated runtime and artifact caches
 and process-group cleanup. Its report records failures rather than treating
@@ -592,6 +596,117 @@ use needs ownership checks for each image type before removing the current
 per-pass process boundary. Per-process retention is not proof of an
 accumulating watcher leak.
 
+## Font and PDF object allocation cleanup
+
+Source review found three lost allocations in ordinary exact-engine paths.
+No malformed font or PDF parser probe was needed to identify them.
+
+- `ttf_read_cmap` allocated a private `cmap_tab` entry array that had no
+  subsequent reads or release. The declaration and allocation are removed.
+  The active cmap table and parsed cmap cache are unchanged.
+- `t1_flush_cs` freed only the emitted subroutine prefix before freeing its
+  containing table. Allocated unused subroutines above `subr_max` lost their
+  owners. Cleanup now releases that tail as well. The emission loop, original
+  subroutine indices, interior holes, counts and footer are unchanged.
+- `avlputobj` allocated a candidate before `avl_probe`. When an equal key
+  already existed, the tree retained its original entry but the rejected
+  candidate was not released. Insertion now frees the rejected candidate
+  without a second tree lookup or replacing the accepted entry. The allocation
+  failure branch also releases its candidate before the existing fatal error.
+
+Nine new tests exercise actual ownership operations in these helpers.
+Seven count Type 1 releases and cover entry ranges, initialized null entries,
+borrowed `.notdef` names, repeated cleanup and an untouched emitted prefix.
+Two use locally owned AVL trees to count allocations and releases for unique
+entries and 128 rejected duplicates, retaining the first object's identity
+and balancing allocations at teardown. These tests
+do not mutate the engine's global object table or parse untrusted fonts.
+
+The relevant files are `generated/backend/writettf.rs`, `writet1.rs` and
+`avlstuff.rs` under `crates/tekai-engine/src`. These are ownership-only changes,
+so build-state version 41 is unchanged. They do not make the engine reentrant
+or establish complete font and object cleanup. Its current process exit still
+contains other per-pass retention.
+
+The same review found unmeasured font scaling costs. `ttf_read_post` restarts
+the custom-name buffer scan for successive name indices. `ttf_reindex_glyphs`
+searches glyph names for each encoding entry, and Type 1 `cs_mark` searches
+charstrings by name. The successful cmap cache does not share all parsed font
+metadata, and non-subset TrueType output still performs its normal full
+metadata parse before copying. Descriptor and encoding ownership need a
+separate cleanup contract.
+Some interned names alias encoding-owned storage, so an unconditional tree
+destructor could double-free them. None of these broader costs is fixed here.
+
+## Experimental renderer source review
+
+The following findings concern the opt-in renderer in
+`crates/tekai-pdftex/src/native.rs`, not the default exact engine. They are
+source-derived worst cases, not measured timing or memory results. No new
+native renderer probes were run in this review.
+
+### Source scanning and inline cleaning
+
+`take_until_command_or_blank` independently searches the remaining source for
+every marker even when a nearby blank line already bounds the paragraph.
+Repeated fixed-size paragraphs can therefore rescan overlapping suffixes
+quadratically. Nearest-command selectors in file loading and pre-body
+collectors use the same pattern when some command kinds are absent.
+`find_control` can also rescan a growing line prefix for comment detection
+before rejecting an alphabetic suffix match.
+
+`clean_inline_text_collecting` copies the remaining character iterator into a
+new string for many short inline constructs, recursively processes that
+suffix, and normalizes each assembled result. Repeated constructs can produce
+quadratic copied bytes and linear recursion depth. Input expansion retains
+whole source strings along recursive include chains without an aggregate byte
+or depth budget. Separate adapter and option collectors reread package graphs,
+and inherited option vectors are cloned along nested dependencies.
+`clean_math_text` and the loose text fallback use the same suffix-copying and
+continuation-recursion pattern. Punctuation normalization is not idempotent,
+so removing repeated cleanup passes without characterization tests could
+change current output.
+
+Lookup and option refactors must preserve first-match and inherited-option
+semantics. A visited key consisting only of a canonical path can suppress a
+later visit with different inherited options. The native search walk also has
+different symlink and ordering rules from the exact engine's indexed resolver.
+Replacing it silently would change behavior.
+
+### Layout, graphics and output
+
+Blank lookahead at a fresh two-column page can inspect the same blank suffix
+repeatedly before a wide top float. Invisible overflow records duplicate full
+placements that output consumers skip but summary counts still include.
+Caption tracing copies complete text before producing a bounded excerpt.
+Title padding can rerun layout over an already parsed prefix just to recover
+its cursor. SyncTeX generation scans all placements again for every page.
+Any refactor must preserve deferred-float ordering and public summaries.
+Positive source lengths can also expand into an unbounded number of blank
+line records. The length parser and float-derived slot conversion have no
+finite-value or aggregate admission check. Faster lookahead alone would not
+bound that source-to-layout amplification.
+
+Graphics prewarming limits workers but retains every successful asset in an
+unbounded per-parse cache. Different pages of one PDF each reload the complete
+file. Dimension reads load complete PNG and JPEG files. Imported PDF streams
+are copied during collection, remapping and serialization. These Rust-owned
+values drop with their cache and document owners within the native invocation,
+so this is not evidence of cross-build retention.
+The native PNG path is separate from the exact engine's fixed PNG adapter.
+
+PDF output retains page streams, object buffers and the final byte buffer
+together. Every page receives an XObject dictionary containing all document
+images, including unused images, so resource output grows with pages times
+images. Shared in-memory image payloads do not deduplicate serialized objects
+for repeated placements. Streaming output and per-page resource sets need
+object-identity and output-fidelity tests before implementation.
+
+Public native draft and no-PDF options also need review. Draft graphics has
+no production read in this file, and no-PDF mode skips emission only after
+parsing and layout. Current experimental CLI callers leave both flags false.
+These findings do not claim a default CLI regression or a Rust ownership leak.
+
 ## Remaining review targets
 
 The production linter, watcher, watch-event collector, resolver, PDF wrapper,
@@ -600,9 +715,14 @@ code, and editor integration code have received detailed function-level review.
 Compiler orchestration, cache publication, fingerprints, and parsers have also
 been traced across files. The experimental expansion production code and
 report-only dependency walker have now received function-level review.
-Review of the experimental renderer is ongoing.
+The experimental renderer's include and package paths, supported-document
+parser and pre-body analysis, 55 layout helpers, graphics loading and PDF
+serialization have received targeted function-level review. The remaining
+renderer helpers and their interactions still need review.
 The generated JPEG, JBIG2, and image-loader implementations have received
-function-level review. Other generated backends remain review targets.
+function-level review. Font parsing and cleanup, the AVL object index and
+compression finalization have received targeted review. Other generated
+backends remain review targets.
 
 The generated engine is approximately 115,000 lines. It has not received a
 complete manual function-by-function review in this pass. Generated and
@@ -629,7 +749,7 @@ confirmed performance findings.
 
 ## Local regression checks for the current fixes
 
-The current fixes passed 522 workspace library tests in debug and release,
+The current fixes passed 531 workspace library tests in debug and release,
 11 self-contained CLI tests, 13 native shared-tree CLI tests, and 149 Python tool tests.
 Both bundled large-paper fixtures passed their build gate. The real TeX
 reference test skipped locally because this machine has no system TeX
@@ -638,12 +758,19 @@ release and standalone builds passed. The separate upstream comparison passed
 all 99 paper and transparent-image pages with matching text and pixels.
 These are local results, not remote CI success.
 
-The full native performance profile passed 162 gates, recorded 29 observations,
+The full release diagnostic profile passed 162 gates, recorded 29 observations,
 and reproduced seven known failures with no unexpected failures or skips.
 All 267 supervised commands completed without a timeout. Both isolated
 executable copies matched their sources and retained matching start/end hashes.
 The rotating-input watcher completed all ten edits. This checkpoint adds 88
 JPEG gates and 27 PNG framing, copy and decode gates to the prior 47 passes.
+The allocation checkpoint reran the same complete profile. Its first restricted
+local attempt failed the watcher gate and skipped process inspection. The
+approved rerun passed all gates, including all ten watch edits and the owned
+process check. The restricted attempt is not counted as a passing run.
+The compiler gates and 99-page comparison exercise the exact engine.
+`audit_expansion` exercises the experimental expander, not the renderer.
+The newly identified renderer scan and copy bounds are not yet CI gates.
 
 Release input-identity probes now rebuild and produce the changed text for both
 in-place edits and atomic replacement with preserved mtime. The database probe
@@ -734,6 +861,17 @@ a cyclic PDF parent, oversized PNG metadata, and unrelated output sidecars.
 The experimental engine also needs group-storage accounting and error tests
 for arithmetic boundaries and invalid Unicode hex input.
 
+The next source-derived scaling gates should use small in-memory inputs and
+counters at actual scan, copy and lookup operations. Renderer scanners can
+share a forward cursor while retaining distinct raw-marker and control-word
+matching rules. Blank lookahead can share a monotonic index without storing
+an extra vector, but must stop at page styles and output controls.
+Font name indices should borrow bytes, retain original first-match order and
+drop before cleanup. TrueType custom-name offsets must preserve the current
+NUL-separated indexing, including embedded NULs. Invalid or already-used
+Type 1 entries must still shadow later duplicate names. These are proposed
+gates and refactors, not passing checks or implemented fixes.
+
 Any output-affecting fixes still need the real-paper fidelity comparison and
 the ARM64 and Intel CI gates. The current audit records failures and proposed
 remedies. It does not claim these newly found failures are fixed.
@@ -744,3 +882,14 @@ before library tests because the optional C entrypoint collided with the test
 harness, and its preview gates exposed the unshipped standalone dependency.
 Both issues have local regression fixes. That failed run is not recorded as
 remote CI success for the corrected checkpoint.
+
+The corrected checkpoint at `ac5a9e8` passed all six jobs in
+[full CI](https://github.com/NicoNekoru/tekai/actions/runs/38004576383).
+ARM64 and Intel both passed the installed-TeX reference gate, core Rust
+checks, 522 release library tests, 162 diagnostic gates and the 99-page
+text/pixel comparison. Both reports record 29 observations, seven known
+failures, no unexpected failures or skips, 267 completed commands and all ten
+watch edits. Downloaded artifacts identify that exact commit and unchanged
+isolated executable copies. Linux runner tests passed on Python 3.10 and 3.13.
+These remote results predate the allocation changes and their nine new tests.
+The newer checkpoint's CI must be checked separately from this successful run.
