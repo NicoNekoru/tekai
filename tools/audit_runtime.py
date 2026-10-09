@@ -3,10 +3,12 @@
 
 This is a diagnostic runner, not a timing-based CI gate. Requires macOS and a
 release tekai binary. Cache correctness cases also require pdftotext. Every
-started build owns a process group which is killed and reaped on timeout.
+started build owns a process group which is terminated on timeout. The runner
+reaps its direct child.
 """
 
 import argparse
+import gzip
 import json
 import os
 from pathlib import Path
@@ -21,7 +23,8 @@ import time
 import zlib
 
 REPO = Path(__file__).resolve().parent.parent
-CASES = ('lookup', 'lint', 'cache', 'edit-race', 'cancel', 'preview', 'pdf', 'png', 'deep-inputs', 'aux-concurrency')
+CASES = ('lookup', 'lint', 'cache', 'edit-race', 'input-identity', 'source-boundaries', 'format-cache',
+         'cancel', 'preview', 'pdf', 'png', 'deep-inputs', 'aux-concurrency')
 SEARCH_VARIABLES = (
     'TEXINPUTS', 'BIBINPUTS', 'BSTINPUTS', 'TEXFONTS', 'TFMFONTS', 'AFMFONTS',
     'T1FONTS', 'TTFONTS', 'OPENTYPEFONTS', 'VFFONTS', 'ENCFONTS', 'SFDFONTS',
@@ -133,6 +136,15 @@ class Audit:
             return True
         self.record(case, skipped=True, reason='pdftotext is unavailable')
         return False
+
+    def process_inspection_available(self, case):
+        try:
+            subprocess.check_output(['ps', '-p', str(os.getpid()), '-o', 'pid='],
+                                    text=True, stderr=subprocess.PIPE, timeout=2)
+            return True
+        except (OSError, subprocess.SubprocessError) as error:
+            self.record(case, skipped=True, reason=f'Process inspection is unavailable: {error}')
+            return False
 
     @staticmethod
     def parsed(result):
@@ -267,6 +279,8 @@ class Audit:
             stop_group(process)
 
     def cancel(self):
+        if not self.process_inspection_available('cancel'):
+            return
         project = self.project('cancel', '\\documentclass{article}\n\\newcount\\auditcount\n'
                                '\\begin{document}\n\\loop\\advance\\auditcount by1'
                                '\\ifnum\\auditcount<100000000\\repeat\n\\end{document}\n')
@@ -294,6 +308,112 @@ class Audit:
                         child_survived=bool(snapshot), child_snapshot=snapshot)
         finally:
             stop_group(process)
+
+    def input_identity(self):
+        if not self.needs_pdftext('input-identity'):
+            return
+        source = '\\documentclass{article}\n\\begin{document}\nOLD-CONTENT\n\\end{document}\n'
+        for mode in ('in-place', 'replacement'):
+            project = self.project(f'input-identity-{mode}', source)
+            command = self.build_command(project)
+            self.parsed(self.run(command, project))
+            path = project / 'main.tex'
+            identity = path.stat()
+            changed = source.replace('OLD-CONTENT', 'NEW-CONTENT-LONGER')
+            target = path if mode == 'in-place' else project / 'replacement.tex'
+            target.write_text(changed)
+            os.utime(target, ns=(identity.st_atime_ns, identity.st_mtime_ns))
+            if mode == 'replacement':
+                target.replace(path)
+            current = path.stat()
+            next_build = self.parsed(self.run(command, project))
+            text = self.text(project)
+            forced = self.parsed(self.run([*command, '--force'], project))
+            forced_text = self.text(project)
+            self.record('input-identity', mode=mode, size_changed=current.st_size != identity.st_size,
+                        inode_changed=current.st_ino != identity.st_ino,
+                        mtime_preserved=current.st_mtime_ns == identity.st_mtime_ns,
+                        next_build=next_build, text=text, forced=forced, forced_text=forced_text,
+                        stale_cache_hit=next_build['skipped'] and 'OLD-CONTENT' in text
+                        and 'NEW-CONTENT-LONGER' in forced_text)
+
+    def format_cache(self):
+        if not self.needs_pdftext('format-cache'):
+            return
+        project = self.project('format-cache', '\\audittext\\par\\end\n')
+        env = self.environment(project, TEXFORMATS=f'{project}:')
+        base = [self.args.engine, '__tekai-engine', '-no-shell-escape',
+                '-interaction=nonstopmode', '-halt-on-error']
+        for name, word in [('old', 'OLD-FORMAT'), ('new', 'NEW-FORMAT')]:
+            source = ('\\catcode123=1\\catcode125=2'
+                      '\\pdfoutput=1\\font\\auditfont=cmr10\\auditfont'
+                      '\\hsize=100pt\\vsize=100pt\\output={\\shipout\\box255}'
+                      '\\def\\audittext{' + word + '}\\dump')
+            result = self.run([*base, '-ini', '-etex', f'-jobname={name}',
+                               f'-output-directory={project}', source], project, env)
+            if result.get('code') != 0:
+                raise RuntimeError(f'Format fixture generation failed: {result}')
+        active = project / 'active.fmt'
+        raw = project / 'active.fmt.raw'
+        # Exercise gzip materialization even if dump compression defaults change.
+        old = (project / 'old.fmt').read_bytes()
+        active.write_bytes(old if old.startswith(b'\x1f\x8b') else gzip.compress(old))
+        (project / 'build').mkdir()
+        command = [*base, '-fmt=active', '-jobname=main',
+                   f'-output-directory={project / "build"}', 'main.tex']
+        first = self.run(command, project, env)
+        if first.get('code') != 0 or not raw.is_file():
+            raise RuntimeError(f'Format companion fixture failed: {first}')
+        first_text = self.text(project)
+        new = (project / 'new.fmt').read_bytes()
+        replacement = project / 'replacement.fmt'
+        replacement.write_bytes(new if new.startswith(b'\x1f\x8b') else gzip.compress(new))
+        replacement.replace(active)
+        second = self.run(command, project, env)
+        if second.get('code') != 0:
+            raise RuntimeError(f'Replaced format fixture failed: {second}')
+        second_text = self.text(project)
+        raw.unlink()
+        refreshed = self.run(command, project, env)
+        if refreshed.get('code') != 0:
+            raise RuntimeError(f'Refreshed format fixture failed: {refreshed}')
+        refreshed_text = self.text(project)
+        self.record('format-cache', first_text=first_text, second_text=second_text,
+                    refreshed_text=refreshed_text,
+                    stale_raw_companion='OLD-FORMAT' in second_text and 'NEW-FORMAT' in refreshed_text)
+
+    def source_boundaries(self):
+        if not self.needs_pdftext('source-boundaries'):
+            return
+        for mode in ('conditional', 'macro', 'endinput'):
+            preamble = '\\documentclass{article}\n'
+            if mode == 'conditional':
+                preamble += '\\iffalse\\end{document}\\fi\n'
+            elif mode == 'macro':
+                preamble += '\\newcommand{\\auditfinish}{\\end{document}}\n'
+            source = preamble + '\\begin{document}\nOLD-CONTENT\n\\end{document}\n'
+            project = self.project(f'source-boundaries-{mode}', source)
+            path = project / 'main.tex'
+            if mode == 'endinput':
+                path.write_text(preamble + '\\begin{document}\\input{part}\\end{document}\n')
+                path = project / 'part.tex'
+                source = '\\iffalse\\endinput\\fi\nOLD-CONTENT\n'
+                path.write_text(source)
+            command = self.build_command(project)
+            self.parsed(self.run(command, project))
+            identity = path.stat()
+            path.write_text(source.replace('OLD-CONTENT', 'NEW-CONTENT'))
+            current = path.stat()
+            if current.st_mtime_ns == identity.st_mtime_ns:
+                raise RuntimeError('Source boundary fixture needs distinct modification times')
+            next_build = self.parsed(self.run(command, project))
+            text = self.text(project)
+            forced = self.parsed(self.run([*command, '--force'], project))
+            forced_text = self.text(project)
+            self.record('source-boundaries', mode=mode, mtime_changed=True,
+                        next_build=next_build, text=text, forced=forced, forced_text=forced_text,
+                        stale_cache_hit=next_build['skipped'] and 'OLD-CONTENT' in text
+                        and 'NEW-CONTENT' in forced_text)
 
     def preview(self):
         project = self.project('unicode-preview', '\\documentclass{article}\n\\begin{document}\n'
@@ -363,6 +483,8 @@ class Audit:
             self.record('deep-inputs', phase='check', files=count, **result)
 
     def aux_concurrency(self):
+        if not self.process_inspection_available('aux-concurrency'):
+            return
         for count in ([4, 32] if self.args.quick else [4, 16, 32]):
             source = ('\\documentclass{article}\n\\begin{document}\nHello\n\\iffalse\n'
                       + '\n'.join(f'\\includegraphics{{image{i}.eps}}' for i in range(count))

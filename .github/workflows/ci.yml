@@ -26,6 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test audit runner permissions and cleanup without compiling TeX
+        run: python3 -B -m unittest discover -s tools -p test_audit_runtime.py
+
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy

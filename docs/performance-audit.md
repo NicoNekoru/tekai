@@ -28,6 +28,8 @@ python3 tools/audit_runtime.py --quick
 python3 tools/audit_runtime.py --case lookup --case edit-race --case cancel
 python3 tools/audit_runtime.py --case lint --case pdf --case cache
 python3 tools/audit_runtime.py --case aux-concurrency
+python3 tools/audit_runtime.py --case input-identity --case source-boundaries --case format-cache
+python3 -B -m unittest discover -s tools -p test_audit_runtime.py
 ```
 
 The runner requires macOS for RSS measurements. The cache-output checks use
@@ -38,8 +40,9 @@ fixture uses a long finite loop as a fallback in addition to process-group
 cleanup. No probe requires removing or modifying a shared cache. CPU model
 metadata is best effort when the sandbox denies system-information queries.
 RSS is `null` with `rss_available = false` if the system timer cannot collect
-it. The cancellation and concurrency checks require process inspection
-permission.
+it. The cancellation and concurrency checks explicitly record a skip when
+process inspection is unavailable. The runner tests exercise permission
+denials and owned-process cleanup without launching a compiler.
 
 ## Confirmed cache correctness failures
 
@@ -81,6 +84,50 @@ problem. The resolver and build cache need to share lookup dependencies.
 Relevant code is in `src/compiler.rs`, `crates/tekai-engine/src/search.rs`,
 and `crates/tekai-engine/src/lookup.rs`.
 
+### Preserved source modification times can hide changed content and size
+
+Effective TeX fingerprints accept a matching mtime without checking the
+current size, inode, or ctime. Both an in-place edit and an atomic replacement
+of the root source reproduced a stale cache hit when the driver preserved
+mtime. The changed source was longer. The replacement also had a new inode.
+The ordinary build skipped with `OLD-CONTENT`, while a forced build produced
+`NEW-CONTENT-LONGER`.
+
+Use the same file identity contract for resolver metadata, source fingerprints,
+and media caches. Effective source length cannot replace physical file size
+in the metadata fast path. Relevant functions in `src/compiler.rs` are
+`input_fingerprint_is_fresh`, `fingerprint_effective_tex_path_reusing`, and
+`file_metadata_fingerprint`.
+
+### Textual end markers can exclude active source from fingerprints
+
+`effective_tex_bytes` treats the first textual `\end{document}` or
+`\endinput` as an execution boundary. It does not account for conditional
+execution or macro definitions. Three fixtures reproduced stale cache hits
+after ordinary content edits with changed mtime.
+
+- A root source placed `\end{document}` inside an inactive `\iffalse` block.
+- A root source defined a finishing macro containing `\end{document}`.
+- An included source placed `\endinput` inside an inactive conditional.
+
+Each next build skipped and retained `OLD-CONTENT`. Forced builds produced
+`NEW-CONTENT`. A conservative full-content fingerprint is safer than trying
+to infer executed TeX from these textual markers. An engine-observed input
+snapshot can support more precise reuse without guessing macro semantics.
+
+### Replacing a format leaves its raw companion stale
+
+`check_format_path` prefers any readable `.fmt.raw` companion without checking
+which `.fmt` produced it. Two tiny formats defined different output text.
+After the first run materialized `active.fmt.raw`, replacing `active.fmt` with
+the second format still produced `OLD-FORMAT`. Removing only the temporary
+fixture's raw companion caused the next run to produce `NEW-FORMAT`.
+
+Key raw companions by source identity or content, and publish them atomically
+in a writable cache. Do not modify shared installation trees merely to read a
+format. The confirmed code is `crates/tekai-engine/src/kpathsea.rs` in
+`check_format_path` and `materialize_raw_format_companion`.
+
 ### Database identity checks disagree across caches
 
 An external shared tree contains old and new versions of `auditchoice.sty`.
@@ -103,7 +150,9 @@ engine child.
 
 After terminating the parent of an infinite-loop TeX build, its engine child
 remained alive with parent PID 1 and consumed 88.8 percent CPU after half a
-second. The diagnostic driver killed and reaped its owned process group.
+second. The diagnostic driver terminated its owned process group and reaped
+the CLI. The finite-loop fixture also reproduced the orphan with 87.2 percent
+CPU after half a second.
 
 Repeated cancellations can accumulate CPU and memory use and leave old jobs
 writing outputs. A shared process runner should own the child lifetime,
@@ -267,10 +316,10 @@ The confirmed metadata code is in `crates/tekai-engine/src/pngshim.rs`.
 ## Remaining review targets
 
 The production linter, watcher, watch-event collector, resolver, PDF wrapper,
-PDF import adapter, PNG adapter, low-level support routines, and editor integration code have received detailed
-function-level review. Compiler orchestration, cache publication, fingerprints,
-and selected parser paths have also been traced across files. Review of the
-remaining compiler helpers and experimental engine is ongoing.
+PDF import adapter, PNG adapter, low-level support routines, compiler production
+code, and editor integration code have received detailed function-level review.
+Compiler orchestration, cache publication, fingerprints, and parsers have also
+been traced across files. Experimental engine review is ongoing.
 
 The generated engine is approximately 115,000 lines. It has not received a
 complete manual function-by-function review in this pass. Generated and
@@ -305,7 +354,8 @@ graph, and stream job-scoped artifact caching.
 Regression checks should test outcomes and bounded operation counts rather
 than relying only on timing thresholds. Required cases include edits after
 input consumption, creation of a higher-priority file, same-size database
-replacement with preserved mtime, cancellation of a live engine, a symlink
+replacement with preserved mtime, source replacement with preserved mtime,
+inactive end markers, format replacement, cancellation of a live engine, a symlink
 DAG, long Unicode and escape-heavy lines, a shared-resource multipage PDF,
 a cyclic PDF parent, oversized PNG metadata, and unrelated output sidecars.
 
