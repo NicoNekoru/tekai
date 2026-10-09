@@ -36,6 +36,7 @@ def command(args, **kwargs):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", type=Path, default=bundle.ROOT / "target/debug/tekai")
+    parser.add_argument("--images", action="store_true", help="also compare a page of 32 unique and repeated transparent PNGs")
     args = parser.parse_args()
     poppler = {name: shutil.which(name) for name in ["pdfinfo", "pdftotext", "pdftoppm", "pdffonts"]}
     if not all(poppler.values()):
@@ -69,8 +70,21 @@ def main():
             "stack_size = 10000", "save_size = 200000", "param_size = 20000",
             "shell_escape = f", "openout_any = a",
         ]) + "\n")
-        for case, suffix in CASES:
-            source = bundle.ROOT / "examples" / case
+        cases = [(case, suffix, bundle.ROOT / "examples" / case) for case, suffix in CASES]
+        if args.images:
+            from benchmark_runtime import png
+            source = work / "transparent-images-source"
+            source.mkdir()
+            for index in range(32):
+                png(source / f"image{index}.png", index)
+            rows = []
+            for start in range(0, 32, 8):
+                rows.append("".join(f"\\includegraphics[width=1cm]{{image{index}.png}}" for index in range(start, start + 8)) + "\\par\n")
+            # Repeat after eviction as well as immediately, exercising both paths.
+            rows.append("\\includegraphics[width=1cm]{image0.png}\\includegraphics[width=1cm]{image0.png}")
+            (source / "main.tex").write_text("\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n" + "".join(rows) + "\n\\end{document}\n")
+            cases.append(("transparent-images", "images", source))
+        for case, suffix, source in cases:
             candidate = bundle.ROOT / f"target/runtime-complete-paper-{suffix}"
             env = {"PATH": "", "TEKAI_ENGINE_CACHE": str(work / "cache"),
                    "TEKAI_TEXMF_MODE": "bundled"}

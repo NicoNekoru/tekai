@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -12,6 +13,10 @@ use crate::compiler::{
     BibMode, BuildOptions, DraftPrepass, Engine, Runner, build, build_dependency_paths,
 };
 use crate::lint::{LintConfig, format_diagnostic, has_errors, lint_paths};
+
+#[path = "watch_events.rs"]
+mod events;
+use events::EventReceiver;
 
 #[derive(Debug, Clone)]
 pub struct WatchOptions {
@@ -26,9 +31,10 @@ pub struct WatchOptions {
 }
 
 pub fn watch(options: WatchOptions) -> Result<()> {
-    let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
+    let ignored_out_dir = absolute_output_dir(&options.build_options.out_dir)?;
+    let (tx, rx) = events::channel(ignored_out_dir.clone());
     let mut watcher = notify::recommended_watcher(move |result| {
-        let _ = tx.send(result);
+        tx.send(result);
     })
     .context("failed to create filesystem watcher")?;
     watcher
@@ -37,7 +43,7 @@ pub fn watch(options: WatchOptions) -> Result<()> {
 
     let mut filter = WatchFilter {
         root: canonical_for_watch(&options.root).unwrap_or_else(|| options.root.clone()),
-        ignored_out_dir: absolute_output_dir(&options.build_options.out_dir)?,
+        ignored_out_dir,
         dependency_paths: HashSet::new(),
         watched_dependency_dirs: HashSet::new(),
     };
@@ -46,12 +52,11 @@ pub fn watch(options: WatchOptions) -> Result<()> {
     let initial_build_ok = run_once(&options, LintScope::Full, "rebuild", None);
     refresh_dependency_filter(&options, &mut filter, &mut watcher);
     if let Some(hot_preview) = &mut hot_preview {
-        hot_preview.remember_paths(filter.dependency_paths.iter());
+        hot_preview.synchronize_paths(filter.dependency_paths.iter());
         if initial_build_ok {
             hot_preview.prewarm(&options);
         }
     }
-    drain_startup_events(&rx);
 
     let mut pending_event = None;
     if initial_build_ok
@@ -82,13 +87,17 @@ pub fn watch(options: WatchOptions) -> Result<()> {
         let paths = debounced_relevant_paths(&rx, quiet_duration, max_duration, &filter, paths);
         let build_ok = run_once(
             &options,
-            LintScope::Changed(paths),
+            if paths.contains(&filter.root) {
+                LintScope::Full
+            } else {
+                LintScope::Changed(paths)
+            },
             "rebuild",
             hot_preview.as_mut(),
         );
         refresh_dependency_filter(&options, &mut filter, &mut watcher);
         if let Some(hot_preview) = &mut hot_preview {
-            hot_preview.remember_paths(filter.dependency_paths.iter());
+            hot_preview.synchronize_paths(filter.dependency_paths.iter());
         }
         if build_ok
             && let (Some(final_build_options), Some(final_after_idle)) =
@@ -228,7 +237,7 @@ fn lint_targets(options: &WatchOptions, lint_scope: &LintScope) -> Result<Vec<Pa
 }
 
 fn debounced_relevant_paths(
-    rx: &mpsc::Receiver<notify::Result<Event>>,
+    rx: &impl EventReceiver,
     quiet_duration: Duration,
     max_duration: Duration,
     filter: &WatchFilter,
@@ -236,7 +245,7 @@ fn debounced_relevant_paths(
 ) -> Vec<PathBuf> {
     let start = Instant::now();
     let mut quiet_started = start;
-    let mut paths = initial_paths;
+    let mut paths = initial_paths.into_iter().collect::<HashSet<_>>();
     loop {
         let elapsed = start.elapsed();
         if elapsed >= max_duration || quiet_started.elapsed() >= quiet_duration {
@@ -249,8 +258,19 @@ fn debounced_relevant_paths(
             .min(Duration::from_millis(40));
         match rx.recv_timeout(timeout) {
             Ok(Ok(event)) => {
-                if let Some(mut event_paths) = relevant_event_paths(&event, filter) {
-                    paths.append(&mut event_paths);
+                if let Some(event_paths) = relevant_event_paths(&event, filter) {
+                    paths.extend(event_paths);
+                    if paths.len() > events::MAX_PATHS
+                        || paths.contains(&filter.root)
+                        || paths
+                            .iter()
+                            .map(|path| path.as_os_str().len() + 64)
+                            .sum::<usize>()
+                            > events::MAX_PATH_BYTES
+                    {
+                        // A structural marker forces normal build/lint fallback.
+                        paths = HashSet::from([filter.root.clone()]);
+                    }
                     quiet_started = Instant::now();
                 }
             }
@@ -259,8 +279,8 @@ fn debounced_relevant_paths(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    let mut paths = paths.into_iter().collect::<Vec<_>>();
     paths.sort();
-    paths.dedup();
     paths
 }
 
@@ -272,7 +292,7 @@ enum WaitForEvent {
 }
 
 fn wait_for_relevant_event(
-    rx: &mpsc::Receiver<notify::Result<Event>>,
+    rx: &impl EventReceiver,
     idle_duration: Duration,
     filter: &WatchFilter,
 ) -> WaitForEvent {
@@ -299,21 +319,14 @@ fn wait_for_relevant_event(
     }
 }
 
-fn drain_startup_events(rx: &mpsc::Receiver<notify::Result<Event>>) {
-    loop {
-        match rx.try_recv() {
-            Ok(Ok(_event)) => {}
-            Ok(Err(error)) => eprintln!("warning: watch event failed: {error}"),
-            Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
-        }
-    }
-}
-
 const HOT_PREVIEW_DIR: &str = ".tekai-hmr";
 const HOT_PREVIEW_WARM_DIR: &str = ".tekai-hmr-warm";
 const HOT_PREVIEW_CONTEXT_BYTES: usize = 900;
 const HOT_PREVIEW_MAX_SNIPPET_BYTES: usize = 2_400;
 const HOT_PREVIEW_MAX_INLINE_BYTES: u64 = 128 * 1024;
+const HOT_PREVIEW_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
+const HOT_PREVIEW_SNAPSHOT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const HOT_PREVIEW_SNAPSHOT_FILES: usize = 256;
 
 #[derive(Debug)]
 enum HotPreviewOutcome {
@@ -371,10 +384,63 @@ impl HotPreviewState {
             let Some(canonical) = canonical_for_watch(path) else {
                 continue;
             };
-            if let Ok(source) = fs::read_to_string(&canonical) {
-                self.snapshots.insert(canonical, source);
+            self.snapshots.remove(&canonical);
+            let Ok(file) = fs::File::open(&canonical) else {
+                continue;
+            };
+            let Ok(metadata) = file.metadata() else {
+                continue;
+            };
+            if metadata.len() > HOT_PREVIEW_SNAPSHOT_FILE_BYTES {
+                continue;
             }
+            let mut source = String::new();
+            if file
+                .take(HOT_PREVIEW_SNAPSHOT_FILE_BYTES + 1)
+                .read_to_string(&mut source)
+                .is_err()
+                || source.len() as u64 > HOT_PREVIEW_SNAPSHOT_FILE_BYTES
+            {
+                continue;
+            }
+            let cost = source.capacity() + canonical.capacity() + 128;
+            if cost > HOT_PREVIEW_SNAPSHOT_BYTES {
+                continue;
+            }
+            while self.snapshots.len() >= HOT_PREVIEW_SNAPSHOT_FILES
+                || self.snapshot_bytes() + cost > HOT_PREVIEW_SNAPSHOT_BYTES
+            {
+                let Some(largest) = self
+                    .snapshots
+                    .iter()
+                    .max_by_key(|(_, source)| source.capacity())
+                    .map(|(path, _)| path.clone())
+                else {
+                    break;
+                };
+                self.snapshots.remove(&largest);
+            }
+            self.snapshots.insert(canonical, source);
         }
+    }
+
+    fn snapshot_bytes(&self) -> usize {
+        self.snapshots
+            .iter()
+            .map(|(path, source)| source.capacity() + path.capacity() + 128)
+            .sum()
+    }
+
+    fn synchronize_paths<'a>(&mut self, paths: impl Iterator<Item = &'a PathBuf>) {
+        let mut active = paths
+            .filter(|path| has_tex_source_extension(path))
+            .filter_map(|path| canonical_for_watch(path))
+            .collect::<Vec<_>>();
+        active.sort();
+        active.dedup();
+        self.snapshots
+            .retain(|path, _| active.binary_search(path).is_ok());
+        self.remember_paths(active.iter());
     }
 
     fn prewarm(&mut self, options: &WatchOptions) {
@@ -1230,6 +1296,9 @@ fn dependency_watch_dirs(
 }
 
 fn relevant_event_paths(event: &Event, filter: &WatchFilter) -> Option<Vec<PathBuf>> {
+    if event.need_rescan() {
+        return Some(vec![filter.root.clone()]);
+    }
     let mut paths = event
         .paths
         .iter()
@@ -1376,6 +1445,52 @@ mod tests {
     use notify::{Event, EventKind};
 
     use super::*;
+
+    #[test]
+    fn snapshots_follow_active_dependencies_and_have_a_byte_budget() {
+        let root = unique_temp_dir("tekai-watch-snapshot-budget");
+        fs::create_dir_all(&root).unwrap();
+        let mut state = HotPreviewState {
+            snapshots: HashMap::new(),
+            static_document: None,
+            warmed: false,
+        };
+        for n in 0..25 {
+            let path = root.join(format!("part-{n}.tex"));
+            fs::write(&path, "a".repeat(1024 * 1024)).unwrap();
+            state.synchronize_paths(std::iter::once(&path));
+            assert_eq!(state.snapshots.len(), 1);
+            assert!(state.snapshots.contains_key(&path.canonicalize().unwrap()));
+        }
+        let paths = (0..25)
+            .map(|n| root.join(format!("part-{n}.tex")))
+            .collect::<Vec<_>>();
+        state.synchronize_paths(paths.iter());
+        assert!(state.snapshot_bytes() <= HOT_PREVIEW_SNAPSHOT_BYTES);
+        assert!(state.snapshots.len() < paths.len());
+        let huge = root.join("huge.tex");
+        fs::write(
+            &huge,
+            "a".repeat(HOT_PREVIEW_SNAPSHOT_FILE_BYTES as usize + 1),
+        )
+        .unwrap();
+        state.synchronize_paths(std::iter::once(&huge));
+        assert!(state.snapshots.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_rescan_event_forces_structural_fallback() {
+        let root = PathBuf::from("/paper");
+        let filter = WatchFilter {
+            root: root.clone(),
+            ignored_out_dir: root.join("out"),
+            dependency_paths: HashSet::new(),
+            watched_dependency_dirs: HashSet::new(),
+        };
+        let event = Event::new(EventKind::Any).set_flag(notify::event::Flag::Rescan);
+        assert_eq!(relevant_event_paths(&event, &filter), Some(vec![root]));
+    }
 
     #[test]
     fn dependency_paths_are_relevant_even_without_known_extension() {

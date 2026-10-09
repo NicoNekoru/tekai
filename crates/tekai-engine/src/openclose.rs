@@ -318,6 +318,9 @@ pub unsafe extern "C" fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c
             if allocated {
                 set_nameoffile_from_c_str(fname);
             }
+            crate::lookup::record_output(std::path::Path::new(
+                &CStr::from_ptr(fname).to_string_lossy().into_owned(),
+            ));
             recorder_record_output(fname);
         }
         if allocated {

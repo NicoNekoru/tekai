@@ -156,6 +156,90 @@ Performance changes are accepted only with the relevant correctness gate. In
 particular, final-build optimizations require rendered parity, and watch changes
 must preserve dependency filtering and structural fallbacks.
 
+### Lookup sessions and retention limits
+
+Mutable filesystem lookup is implemented in `tekai-engine/src/lookup.rs`.
+Each build, dependency scan and native pass starts a fresh thread-local session.
+Recursive roots are indexed by basename once, and an ancestor index supplies
+filtered views for overlapping search entries. Matching repeated `//` wildcards
+uses a dynamic-programming table and preserves outer-first directory priority.
+Database-only entries retain their database order and reparse when the database's
+identity, length or timestamps change. Explicit symlink paths remain searchable.
+
+The session observes a stable external filesystem during a pass. `open_output`
+registers newly created TeX files in existing inventories. Completed shell
+commands and pipes invalidate the inventory because opted-in external commands
+can create arbitrary inputs. Symlink-directory aliases are retained, including
+initially empty aliases, so a generated file becomes visible through each name.
+A new build or one-shot `locate` sees external edits.
+Call `lookup::reset` before a new scheduler-resolution session when using the
+engine crate directly. Never cache negative filesystem lookups across builds.
+
+Retained data has explicit admission and eviction rules.
+
+| Data | Retention budget | Lifecycle or fallback |
+| --- | --- | --- |
+| Mutable lookup indexes | 32 MiB charged cost, at most 128 indexes | Evict least recently used roots. Oversized trees/databases stream without retaining their full index, with at most 128 oversize markers. |
+| Decoded PNG cache | 16 MiB including charged overhead, at most 256 entries | Evict least recently used pixels. Active readers own their `Arc` independently. Oversized images decode without admission. |
+| Preview source snapshots | 16 MiB charged cost, at most 256 files and 2 MiB per file | Remove inactive dependencies. Uncached sources use the existing conservative snippet selection. |
+| Queued watch paths | 1 MiB charged cost or 4096 unique paths, with one wakeup | Coalesce repeats and discard output/access events before queueing. Overflow or watcher errors request a normal whole-root rebuild. |
+
+These are retention budgets, not a total process-memory limit. A currently
+decoded image, native font tables and the typesetting workspace can require
+additional memory. Container and path overhead are charged conservatively.
+The immutable bundled filename index is process-owned `OnceLock` data, not a
+history of document lookups. Native typesetting runs in a child per pass, so its
+global font/image tables cannot accumulate across watcher rebuilds. Investigate
+heap-tool warnings by ownership and repeated live measurements rather than
+treating every at-exit allocation as a growing leak.
+
+CI asserts scan counts and retention costs without installed TeX on both macOS
+architectures. It does not use hardware-sensitive benchmark thresholds. For
+matched release measurements on macOS, run the maintainer benchmark against an
+older binary if available.
+
+```sh
+python3 tools/benchmark_runtime.py --engine target/release/tekai \
+  --baseline /path/to/previous/tekai --watch --repeats 3
+python3 tools/verify_bundled_papers.py --engine target/release/tekai --images
+```
+
+The benchmark creates temporary nested projects, transparent PNGs, shared trees
+and paper copies. It records warm medians and peak RSS in
+`target/runtime-performance/report.json`. The optional watch case rotates 25
+one-MiB includes with one active include at a time. Caches are isolated by binary,
+and benchmark subprocess groups are stopped on timeout. The parity gate's image
+case covers 32 distinct transparent PNGs and repeated images after eviction.
+
+On 2026-10-09, matched warm trials on an Apple M4 Pro compared the installed
+0.5.0 release with the optimized refactor. Each timing is the median of three
+runs after warming the same case. Paper copies, output directories and caches
+were separate for each binary. The added folders contained unused data files.
+
+| Case | 0.5.0 | Refactor |
+| --- | ---: | ---: |
+| Minimal native pass, 4000 unused leaf folders | 1.309 s | 0.100 s |
+| 50-page paper, no added folders | 2.612 s | 1.870 s |
+| 50-page paper, 1000 unused leaf folders | 69.085 s | 1.867 s |
+| 48-page paper, 1000 unused leaf folders | 8.250 s | 0.672 s |
+| Cached build, 4000 unrelated personal-tree folders | 75.8 ms | 13.5 ms |
+| Cached build, 4000 unrelated site-tree folders | 73.8 ms | 9.7 ms |
+| 32 unique transparent PNGs, peak RSS | 162.0 MiB | 49.3 MiB |
+
+The 25-include preview rotation was one continuous run per binary. Release
+0.5.0 grew from 29.3 to 55.3 MiB as inactive sources accumulated. The refactor
+started at 28.9 MiB and reached a roughly 35.1 MiB plateau after three edits.
+It remained there through edit 23, with lower RSS at the last sample.
+The complete sample series is in the benchmark JSON. Simple unpadded startup
+timings differ by a few milliseconds, so this table is evidence about scaling
+and retention rather than a promise that every small build is faster.
+
+A final candidate-only recheck after the generated-file alias fixes measured
+1.724 s for the padded 50-page paper, 0.624 s for the padded 48-page paper and
+49.0 MiB peak RSS for 32 PNGs. Preview RSS stayed between 29.4 and 30.9 MiB
+through all 25 rotating includes. Those samples are recorded separately in
+`target/runtime-performance/final-candidate.json`.
+
 ## Build disk usage
 
 Measure a fresh build directory, not a long-lived `target/debug` containing

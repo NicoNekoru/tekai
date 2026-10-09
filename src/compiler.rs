@@ -89,10 +89,11 @@ static KPATHSEA_RESOLUTION_CACHE: OnceLock<Mutex<HashMap<KpathseaResolutionKey, 
     OnceLock::new();
 
 fn clear_kpathsea_resolution_cache() {
+    tekai_engine::lookup::reset();
     if let Some(cache) = KPATHSEA_RESOLUTION_CACHE.get()
         && let Ok(mut cache) = cache.lock()
     {
-        cache.clear();
+        *cache = HashMap::new();
     }
 }
 
@@ -765,6 +766,7 @@ fn latexmk_or_tectonic_build(options: &BuildOptions) -> Result<BuildReport> {
 }
 
 fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
+    let started = Instant::now();
     if options.max_runs == 0 {
         bail!("--max-runs must be at least 1");
     }
@@ -785,7 +787,6 @@ fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
     let mode_key = direct_mode_key(options, &main);
 
-    let started = Instant::now();
     let mut previous_build_state = read_build_state_if_exists(&state_path)?;
     if !options.force
         && !pdf_path.exists()
@@ -974,6 +975,7 @@ fn append_tekai_pdftex_certification_trace(
 }
 
 fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
+    let started = Instant::now();
     if options.max_runs == 0 {
         bail!("--max-runs must be at least 1");
     }
@@ -998,7 +1000,6 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
     let mode_key = direct_mode_key(options, &main);
 
-    let started = Instant::now();
     let mut previous_build_state = read_build_state_if_exists(&state_path)?;
     let mut restored_aux_cache_accepts_stale_final_pdf = false;
     if !options.force

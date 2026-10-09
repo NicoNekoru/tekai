@@ -252,31 +252,65 @@ pub fn paths(variables: &[&'static str], subdirs: &[&str]) -> Vec<SearchPath> {
 /// fingerprinted separately by the recorder. This catches newly added files
 /// that shadow a previously used package without changing that old file.
 pub fn tree_signature(base: &Path) -> String {
-    let mut signature = String::new();
-    for root in shared_roots() {
-        signature.push_str(&root.path);
+    signature_for_roots(base, &shared_roots())
+}
+
+fn signature_for_roots(base: &Path, roots: &[SearchPath]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut signature = std::collections::hash_map::DefaultHasher::new();
+    for root in roots {
+        root.path.hash(&mut signature);
+        let database_only = root.path.starts_with("!!");
         let root = base.join(root.path.strip_prefix("!!").unwrap_or(&root.path));
-        for entry in walkdir::WalkDir::new(root)
-            .follow_links(true)
-            .sort_by_file_name()
-            .into_iter()
-        {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            if entry.file_type().is_dir() || entry.file_name() == "ls-R" {
-                signature.push_str(&entry.path().to_string_lossy());
-                if let Ok(metadata) = entry.metadata() {
-                    signature.push_str(&format!(
-                        "{:?}:{}",
-                        metadata.modified().ok(),
-                        metadata.len()
-                    ));
+        if database_only {
+            // Database-only lookup never walks the tree. Its invalidation must
+            // follow the same rule, not inspect unrelated manuals or sources.
+            let db = root
+                .ancestors()
+                .map(|root| root.join("ls-R"))
+                .find(|db| db.is_file())
+                .unwrap_or_else(|| root.join("ls-R"));
+            hash_metadata(&db, &mut signature);
+            continue;
+        }
+        hash_metadata(&root, &mut signature);
+        let mut visited = std::collections::HashSet::new();
+        // These are precisely the typed TDS subtrees used by the resolver.
+        // Root metadata also catches the creation of a previously absent type.
+        for kind in ["tex", "fonts", "bibtex", "makeindex"] {
+            let subtree = root.join(kind);
+            subtree.hash(&mut signature);
+            for entry in walkdir::WalkDir::new(subtree)
+                .follow_links(true)
+                .sort_by_file_name()
+                .into_iter()
+                .filter_entry(|entry| {
+                    !entry.file_type().is_dir()
+                        || entry
+                            .path()
+                            .canonicalize()
+                            .ok()
+                            .is_some_and(|path| visited.insert(path))
+                })
+            {
+                let Ok(entry) = entry else { continue };
+                if entry.file_type().is_dir() {
+                    hash_metadata(entry.path(), &mut signature);
                 }
             }
         }
     }
-    signature
+    format!("{:016x}", signature.finish())
+}
+
+fn hash_metadata(path: &Path, signature: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+    path.hash(signature);
+    path.canonicalize().ok().hash(signature);
+    if let Ok(metadata) = std::fs::metadata(path) {
+        metadata.modified().ok().hash(signature);
+        metadata.len().hash(signature);
+    }
 }
 
 #[cfg(test)]
@@ -311,5 +345,36 @@ mod tests {
     fn cyclic_variables_and_brace_expansion_are_bounded() {
         assert_eq!(expand_with("$LOOP", &|_| Some("$LOOP".into())), vec![""]);
         assert_eq!(expand_with("a{broken", &|_| None), vec!["a{broken"]);
+    }
+
+    #[test]
+    fn signatures_ignore_unsearched_docs_and_database_only_disk_changes() {
+        let root = std::env::temp_dir().join(format!("tekai-signature-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("doc")).unwrap();
+        std::fs::create_dir_all(root.join("tex/latex")).unwrap();
+        let roots = vec![SearchPath {
+            path: root.to_string_lossy().into_owned(),
+            source: "test",
+            bundled: false,
+        }];
+        let before = signature_for_roots(Path::new("."), &roots);
+        for n in 0..1000 {
+            std::fs::create_dir_all(root.join(format!("doc/{n}/unused"))).unwrap();
+        }
+        assert_eq!(signature_for_roots(Path::new("."), &roots), before);
+        std::fs::create_dir(root.join("tex/latex/new-package")).unwrap();
+        assert_ne!(signature_for_roots(Path::new("."), &roots), before);
+        std::fs::write(root.join("ls-R"), "./tex/latex:\n").unwrap();
+        let roots = vec![SearchPath {
+            path: format!("!!{}", root.display()),
+            source: "test",
+            bundled: false,
+        }];
+        let before = signature_for_roots(Path::new("."), &roots);
+        std::fs::write(root.join("tex/latex/not-in-database.sty"), "ignored").unwrap();
+        assert_eq!(signature_for_roots(Path::new("."), &roots), before);
+        std::fs::write(root.join("ls-R"), "./tex/latex:\nnot-in-database.sty\n").unwrap();
+        assert_ne!(signature_for_roots(Path::new("."), &roots), before);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

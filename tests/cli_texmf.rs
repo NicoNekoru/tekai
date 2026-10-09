@@ -345,6 +345,32 @@ fn custom_tree_lists_and_project_configuration_are_respected() {
 }
 
 #[test]
+fn files_created_after_inventory_are_found_recursively_in_the_same_pass() {
+    let project = Project::new();
+    fs::create_dir_all(project.0.join("paper/build/generated/deep")).unwrap();
+    project.write(
+        "paper/main.tex",
+        r"\documentclass{article}
+\begin{filecontents*}[overwrite]{generated/deep/newinput.tex}
+\typeout{GENERATED-AFTER-INVENTORY}
+Generated body.
+\end{filecontents*}
+\begin{document}
+\input{newinput}
+\end{document}
+",
+    );
+    project.build(&[]);
+    project.marker("GENERATED-AFTER-INVENTORY");
+    assert!(
+        project
+            .0
+            .join("paper/build/generated/deep/newinput.tex")
+            .is_file()
+    );
+}
+
+#[test]
 fn referenced_variable_changes_invalidate_the_build_cache() {
     let project = Project::new();
     for (tree, marker) in [("one", "FIRST-VARIABLE"), ("two", "SECOND-VARIABLE")] {

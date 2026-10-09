@@ -139,8 +139,6 @@ static FORMAT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 static EMBEDDED_PDFLATEX_FORMAT_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 thread_local! {
-    static INDEX_LOOKUP_CACHE: RefCell<HashMap<c_uint, HashMap<String, Option<PathBuf>>>> =
-        RefCell::new(HashMap::new());
     static INDEX_READABLE_CACHE: RefCell<HashMap<PathBuf, bool>> = RefCell::new(HashMap::new());
 }
 
@@ -533,25 +531,9 @@ fn is_runtime_ls_r_dir(dir: &str) -> bool {
 }
 
 fn find_in_index(candidate: &str, format: c_uint) -> Option<PathBuf> {
-    let cached = INDEX_LOOKUP_CACHE.with(|cache| {
-        let cache = cache.borrow();
-        cache
-            .get(&format)
-            .and_then(|by_candidate| by_candidate.get(candidate).cloned())
-    });
-    if let Some(found) = cached {
-        return found;
-    }
-
-    let found = find_in_index_uncached(candidate, format);
-    INDEX_LOOKUP_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .entry(format)
-            .or_default()
-            .insert(candidate.to_owned(), found.clone());
-    });
-    found
+    // The immutable filename index already provides constant-time misses.
+    // Memoizing every requested name retained arbitrary document strings.
+    find_in_index_uncached(candidate, format)
 }
 
 fn find_in_index_uncached(candidate: &str, format: c_uint) -> Option<PathBuf> {
@@ -810,15 +792,25 @@ pub fn input_search_paths(extension: &str) -> Vec<crate::search::SearchPath> {
 
 /// Resolve a scheduler input using the same search paths as the engine.
 /// The caller supplies a base directory, so concurrent builds never chdir.
+/// Start a mutable-tree session with `lookup::reset` before a new build.
 pub fn resolve_input(
     doc_dir: &Path,
     candidate: &str,
     extension: &str,
 ) -> io::Result<Option<PathBuf>> {
-    Ok(locate_input(doc_dir, candidate, extension)?.map(|found| found.path))
+    Ok(locate_in_session(doc_dir, candidate, extension)?.map(|found| found.path))
 }
 
 pub fn locate_input(
+    doc_dir: &Path,
+    candidate: &str,
+    extension: &str,
+) -> io::Result<Option<InputLocation>> {
+    crate::lookup::reset();
+    locate_in_session(doc_dir, candidate, extension)
+}
+
+fn locate_in_session(
     doc_dir: &Path,
     candidate: &str,
     extension: &str,

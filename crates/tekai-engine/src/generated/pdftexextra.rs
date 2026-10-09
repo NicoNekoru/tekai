@@ -2631,6 +2631,7 @@ pub unsafe extern "C" fn runsystem(mut cmd: *const ::core::ffi::c_char) -> ::cor
     }
     if allow == 1 as ::core::ffi::c_int {
         status = system(cmd);
+        crate::lookup::reset();
     } else if allow == 2 as ::core::ffi::c_int {
         let mut k_0: size_t = 0;
         k_0 = 0 as size_t;
@@ -2641,6 +2642,7 @@ pub unsafe extern "C" fn runsystem(mut cmd: *const ::core::ffi::c_char) -> ::cor
             k_0 = k_0.wrapping_add(1);
         }
         status = system(safecmd);
+        crate::lookup::reset();
     }
     if status != 0 as ::core::ffi::c_int {
         fprintf(
@@ -4267,6 +4269,7 @@ pub unsafe extern "C" fn close_file_or_pipe(mut f_0: *mut FILE) {
             if pipes[i as usize] == f_0 {
                 if !f_0.is_null() {
                     pclose(f_0);
+                    crate::lookup::reset();
                 }
                 pipes[i as usize] = ::core::ptr::null_mut::<FILE>();
                 return;

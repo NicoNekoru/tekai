@@ -3,6 +3,24 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
+## Unreleased
+
+- Index recursive project and shared package trees once per build/pass. Reuse
+  overlapping search roots and parse mutable filename databases once per file
+  identity, preserving path priority and database-only lookup.
+- Replace exponential recursive-wildcard matching with dynamic programming.
+  Register files created by TeX immediately and refresh lookup after opted-in
+  shell commands, so inventory caching does not hide generated inputs.
+- Bound retained lookup indexes and decoded PNG pixels. Drop compressed PNG
+  buffers after decoding and remove the redundant unbounded bundled-name cache.
+- Prune preview snapshots to active dependencies and cap their retained size.
+  Coalesce watch notifications in a bounded queue, use whole-build fallback on
+  overflow, and preserve source edits made during startup builds.
+- Fingerprint only searched personal TDS subtrees and site filename databases.
+  Include cache-validation work in reported direct-build timings.
+- Add deterministic scan-count, eviction and watcher-retention CI tests,
+  a repeatable runtime benchmark, and transparent-image PDF parity coverage.
+
 ## 0.5.0 - 2026-10-07
 
 - Share standard personal and site-wide TeX addition trees with installed TeX

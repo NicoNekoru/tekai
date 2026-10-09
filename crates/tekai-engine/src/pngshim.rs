@@ -66,6 +66,8 @@ struct FileIdentity {
     size: libc::off_t,
     mtime_sec: libc::time_t,
     mtime_nsec: libc::c_long,
+    ctime_sec: libc::time_t,
+    ctime_nsec: libc::c_long,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -78,8 +80,15 @@ struct PngDecodeCacheKey {
 }
 
 thread_local! {
-    static PNG_DECODE_CACHE: std::cell::RefCell<std::collections::HashMap<PngDecodeCacheKey, Arc<DecodedImage>>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
+    static PNG_DECODE_CACHE: std::cell::RefCell<crate::cache::BudgetCache<PngDecodeCacheKey, Arc<DecodedImage>>> =
+        std::cell::RefCell::new(crate::cache::BudgetCache::new(PNG_CACHE_BYTES, 256));
+}
+
+const PNG_CACHE_BYTES: usize = 16 * 1024 * 1024;
+
+pub(crate) fn reset_decode_cache() {
+    PNG_DECODE_CACHE
+        .with(|cache| *cache.borrow_mut() = crate::cache::BudgetCache::new(PNG_CACHE_BYTES, 256));
 }
 
 struct PngState {
@@ -187,7 +196,8 @@ impl PngState {
         }
         let cache_key = self.decode_cache_key();
         if let Some(key) = cache_key {
-            if let Some(decoded) = PNG_DECODE_CACHE.with(|cache| cache.borrow().get(&key).cloned())
+            if let Some(decoded) =
+                PNG_DECODE_CACHE.with(|cache| cache.borrow_mut().get(&key).cloned())
             {
                 self.decoded = Some(decoded);
                 self.row_cursor = 0;
@@ -214,6 +224,10 @@ impl PngState {
             .next_frame(&mut data)
             .map_err(|err| err.to_string())?;
         data.truncate(output.buffer_size());
+        drop(reader);
+        // Keep neither the compressed file nor the decoder's temporary buffers
+        // alongside the pixels. Transform changes can reread the open file.
+        self.data = Vec::new();
 
         let mut color_type = color_type_to_u8(output.color_type);
         let bit_depth = bit_depth_to_u8(output.bit_depth);
@@ -247,7 +261,9 @@ impl PngState {
         });
         if let Some(key) = cache_key {
             PNG_DECODE_CACHE.with(|cache| {
-                cache.borrow_mut().insert(key, Arc::clone(&decoded));
+                cache
+                    .borrow_mut()
+                    .insert(key, Arc::clone(&decoded), decoded.data.capacity() + 256);
             });
         }
         self.decoded = Some(decoded);
@@ -715,6 +731,8 @@ fn file_identity(fp: *mut libc::FILE) -> Option<FileIdentity> {
         size: stat.st_size,
         mtime_sec: stat_mtime_sec(&stat),
         mtime_nsec: stat_mtime_nsec(&stat),
+        ctime_sec: stat.st_ctime,
+        ctime_nsec: stat.st_ctime_nsec,
     })
 }
 
@@ -915,6 +933,139 @@ mod tests {
     use std::io::Write;
     use std::os::unix::ffi::OsStrExt;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn decoded_cache_is_bounded_and_eviction_keeps_active_pixels_valid() {
+        reset_decode_cache();
+        let active = Arc::new(DecodedImage {
+            data: vec![123; 1024 * 1024],
+            rowbytes: 1024,
+            bit_depth: 8,
+            color_type: PNG_COLOR_TYPE_GRAY,
+        });
+        let key = |ino| PngDecodeCacheKey {
+            file: FileIdentity {
+                dev: 1,
+                ino,
+                size: 1,
+                mtime_sec: 1,
+                mtime_nsec: 0,
+                ctime_sec: 1,
+                ctime_nsec: 0,
+            },
+            strip_16: false,
+            trns_to_alpha: false,
+            strip_alpha: false,
+            gamma: None,
+        };
+        PNG_DECODE_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            cache.insert(key(0), Arc::clone(&active), active.data.capacity() + 256);
+            assert!(Arc::ptr_eq(cache.get(&key(0)).unwrap(), &active));
+            for n in 1..64 {
+                let decoded = Arc::new(DecodedImage {
+                    data: vec![n as u8; 1024 * 1024],
+                    rowbytes: 1024,
+                    bit_depth: 8,
+                    color_type: PNG_COLOR_TYPE_GRAY,
+                });
+                cache.insert(key(n), decoded, 1024 * 1024 + 256);
+                assert!(cache.retained_bytes() <= PNG_CACHE_BYTES);
+            }
+            assert!(cache.get(&key(0)).is_none());
+        });
+        assert_eq!(Arc::strong_count(&active), 1);
+        assert!(active.data.iter().all(|pixel| *pixel == 123));
+        reset_decode_cache();
+    }
+
+    #[test]
+    fn decoding_releases_compressed_data_and_preserves_alpha_transform() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&[10, 20, 30, 128])
+                .unwrap();
+        }
+        let mut state = PngState::new();
+        state.data = bytes;
+        state.width = 1;
+        state.height = 1;
+        state.strip_alpha = true;
+        state.ensure_decoded().unwrap();
+        assert!(state.data.is_empty());
+        assert_eq!(state.data.capacity(), 0);
+        let decoded = state.decoded.unwrap();
+        assert_eq!(decoded.color_type, PNG_COLOR_TYPE_RGB);
+        assert_eq!(decoded.data, [10, 20, 30]);
+    }
+
+    #[test]
+    fn real_file_cache_reuses_only_matching_transforms_and_file_identity() {
+        fn encoded(pixel: &[u8]) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
+                encoder.set_color(png::ColorType::Rgba);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder
+                    .write_header()
+                    .unwrap()
+                    .write_image_data(pixel)
+                    .unwrap();
+            }
+            bytes
+        }
+        reset_decode_cache();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "tekai-png-cache-{}-{nonce}.png",
+            std::process::id()
+        ));
+        fs::write(&path, encoded(&[10, 20, 30, 128])).unwrap();
+        let original_mtime = fs::metadata(&path).unwrap().modified().unwrap();
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let file = unsafe { libc::fopen(name.as_ptr(), c"rb".as_ptr()) };
+        assert!(!file.is_null());
+        let decode = |strip_alpha| {
+            let mut state = PngState::new();
+            state.file = file;
+            state.width = 1;
+            state.height = 1;
+            state.strip_alpha = strip_alpha;
+            state.ensure_decoded().unwrap();
+            state.decoded.unwrap()
+        };
+        let rgba = decode(false);
+        let rgb = decode(true);
+        assert_eq!(rgba.data, [10, 20, 30, 128]);
+        assert_eq!(rgb.data, [10, 20, 30]);
+        assert!(!Arc::ptr_eq(&rgba, &rgb));
+        assert!(Arc::ptr_eq(&rgb, &decode(true)));
+        let identity = file_identity(file).unwrap();
+        fs::write(&path, encoded(&[50, 60, 70, 128])).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(original_mtime))
+            .unwrap();
+        assert_ne!(file_identity(file).unwrap(), identity);
+        assert_eq!(decode(true).data, [50, 60, 70]);
+        unsafe {
+            libc::fclose(file);
+        }
+        fs::remove_file(path).unwrap();
+        reset_decode_cache();
+    }
 
     #[test]
     fn read_update_info_keeps_untransformed_png_lazy() {

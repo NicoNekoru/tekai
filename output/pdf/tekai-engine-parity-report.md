@@ -2,6 +2,18 @@
 
 Initial measurement: 2026-07-05. Bundled runtime parity revalidated on 2026-10-07.
 
+## Bounded runtime cache gate
+
+On 2026-10-09, the lookup and retention refactor passed the bundled-runtime gate
+with no installed TeX. All 48 and 50 paper pages matched upstream pdfTeX at
+144 DPI, and extracted text matched. A new one-page fixture containing 32
+distinct transparent PNGs plus repeats after cache eviction also matched
+pixel-for-pixel and in extracted text. No bundle or format data changed.
+
+Reproduce with `python3 tools/verify_bundled_papers.py --engine target/release/tekai --images`.
+The required real BasicTeX comparison remains a separate CI gate. It was not
+run locally on this machine, which has no TeX installation.
+
 ## 0.5.0 release gate
 
 On 2026-10-07, the optimized 0.5.0 release binary rebuilt both public fixtures

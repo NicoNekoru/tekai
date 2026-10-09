@@ -54,8 +54,10 @@ pub mod generated {
     pub mod pdftexini;
 }
 
+mod cache;
 mod embedded;
 pub mod kpathsea;
+pub mod lookup;
 pub mod md5;
 pub mod openclose;
 pub mod pdftoepdf;
@@ -74,6 +76,8 @@ pub unsafe fn run_from_c_args(
     argc: ::core::ffi::c_int,
     argv: *mut *mut ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
+    lookup::reset();
+    pngshim::reset_decode_cache();
     unsafe {
         generated::pdftexextra::synctexoption = ::core::ffi::c_int::MAX;
         synctex::reset_for_run();
