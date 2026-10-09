@@ -20,7 +20,7 @@ import time
 import zlib
 
 REPO = Path(__file__).resolve().parent.parent
-CASES = ('lookup', 'lint', 'cache', 'edit-race', 'cancel', 'preview', 'pdf', 'png', 'deep-inputs')
+CASES = ('lookup', 'lint', 'cache', 'edit-race', 'cancel', 'preview', 'pdf', 'png', 'deep-inputs', 'aux-concurrency')
 SEARCH_VARIABLES = (
     'TEXINPUTS', 'BIBINPUTS', 'BSTINPUTS', 'TEXFONTS', 'TFMFONTS', 'AFMFONTS',
     'T1FONTS', 'TTFONTS', 'OPENTYPEFONTS', 'VFFONTS', 'ENCFONTS', 'SFDFONTS',
@@ -343,7 +343,63 @@ class Audit:
                 (project / f'part{index}.tex').write_text(
                     f'\\input{{part{index + 1}}}\n' if index + 1 < count else 'Body\n')
             result = self.run(self.build_command(project, '--once'), project, measured=True)
-            self.record('deep-inputs', files=count, **result)
+            self.record('deep-inputs', phase='build', files=count, **result)
+            command = [self.args.engine, 'check', project / 'main.tex', '--out-dir',
+                       project / 'build', '--once', '--allow-warnings', '--quiet', '--report-json']
+            result = self.run(command, project, measured=True)
+            self.record('deep-inputs', phase='check', files=count, **result)
+
+    def aux_concurrency(self):
+        for count in ([4, 32] if self.args.quick else [4, 16, 32]):
+            source = ('\\documentclass{article}\n\\begin{document}\nHello\n\\iffalse\n'
+                      + '\n'.join(f'\\includegraphics{{image{i}.eps}}' for i in range(count))
+                      + '\n\\fi\n\\end{document}\n')
+            project = self.project(f'aux-concurrency-{count}', source)
+            program_dir = project / 'programs'
+            program_dir.mkdir()
+            program = program_dir / 'epstopdf'
+            blank_pdf = pdf_bytes([
+                b'<< /Type /Catalog /Pages 2 0 R >>',
+                b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+                b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>',
+                b'<< /Length 0 >>\nstream\n\nendstream',
+            ])
+            # The stand-in performs no conversion. It delays briefly to expose
+            # peak concurrency, then writes a tiny valid PDF to the requested path.
+            program.write_text('#!/usr/bin/env python3\nimport sys\nimport time\n'
+                               'from pathlib import Path\ntime.sleep(0.5)\n'
+                               'output = next(arg.split("=", 1)[1] for arg in sys.argv[1:] '
+                               'if arg.startswith("--outfile="))\n'
+                               f'Path(output).write_bytes({blank_pdf!r})\n')
+            program.chmod(0o700)
+            for index in range(count):
+                (project / f'image{index}.eps').write_text(
+                    '%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 10 10\nshowpage\n')
+            env = self.environment(project, PATH=str(program_dir) + os.pathsep + os.environ.get('PATH', ''))
+            command = self.build_command(project, '--external-tools', '--force')
+            process = self.start(command, project, env)
+            peak = 0
+            started = time.monotonic()
+            try:
+                deadline = started + self.args.timeout
+                while process.poll() is None and time.monotonic() < deadline:
+                    lines = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,command='], text=True).splitlines()
+                    active = 0
+                    for line in lines:
+                        fields = line.strip().split(None, 2)
+                        if len(fields) == 3 and fields[1] == str(process.pid) and str(program) in fields[2]:
+                            active += 1
+                    peak = max(peak, active)
+                    time.sleep(0.01)
+                if process.poll() is None:
+                    self.record('aux-concurrency', jobs=count, peak_converters=peak, timeout=True)
+                else:
+                    stdout, stderr = process.communicate()
+                    self.record('aux-concurrency', jobs=count, peak_converters=peak,
+                                cpu_count=os.cpu_count(), seconds=time.monotonic() - started,
+                                code=process.returncode, stdout=stdout, stderr_tail=stderr[-2000:])
+            finally:
+                stop_group(process)
 
 
 def main():

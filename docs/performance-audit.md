@@ -27,6 +27,7 @@ them as a passing correctness suite. The timing samples are diagnostic.
 python3 tools/audit_runtime.py --quick
 python3 tools/audit_runtime.py --case lookup --case edit-race --case cancel
 python3 tools/audit_runtime.py --case lint --case pdf --case cache
+python3 tools/audit_runtime.py --case aux-concurrency
 ```
 
 The runner requires macOS for RSS measurements. The cache-output checks use
@@ -128,6 +129,34 @@ The confirmed site is `src/watch.rs` in `hot_preview_definition_inputs`.
 | Importing page 1 with shared resources | 1-page, 27 KB PDF | 256-page, 50 KB PDF | 33.2 to 130.5 MiB peak RSS |
 | Saving a minimal build cache | No unrelated outputs | 128 MiB of unrelated bibliography outputs | 29.4 to 145.8 MiB peak RSS |
 | Reading a PNG palette | 3-byte palette | Invalid 24 MiB palette | 29.5 to 77.5 MiB peak RSS, both builds accepted |
+| Scheduling EPS conversion | 4 jobs | 32 jobs on 14 CPUs | 4 and 32 simultaneous converter processes |
+
+### Auxiliary tools have no shared concurrency limit
+
+The bibliography, index, EPS, SVG, Asymptote, PythonTeX, MetaPost, and gnuplot
+job runners start an OS thread for each discovered job. Their outer task
+groups also run concurrently. There is no shared ceiling on threads,
+subprocesses, or the combined memory cost of the jobs. The PGF make runner
+does cap its own concurrency, but that limit does not govern the other tools.
+
+An isolated converter stand-in delayed each job by half a second, then wrote
+a tiny valid PDF. Four jobs produced four simultaneous converters. Thirty-two
+jobs produced thirty-two simultaneous converters on this 14-CPU machine.
+The timing is artificial and says nothing about real conversion speed. The
+process count verifies that the scheduler launches every job at once.
+
+All image references in that fixture were inside `\iffalse`. TeX skipped
+them, but source preflight still ran all converters. The rendered one-page
+document needed none of those images.
+
+Use one bounded executor across tool categories, with explicit cancellation
+and per-job resource ownership. Avoid eagerly converting resources that the
+document does not use where that can be established safely. A TeX source
+scan cannot in general determine arbitrary macro and conditional behavior.
+
+Relevant code is in `src/compiler.rs`, including
+`run_bibtex_jobs_if_stale_for_jobs`, `run_makeindex_jobs_if_stale`,
+`run_eps_conversion_jobs_if_needed`, and `run_svg_conversion_jobs_if_needed`.
 
 ### Directory aliases still multiply traversal work
 
@@ -261,7 +290,7 @@ confirmed performance findings.
 ## Fix order and regression checks
 
 First define shared contracts for build generations, lookup dependencies,
-file identity, and process cancellation. Fixing the stale-output and orphan
+file identity, bounded auxiliary scheduling, and process cancellation. Fixing the stale-output and orphan
 cases takes priority over improving benchmark numbers. Then remove repeated
 linter scans and PDF clones, replace alias traversal with a physical directory
 graph, and stream job-scoped artifact caching.
