@@ -42,6 +42,12 @@ pub(crate) struct DirectoryGraph {
     budget: usize,
     #[cfg(test)]
     read_dirs: usize,
+    #[cfg(test)]
+    entry_metadata_followups: usize,
+    #[cfg(test)]
+    directory_canonicalizations: usize,
+    #[cfg(test)]
+    ordinary_directory_canonicalizations: usize,
 }
 
 enum Part {
@@ -94,6 +100,12 @@ impl DirectoryGraph {
             budget,
             #[cfg(test)]
             read_dirs: 0,
+            #[cfg(test)]
+            entry_metadata_followups: 0,
+            #[cfg(test)]
+            directory_canonicalizations: 1 + usize::from(excluded_bundle.is_some()),
+            #[cfg(test)]
+            ordinary_directory_canonicalizations: 0,
         };
         graph.add_directory(canonical)?;
         let mut next = 0;
@@ -105,28 +117,48 @@ impl DirectoryGraph {
             if let Ok(entries) = fs::read_dir(&graph.nodes[next].canonical) {
                 for entry in entries.filter_map(Result::ok) {
                     let name = entry.file_name();
-                    let path = entry.path();
-                    let Ok(metadata) = entry.metadata() else {
+                    let Ok(file_type) = entry.file_type() else {
                         continue;
                     };
-                    // DirEntry metadata does not follow leaf symlinks.
-                    let symlink = metadata.file_type().is_symlink();
+                    // Directory-entry type normally comes from read_dir. Only
+                    // symlinks need a separate metadata call to classify the
+                    // target, and regular files need no path allocation here.
+                    let symlink = file_type.is_symlink();
                     let hops = if symlink {
                         resolve_hops(&graph.nodes[next].canonical, Path::new(&name))
                     } else {
                         hop_limit().map(|_| 0)
                     };
-                    let metadata = if symlink {
-                        let Ok(metadata) = fs::metadata(&path) else {
+                    let file_type = if symlink {
+                        #[cfg(test)]
+                        {
+                            graph.entry_metadata_followups += 1;
+                        }
+                        let Ok(metadata) = fs::metadata(entry.path()) else {
                             continue;
                         };
-                        metadata
+                        metadata.file_type()
                     } else {
-                        metadata
+                        file_type
                     };
-                    if metadata.is_dir() {
-                        let Ok(target) = path.canonicalize() else {
-                            continue;
+                    if file_type.is_dir() {
+                        let path = entry.path();
+                        let target = if symlink || !cfg!(unix) {
+                            #[cfg(test)]
+                            {
+                                graph.directory_canonicalizations += 1;
+                                graph.ordinary_directory_canonicalizations += usize::from(!symlink);
+                            }
+                            let Ok(target) = path.canonicalize() else {
+                                continue;
+                            };
+                            target
+                        } else {
+                            // Unix read_dir returns the actual child spelling.
+                            // Its canonical parent has no symlink components.
+                            // Keep canonicalization on other platforms, where
+                            // reparse points and namespace normalization differ.
+                            path
                         };
                         if excluded.as_ref() == Some(&target) {
                             continue;
@@ -138,7 +170,7 @@ impl DirectoryGraph {
                         };
                         graph.charge(name.capacity() + std::mem::size_of::<Edge>() + 64)?;
                         graph.nodes[next].edges.push(Edge { name, target, hops });
-                    } else if metadata.is_file() && !graph.add_file(next, &name, hops) {
+                    } else if file_type.is_file() && !graph.add_file(next, &name, hops) {
                         return None;
                     }
                 }
@@ -635,6 +667,90 @@ mod tests {
             graph.find_from(&nested, Some(""), Path::new("f.sty")),
             Some(nested.join("y/f.sty"))
         );
+    }
+
+    #[test]
+    fn normal_entries_need_no_metadata_followups_or_unix_child_canonicalization() {
+        let fixture = Fixture::new();
+        let directories = [
+            fixture.0.clone(),
+            fixture.directory("MiXeD"),
+            fixture.directory("MiXeD/SubDir"),
+            fixture.directory("Other"),
+        ];
+        for directory in &directories {
+            for n in 0..20 {
+                fs::write(directory.join(format!("file-{n}.sty")), "file").unwrap();
+            }
+        }
+        let graph = DirectoryGraph::build(&fixture.0, None, BUDGET).unwrap();
+        assert_eq!(graph.read_dirs, 4);
+        // These count explicit directory-entry followups, not file_type's
+        // platform-internal fallback or the separate symlink-hop resolver.
+        assert_eq!(graph.entry_metadata_followups, 0);
+        assert_eq!(
+            graph.ordinary_directory_canonicalizations,
+            if cfg!(unix) { 0 } else { 3 }
+        );
+        assert_eq!(
+            graph.directory_canonicalizations,
+            if cfg!(unix) { 1 } else { 4 }
+        );
+        let nested = fixture.0.join("MiXeD/SubDir").canonicalize().unwrap();
+        assert!(graph.contains_directory(&nested));
+        assert_eq!(
+            graph.find(Some("MiXeD//SubDir"), Path::new("file-0.sty")),
+            Some(fixture.0.join("MiXeD/SubDir/file-0.sty"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_symlink_entries_need_metadata_followups_and_child_canonicalization() {
+        let fixture = Fixture::new();
+        let root = fixture.directory("search");
+        let target = fixture.directory("external");
+        let deep = fixture.directory("external/DeEp");
+        fs::write(deep.join("f.sty"), "file").unwrap();
+        fs::write(root.join("ordinary.sty"), "file").unwrap();
+        for alias in ["a", "z"] {
+            std::os::unix::fs::symlink(&target, root.join(alias)).unwrap();
+        }
+        std::os::unix::fs::symlink(deep.join("f.sty"), root.join("leaf.sty")).unwrap();
+        std::os::unix::fs::symlink(deep.join("missing.sty"), root.join("dangling.sty")).unwrap();
+        let graph = DirectoryGraph::build(&root, None, BUDGET).unwrap();
+        assert_eq!(graph.read_dirs, 3);
+        assert_eq!(graph.entry_metadata_followups, 4);
+        assert_eq!(graph.directory_canonicalizations, 3);
+        assert_eq!(graph.ordinary_directory_canonicalizations, 0);
+        assert_eq!(
+            graph.find(Some(""), Path::new("f.sty")),
+            Some(root.join("a/DeEp/f.sty"))
+        );
+        assert_eq!(
+            graph.find(Some(""), Path::new("leaf.sty")),
+            Some(root.join("leaf.sty"))
+        );
+        assert_eq!(graph.find(Some(""), Path::new("dangling.sty")), None);
+    }
+
+    #[test]
+    fn ordinary_bundle_child_is_excluded_without_child_canonicalization_on_unix() {
+        let fixture = Fixture::new();
+        let bundle = fixture.directory("bundle");
+        fs::write(bundle.join("private.sty"), "bundle").unwrap();
+        let graph = DirectoryGraph::build(&fixture.0, Some(&bundle), BUDGET).unwrap();
+        assert_eq!(graph.read_dirs, 1);
+        assert_eq!(graph.entry_metadata_followups, 0);
+        assert_eq!(
+            graph.ordinary_directory_canonicalizations,
+            usize::from(!cfg!(unix))
+        );
+        assert_eq!(
+            graph.directory_canonicalizations,
+            if cfg!(unix) { 2 } else { 3 }
+        );
+        assert_eq!(graph.find(Some(""), Path::new("private.sty")), None);
     }
 
     #[cfg(unix)]
