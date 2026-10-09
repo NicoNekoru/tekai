@@ -1333,7 +1333,9 @@ impl<'a> ExpansionEngine<'a> {
                     if divisor == 0 {
                         return Err(ExpandError::new("integer expression divided by zero"));
                     }
-                    value /= divisor;
+                    value = value
+                        .checked_div(divisor)
+                        .ok_or_else(|| ExpandError::new("integer expression is too large"))?;
                 }
                 _ => return Ok(value),
             }
@@ -4056,7 +4058,9 @@ fn read_integer_product_from_pending(
                 if divisor == 0 {
                     return Err(ExpandError::new("integer expression divided by zero"));
                 }
-                value /= divisor;
+                value = value
+                    .checked_div(divisor)
+                    .ok_or_else(|| ExpandError::new("integer expression is too large"))?;
             }
             _ => return Ok(value),
         }
@@ -4480,32 +4484,29 @@ fn pdf_escape_hex_bytes(bytes: &[u8]) -> String {
 }
 
 fn pdf_unescape_hex(text: &str) -> Result<String, ExpandError> {
-    let hex = text
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .collect::<String>();
-    if hex.len() % 2 != 0 {
+    let mut bytes = Vec::new();
+    let mut high = None;
+    for ch in text.chars().filter(|ch| !ch.is_whitespace()) {
+        let digit = match ch {
+            '0'..='9' => ch as u8 - b'0',
+            'a'..='f' => ch as u8 - b'a' + 10,
+            'A'..='F' => ch as u8 - b'A' + 10,
+            _ => {
+                return Err(ExpandError::new(
+                    "\\pdfunescapehex encountered a non-hex digit",
+                ));
+            }
+        };
+        if let Some(high_digit) = high.take() {
+            bytes.push((high_digit << 4) | digit);
+        } else {
+            high = Some(digit);
+        }
+    }
+    if high.is_some() {
         return Err(ExpandError::new(
             "\\pdfunescapehex requires an even number of hex digits",
         ));
-    }
-    let mut bytes = Vec::with_capacity(hex.len() / 2);
-    let mut chars = hex.chars();
-    while let Some(high) = chars.next() {
-        let low = chars
-            .next()
-            .expect("hex string length was checked to be even");
-        let Some(high) = high.to_digit(16) else {
-            return Err(ExpandError::new(
-                "\\pdfunescapehex encountered a non-hex digit",
-            ));
-        };
-        let Some(low) = low.to_digit(16) else {
-            return Err(ExpandError::new(
-                "\\pdfunescapehex encountered a non-hex digit",
-            ));
-        };
-        bytes.push(((high << 4) | low) as u8);
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
@@ -5313,6 +5314,53 @@ mod tests {
             expand_to_text(r"\ifnum\numexpr3*4\relax>10 yes\else no\fi").unwrap(),
             "yes"
         );
+    }
+
+    #[test]
+    fn numexpr_division_returns_errors_in_streaming_and_pending_paths() {
+        let minimum = r"\count0=-9223372036854775807 \advance\count0 by -1 ";
+        for (prefix, expression, message) in [
+            (minimum, r"\number\numexpr\count0/-1\relax", "too large"),
+            ("", r"\number\numexpr1/0\relax", "divided by zero"),
+        ] {
+            for expression in [
+                expression.to_string(),
+                format!(r"\edef\result{{{expression}}}"),
+            ] {
+                let error = expand_to_text(&format!("{prefix}{expression}"))
+                    .expect_err("invalid division must return an expansion error");
+                assert!(error.to_string().contains(message), "{error}");
+            }
+        }
+        for expression in [
+            r"\number\numexpr-7/2\relax",
+            r"\edef\result{\number\numexpr-7/2\relax}\result",
+        ] {
+            assert_eq!(expand_to_text(expression).unwrap(), "-3");
+        }
+    }
+
+    #[test]
+    fn pdfunescapehex_validates_digits_before_pairing_them() {
+        for invalid in ["é", "界", "🙂", "0é", "éé", "é0", "GG", "F"] {
+            for expression in [
+                format!(r"\pdfunescapehex{{{invalid}}}"),
+                format!(r"\edef\result{{\pdfunescapehex{{{invalid}}}}}"),
+            ] {
+                let error = expand_to_text(&expression)
+                    .expect_err("invalid hex must return an expansion error");
+                assert!(error.to_string().contains("\\pdfunescapehex"), "{error}");
+            }
+        }
+        assert_eq!(pdf_unescape_hex("").unwrap(), "");
+        assert_eq!(pdf_unescape_hex(" \n\t\u{2003}").unwrap(), "");
+        assert_eq!(pdf_unescape_hex("4 1\n6\t2\u{2003}43").unwrap(), "AbC");
+        for expression in [
+            r"\pdfunescapehex{416243}",
+            r"\edef\result{\pdfunescapehex{416243}}\result",
+        ] {
+            assert_eq!(expand_to_text(expression).unwrap(), "AbC");
+        }
     }
 
     #[test]

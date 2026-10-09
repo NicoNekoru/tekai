@@ -7,6 +7,8 @@ hits when lookup precedence changes, and engine processes surviving
 cancellation. Cache retention limits alone do not prevent these failures.
 
 The preview scan now rounds its byte limit down to a UTF-8 character boundary.
+The experimental expander now rejects the three reproduced invalid inputs
+without aborting.
 The other confirmed failures below remain open unless their section says otherwise.
 
 ## Measurement conditions
@@ -356,7 +358,7 @@ saved bindings. They should not require duplicating every unrelated definition.
 Relevant code is `crates/tekai-pdftex/src/expand.rs` in
 `ensure_current_scope_snapshot`, `current_expansion_state`, and scoped setters.
 
-### Finite invalid primitive inputs can abort expansion
+### Finite invalid primitive inputs aborted expansion
 
 Both integer-expression parsers check multiplication overflow and division
 by zero, but use unchecked division for `i64::MIN / -1`. A finite count
@@ -369,10 +371,16 @@ with exit code -6. The direct expression and the same expression inside
 an even UTF-8 byte count, then assumes an even character count. The two-byte,
 one-character argument reaches an invalid `expect` before digit validation.
 
-Define the supported numeric ranges and use checked arithmetic consistently
-in both parser paths. Decode hex as validated ASCII bytes and return
-`ExpandError` for invalid input. These are input-error handling failures,
-not valid TeX output comparisons.
+Both division sites now use `checked_div`. Hex decoding validates each ASCII
+digit before pairing it and no longer allocates an intermediate filtered
+string. The three release probes now return `ExpandError` with normal process
+exit instead of aborting. Regression tests cover both parser paths, zero
+divisors, valid negative division, invalid Unicode and ASCII hex, whitespace,
+and valid hex output. These are input-error handling fixes, not valid TeX
+output comparisons.
+
+The broader numeric range contract and unchecked sign changes and register
+advances still need review. The nested-scope copying cost remains open.
 
 ## Static image parser safety concerns
 
