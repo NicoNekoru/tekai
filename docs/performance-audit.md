@@ -21,6 +21,9 @@ Inherited page attributes use iterative parent traversal and reject cycles
 with a normal input error.
 Duplicate watcher notifications no longer select an unchanged source's EOF
 as a preview edit and replace a valid PDF with a placeholder.
+Hot preview preparation now selects the embedded engine rather than depending
+on a separate development executable. JPEG resolution metadata now uses a
+checked slice parser with bounded APP1 storage.
 The other confirmed failures below remain open unless their section says otherwise.
 
 ## Measurement conditions
@@ -126,7 +129,7 @@ to ignored comments can therefore still hit the content cache.
 
 Entries without an identity rehash instead of trusting mtime. Platforms
 without the Unix change-time identity also rehash. The build-state version
-is now 39, including the directory-graph lookup change. Regression tests cover
+is now 41, including the directory-graph, JPEG and PNG changes. Regression tests cover
 same-length and longer edits, atomic replacement, legacy entries,
 unchanged-content reuse, and the metadata-only
 fast path. A bundled CLI test checks actual rebuilds after preserved-mtime
@@ -396,6 +399,18 @@ placeholder or substitute a direct body marker for the included source.
 This change can still trigger ordinary full/cache work. Multi-source preview
 selection and output-generation tracking remain separate design concerns.
 
+### Hot preview now works with the single executable install
+
+The fresh ARM CI environment caught a dependency on an unshipped standalone
+engine during preview prewarming. A source-tree executable could hide the
+failure locally even with an empty executable search path.
+
+Hot preview preparation now selects the exact embedded engine. Ordinary builds
+and fallback behavior keep their original engine options. A unit test checks
+the prepared engine and its fast-build settings. Native validation of an
+isolated executable copy passes Unicode prewarming and all ten rotating input
+edits without a sibling engine or a runner override.
+
 ### Settled caches load unrelated outputs into memory
 
 `collect_settled_aux_cache_file_paths` scans the entire output tree and collects
@@ -446,6 +461,47 @@ library's allocation limit does not constrain a caller-allocated output buffer.
 The compressed input also remains a whole-file read on the decode path.
 
 The confirmed metadata code is in `crates/tekai-engine/src/pngshim.rs`.
+
+### PNG chunk traversal now validates extents and advances forward
+
+The fast copy path cast unsigned chunk lengths to signed integers and used
+relative seeks. An IDAT declaration of `0xfffffff4` became minus twelve,
+returning traversal to the same header. The metadata pass accepted that IDAT
+header without inspecting its extent, so a tiny file could reach the loop.
+The copy pass also ignored incomplete payload reads.
+
+Metadata and copy traversal now share checked length and extent helpers.
+Chunks must obey the [PNG chunk-length limit](https://www.w3.org/TR/png-3/#5Chunk-layout)
+and fit within the open file's measured extent, including their CRC bytes.
+Absolute next offsets advance forward. IDAT totals use checked 64-bit sums,
+and every copied read must be complete. The second pass checks its total
+against the first pass before closing the stream. Existing palette and
+transparency bounds retain their specific diagnostics.
+
+Fourteen native framing gates check first and later chunk failures with tiny
+fixtures. A valid two-IDAT control requires the actual copy path and exact
+concatenated compressed bytes in the PDF. Helpers also have deterministic
+overflow and progress tests without large payload allocations.
+
+This checks CRC extent, not CRC contents on the fast copy path. Matching
+two-pass lengths does not establish input-content stability during edits.
+
+### PNG decoding failures now stop before output copying
+
+Four adapter entry points discarded `ensure_decoded` errors. Generated row
+writers could then copy an unfilled allocated buffer into the PDF. Source
+review traced this through transformed updates, row reads, whole-image reads
+and the RGBA fast path. No unfixed native probe was run.
+
+All four entry points now report `invalid PNG image data` through the existing
+fatal error path. Nine native cases require the exact decoder error, a normal
+engine exit and no surviving incomplete PDF. Valid grayscale, RGB and RGBA
+controls force decoding and require exact color and alpha bytes in the output.
+Safe Result-level tests also verify that failed decoding caches no pixels and
+repeated attempts return the same error.
+
+The decoded-frame allocation policy and whole-file compressed reads remain
+open. The change prevents swallowed failures, not every image memory problem.
 
 ## Confirmed experimental expansion failures
 
@@ -502,20 +558,33 @@ output comparisons.
 The broader numeric range contract and unchecked sign changes and register
 advances still need review. The nested-scope copying cost remains open.
 
-## Static image parser safety concerns
+## JPEG resolution metadata now uses checked reads
 
-The generated JPEG EXIF reader allocates an APP1 buffer, ignores the `fread`
-result, then follows TIFF offsets and field counts through raw pointers.
-`read_APP1_Exif` and `read_exif_bytes` do not carry the buffer's end address
-into those reads. Even the byte-order check dereferences the pointer after
-skipping zero bytes without verifying that it remains inside the buffer.
-Malformed or truncated metadata can therefore reach unchecked reads.
+The previous generated EXIF reader ignored incomplete reads and followed TIFF
+offsets through raw pointers. A twelve-byte JPEG containing only the EXIF
+signature reached an out-of-bounds byte-order read. Signed resolution division
+also allowed the minimum integer divided by minus one to abort.
 
-Replace this parser with checked slice reads. Validate the TIFF header, field
-table extent, and each referenced value before using it. Preserve valid
-resolution metadata through explicit tests. This is a code-level bounds
-finding in `crates/tekai-engine/src/generated/backend/writejpg.rs`, not a
-measured crash or exploit claim.
+`jpeg_exif.rs` now validates the signature, TIFF header, field-table extent,
+tag types and counts, and every referenced rational through checked slices.
+Division is checked. Resolution changes apply only after the complete metadata
+parses. Invalid optional metadata leaves the existing fallback intact. APP1
+storage cannot exceed 65,533 bytes, and the adapter requires a complete read.
+Invalid framing returns a normal engine input error. Positive resolution
+division, centimetre conversion and final truncation retain their old behavior.
+
+Ten unit tests cover both byte orders, every truncation of a valid payload,
+offset and field-count boundaries, zero padding, unsupported types, absent
+tags and arithmetic traps. All 88 full-profile native JPEG gates pass,
+including three framing rejections, invalid metadata and valid DPI controls.
+Successful controls require a fresh compilation, exact image bytes in the PDF,
+one 1-by-1 image object, and the expected natural dimensions. These checks do
+not establish independent image decoding or validate every JPEG segment.
+
+The unchecked-read finding came from source review. No unfixed native crash
+probe was run. High-bit signed resolution semantics remain unchanged.
+
+## Remaining image ownership concerns
 
 The image loader also uses manual allocation and handle cleanup through
 `readimage`, `deleteimage`, and `img_free`. Full reentrant or long-lived engine
@@ -560,8 +629,8 @@ confirmed performance findings.
 
 ## Local regression checks for the current fixes
 
-The current fixes passed 507 workspace library tests, 11 self-contained CLI
-tests, 13 native shared-tree CLI tests, and 116 Python tool tests.
+The current fixes passed 522 workspace library tests in debug and release,
+11 self-contained CLI tests, 13 native shared-tree CLI tests, and 149 Python tool tests.
 Both bundled large-paper fixtures passed their build gate. The real TeX
 reference test skipped locally because this machine has no system TeX
 installation. Workspace and standalone-engine lint checks, formatting, and
@@ -569,9 +638,12 @@ release and standalone builds passed. The separate upstream comparison passed
 all 99 paper and transparent-image pages with matching text and pixels.
 These are local results, not remote CI success.
 
-The full native performance profile passed 47 gates, recorded 29 observations,
+The full native performance profile passed 162 gates, recorded 29 observations,
 and reproduced seven known failures with no unexpected failures or skips.
-The engine and expansion executable hashes matched at the start and end.
+All 267 supervised commands completed without a timeout. Both isolated
+executable copies matched their sources and retained matching start/end hashes.
+The rotating-input watcher completed all ten edits. This checkpoint adds 88
+JPEG gates and 27 PNG framing, copy and decode gates to the prior 47 passes.
 
 Release input-identity probes now rebuild and produce the changed text for both
 in-place edits and atomic replacement with preserved mtime. The database probe
@@ -588,7 +660,7 @@ findings remain.
 
 `tools/performance_ci.py` separates fixed correctness gates from timings and
 open failures. The quick profile covers lookup, linter checks, source identity,
-PNG bounds, Unicode preview, cache hits, and decoded images. The full profile
+PNG bounds, JPEG metadata, Unicode preview, cache hits, and decoded images. The full profile
 adds every audit fixture, rotating watcher inputs, and experimental expansion.
 Successful probes for unresolved scaling costs are observations, not evidence
 that their complexity or memory use is fixed.
@@ -623,12 +695,20 @@ default branch.
 Every compiler probe has a finite input and a command deadline. The supervisor
 owns each process group, stops descendants, and reaps the direct child. All
 runtime and artifact caches, home directories, and temporary inputs are
-fixture-owned. The runner records streamed executable hashes at the start
-and end, rejecting a changed or unavailable executable at the final check.
+fixture-owned. The runner copies selected executables into an isolated binary
+directory and checks their streamed hashes before starting fixtures. It also
+checks both source and copied executables at the end, rejecting changes or
+disappearance. No development sibling engine is copied. Endpoint hashes do
+not detect a temporary replacement restored between checks.
 Reports distinguish passed gates, known failures, observations,
 and skips, and CI uploads them even after a failure. Release library tests
 enforce deterministic scan and retention assertions. The full profile also
 runs the separate all-page upstream PDF comparison.
+
+Release library tests disable the optional C entrypoint, matching the actual
+embedding dependency features. Without this setting, fat LTO collides with
+the Rust test harness entrypoint before any tests execute. The corrected
+command retains fat LTO and all workspace library tests.
 
 The parity runner now isolates all four candidate caches and uses owned
 process groups with bounded output capture and deadlines. It rejects oversized
@@ -657,3 +737,10 @@ for arithmetic boundaries and invalid Unicode hex input.
 Any output-affecting fixes still need the real-paper fidelity comparison and
 the ARM64 and Intel CI gates. The current audit records failures and proposed
 remedies. It does not claim these newly found failures are fixed.
+
+The first full remote run at `205a81f` passed both core macOS jobs and the
+99-page text/pixel comparison on both architectures. Its release jobs failed
+before library tests because the optional C entrypoint collided with the test
+harness, and its preview gates exposed the unshipped standalone dependency.
+Both issues have local regression fixes. That failed run is not recorded as
+remote CI success for the corrected checkpoint.
