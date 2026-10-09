@@ -168,6 +168,31 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(self.status('png-palette-25165824', code=0), 'failed')
         self.assertEqual(self.status('png-palette-3', code=0), 'passed')
 
+    def test_tex_print_text_removes_only_line_breaks(self):
+        self.assertEqual(ci._tex_print_text('one\n \r\ntwo\r\t  three'), 'one two\t  three')
+
+    def test_png_expected_phrases_accept_print_width_breaks_at_every_character(self):
+        cases = [('png-invalid-PLTE-769', 'invalid PNG PLTE length'),
+                 ('png-invalid-tRNS-25165824', 'invalid or duplicate PNG tRNS length'),
+                 ('png-palette-25165824', 'invalid PNG PLTE length')]
+        for case, expected in cases:
+            for newline in ('\n', '\r\n', '\r'):
+                for index in range(len(expected) + 1):
+                    with self.subTest(case=case, newline=newline, index=index):
+                        diagnostic = expected[:index] + newline + expected[index:]
+                        self.assertEqual(self.status(case, code=1, expected_error=expected,
+                                                    engine_log='! pdfTeX error: ' + diagnostic,
+                                                    stderr_tail=NORMAL_ENGINE_ERROR), 'passed')
+
+    def test_png_print_width_matching_requires_the_exact_diagnostic(self):
+        for diagnostic in ('invalid\n PNG tRNS length', 'invalid  PNG PLTE length',
+                           'invalid\nPNG PLTE length', 'invalid PNG unrelated\n PLTE length',
+                           'invalid PNG PLTE\n count'):
+            with self.subTest(diagnostic=diagnostic):
+                for case in ('png-invalid-PLTE-769', 'png-palette-25165824'):
+                    self.assertEqual(self.status(case, code=1, expected_error='invalid PNG PLTE length',
+                                                engine_log=diagnostic, stderr_tail=NORMAL_ENGINE_ERROR), 'failed')
+
     def test_preview_must_complete_prewarming_and_stay_alive(self):
         self.assertEqual(self.status('unicode-preview', prewarmed=True, alive=True), 'passed')
         self.assertEqual(self.status('unicode-preview', prewarmed=False, alive=True), 'failed')
@@ -227,6 +252,19 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(self.status('deep-inputs', code=1, phase='build', stdout='file not found'), 'failed')
         self.assertEqual(self.status('deep-inputs', code=-6, phase='check'), 'failed')
 
+    def test_capacity_diagnostic_accepts_print_width_breaks_in_each_output(self):
+        for diagnostic in ('TeX capacity\n exceeded', 'TeX capacity \r\nexceeded',
+                           'TeX capac\nity excee\rded'):
+            for output in ('stdout', 'stderr_tail'):
+                with self.subTest(diagnostic=diagnostic, output=output):
+                    evidence = dict(code=1, stderr_tail=NORMAL_ENGINE_ERROR)
+                    evidence[output] = evidence.get(output, '') + diagnostic
+                    self.assertEqual(self.status('deep-inputs', **evidence), 'passed')
+
+    def test_capacity_diagnostic_does_not_join_distinct_output_streams(self):
+        self.assertEqual(self.status('deep-inputs', code=1, stdout='capacity ',
+                                    stderr_tail='exceeded\n' + NORMAL_ENGINE_ERROR), 'failed')
+
     def test_missing_lookup_exit_one_does_not_hide_unrelated_errors(self):
         for stderr in ('', 'Error: permission denied\n', 'Error: failed to open project directory\n',
                        'Error: TeX input different.sty was not found; use --report-json to inspect its search paths\n'):
@@ -236,12 +274,13 @@ class VerdictTests(unittest.TestCase):
     def test_png_cli_exit_one_does_not_hide_engine_signals_or_panics(self):
         for status in ('signal: 6 (SIGABRT)', 'signal: 11 (SIGSEGV)', 'exit status: 101', 'exit status: 10', ''):
             stderr = f'Error: TeX engine failed with status {status}\n'
-            with self.subTest(status=status):
-                self.assertEqual(self.status('png-invalid-PLTE-769', code=1,
-                                            expected_error='invalid PNG PLTE length',
-                                            engine_log='invalid PNG PLTE length', stderr_tail=stderr), 'failed')
-                self.assertEqual(self.status('png-palette-25165824', code=1,
-                                            engine_log='invalid PNG PLTE length', stderr_tail=stderr), 'failed')
+            for diagnostic in ('invalid PNG PLTE length', 'invalid\n PNG PL\r\nTE length'):
+                with self.subTest(status=status, diagnostic=diagnostic):
+                    self.assertEqual(self.status('png-invalid-PLTE-769', code=1,
+                                                expected_error='invalid PNG PLTE length',
+                                                engine_log=diagnostic, stderr_tail=stderr), 'failed')
+                    self.assertEqual(self.status('png-palette-25165824', code=1,
+                                                engine_log=diagnostic, stderr_tail=stderr), 'failed')
 
     def test_deep_capacity_diagnostic_does_not_hide_wrapped_abort(self):
         stderr = 'Error: TeX engine failed with status signal: 6 (SIGABRT)\nTeX capacity exceeded\n'
@@ -256,6 +295,8 @@ class VerdictTests(unittest.TestCase):
         self.assertFalse(ci.normal_engine_input_error({'code': 1, 'timeout': True, 'stderr_tail': NORMAL_ENGINE_ERROR}))
         self.assertFalse(ci.normal_engine_input_error({'code': 1, 'stderr_tail': NORMAL_ENGINE_ERROR
                                                      + 'TeX engine failed with status signal: 6 (SIGABRT)\n'}))
+        self.assertFalse(ci.normal_engine_input_error({'code': 1,
+                                                     'stderr_tail': NORMAL_ENGINE_ERROR.replace('exit status', 'exit\n status')}))
 
     def test_skip_is_explicit(self):
         result = ci.verdict('input-identity', {'skipped': True, 'reason': 'pdftotext missing'})

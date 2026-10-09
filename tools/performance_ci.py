@@ -54,6 +54,11 @@ OPEN_SCALING = {
 }
 
 
+def _tex_print_text(text):
+    """Remove TeX print-width breaks, preserving literal spaces and tabs."""
+    return text.replace('\r', '').replace('\n', '')
+
+
 def normal_engine_input_error(values):
     """CLI exit 1 alone cannot distinguish a TeX error from a child crash.
 
@@ -115,22 +120,20 @@ def verdict(case, values):
         known = control_ok and values.get('child_survived') is True
     elif case == 'pdf-parent-cycle':
         check('cyclic PDF import returns a normal engine input error', normal_engine_input_error(values))
-        # TeX inserts line breaks at print width, including inside words. Drop
-        # only those breaks, retaining the diagnostic's literal spaces.
-        engine_log = values.get('engine_log', '').replace('\r', '').replace('\n', '')
         check('cyclic PDF import identifies the parent-chain cycle',
-              'xpdf: cyclic PDF page Parent chain' in engine_log)
+              'xpdf: cyclic PDF page Parent chain' in _tex_print_text(values.get('engine_log', '')))
     elif case.startswith('png-invalid-'):
         check('invalid metadata returns a normal engine input error', normal_engine_input_error(values))
         check('error identifies the invalid metadata', values.get('expected_error', '')
-              in values.get('engine_log', '') and bool(values.get('expected_error')))
+              in _tex_print_text(values.get('engine_log', '')) and bool(values.get('expected_error')))
     elif case.startswith('png-palette-'):
         invalid = int(case.rsplit('-', 1)[1]) > 768
         check('palette fixture returns the expected status', values.get('code') == (1 if invalid else 0)
               and not values.get('timeout'))
         if invalid:
             check('invalid palette returns a normal engine input error', normal_engine_input_error(values))
-            check('palette rejection identifies metadata bounds', 'invalid PNG PLTE length' in values.get('engine_log', ''))
+            check('palette rejection identifies metadata bounds',
+                  'invalid PNG PLTE length' in _tex_print_text(values.get('engine_log', '')))
     elif case == 'unicode-preview':
         check('watcher completed Unicode preview prewarming', values.get('prewarmed'))
         check('watcher remains alive after prewarming', values.get('alive'))
@@ -178,7 +181,8 @@ def verdict(case, values):
         if values.get('code') == 1:
             check('deep input rejection is a normal engine input error', normal_engine_input_error(values))
             check('deep input rejection identifies TeX capacity',
-                  'capacity exceeded' in values.get('stdout', '') + values.get('stderr_tail', ''))
+                  any('capacity exceeded' in _tex_print_text(values.get(key, ''))
+                      for key in ('stdout', 'stderr_tail')))
     else:
         check('fixture command succeeds', values.get('code') == 0 and not values.get('timeout'))
 
