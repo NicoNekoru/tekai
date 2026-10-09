@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
 
-const BUILD_STATE_VERSION: u32 = 36;
+const BUILD_STATE_VERSION: u32 = 37;
 const BIB_STATE_VERSION: u32 = 11;
 const INDEX_STATE_VERSION: u32 = 10;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
@@ -277,6 +277,32 @@ struct FileFingerprint {
     modified_ns: u64,
     #[serde(default)]
     hash: String,
+    // Effective-source lengths are not physical file sizes. Keep the latter
+    // together with the file identity used by every metadata-only fast path.
+    #[serde(default)]
+    metadata: Option<FileMetadataFingerprint>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Hash, PartialEq)]
+struct FileMetadataFingerprint {
+    len: u64,
+    modified_ns: u64,
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+    #[cfg(unix)]
+    changed_sec: i64,
+    #[cfg(unix)]
+    changed_nsec: i64,
+}
+
+impl FileMetadataFingerprint {
+    fn matches(self, input: &FileFingerprint) -> bool {
+        // Without a change-time identity, an edit preserving length and mtime
+        // cannot be distinguished from an unchanged file. Hash it instead.
+        cfg!(unix) && input.metadata == Some(self)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -10212,7 +10238,7 @@ fn fingerprint_bibtex_database_reusing(
     let Ok(canonical) = path.canonicalize() else {
         return Ok(None);
     };
-    let Some((_, modified_ns)) = file_metadata_fingerprint(&canonical)? else {
+    let Some(metadata) = file_metadata_fingerprint(&canonical)? else {
         return Ok(None);
     };
     let path = canonical.display().to_string();
@@ -10222,7 +10248,7 @@ fn fingerprint_bibtex_database_reusing(
         previous
             .and_then(|previous| previous.get(&path))
             .filter(|fingerprint| {
-                fingerprint.modified_ns == modified_ns && fingerprint.hash.starts_with(&hash_prefix)
+                metadata.matches(fingerprint) && fingerprint.hash.starts_with(&hash_prefix)
             })
     {
         return Ok(Some(fingerprint.clone()));
@@ -10236,8 +10262,9 @@ fn fingerprint_bibtex_database_reusing(
     Ok(Some(FileFingerprint {
         path,
         len: effective.len() as u64,
-        modified_ns,
+        modified_ns: metadata.modified_ns,
         hash: format!("{hash_prefix}{:016x}", content_hash(&effective)),
+        metadata: Some(metadata),
     }))
 }
 
@@ -10582,6 +10609,7 @@ fn fingerprint_biber_glob_matches(
         path: biber_glob_fingerprint_path(&doc_dir, pattern),
         len: paths.len() as u64,
         modified_ns: 0,
+        metadata: None,
         hash: format!(
             "{BIBER_GLOB_MATCHES_HASH_PREFIX}{:016x}",
             content_hash(&bytes)
@@ -10663,6 +10691,7 @@ fn fingerprint_biber_config_choice(doc_dir: &Path, config_path: Option<&Path>) -
         path: biber_config_fingerprint_path(&doc_dir),
         len: u64::from(config_path.is_some()),
         modified_ns: 0,
+        metadata: None,
         hash: format!(
             "{BIBER_CONFIG_CHOICE_HASH_PREFIX}{:016x}",
             content_hash(&bytes)
@@ -11952,15 +11981,15 @@ fn fingerprint_path_reusing(
     let Ok(canonical) = path.canonicalize() else {
         return Ok(None);
     };
-    let Some((len, modified_ns)) = file_metadata_fingerprint(&canonical)? else {
+    let Some(metadata) = file_metadata_fingerprint(&canonical)? else {
         return Ok(None);
     };
     let path = canonical.display().to_string();
     let hash = previous
         .and_then(|previous| previous.get(&path))
         .filter(|fingerprint| {
-            fingerprint.len == len
-                && fingerprint.modified_ns == modified_ns
+            metadata.matches(fingerprint)
+                && fingerprint.len == metadata.len
                 && !fingerprint.hash.is_empty()
         })
         .map(|fingerprint| fingerprint.hash.clone())
@@ -11968,9 +11997,10 @@ fn fingerprint_path_reusing(
         .unwrap_or_else(|| file_content_hash_hex(&canonical))?;
     Ok(Some(FileFingerprint {
         path,
-        len,
-        modified_ns,
+        len: metadata.len,
+        modified_ns: metadata.modified_ns,
         hash,
+        metadata: Some(metadata),
     }))
 }
 
@@ -11999,7 +12029,7 @@ fn fingerprint_effective_tex_path_reusing(
     let Ok(canonical) = path.canonicalize() else {
         return Ok(None);
     };
-    let Some((_, modified_ns)) = file_metadata_fingerprint(&canonical)? else {
+    let Some(metadata) = file_metadata_fingerprint(&canonical)? else {
         return Ok(None);
     };
     let path = canonical.display().to_string();
@@ -12008,7 +12038,7 @@ fn fingerprint_effective_tex_path_reusing(
         previous
             .and_then(|previous| previous.get(&path))
             .filter(|fingerprint| {
-                fingerprint.modified_ns == modified_ns && fingerprint.hash.starts_with(hash_prefix)
+                metadata.matches(fingerprint) && fingerprint.hash.starts_with(hash_prefix)
             })
     {
         return Ok(Some(fingerprint.clone()));
@@ -12017,20 +12047,13 @@ fn fingerprint_effective_tex_path_reusing(
         .with_context(|| format!("failed to read TeX source {}", canonical.display()))?;
     let effective = effective_tex_bytes(&bytes, mode);
     let len = effective.len() as u64;
-    let hash = previous
-        .and_then(|previous| previous.get(&path))
-        .filter(|fingerprint| {
-            fingerprint.len == len
-                && fingerprint.modified_ns == modified_ns
-                && fingerprint.hash.starts_with(hash_prefix)
-        })
-        .map(|fingerprint| fingerprint.hash.clone())
-        .unwrap_or_else(|| format!("{hash_prefix}{:016x}", content_hash(&effective)));
+    let hash = format!("{hash_prefix}{:016x}", content_hash(&effective));
     Ok(Some(FileFingerprint {
         path,
         len,
-        modified_ns,
+        modified_ns: metadata.modified_ns,
         hash,
+        metadata: Some(metadata),
     }))
 }
 
@@ -12076,10 +12099,10 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
                 .map(|hash| (hash, EffectiveTexMode::Input))
         })
     {
-        let Some((_, modified_ns)) = file_metadata_fingerprint(path)? else {
+        let Some(metadata) = file_metadata_fingerprint(path)? else {
             return Ok(false);
         };
-        if modified_ns == input.modified_ns {
+        if metadata.matches(input) {
             return Ok(true);
         }
         let bytes =
@@ -12097,10 +12120,10 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
         let Some(citation_keys) = decode_bibtex_citation_keys(encoded_keys) else {
             return Ok(false);
         };
-        let Some((_, modified_ns)) = file_metadata_fingerprint(path)? else {
+        let Some(metadata) = file_metadata_fingerprint(path)? else {
             return Ok(false);
         };
-        if modified_ns == input.modified_ns {
+        if metadata.matches(input) {
             return Ok(true);
         }
         let bytes =
@@ -12114,13 +12137,13 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
         return Ok(format!("{:016x}", content_hash(&effective)) == expected_hash);
     }
 
-    let Some((len, modified_ns)) = file_metadata_fingerprint(path)? else {
+    let Some(metadata) = file_metadata_fingerprint(path)? else {
         return Ok(false);
     };
-    if len != input.len {
+    if metadata.len != input.len {
         return Ok(false);
     }
-    if modified_ns == input.modified_ns {
+    if metadata.matches(input) {
         return Ok(true);
     }
     Ok(file_content_hash_hex(path)? == input.hash)
@@ -12511,7 +12534,7 @@ fn is_tex_like_source_input(path: &Path) -> bool {
     )
 }
 
-fn file_metadata_fingerprint(path: &Path) -> Result<Option<(u64, u64)>> {
+fn file_metadata_fingerprint(path: &Path) -> Result<Option<FileMetadataFingerprint>> {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -12528,7 +12551,20 @@ fn file_metadata_fingerprint(path: &Path) -> Result<Option<(u64, u64)>> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
-    Ok(Some((metadata.len(), modified_ns)))
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    Ok(Some(FileMetadataFingerprint {
+        len: metadata.len(),
+        modified_ns,
+        #[cfg(unix)]
+        dev: metadata.dev(),
+        #[cfg(unix)]
+        ino: metadata.ino(),
+        #[cfg(unix)]
+        changed_sec: metadata.ctime(),
+        #[cfg(unix)]
+        changed_nsec: metadata.ctime_nsec(),
+    }))
 }
 
 fn file_content_hash_hex(path: &Path) -> Result<String> {
@@ -14815,9 +14851,121 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn effective_tex_fingerprint_reuses_previous_metadata_without_reading() {
-        use std::os::unix::fs::PermissionsExt;
+    fn fingerprints_observe_edits_and_replacements_with_preserved_mtime() {
+        use std::fs::{File, FileTimes};
 
+        let root = unique_temp_dir("tekai-preserved-mtime-fingerprints");
+        fs::create_dir_all(&root).unwrap();
+        let citation_keys = Some(vec!["used".to_string()]);
+        for kind in 0..5 {
+            let fingerprint = |path: &Path, previous: Option<&HashMap<String, FileFingerprint>>| {
+                match kind {
+                    0 => fingerprint_path_reusing(path, previous),
+                    1 => fingerprint_effective_tex_path_reusing(
+                        path,
+                        previous,
+                        EffectiveTexMode::Root,
+                    ),
+                    2 => fingerprint_effective_tex_path_reusing(
+                        path,
+                        previous,
+                        EffectiveTexMode::Input,
+                    ),
+                    3 => fingerprint_effective_tex_path_reusing(
+                        path,
+                        previous,
+                        EffectiveTexMode::Preamble,
+                    ),
+                    _ => fingerprint_bibtex_database_reusing(path, previous, &citation_keys),
+                }
+                .unwrap()
+                .unwrap()
+            };
+            for atomic in [false, true] {
+                for replacement in ["NEW", "NEW-LONGER"] {
+                    let path = root.join(format!("input-{kind}-{atomic}-{replacement}.tex"));
+                    let source = |word| {
+                        if kind == 4 {
+                            format!("@book{{used,title={{{word}}}}}\n")
+                        } else {
+                            format!(
+                                "\\def\\word{{{word}}}\n\\begin{{document}}Body\\end{{document}}\n"
+                            )
+                        }
+                    };
+                    fs::write(&path, source("OLD")).unwrap();
+                    let modified = fs::metadata(&path).unwrap().modified().unwrap();
+                    let initial = fingerprint(&path, None);
+                    let previous = HashMap::from([(initial.path.clone(), initial.clone())]);
+                    let destination = if atomic {
+                        path.with_extension("replacement")
+                    } else {
+                        path.clone()
+                    };
+                    fs::write(&destination, source(replacement)).unwrap();
+                    File::open(&destination)
+                        .unwrap()
+                        .set_times(FileTimes::new().set_modified(modified))
+                        .unwrap();
+                    if atomic {
+                        fs::rename(destination, &path).unwrap();
+                    }
+
+                    assert!(!input_fingerprint_is_fresh(&initial).unwrap());
+                    let updated = fingerprint(&path, Some(&previous));
+                    assert_ne!(updated.hash, initial.hash, "{path:?}");
+                    assert_ne!(updated.metadata, initial.metadata, "{path:?}");
+                    assert_eq!(updated.modified_ns, initial.modified_ns);
+                    assert!(input_fingerprint_is_fresh(&updated).unwrap());
+
+                    // Legacy entries without a physical identity must rehash.
+                    let mut legacy = initial.clone();
+                    legacy.metadata = None;
+                    assert!(!input_fingerprint_is_fresh(&legacy).unwrap());
+                    let previous = HashMap::from([(legacy.path.clone(), legacy)]);
+                    assert_eq!(fingerprint(&path, Some(&previous)), updated);
+                }
+            }
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn effective_source_rehash_preserves_cache_hits_for_unchanged_content() {
+        let root = unique_temp_dir("tekai-effective-identity-rehash");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("main.tex");
+        fs::write(&path, "\\begin{document}Body\\end{document}\n").unwrap();
+        let initial = fingerprint_effective_tex_path_reusing(&path, None, EffectiveTexMode::Root)
+            .unwrap()
+            .unwrap();
+        fs::write(
+            &path,
+            "% A longer comment\n\\begin{document}Body\\end{document}\n",
+        )
+        .unwrap();
+        assert!(input_fingerprint_is_fresh(&initial).unwrap());
+        let previous = HashMap::from([(initial.path.clone(), initial.clone())]);
+        let updated =
+            fingerprint_effective_tex_path_reusing(&path, Some(&previous), EffectiveTexMode::Root)
+                .unwrap()
+                .unwrap();
+        assert_eq!(updated.hash, initial.hash);
+        assert_eq!(updated.len, initial.len);
+        assert_ne!(updated.metadata, initial.metadata);
+        assert!(updated.metadata.unwrap().len > initial.metadata.unwrap().len);
+
+        let mut serialized = serde_json::to_value(&initial).unwrap();
+        serialized.as_object_mut().unwrap().remove("metadata");
+        let legacy: FileFingerprint = serde_json::from_value(serialized).unwrap();
+        assert!(legacy.metadata.is_none());
+        assert!(input_fingerprint_is_fresh(&legacy).unwrap());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn effective_tex_fingerprint_reuses_previous_metadata_without_reading() {
         let root = unique_temp_dir("tekai-effective-fingerprint-reuse");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let input = root.join("main.tex");
@@ -14827,17 +14975,15 @@ mod tests {
         )
         .expect("failed to write input");
 
-        let initial = fingerprint_effective_tex_path_reusing(&input, None, EffectiveTexMode::Root)
-            .expect("failed to fingerprint TeX input")
-            .expect("fingerprint should exist");
+        let mut initial =
+            fingerprint_effective_tex_path_reusing(&input, None, EffectiveTexMode::Root)
+                .expect("failed to fingerprint TeX input")
+                .expect("fingerprint should exist");
+        // A sentinel proves that matching identity takes the metadata-only
+        // path. Changing permissions would change ctime and require a read.
+        initial.hash = format!("{TEX_ROOT_EFFECTIVE_HASH_PREFIX}reused-without-reading");
         let mut previous = HashMap::new();
         previous.insert(initial.path.clone(), initial.clone());
-
-        let original_permissions = fs::metadata(&input)
-            .expect("failed to inspect input")
-            .permissions();
-        fs::set_permissions(&input, fs::Permissions::from_mode(0o000))
-            .expect("failed to make input unreadable");
 
         let reused =
             fingerprint_effective_tex_path_reusing(&input, Some(&previous), EffectiveTexMode::Root)
@@ -14850,7 +14996,6 @@ mod tests {
             "{initial:#?}"
         );
 
-        fs::set_permissions(&input, original_permissions).expect("failed to restore permissions");
         let _ = fs::remove_dir_all(root);
     }
 
@@ -16019,18 +16164,21 @@ mod tests {
                     len: 0,
                     modified_ns: 0,
                     hash: "real".to_string(),
+                    metadata: None,
                 },
                 FileFingerprint {
                     path: biber_glob_fingerprint_path(&root, "refs/*.bib"),
                     len: 0,
                     modified_ns: 0,
                     hash: format!("{BIBER_GLOB_MATCHES_HASH_PREFIX}0000000000000000"),
+                    metadata: None,
                 },
                 FileFingerprint {
                     path: biber_config_fingerprint_path(&root),
                     len: 0,
                     modified_ns: 0,
                     hash: format!("{BIBER_CONFIG_CHOICE_HASH_PREFIX}0000000000000000"),
+                    metadata: None,
                 },
             ],
         };

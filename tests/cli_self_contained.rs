@@ -176,6 +176,53 @@ fn check_builds_and_caches_without_external_tools_or_tex_installation() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn bundled_cache_observes_source_edits_with_preserved_mtime() {
+    use std::fs::{File, FileTimes};
+
+    let project = Project::new();
+    let source = |word| {
+        format!("\\documentclass{{article}}\n\\begin{{document}}\n{word}\n\\end{{document}}\n")
+    };
+    let args = ["build", "main.tex", "--report-json"];
+    project.write("main.tex", &source("OLD"));
+    project.success(&args);
+    assert_eq!(project.success(&args)["skipped"], true);
+
+    let main = project.0.join("main.tex");
+    let modified = fs::metadata(&main).unwrap().modified().unwrap();
+    for (atomic, word) in [(false, "NEW"), (true, "NEW-LONGER")] {
+        let destination = if atomic {
+            project.0.join("replacement.tex")
+        } else {
+            main.clone()
+        };
+        fs::write(&destination, source(word)).unwrap();
+        File::open(&destination)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(modified))
+            .unwrap();
+        if atomic {
+            fs::rename(destination, &main).unwrap();
+        }
+        let built = project.success(&args);
+        assert_eq!(built["skipped"], false);
+        assert!(built["tex_runs"].as_u64().unwrap() > 0);
+        assert_eq!(project.success(&args)["skipped"], true);
+    }
+
+    // An identical replacement changes inode but can retain the content hit.
+    let replacement = project.0.join("identical.tex");
+    fs::copy(&main, &replacement).unwrap();
+    File::open(&replacement)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(modified))
+        .unwrap();
+    fs::rename(replacement, main).unwrap();
+    assert_eq!(project.success(&args)["skipped"], true);
+}
+
 #[test]
 #[ignore = "large-paper gate; CI runs it explicitly before installing optional TeX tools"]
 fn bundled_runtime_builds_large_papers_without_external_tools() {

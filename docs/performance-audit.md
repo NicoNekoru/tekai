@@ -11,6 +11,8 @@ The experimental expander now rejects the three reproduced invalid inputs
 without aborting.
 PNG metadata reads now validate palette, transparency, and header bounds before
 allocating their buffers.
+Compiler fingerprint fast paths now check physical file identity as well as
+mtime, so preserved timestamps no longer hide the reproduced source edits.
 The other confirmed failures below remain open unless their section says otherwise.
 
 ## Measurement conditions
@@ -98,18 +100,31 @@ problem. The resolver and build cache need to share lookup dependencies.
 Relevant code is in `src/compiler.rs`, `crates/tekai-engine/src/search.rs`,
 and `crates/tekai-engine/src/lookup.rs`.
 
-### Preserved source modification times can hide changed content and size
+### Source fingerprints now check physical file identity
 
-Effective TeX fingerprints accept a matching mtime without checking the
+Effective TeX fingerprints accepted a matching mtime without checking the
 current size, inode, or ctime. Both an in-place edit and an atomic replacement
 of the root source reproduced a stale cache hit when the driver preserved
 mtime. The changed source was longer. The replacement also had a new inode.
 The ordinary build skipped with `OLD-CONTENT`, while a forced build produced
 `NEW-CONTENT-LONGER`.
 
-Use the same file identity contract for resolver metadata, source fingerprints,
-and media caches. Effective source length cannot replace physical file size
-in the metadata fast path. Relevant functions in `src/compiler.rs` are
+Compiler fingerprints now store physical size separately from effective
+source length. Metadata-only reuse on Unix requires matching size, mtime,
+device, inode, and ctime. Generic files, root and included TeX sources,
+preambles, and cited bibliography subsets use the same comparison.
+Changed identity triggers content hashing. Identical replacements and edits
+to ignored comments can therefore still hit the content cache.
+
+Entries without an identity rehash instead of trusting mtime. Platforms
+without the Unix change-time identity also rehash. The build-state version
+is now 37. Regression tests cover same-length and longer edits, atomic
+replacement, legacy entries, unchanged-content reuse, and the metadata-only
+fast path. A bundled CLI test checks actual rebuilds after preserved-mtime
+edits and cache hits after an identical replacement.
+
+This does not fix changes during compilation or textual execution-boundary
+inference. Relevant functions in `src/compiler.rs` are
 `input_fingerprint_is_fresh`, `fingerprint_effective_tex_path_reusing`, and
 `file_metadata_fingerprint`.
 
@@ -337,6 +352,9 @@ declarations without large payloads. A bundled CLI regression builds a valid
 one-pixel image, then checks that invalid palette and transparency declarations
 exit with code 1 and the expected metadata error. It uses empty executable
 search paths and fixture-owned caches.
+The release diagnostic also accepts the valid palette and rejects the 24 MiB
+declaration. Its RSS measurement is unavailable under the sandbox, so it does
+not establish a post-fix memory delta.
 
 The active decoded frame still needs a separate memory policy. The decoder
 library's allocation limit does not constrain a caller-allocated output buffer.
