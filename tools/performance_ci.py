@@ -42,18 +42,27 @@ KNOWN_ISSUES = {
     'edit-race': 'Changes during compilation can publish a stale PDF as fresh.',
     'format-cache': 'Replacing a compressed format can reuse its stale raw companion.',
     'cancel': 'Cancellation can leave the engine running.',
-    'pdf-parent-cycle': 'A cyclic PDF page parent can hang inherited-value lookup.',
 }
 OPEN_SCALING = {
     'format-many': 'Repeated prefix scans and string edits can be quadratic.',
     'lint-long': 'Column lookup can repeat prefix scans.',
     'lint-slashes': 'Escape checks can repeat backslash scans.',
     'unrelated-sidecars': 'Settled caches load unrelated sidecar outputs.',
-    'pdf-dictionary': 'PDF dictionary wrapper access repeats clones.',
     'pdf-shared-resources': 'Shared resources are cloned for each page.',
     'expansion-scopes': 'Mutating local groups clone the expansion state.',
     'aux-concurrency': 'Auxiliary converters have no shared concurrency ceiling.',
 }
+
+
+def normal_engine_input_error(values):
+    """CLI exit 1 alone cannot distinguish a TeX error from a child crash.
+
+    compiler.rs reports the child's ExitStatus in this line. Require its exact
+    normal exit status, rather than accepting a signal or a Rust panic exit.
+    """
+    statuses = re.findall(r'(?m)^(?:Error: )?TeX engine failed with status ([^\r\n]+)\r?$',
+                          values.get('stderr_tail', ''))
+    return values.get('code') == 1 and not values.get('timeout') and statuses == ['exit status: 1']
 
 
 def verdict(case, values):
@@ -105,12 +114,14 @@ def verdict(case, values):
         check('engine child exits with its parent', values.get('child_survived') is False)
         known = control_ok and values.get('child_survived') is True
     elif case == 'pdf-parent-cycle':
-        check('cyclic PDF import returns normally within the safety timeout',
-              not values.get('timeout') and values.get('code') in (0, 1))
-        known = values.get('timeout') is True
+        check('cyclic PDF import returns a normal engine input error', normal_engine_input_error(values))
+        # TeX inserts line breaks at print width, including inside words. Drop
+        # only those breaks, retaining the diagnostic's literal spaces.
+        engine_log = values.get('engine_log', '').replace('\r', '').replace('\n', '')
+        check('cyclic PDF import identifies the parent-chain cycle',
+              'xpdf: cyclic PDF page Parent chain' in engine_log)
     elif case.startswith('png-invalid-'):
-        check('invalid metadata returns a normal input error', values.get('code') == 1
-              and not values.get('timeout'))
+        check('invalid metadata returns a normal engine input error', normal_engine_input_error(values))
         check('error identifies the invalid metadata', values.get('expected_error', '')
               in values.get('engine_log', '') and bool(values.get('expected_error')))
     elif case.startswith('png-palette-'):
@@ -118,6 +129,7 @@ def verdict(case, values):
         check('palette fixture returns the expected status', values.get('code') == (1 if invalid else 0)
               and not values.get('timeout'))
         if invalid:
+            check('invalid palette returns a normal engine input error', normal_engine_input_error(values))
             check('palette rejection identifies metadata bounds', 'invalid PNG PLTE length' in values.get('engine_log', ''))
     elif case == 'unicode-preview':
         check('watcher completed Unicode preview prewarming', values.get('prewarmed'))
@@ -133,6 +145,9 @@ def verdict(case, values):
     elif case == 'symlink-dag':
         check('finite missing-file DAG lookup returns not found', values.get('code') == 1
               and not values.get('timeout'))
+        check('lookup identifies the expected missing fixture input', bool(re.search(
+            r'(?m)^Error: TeX input missing\.sty was not found; use --report-json to inspect its search paths\r?$',
+            values.get('stderr_tail', ''))))
     elif case == 'symlink-alias-semantics':
         check('named alias component selects its target rather than a decoy', values.get('code') == 0
               and values.get('alias_found') and not values.get('timeout'))
@@ -161,6 +176,7 @@ def verdict(case, values):
         check('deep input returns success or a normal capacity error',
               values.get('code') in (0, 1) and not values.get('timeout'))
         if values.get('code') == 1:
+            check('deep input rejection is a normal engine input error', normal_engine_input_error(values))
             check('deep input rejection identifies TeX capacity',
                   'capacity exceeded' in values.get('stdout', '') + values.get('stderr_tail', ''))
     else:

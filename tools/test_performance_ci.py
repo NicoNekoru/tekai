@@ -16,6 +16,9 @@ from unittest.mock import Mock, patch
 
 import performance_ci as ci
 
+NORMAL_ENGINE_ERROR = 'Error: TeX engine failed with status exit status: 1\nTeX log: /fixture/build/main.log\n'
+MISSING_INPUT_ERROR = 'Error: TeX input missing.sty was not found; use --report-json to inspect its search paths\n'
+
 
 def options(work, **values):
     defaults = dict(engine=Path(sys.executable), output=work / 'report.json', profile='quick',
@@ -106,20 +109,62 @@ class VerdictTests(unittest.TestCase):
         evidence['child_started'] = False
         self.assertEqual(self.status('cancel', **evidence), 'failed')
 
-    def test_pdf_cycle_only_the_known_hang_is_allowed(self):
-        self.assertEqual(self.status('pdf-parent-cycle', timeout=True), 'known_failure')
-        self.assertEqual(self.status('pdf-parent-cycle', code=-6), 'failed')
-        self.assertEqual(self.status('pdf-parent-cycle', code=1), 'unexpected_pass')
+    def test_pdf_cycle_requires_a_controlled_parent_chain_rejection(self):
+        evidence = dict(code=1, engine_log='! pdfTeX error: xpdf: cyclic PDF page Parent chain\n',
+                        stderr_tail=NORMAL_ENGINE_ERROR)
+        self.assertEqual(self.status('pdf-parent-cycle', **evidence), 'passed')
+        self.assertNotIn('pdf-parent-cycle', ci.KNOWN_ISSUES)
+        for changed in ({'timeout': True}, {'code': 0}, {'code': -6},
+                        {'engine_log': 'xpdf: unrelated PDF error'}, {'engine_log': ''},
+                        {'stderr_tail': 'Error: permission denied\n'},
+                        {'stderr_tail': ''}):
+            with self.subTest(changed=changed):
+                self.assertEqual(self.status('pdf-parent-cycle', **{**evidence, **changed}), 'failed')
+
+    def test_pdf_cycle_diagnostic_does_not_hide_wrapped_signals_or_panics(self):
+        for status in ('signal: 6 (SIGABRT)', 'signal: 11 (SIGSEGV)', 'exit status: 101'):
+            with self.subTest(status=status):
+                stderr = f'Error: TeX engine failed with status {status}\n'
+                self.assertEqual(self.status('pdf-parent-cycle', code=1,
+                                            engine_log='xpdf: cyclic PDF page Parent chain',
+                                            stderr_tail=stderr), 'failed')
+
+    def test_pdf_cycle_diagnostic_must_be_in_the_engine_log(self):
+        self.assertEqual(self.status('pdf-parent-cycle', code=1, engine_log='',
+                                    stderr_tail=NORMAL_ENGINE_ERROR + 'xpdf: cyclic PDF page Parent chain\n'),
+                         'failed')
+
+    def test_pdf_cycle_diagnostic_accepts_tex_print_width_line_breaks(self):
+        for diagnostic in ('xpdf: cyclic\n PDF page Parent chain',
+                           'xpdf: cyclic \nPDF page Parent chain',
+                           'xpdf: cyc\nlic PDF page Par\r\nent chain',
+                           'xpd\r\nf: cyclic PDF page Parent chain'):
+            with self.subTest(diagnostic=diagnostic):
+                self.assertEqual(self.status('pdf-parent-cycle', code=1,
+                                            engine_log='! pdfTeX error: ' + diagnostic + '\n ==> Fatal error\n',
+                                            stderr_tail=NORMAL_ENGINE_ERROR), 'passed')
+
+    def test_pdf_cycle_line_break_matching_preserves_exact_phrase_and_spaces(self):
+        for diagnostic in ('xpdf: acyclic\n PDF page Parent chain',
+                           'xpdf: cyclic\n unrelated PDF page Parent chain',
+                           'xpdf: cyclic\nPDF page Parent chain',
+                           'xpdf: cyclic  PDF page Parent chain',
+                           'xpdf: cyclic PDF page Child chain'):
+            with self.subTest(diagnostic=diagnostic):
+                self.assertEqual(self.status('pdf-parent-cycle', code=1,
+                                            engine_log=diagnostic, stderr_tail=NORMAL_ENGINE_ERROR), 'failed')
 
     def test_png_rejection_requires_normal_exit_and_specific_diagnostic(self):
-        evidence = dict(code=1, expected_error='invalid PNG PLTE length', engine_log='invalid PNG PLTE length')
+        evidence = dict(code=1, expected_error='invalid PNG PLTE length', engine_log='invalid PNG PLTE length',
+                        stderr_tail=NORMAL_ENGINE_ERROR)
         self.assertEqual(self.status('png-invalid-PLTE-769', **evidence), 'passed')
         for changed in ({'code': -6}, {'code': 0}, {'timeout': True}, {'engine_log': 'generic failure'}):
             with self.subTest(changed=changed):
                 self.assertEqual(self.status('png-invalid-PLTE-769', **{**evidence, **changed}), 'failed')
 
     def test_large_palette_observation_still_asserts_rejection(self):
-        self.assertEqual(self.status('png-palette-25165824', code=1, engine_log='invalid PNG PLTE length'), 'passed')
+        self.assertEqual(self.status('png-palette-25165824', code=1, engine_log='invalid PNG PLTE length',
+                                    stderr_tail=NORMAL_ENGINE_ERROR), 'passed')
         self.assertEqual(self.status('png-palette-25165824', code=0), 'failed')
         self.assertEqual(self.status('png-palette-3', code=0), 'passed')
 
@@ -140,7 +185,7 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(self.status('expansion-scopes', depth=64, code=0, stdout='output_tokens=1'), 'failed')
 
     def test_lookup_not_found_and_alias_semantics_are_assertions(self):
-        self.assertEqual(self.status('symlink-dag', code=1, depth=16), 'passed')
+        self.assertEqual(self.status('symlink-dag', code=1, depth=16, stderr_tail=MISSING_INPUT_ERROR), 'passed')
         self.assertEqual(self.status('symlink-dag', timeout=True, depth=16), 'failed')
         self.assertEqual(self.status('symlink-dag', code=0), 'failed')
         self.assertEqual(self.status('symlink-alias-semantics', code=0, alias_found=True), 'passed')
@@ -164,14 +209,53 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(self.status('runtime-cache-hit', **evidence), 'failed')
 
     def test_open_scaling_costs_are_disclosed_without_fake_time_gates(self):
-        result = ci.verdict('pdf-dictionary-8192', {'code': 0, 'seconds': 100000, 'peak_mib': 100000})
+        result = ci.verdict('pdf-shared-resources-256', {'code': 0, 'seconds': 100000, 'peak_mib': 100000})
         self.assertEqual(result['status'], 'observation')
         self.assertIn('open_scaling_issue', result)
 
+    def test_pdf_dictionary_is_a_fixed_gate_without_a_time_threshold(self):
+        result = ci.verdict('pdf-dictionary-8192', {'code': 0, 'seconds': 100000, 'peak_mib': 100000})
+        self.assertEqual(result['status'], 'passed')
+        self.assertNotIn('open_scaling_issue', result)
+        self.assertNotIn('pdf-dictionary', ci.OPEN_SCALING)
+        self.assertEqual(self.status('pdf-dictionary-8192', code=1), 'failed')
+        self.assertEqual(self.status('pdf-dictionary-8192', code=0, timeout=True), 'failed')
+
     def test_deep_input_error_requires_capacity_diagnostic(self):
-        self.assertEqual(self.status('deep-inputs', code=1, phase='build', stdout='TeX capacity exceeded'), 'passed')
+        self.assertEqual(self.status('deep-inputs', code=1, phase='build', stdout='TeX capacity exceeded',
+                                    stderr_tail=NORMAL_ENGINE_ERROR), 'passed')
         self.assertEqual(self.status('deep-inputs', code=1, phase='build', stdout='file not found'), 'failed')
         self.assertEqual(self.status('deep-inputs', code=-6, phase='check'), 'failed')
+
+    def test_missing_lookup_exit_one_does_not_hide_unrelated_errors(self):
+        for stderr in ('', 'Error: permission denied\n', 'Error: failed to open project directory\n',
+                       'Error: TeX input different.sty was not found; use --report-json to inspect its search paths\n'):
+            with self.subTest(stderr=stderr):
+                self.assertEqual(self.status('symlink-dag', code=1, stderr_tail=stderr), 'failed')
+
+    def test_png_cli_exit_one_does_not_hide_engine_signals_or_panics(self):
+        for status in ('signal: 6 (SIGABRT)', 'signal: 11 (SIGSEGV)', 'exit status: 101', 'exit status: 10', ''):
+            stderr = f'Error: TeX engine failed with status {status}\n'
+            with self.subTest(status=status):
+                self.assertEqual(self.status('png-invalid-PLTE-769', code=1,
+                                            expected_error='invalid PNG PLTE length',
+                                            engine_log='invalid PNG PLTE length', stderr_tail=stderr), 'failed')
+                self.assertEqual(self.status('png-palette-25165824', code=1,
+                                            engine_log='invalid PNG PLTE length', stderr_tail=stderr), 'failed')
+
+    def test_deep_capacity_diagnostic_does_not_hide_wrapped_abort(self):
+        stderr = 'Error: TeX engine failed with status signal: 6 (SIGABRT)\nTeX capacity exceeded\n'
+        for phase in ('build', 'check'):
+            with self.subTest(phase=phase):
+                self.assertEqual(self.status('deep-inputs', code=1, phase=phase, stderr_tail=stderr), 'failed')
+
+    def test_normal_engine_error_accepts_timer_suffix_but_requires_exact_status(self):
+        timer = '1048576 maximum resident set size\n'
+        self.assertTrue(ci.normal_engine_input_error({'code': 1, 'stderr_tail': NORMAL_ENGINE_ERROR + timer}))
+        self.assertFalse(ci.normal_engine_input_error({'code': 1, 'stderr_tail': timer}))
+        self.assertFalse(ci.normal_engine_input_error({'code': 1, 'timeout': True, 'stderr_tail': NORMAL_ENGINE_ERROR}))
+        self.assertFalse(ci.normal_engine_input_error({'code': 1, 'stderr_tail': NORMAL_ENGINE_ERROR
+                                                     + 'TeX engine failed with status signal: 6 (SIGABRT)\n'}))
 
     def test_skip_is_explicit(self):
         result = ci.verdict('input-identity', {'skipped': True, 'reason': 'pdftotext missing'})
@@ -390,7 +474,7 @@ class RunnerTests(unittest.TestCase):
     def test_report_artifacts_distinguish_outcomes_and_separate_timings(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.audit.record('input-identity', **cache_evidence(), seconds=42, peak_mib=100)
-            self.audit.record('pdf-parent-cycle', timeout=True)
+            self.audit.record('edit-race', first_text='OLD-CONTENT', next_text='OLD-CONTENT', stale_cache_hit=True)
         report = json.loads(self.args.output.read_text())
         self.assertEqual(report['summary']['passed'], 1)
         self.assertEqual(report['summary']['known_failure'], 1)
