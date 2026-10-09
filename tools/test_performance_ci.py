@@ -13,6 +13,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+import zlib
 
 import performance_ci as ci
 
@@ -32,6 +33,14 @@ def cache_evidence(**values):
     result = dict(next_build={'skipped': False, 'tex_runs': 1}, text='NEW-CONTENT-LONGER',
                   forced_text='NEW-CONTENT-LONGER', stale_cache_hit=False,
                   mtime_preserved=True, size_changed=True)
+    result.update(values)
+    return result
+
+
+def jpeg_evidence(**values):
+    result = dict(code=0, build_report={'skipped': False, 'tex_runs': 1}, pdf_complete=True,
+                  embedded_image_dimensions=[1, 1], jpeg_bytes_embedded=True,
+                  expected_dpi=[144, 72], natural_dimensions_sp=[32891, 65782])
     result.update(values)
     return result
 
@@ -193,6 +202,95 @@ class VerdictTests(unittest.TestCase):
                     self.assertEqual(self.status(case, code=1, expected_error='invalid PNG PLTE length',
                                                 engine_log=diagnostic, stderr_tail=NORMAL_ENGINE_ERROR), 'failed')
 
+    def test_png_framing_requires_normal_exit_and_the_exact_diagnostic_path(self):
+        for fixture in ci._png_framing_fixtures():
+            if 'expected_error' not in fixture:
+                continue
+            expected = fixture['expected_error']
+            evidence = dict(code=1, stderr_tail=NORMAL_ENGINE_ERROR, expected_error=expected, engine_log=expected,
+                            pdf_exists_after_failure=False)
+            with self.subTest(case=fixture['name']):
+                self.assertEqual(self.status(fixture['name'], **evidence), 'passed')
+                for change in ({'code': 0}, {'code': -6}, {'timeout': True}, {'engine_log': 'unrelated PNG error'},
+                               {'expected_error': ''}, {'stderr_tail': ''}, {'pdf_exists_after_failure': True},
+                               {'engine_log': expected.replace('writepng: ', 'invalid PNG metadata: ')
+                                if expected.startswith('writepng: ') else expected.replace('invalid PNG metadata: ', 'writepng: ')}):
+                    self.assertEqual(self.status(fixture['name'], **{**evidence, **change}), 'failed')
+                for child_status in ('signal: 6 (SIGABRT)', 'signal: 11 (SIGSEGV)', 'exit status: 101'):
+                    self.assertEqual(self.status(fixture['name'], **{**evidence,
+                        'stderr_tail': f'Error: TeX engine failed with status {child_status}\n'}), 'failed')
+                for index in range(len(expected) + 1):
+                    self.assertEqual(self.status(fixture['name'], **{**evidence,
+                        'engine_log': expected[:index] + '\r\n' + expected[index:]}), 'passed')
+
+    def test_png_multi_idat_control_requires_a_fresh_exact_copy(self):
+        evidence = dict(code=0, build_report={'skipped': False, 'tex_runs': 1}, engine_log='(PNG copy)',
+                        pdf_complete=True, embedded_image_dimensions=[1, 1], png_idat_stream_copied=True)
+        self.assertEqual(self.status('png-copy-multiple-idat', **evidence), 'passed')
+        for change in ({'code': 1}, {'code': -6}, {'timeout': True}, {'stdout_truncated': True},
+                       {'pdf_truncated': True}, {'build_report': {'skipped': True, 'tex_runs': 0}},
+                       {'build_report': {'skipped': False, 'tex_runs': True}},
+                       {'build_report': {'skipped': False, 'tex_runs': 0}}, {'engine_log': '(PNG decoded)'},
+                       {'pdf_complete': False}, {'embedded_image_dimensions': [2, 1]},
+                       {'png_idat_stream_copied': False}):
+            with self.subTest(change=change):
+                self.assertEqual(self.status('png-copy-multiple-idat', **{**evidence, **change}), 'failed')
+
+    def test_png_decode_rejections_require_the_exact_decoder_error_and_normal_exit(self):
+        for fixture in ci._png_decode_fixtures():
+            if 'expected_error' not in fixture:
+                continue
+            expected = fixture['expected_error']
+            evidence = dict(code=1, stderr_tail=NORMAL_ENGINE_ERROR, expected_error=expected, engine_log=expected,
+                            pdf_exists_after_failure=False)
+            self.assertEqual(self.status(fixture['name'], **evidence), 'passed')
+            for change in ({'code': 0}, {'code': -6}, {'timeout': True}, {'expected_error': ''},
+                           {'engine_log': 'invalid PNG image data: unrelated error'}, {'pdf_exists_after_failure': True},
+                           {'stderr_tail': 'Error: TeX engine failed with status exit status: 101\n'}):
+                self.assertEqual(self.status(fixture['name'], **{**evidence, **change}), 'failed')
+            for index in range(len(expected) + 1):
+                self.assertEqual(self.status(fixture['name'], **{**evidence,
+                    'engine_log': expected[:index] + '\r\n' + expected[index:]}), 'passed')
+
+    def test_png_decode_controls_require_exact_pixels_and_a_fresh_complete_pdf(self):
+        evidence = dict(code=0, build_report={'skipped': False, 'tex_runs': 1},
+                        pdf_complete=True, decoded_pixels_exact=True)
+        self.assertEqual(self.status('png-decode-valid-0', **evidence), 'passed')
+        for change in ({'code': 1}, {'timeout': True}, {'pdf_truncated': True}, {'stdout_truncated': True},
+                       {'build_report': {'skipped': True, 'tex_runs': 0}}, {'decoded_pixels_exact': False},
+                       {'pdf_complete': False}):
+            self.assertEqual(self.status('png-decode-valid-0', **{**evidence, **change}), 'failed')
+
+    def test_jpeg_framing_requires_a_normal_exit_and_exact_wrappable_diagnostic(self):
+        expected = 'reading JPEG image failed (premature file end)'
+        evidence = dict(code=1, stderr_tail=NORMAL_ENGINE_ERROR, expected_error=expected,
+                        engine_log='reading JPEG image failed (prema\nture file end)')
+        self.assertEqual(self.status('jpeg-framing-signature-only', **evidence), 'passed')
+        for changed in ({'code': 0}, {'code': -6}, {'timeout': True}, {'engine_log': 'unrelated error'},
+                        {'engine_log': ''}, {'expected_error': ''}, {'stderr_tail': ''}):
+            with self.subTest(changed=changed):
+                self.assertEqual(self.status('jpeg-framing-signature-only', **{**evidence, **changed}), 'failed')
+        for status in ('signal: 6 (SIGABRT)', 'signal: 11 (SIGSEGV)', 'exit status: 101'):
+            with self.subTest(status=status):
+                self.assertEqual(self.status('jpeg-framing-signature-only', **{
+                    **evidence, 'stderr_tail': f'Error: TeX engine failed with status {status}\n'}), 'failed')
+
+    def test_jpeg_embedding_requires_pixels_geometry_and_a_fresh_complete_pdf(self):
+        self.assertEqual(self.status('jpeg-valid-dpi-little', **jpeg_evidence()), 'passed')
+        for changed in ({'code': 1}, {'code': -6}, {'timeout': True}, {'stdout_truncated': True},
+                        {'pdf_truncated': True}, {'pdf_complete': False}, {'jpeg_bytes_embedded': False},
+                        {'embedded_image_dimensions': [2, 1]}, {'natural_dimensions_sp': [65782, 65782]},
+                        {'natural_dimensions_sp': None}, {'build_report': {'skipped': True, 'tex_runs': 0}},
+                        {'build_report': {'skipped': False, 'tex_runs': 0}}, {'expected_dpi': []}):
+            with self.subTest(changed=changed):
+                self.assertEqual(self.status('jpeg-valid-dpi-little', **jpeg_evidence(**changed)), 'failed')
+
+    def test_jpeg_invalid_optional_metadata_has_a_strict_fallback_geometry_gate(self):
+        evidence = jpeg_evidence(expected_dpi=[72, 72], natural_dimensions_sp=[65782, 65782])
+        self.assertEqual(self.status('jpeg-invalid-ifd-offset', **evidence), 'passed')
+        self.assertEqual(self.status('jpeg-invalid-ifd-offset', **{**evidence, 'code': 1,
+                         'stderr_tail': NORMAL_ENGINE_ERROR}), 'failed')
+
     def test_preview_must_complete_prewarming_and_stay_alive(self):
         self.assertEqual(self.status('unicode-preview', prewarmed=True, alive=True), 'passed')
         self.assertEqual(self.status('unicode-preview', prewarmed=False, alive=True), 'failed')
@@ -346,7 +444,241 @@ class HashTests(unittest.TestCase):
         self.assertTrue(all(call.args == (ci.HASH_CHUNK_BYTES,) for call in handle.read.call_args_list))
 
 
+class PNGFixtureTests(unittest.TestCase):
+    def test_decode_fixtures_have_complete_small_chunks_and_specific_data_errors(self):
+        fixtures = ci._png_decode_fixtures()
+        self.assertEqual(len(fixtures), 12)
+        self.assertEqual(len({row['name'] for row in fixtures}), 12)
+        self.assertLess(max(len(row['content']) for row in fixtures), 128)
+        for row in fixtures:
+            content, position, chunks = row['content'], 8, []
+            while position < len(content):
+                length = int.from_bytes(content[position:position + 4], 'big')
+                kind = content[position + 4:position + 8]
+                payload = content[position + 8:position + 8 + length]
+                crc = int.from_bytes(content[position + 8 + length:position + 12 + length], 'big')
+                actual = zlib.crc32(kind + payload)
+                self.assertEqual(len(payload), length)
+                self.assertEqual(crc, actual ^ (0x01000000 if kind == b'IDAT' and '-crc-' in row['name'] else 0))
+                chunks.append((kind, payload))
+                position += length + 12
+            self.assertEqual(position, len(content))
+            self.assertEqual([kind for kind, _ in chunks], [b'IHDR', b'IDAT', b'IEND'])
+            color = int(row['name'].rsplit('-', 1)[1])
+            self.assertEqual(chunks[0][1][9], color)
+            if '-zlib-' in row['name']:
+                self.assertEqual(chunks[1][1], bytes(2))
+                self.assertEqual(row['expected_error'], 'invalid PNG image data: Corrupt deflate stream. BadZlibHeader')
+            elif '-short-scanline-' in row['name']:
+                self.assertEqual(zlib.decompress(chunks[1][1]), b'\x00')
+                self.assertIn('does not have enough data for image.', row['expected_error'])
+            else:
+                pixels = zlib.decompress(chunks[1][1])[1:]
+                self.assertEqual(pixels, {0: b'\x0a', 2: b'\x0a\x14\x1e', 6: b'\x0a\x14\x1e\x80'}[color])
+                if '-crc-' in row['name']:
+                    self.assertIn('CRC error: expected 0x', row['expected_error'])
+                    self.assertIn('type: IDAT,', row['expected_error'])
+
+    def test_decoded_pdf_evidence_requires_exact_uncompressed_color_and_alpha_pixels(self):
+        def image(number, color, pixels):
+            return (f'{number} 0 obj\n<< /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /Device{color} >>\nstream\n'.encode()
+                    + pixels + b'\nendstream\nendobj\n')
+        rgb = image(1, 'RGB', b'\x0a\x14\x1e')
+        alpha = image(2, 'Gray', b'\x80')
+        pdf = b'%PDF-1.5\n' + rgb + alpha + b'%%EOF\n'
+        expected = [('rgb', [10, 20, 30]), ('gray', [128])]
+        self.assertTrue(ci._png_decoded_pdf_evidence(pdf, expected)['decoded_pixels_exact'])
+        for bad in (pdf.replace(b'\x80', b'\x00'), pdf.replace(b'/Width 1', b'/Width 2'),
+                    pdf.replace(b'/BitsPerComponent 8', b'/BitsPerComponent 16'),
+                    pdf.replace(b'/DeviceRGB', b'/DeviceGray'),
+                    pdf.replace(b'/ColorSpace', b'/Filter /FlateDecode /ColorSpace'),
+                    b'%PDF-1.5\n' + rgb + b'%%EOF', b'%PDF-1.5\n' + rgb + alpha + alpha + b'%%EOF'):
+            self.assertFalse(ci._png_decoded_pdf_evidence(bad, expected)['decoded_pixels_exact'])
+        self.assertFalse(ci._png_decoded_pdf_evidence(pdf[:-6], expected)['pdf_complete'])
+
+    def test_framing_cases_are_finite_unique_and_declarations_have_no_large_payload(self):
+        rows = ci._png_framing_fixtures()
+        self.assertEqual(len(rows), 15)
+        self.assertEqual(len({row['name'] for row in rows}), 15)
+        self.assertLess(max(len(row['content']) for row in rows), 128)
+        for stage in ('first', 'later'):
+            for length in (0xfffffff4, 0x80000000, 0x7fffffff):
+                row = next(row for row in rows if row['name'] == f'png-framing-idat-{stage}-{length:08x}')
+                content = row['content']
+                position = 33
+                if stage == 'later':
+                    first_length = int.from_bytes(content[position:position + 4], 'big')
+                    self.assertEqual(content[position + 4:position + 8], b'IDAT')
+                    self.assertEqual(zlib.decompress(content[position + 8:position + 8 + first_length]), bytes(4))
+                    position += first_length + 12
+                self.assertEqual(content[position:position + 8], length.to_bytes(4, 'big') + b'IDAT')
+                self.assertEqual(len(content) - position, 8)
+                prefix = 'invalid PNG metadata: ' if stage == 'first' else 'writepng: '
+                message = 'invalid PNG chunk length' if length > 0x7fffffff else 'PNG chunk exceeds file extent'
+                self.assertEqual(row['expected_error'], prefix + message)
+
+    def test_short_framing_and_nonzero_iend_target_first_and_later_paths(self):
+        rows = {row['name']: row for row in ci._png_framing_fixtures()}
+        for stage in ('first', 'later'):
+            for defect in ('short-payload', 'short-crc', 'short-header', 'nonzero-iend'):
+                content = rows[f'png-framing-{defect}-{stage}']['content']
+                position = 33
+                if stage == 'later':
+                    position += int.from_bytes(content[position:position + 4], 'big') + 12
+                tail = content[position:]
+                if defect == 'short-header':
+                    self.assertEqual(len(tail), 5)
+                else:
+                    declared = int.from_bytes(tail[:4], 'big')
+                    self.assertEqual(tail[4:8], b'IEND' if defect == 'nonzero-iend' else b'IDAT')
+                    if defect == 'short-crc':
+                        self.assertEqual(len(tail), declared + 11)
+                    elif defect == 'short-payload':
+                        self.assertEqual(declared, 10)
+                        self.assertEqual(len(tail), 10)
+                    else:
+                        self.assertEqual(declared, 1)
+                        self.assertEqual(len(tail), 13)
+
+    def test_multi_idat_control_has_valid_complete_crc_and_one_compressed_scanline(self):
+        row = ci._png_framing_fixtures()[-1]
+        content, position, chunks = row['content'], 8, []
+        self.assertEqual(content[:8], b'\x89PNG\r\n\x1a\n')
+        while position < len(content):
+            length = int.from_bytes(content[position:position + 4], 'big')
+            kind = content[position + 4:position + 8]
+            payload = content[position + 8:position + 8 + length]
+            self.assertEqual(len(payload), length)
+            self.assertEqual(int.from_bytes(content[position + 8 + length:position + 12 + length], 'big'),
+                             zlib.crc32(kind + payload))
+            chunks.append((kind, payload))
+            position += length + 12
+        self.assertEqual(position, len(content))
+        self.assertEqual([kind for kind, _ in chunks], [b'IHDR', b'IDAT', b'IDAT', b'IEND'])
+        encoded = b''.join(payload for kind, payload in chunks if kind == b'IDAT')
+        self.assertTrue(all(payload for kind, payload in chunks if kind == b'IDAT'))
+        self.assertEqual(encoded, row['expected_stream'])
+        self.assertEqual(zlib.decompress(encoded), bytes(4))
+        self.assertEqual(chunks[0][1], bytes.fromhex('00 00 00 01 00 00 00 01 08 02 00 00 00'))
+
+    def test_pdf_copy_evidence_requires_exact_stream_filter_length_and_one_image(self):
+        encoded = ci._png_framing_fixtures()[-1]['expected_stream']
+        obj = (f'1 0 obj\n<< /Subtype /Image /Width 1 /Height 1 /Filter /FlateDecode /Length {len(encoded)} >>\nstream\n'.encode()
+               + encoded + b'\nendstream\nendobj\n')
+        pdf = b'%PDF-1.5\n' + obj + b'%%EOF\n'
+        self.assertEqual(ci._png_copy_pdf_evidence(pdf, encoded), {
+            'pdf_complete': True, 'embedded_image_dimensions': [1, 1], 'png_idat_stream_copied': True})
+        for bad in (pdf.replace(b'FlateDecode', b'DCTDecode'),
+                    pdf.replace(f'/Length {len(encoded)}'.encode(), b'/Length 0'),
+                    pdf.replace(encoded, b'wrong stream'), b'%PDF-1.5\n' + obj + obj + b'%%EOF'):
+            self.assertFalse(ci._png_copy_pdf_evidence(bad, encoded)['png_idat_stream_copied'])
+        self.assertFalse(ci._png_copy_pdf_evidence(pdf[:-6], encoded)['pdf_complete'])
+
+
 @unittest.skipUnless(os.name == 'posix', 'POSIX process groups required')
+class JPEGFixtureTests(unittest.TestCase):
+    def test_static_jpeg_has_complete_baseline_tables_and_entropy_data(self):
+        content = ci._jpeg_bytes()
+        self.assertEqual(content[:2], b'\xff\xd8')
+        position, segments = 2, []
+        while True:
+            self.assertEqual(content[position], 255)
+            marker = content[position + 1]
+            length = int.from_bytes(content[position + 2:position + 4], 'big')
+            payload = content[position + 4:position + 2 + length]
+            self.assertEqual(len(payload), length - 2)
+            segments.append((marker, payload))
+            position += length + 2
+            if marker == 218:
+                break
+        self.assertEqual([marker for marker, _ in segments], [219, 192, 196, 218])
+        self.assertEqual(segments[0][1], b'\x00' + b'\x01' * 64)
+        self.assertEqual(segments[1][1], bytes.fromhex('08 00 01 00 01 01 01 11 00'))
+        tables = segments[2][1]
+        self.assertEqual(tables[:18], b'\x00\x01' + bytes(15) + b'\x00')
+        self.assertEqual(tables[18:], b'\x10\x01' + bytes(15) + b'\x00')
+        self.assertEqual(content[position:], b'\x3f\xff\xd9')
+
+    def test_exif_is_the_first_app1_with_its_complete_six_byte_signature(self):
+        metadata = ci._jpeg_tiff()
+        content = ci._jpeg_bytes(metadata)
+        self.assertEqual(content[:4], b'\xff\xd8\xff\xe1')
+        self.assertEqual(int.from_bytes(content[4:6], 'big'), 8 + len(metadata))
+        self.assertEqual(content[6:12], b'Exif\0\0')
+        self.assertEqual(content[12:12 + len(metadata)], metadata)
+
+    def test_tiff_byte_orders_offsets_and_resolution_values_are_exact(self):
+        for order in ('little', 'big'):
+            with self.subTest(order=order):
+                metadata = ci._jpeg_tiff(order)
+                self.assertEqual(len(metadata), 66)
+                self.assertEqual(metadata[:2], b'II' if order == 'little' else b'MM')
+                number = lambda start, length: int.from_bytes(metadata[start:start + length], order)
+                self.assertEqual(number(2, 2), 42)
+                self.assertEqual(number(4, 4), 8)
+                self.assertEqual(number(8, 2), 3)
+                self.assertEqual(number(10, 2), 282)
+                self.assertEqual(number(18, 4), 50)
+                self.assertEqual(number(30, 4), 58)
+                self.assertEqual([number(start, 4) for start in (50, 54, 58, 62)], [144, 1, 72, 1])
+
+    def test_profiles_are_finite_unique_and_full_contains_every_tiff_prefix(self):
+        quick, full = ci._jpeg_fixtures('quick'), ci._jpeg_fixtures('full')
+        self.assertEqual(len(quick), 12)
+        self.assertEqual(len(full), 88)
+        self.assertEqual(len({row['name'] for row in full}), len(full))
+        self.assertLess(max(len(row['content']) for row in full), 256)
+        self.assertEqual(full[:len(quick)], quick)
+        by_name = {row['name']: row for row in full}
+        self.assertEqual(by_name['jpeg-framing-signature-only']['content'],
+                         bytes.fromhex('ff d8 ff e1 00 08 45 78 69 66 00 00'))
+        control = ci._jpeg_tiff()
+        for length in range(len(control)):
+            row = by_name[f'jpeg-invalid-tiff-prefix-{length}']
+            self.assertEqual(row['content'][12:12 + length], control[:length])
+            self.assertEqual(row['expected_dpi'], [72, 72])
+
+    def test_positive_controls_exercise_both_byte_orders_cm_and_integer_division(self):
+        rows = {row['name']: row for row in ci._jpeg_fixtures('full')}
+        for order in ('little', 'big'):
+            self.assertEqual(rows['jpeg-valid-dpi-' + order]['expected_dpi'], [144, 72])
+            self.assertEqual(rows['jpeg-valid-cm-' + order]['expected_dpi'], [365, 182])
+            self.assertEqual(rows['jpeg-valid-fractional-' + order]['expected_dpi'], [72, 36])
+
+    def test_signed_division_control_reaches_a_supported_rational_tag(self):
+        rows = {row['name']: row for row in ci._jpeg_fixtures('full')}
+        for name, order in [('jpeg-invalid-signed-division', 'little'),
+                            ('jpeg-invalid-signed-division-little', 'little'),
+                            ('jpeg-invalid-signed-division-big', 'big')]:
+            content = rows[name]['content']
+            self.assertEqual(int.from_bytes(content[24:26], order), 5)
+            self.assertEqual(int.from_bytes(content[62:66], order), 0x80000000)
+            self.assertEqual(int.from_bytes(content[66:70], order), 0xffffffff)
+
+    def test_fixture_generators_reject_unbounded_or_unknown_arguments(self):
+        with self.assertRaises(ValueError):
+            ci._jpeg_segment(225, bytes(65534))
+        with self.assertRaises(ValueError):
+            ci._jpeg_segment(256, b'')
+        with self.assertRaises(ValueError):
+            ci._jpeg_tiff('unknown')
+        with self.assertRaises(ValueError):
+            ci._jpeg_fixtures('unknown')
+
+    def test_pdf_evidence_requires_the_exact_image_and_one_dct_object(self):
+        content = ci._jpeg_bytes()
+        obj = b'1 0 obj\n<< /Subtype /Image /Width 1 /Height 1 /Filter /DCTDecode >>\nstream\n' + content + b'\nendstream\nendobj\n'
+        pdf = b'%PDF-1.4\n' + obj + b'%%EOF\n'
+        self.assertEqual(ci._jpeg_pdf_evidence(pdf, content), {
+            'pdf_complete': True, 'embedded_image_dimensions': [1, 1], 'jpeg_bytes_embedded': True})
+        self.assertFalse(ci._jpeg_pdf_evidence(pdf[:-6], content)['pdf_complete'])
+        self.assertFalse(ci._jpeg_pdf_evidence(pdf.replace(b'DCTDecode', b'FlateDecode'), content)['jpeg_bytes_embedded'])
+        self.assertFalse(ci._jpeg_pdf_evidence(pdf, content + b'extra')['jpeg_bytes_embedded'])
+        duplicate = ci._jpeg_pdf_evidence(b'%PDF-1.4\n' + obj + obj + b'%%EOF', content)
+        self.assertIsNone(duplicate['embedded_image_dimensions'])
+        self.assertFalse(duplicate['jpeg_bytes_embedded'])
+
+
 class RunnerTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='tekai-performance-unit-')
@@ -551,10 +883,120 @@ class RunnerTests(unittest.TestCase):
             return {'code': 1}
 
         with patch.object(self.audit, 'media'), patch.object(self.audit, 'run', side_effect=run), \
-                patch.object(self.audit, 'record'):
+                patch.object(self.audit, 'record'), patch.object(self.audit, 'png_framing', return_value=True), \
+                patch.object(self.audit, 'png_decode', return_value=True):
             self.audit.png()
         self.assertEqual(len(calls), 5)
         self.assertLess(max(size for _, size in calls), 100)
+
+    def test_png_framing_family_records_precise_errors_and_exact_copy_without_tex(self):
+        fixtures = {row['name']: row for row in ci._png_framing_fixtures()}
+
+        def run(command, project, **_values):
+            row = fixtures[project.name]
+            self.assertIn('--force', command)
+            self.assertEqual((project / 'image.png').read_bytes(), row['content'])
+            source = (project / 'main.tex').read_text()
+            for setting in ('\\pdfminorversion=5', '\\pdfimageapplygamma=0', '\\pdfobjcompresslevel=0'):
+                self.assertIn(setting, source)
+            build = project / 'build'
+            build.mkdir()
+            if 'expected_error' in row:
+                (build / 'main.log').write_text(row['expected_error'])
+                return {'code': 1, 'stderr_tail': NORMAL_ENGINE_ERROR}
+            encoded = row['expected_stream']
+            (build / 'main.log').write_text('(PNG copy)')
+            (build / 'main.pdf').write_bytes(
+                f'%PDF-1.5\n1 0 obj\n<< /Subtype /Image /Width 1 /Height 1 /Filter /FlateDecode /Length {len(encoded)} >>\nstream\n'.encode()
+                + encoded + b'\nendstream\nendobj\n%%EOF\n')
+            return {'code': 0, 'stdout': '{"skipped": false, "tex_runs": 1}'}
+
+        with patch.object(self.audit, 'run', side_effect=run) as calls, contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(self.audit.png_framing())
+        self.assertEqual(calls.call_count, 15)
+        self.assertEqual(self.audit.report['summary']['passed'], 15)
+
+    def test_png_framing_timeout_stops_remaining_cases_and_remains_a_failure(self):
+        with patch.object(self.audit, 'run', return_value={'code': None, 'timeout': True}) as calls, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(self.audit.png_framing())
+        self.assertEqual(calls.call_count, 1)
+        self.assertEqual(self.audit.report['summary']['failed'], 1)
+
+    def test_png_decode_family_records_exact_errors_and_pixels_without_tex(self):
+        fixtures = {row['name']: row for row in ci._png_decode_fixtures()}
+
+        def run(command, project, **_values):
+            row = fixtures[project.name]
+            self.assertIn('--force', command)
+            self.assertEqual((project / 'image.png').read_bytes(), row['content'])
+            self.assertIn('\\pdfimageapplygamma=1', (project / 'main.tex').read_text())
+            build = project / 'build'
+            build.mkdir()
+            if 'expected_error' in row:
+                (build / 'main.log').write_text(row['expected_error'])
+                return {'code': 1, 'stderr_tail': NORMAL_ENGINE_ERROR}
+            pdf = b'%PDF-1.5\n'
+            for number, (color, pixels) in enumerate(row['expected_pixels'], 1):
+                color = 'Gray' if color == 'gray' else 'RGB'
+                pdf += (f'{number} 0 obj\n<< /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /Device{color} >>\nstream\n'.encode()
+                        + bytes(pixels) + b'\nendstream\nendobj\n')
+            (build / 'main.pdf').write_bytes(pdf + b'%%EOF\n')
+            return {'code': 0, 'stdout': '{"skipped": false, "tex_runs": 1}'}
+
+        with patch.object(self.audit, 'run', side_effect=run) as calls, contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(self.audit.png_decode())
+        self.assertEqual(calls.call_count, 12)
+        self.assertEqual(self.audit.report['summary']['passed'], 12)
+
+    def test_png_decode_timeout_stops_remaining_cases_and_remains_a_failure(self):
+        with patch.object(self.audit, 'run', return_value={'code': None, 'timeout': True}) as calls, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(self.audit.png_decode())
+        self.assertEqual(calls.call_count, 1)
+        self.assertEqual(self.audit.report['summary']['failed'], 1)
+
+    def test_png_family_runs_framing_in_both_profiles_and_stops_after_its_timeout(self):
+        with patch.object(self.audit, 'media'), patch.object(self.audit, 'run', return_value={'code': 1}), \
+                patch.object(self.audit, 'record'), patch.object(self.audit, 'project', return_value=self.work), \
+                patch('performance_ci.Audit.png') as legacy:
+            for quick in (True, False):
+                self.args.quick = quick
+                with patch.object(self.audit, 'png_framing', return_value=False) as framing:
+                    self.audit.png()
+                    framing.assert_called_once()
+            legacy.assert_not_called()
+
+    def test_jpeg_family_records_strict_error_and_image_controls_without_tex(self):
+        fixtures = {row['name']: row for row in ci._jpeg_fixtures('quick')}
+
+        def run(command, project, **_values):
+            row = fixtures[project.name]
+            self.assertIn('--force', command)
+            self.assertEqual((project / 'image.jpg').read_bytes(), row['content'])
+            build = project / 'build'
+            build.mkdir()
+            if 'expected_error' in row:
+                (build / 'main.log').write_text(row['expected_error'])
+                return {'code': 1, 'stdout': '', 'stderr_tail': NORMAL_ENGINE_ERROR}
+            dimensions = [(473628672 + 50 * dpi) // (100 * dpi) for dpi in row['expected_dpi']]
+            (build / 'main.log').write_text(f'JPEG-WIDTH-SP={dimensions[0]}\nJPEG-HEIGHT-SP={dimensions[1]}\n')
+            (build / 'main.pdf').write_bytes(b'%PDF-1.4\n1 0 obj\n<< /Subtype /Image /Width 1 /Height 1 /Filter /DCTDecode >>\nstream\n'
+                                           + row['content'] + b'\nendstream\nendobj\n%%EOF\n')
+            return {'code': 0, 'stdout': '{"skipped": false, "tex_runs": 1}'}
+
+        with patch.object(self.audit, 'run', side_effect=run) as calls, contextlib.redirect_stdout(io.StringIO()):
+            self.audit.jpeg()
+        self.assertEqual(calls.call_count, 12)
+        self.assertEqual(self.audit.report['summary']['passed'], 12)
+        self.assertEqual(self.audit.report['summary']['failed'], 0)
+
+    def test_jpeg_timeout_stops_the_family_and_remains_a_failure(self):
+        with patch.object(self.audit, 'run', return_value={'code': None, 'timeout': True}) as calls, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.audit.jpeg()
+        self.assertEqual(calls.call_count, 1)
+        self.assertEqual(self.audit.report['summary']['failed'], 1)
 
     def test_alias_fixture_cannot_be_masked_by_implicit_project_search(self):
         def run(_command, project, env):
@@ -583,7 +1025,70 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual([row['role'] for row in report['executables']], ['engine', 'expansion'])
         self.assertTrue(all(row['sha256_start'] == row['sha256_end'] and row['unchanged']
                             for row in report['executables']))
+        self.assertTrue(all(row['source_sha256_start'] == row['source_sha256_end'] == row['sha256_start']
+                            and row['copy_matches_source'] for row in report['executables']))
         self.assertEqual(report['summary']['passed'], 2)
+
+    def test_selected_executables_are_verified_copies_without_standalone_siblings(self):
+        self.executable_fixtures()
+        source_engine = self.args.engine
+        source_engine.chmod(0o700)
+        (source_engine.parent / 'tekai-engine').write_bytes(b'not part of the deployment')
+        self.audit.capture_executables(['expansion'])
+        self.assertEqual(self.args.engine, self.work / 'bin/tekai')
+        self.assertEqual(self.args.expansion_engine, self.work / 'bin/audit_expansion')
+        self.assertTrue(os.access(self.args.engine, os.X_OK))
+        self.assertFalse((self.work / 'bin/tekai-engine').exists())
+        self.assertEqual(self.args.engine.read_bytes(), source_engine.read_bytes())
+        self.assertEqual(self.audit.report['source_binary'], str(source_engine))
+        self.assertEqual(self.audit.report['binary'], str(self.args.engine))
+        self.assertEqual(self.audit.report['executables'][0]['source_path'], str(source_engine))
+
+    def test_copy_hash_mismatch_fails_before_any_fixture_can_run(self):
+        self.executable_fixtures()
+        with patch('performance_ci.shutil.copy2', side_effect=lambda _source, path: path.write_bytes(b'wrong copy')):
+            with self.assertRaisesRegex(RuntimeError, 'copy does not match'):
+                self.audit.capture_executables([])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.audit.verify_executables()
+        self.assertFalse(self.audit.report['executables'][0]['copy_matches_source'])
+        self.assertEqual(self.audit.report['summary']['failed'], 1)
+
+    def test_changed_source_fails_even_when_the_executed_copy_is_stable(self):
+        self.executable_fixtures()
+        source = self.args.engine
+        self.audit.capture_executables([])
+        source.write_bytes(b'changed source')
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.audit.verify_executables()
+        row = self.audit.report['executables'][0]
+        self.assertEqual(row['sha256_start'], row['sha256_end'])
+        self.assertNotEqual(row['source_sha256_start'], row['source_sha256_end'])
+        self.assertEqual(self.audit.report['summary']['failed'], 1)
+
+    def test_source_disappearance_fails_even_when_the_executed_copy_remains(self):
+        self.executable_fixtures()
+        source = self.args.engine
+        self.audit.capture_executables([])
+        source.unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.audit.verify_executables()
+        self.assertTrue(self.args.engine.is_file())
+        self.assertIsNone(self.audit.report['executables'][0]['source_sha256_end'])
+        self.assertEqual(self.audit.report['summary']['failed'], 1)
+
+    def test_expansion_disappearing_during_copy_is_not_an_optional_initial_absence(self):
+        self.executable_fixtures()
+        real_copy = ci.shutil.copy2
+
+        def copy(source, destination):
+            if source == self.work / 'fixture-expansion':
+                raise FileNotFoundError('source changed during copy')
+            return real_copy(source, destination)
+
+        with patch('performance_ci.shutil.copy2', side_effect=copy), self.assertRaises(FileNotFoundError):
+            self.audit.capture_executables(['expansion'])
+        self.assertNotIn('unavailable_at_start', self.audit.report['executables'][1])
 
     def test_changed_engine_content_fails_with_both_hashes_recorded(self):
         self.executable_fixtures()
@@ -622,6 +1127,7 @@ class RunnerTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.audit.verify_executables()
         self.assertIsNone(self.audit.report['executables'][0]['sha256_end'])
+        self.assertIsNotNone(self.audit.report['executables'][0]['source_sha256_end'])
         self.assertEqual(self.audit.report['results'][-1]['correctness']['status'], 'failed')
 
     def test_missing_optional_expansion_remains_explicitly_unavailable(self):
@@ -670,6 +1176,8 @@ class CLITests(unittest.TestCase):
         self.assertTrue(set(ci.QUICK_CASES).issubset(ci.FULL_CASES))
         self.assertNotIn('watch-retention', ci.QUICK_CASES)
         self.assertTrue(set(ci.AUDIT_CASES).issubset(ci.FULL_CASES))
+        self.assertIn('jpeg', ci.QUICK_CASES)
+        self.assertIn('jpeg', ci.FULL_CASES)
 
     def test_invalid_timeout_values_are_rejected(self):
         for timeout in ('0', '-1', 'nan', 'inf', '61'):

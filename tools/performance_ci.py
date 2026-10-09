@@ -30,8 +30,8 @@ from audit_runtime import Audit, CASES as AUDIT_CASES, png_chunk
 from benchmark_runtime import document, pad, png
 
 REPO = Path(__file__).resolve().parent.parent
-QUICK_CASES = ('lookup', 'lint', 'input-identity', 'png', 'preview', 'runtime', 'images')
-FULL_CASES = (*AUDIT_CASES, 'runtime', 'images', 'watch-retention')
+QUICK_CASES = ('lookup', 'lint', 'input-identity', 'png', 'jpeg', 'preview', 'runtime', 'images')
+FULL_CASES = (*AUDIT_CASES, 'jpeg', 'runtime', 'images', 'watch-retention')
 MAX_STDOUT_BYTES = 1024 * 1024
 LOG_TAIL_BYTES = 8192
 HASH_CHUNK_BYTES = 1024 * 1024
@@ -68,6 +68,188 @@ def normal_engine_input_error(values):
     statuses = re.findall(r'(?m)^(?:Error: )?TeX engine failed with status ([^\r\n]+)\r?$',
                           values.get('stderr_tail', ''))
     return values.get('code') == 1 and not values.get('timeout') and statuses == ['exit status: 1']
+
+
+def _png_framing_fixtures():
+    """Tiny first/later chunk defects and a complete contiguous-IDAT control.
+
+    CRC bytes must exist, but checksum contents are not a gate in this checkpoint.
+    The RGB control has no ancillary chunks that could disable PNG copy.
+    """
+    header = b'\x89PNG\r\n\x1a\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
+    encoded = zlib.compress(bytes(4))
+    idat = png_chunk(b'IDAT', encoded)
+    rows = []
+    for stage, prefix, error_prefix in (('first', header, 'invalid PNG metadata: '),
+                                       ('later', header + idat, 'writepng: ')):
+        for length in (0xfffffff4, 0x80000000, 0x7fffffff):
+            message = 'invalid PNG chunk length' if length > 0x7fffffff else 'PNG chunk exceeds file extent'
+            rows.append({'name': f'png-framing-idat-{stage}-{length:08x}',
+                         'content': prefix + struct.pack('>I', length) + b'IDAT',
+                         'expected_error': error_prefix + message})
+        for defect, tail, message in (
+                ('short-payload', struct.pack('>I', 10) + b'IDAT\x00\x00', 'PNG chunk exceeds file extent'),
+                ('short-crc', png_chunk(b'IDAT', encoded)[:-1], 'PNG chunk exceeds file extent'),
+                ('short-header', b'\x00\x00\x00\x00I', 'short PNG read'),
+                ('nonzero-iend', png_chunk(b'IEND', b'\x00'), 'invalid PNG IEND length')):
+            rows.append({'name': f'png-framing-{defect}-{stage}', 'content': prefix + tail,
+                         'expected_error': error_prefix + message})
+    split = len(encoded) // 2
+    rows.append({'name': 'png-copy-multiple-idat',
+                 'content': header + png_chunk(b'IDAT', encoded[:split])
+                 + png_chunk(b'IDAT', encoded[split:]) + png_chunk(b'IEND', b''),
+                 'expected_stream': encoded})
+    return rows
+
+
+def _png_copy_pdf_evidence(pdf, expected_stream):
+    images = [body for body in re.findall(rb'\b\d+\s+\d+\s+obj\b(.*?)\bendobj\b', pdf, re.S)
+              if re.search(rb'/Subtype\s*/Image\b', body)]
+    dimensions, copied = None, False
+    if len(images) == 1:
+        width = re.search(rb'/Width\s+(\d+)\b', images[0])
+        height = re.search(rb'/Height\s+(\d+)\b', images[0])
+        length = re.search(rb'/Length\s+(\d+)\b', images[0])
+        stream = re.search(rb'\bstream\r?\n(.*?)\r?\nendstream\b', images[0], re.S)
+        if width and height:
+            dimensions = [int(width[1]), int(height[1])]
+        copied = bool(re.search(rb'/Filter\s*/FlateDecode\b', images[0])) \
+            and stream is not None and stream[1] == expected_stream \
+            and length is not None and int(length[1]) == len(expected_stream)
+    return {'pdf_complete': pdf.startswith(b'%PDF-') and pdf.rstrip().endswith(b'%%EOF'),
+            'embedded_image_dimensions': dimensions, 'png_idat_stream_copied': copied}
+
+
+def _png_decode_fixtures():
+    """Complete tiny files with valid controls for the forced decode path."""
+    rows = []
+    for color, pixels in ((0, b'\x0a'), (2, b'\x0a\x14\x1e'), (6, b'\x0a\x14\x1e\x80')):
+        header = b'\x89PNG\r\n\x1a\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, color, 0, 0, 0))
+        encoded = zlib.compress(b'\x00' + pixels)
+        expected_pixels = [('gray' if color == 0 else 'rgb', list(pixels[:1] if color == 0 else pixels[:3]))]
+        if color == 6:
+            expected_pixels.append(('gray', [pixels[3]]))
+        rows.append({'name': f'png-decode-valid-{color}',
+                     'content': header + png_chunk(b'IDAT', encoded) + png_chunk(b'IEND', b''),
+                     'expected_pixels': expected_pixels})
+        for defect, payload in (('zlib', b'\x00\x00'), ('short-scanline', zlib.compress(b'\x00')),
+                                ('crc', encoded)):
+            chunk = bytearray(png_chunk(b'IDAT', payload))
+            if defect == 'crc':
+                chunk[-4] ^= 1
+                stored = int.from_bytes(chunk[-4:], 'big')
+                actual = stored ^ 0x01000000
+                message = (f'CRC error: expected 0x{stored:x} have 0x{actual:x} while decoding '
+                           'ChunkType { type: IDAT, critical: true, private: false, reserved: false, safecopy: false } chunk.')
+            else:
+                message = ('Corrupt deflate stream. BadZlibHeader' if defect == 'zlib'
+                           else 'IDAT or fDAT chunk does not have enough data for image.')
+            rows.append({'name': f'png-decode-invalid-{defect}-{color}',
+                         'content': header + bytes(chunk) + png_chunk(b'IEND', b''),
+                         'expected_error': 'invalid PNG image data: ' + message})
+    return rows
+
+
+def _png_decoded_pdf_evidence(pdf, expected_pixels):
+    images = [body for body in re.findall(rb'\b\d+\s+\d+\s+obj\b(.*?)\bendobj\b', pdf, re.S)
+              if re.search(rb'/Subtype\s*/Image\b', body)]
+    pixels = []
+    for body in images:
+        color = re.search(rb'/ColorSpace\s*/Device(Gray|RGB)\b', body)
+        stream = re.search(rb'\bstream\r?\n(.*?)\r?\nendstream\b', body, re.S)
+        if color is None or stream is None or re.search(rb'/Filter\b', body) \
+                or not all(re.search(pattern, body) for pattern in
+                           (rb'/Width\s+1\b', rb'/Height\s+1\b', rb'/BitsPerComponent\s+8\b')):
+            break
+        pixels.append(('gray' if color[1] == b'Gray' else 'rgb', list(stream[1])))
+    return {'pdf_complete': pdf.startswith(b'%PDF-') and pdf.rstrip().endswith(b'%%EOF'),
+            'decoded_pixels_exact': len(pixels) == len(images) and sorted(pixels) == sorted(expected_pixels)}
+
+
+def _jpeg_segment(marker, payload):
+    if not 0 <= marker <= 255 or len(payload) > 65533:
+        raise ValueError('JPEG segment exceeds its finite 16-bit length')
+    return bytes((255, marker)) + struct.pack('>H', len(payload) + 2) + payload
+
+
+def _jpeg_bytes(metadata=None):
+    """A valid 1x1 gray baseline JPEG, including its entropy-coded image data.
+
+    The single zero DC coefficient and AC EOB each have a one-bit zero code.
+    Remaining entropy bits are padded with ones. No external encoder is used.
+    """
+    tables = bytes((1,)) + bytes(15) + bytes((0,))
+    return (b'\xff\xd8' + (_jpeg_segment(225, b'Exif\0\0' + metadata) if metadata is not None else b'')
+            + _jpeg_segment(219, bytes((0,)) + bytes((1,)) * 64)
+            + _jpeg_segment(192, bytes.fromhex('08 00 01 00 01 01 01 11 00'))
+            + _jpeg_segment(196, bytes((0,)) + tables + bytes((16,)) + tables)
+            + _jpeg_segment(218, bytes.fromhex('01 01 00 00 3f 00')) + b'\x3f\xff\xd9')
+
+
+def _jpeg_tiff(order='little', x=(144, 1), y=(72, 1), unit=2, rational_type=5,
+               ifd_offset=8, x_offset=50, y_offset=58):
+    """Finite TIFF with X/Y rational resolution and a SHORT resolution unit."""
+    if order not in ('little', 'big'):
+        raise ValueError('TIFF byte order must be little or big')
+    endian = '<' if order == 'little' else '>'
+    header = (b'II' if order == 'little' else b'MM') + struct.pack(endian + 'HI', 42, ifd_offset)
+    entries = (struct.pack(endian + 'HHII', 282, rational_type, 1, x_offset)
+               + struct.pack(endian + 'HHII', 283, rational_type, 1, y_offset)
+               + struct.pack(endian + 'HHI', 296, 3, 1) + struct.pack(endian + 'H', unit) + bytes(2))
+    return header + struct.pack(endian + 'H', 3) + entries + bytes(4) + struct.pack(endian + 'IIII', *x, *y)
+
+
+def _jpeg_fixtures(profile):
+    if profile not in ('quick', 'full'):
+        raise ValueError('JPEG profile must be quick or full')
+    premature = 'reading JPEG image failed (premature file end)'
+    bad_length = 'reading JPEG image failed (invalid APP1 segment length)'
+    signature = bytes.fromhex('ff d8 ff e1 00 08 45 78 69 66 00 00')
+    rows = [{'name': 'jpeg-framing-signature-only', 'content': signature, 'expected_error': premature},
+            {'name': 'jpeg-framing-truncated-app1', 'content': signature[:4] + b'\x00\x10' + signature[6:],
+             'expected_error': premature},
+            {'name': 'jpeg-framing-invalid-length', 'content': signature[:4] + b'\x00\x01' + signature[6:],
+             'expected_error': bad_length}]
+
+    def image(name, metadata, dpi=(72, 72)):
+        rows.append({'name': 'jpeg-' + name, 'content': _jpeg_bytes(metadata), 'expected_dpi': list(dpi)})
+
+    image('valid-no-exif', None)
+    image('invalid-empty-exif', b'')
+    image('invalid-zero-metadata', bytes(64))
+    image('invalid-truncated-tiff', b'II\x2a\x00')
+    image('invalid-ifd-offset', _jpeg_tiff(ifd_offset=0xffffffff))
+    image('invalid-rational-offset', _jpeg_tiff(x_offset=0xffffffff))
+    image('invalid-signed-division', _jpeg_tiff(x=(0x80000000, 0xffffffff)))
+    for order in ('little', 'big'):
+        image('valid-dpi-' + order, _jpeg_tiff(order), (144, 72))
+    if profile == 'full':
+        for order in ('little', 'big'):
+            image('valid-cm-' + order, _jpeg_tiff(order, unit=3), (365, 182))
+            image('valid-fractional-' + order, _jpeg_tiff(order, x=(145, 2), y=(73, 2)), (72, 36))
+            image('invalid-ifd-end-' + order, _jpeg_tiff(order, ifd_offset=66))
+            image('invalid-rational-end-' + order, _jpeg_tiff(order, y_offset=66))
+            image('invalid-signed-division-' + order,
+                  _jpeg_tiff(order, x=(0x80000000, 0xffffffff)))
+        control = _jpeg_tiff()
+        for length in range(len(control)):
+            image(f'invalid-tiff-prefix-{length}', control[:length])
+    return rows
+
+
+def _jpeg_pdf_evidence(pdf, content):
+    """Inspect the one uncompressed image object in this fixture-owned PDF."""
+    images = [body for body in re.findall(rb'\b\d+\s+\d+\s+obj\b(.*?)\bendobj\b', pdf, re.S)
+              if re.search(rb'/Subtype\s*/Image\b', body)]
+    dimensions, embedded = None, False
+    if len(images) == 1:
+        width = re.search(rb'/Width\s+(\d+)\b', images[0])
+        height = re.search(rb'/Height\s+(\d+)\b', images[0])
+        if width and height:
+            dimensions = [int(width[1]), int(height[1])]
+        embedded = bool(re.search(rb'/Filter\s*/DCTDecode\b', images[0])) and content in images[0]
+    return {'pdf_complete': pdf.startswith(b'%PDF-') and pdf.rstrip().endswith(b'%%EOF'),
+            'embedded_image_dimensions': dimensions, 'jpeg_bytes_embedded': embedded}
 
 
 def verdict(case, values):
@@ -122,6 +304,34 @@ def verdict(case, values):
         check('cyclic PDF import returns a normal engine input error', normal_engine_input_error(values))
         check('cyclic PDF import identifies the parent-chain cycle',
               'xpdf: cyclic PDF page Parent chain' in _tex_print_text(values.get('engine_log', '')))
+    elif case.startswith('png-framing-'):
+        check('invalid PNG framing returns a normal engine input error', normal_engine_input_error(values))
+        check('PNG framing error identifies the exact fixture defect and path', bool(values.get('expected_error'))
+              and values['expected_error'] in _tex_print_text(values.get('engine_log', '')))
+        check('PNG framing failure leaves no incomplete PDF', values.get('pdf_exists_after_failure') is False)
+    elif case.startswith('png-decode-invalid-'):
+        check('invalid PNG data returns a normal engine input error', normal_engine_input_error(values))
+        check('PNG decoding reports the exact data error', bool(values.get('expected_error'))
+              and values['expected_error'] in _tex_print_text(values.get('engine_log', '')))
+        check('PNG decoding failure leaves no incomplete PDF', values.get('pdf_exists_after_failure') is False)
+    elif case.startswith('png-decode-valid-'):
+        check('PNG decode control compiles without timeout or truncated evidence', values.get('code') == 0
+              and not values.get('timeout') and not values.get('stdout_truncated') and not values.get('pdf_truncated'))
+        report = values.get('build_report', {})
+        check('fresh PNG decode control runs the engine', report.get('skipped') is False
+              and type(report.get('tex_runs')) is int and report['tex_runs'] >= 1)
+        check('PNG decoding produces a complete PDF', values.get('pdf_complete'))
+        check('PNG decoding emits the exact color and alpha pixels', values.get('decoded_pixels_exact'))
+    elif case == 'png-copy-multiple-idat':
+        check('multi-IDAT PNG compiles without timeout or truncated evidence', values.get('code') == 0
+              and not values.get('timeout') and not values.get('stdout_truncated') and not values.get('pdf_truncated'))
+        report = values.get('build_report', {})
+        check('fresh multi-IDAT fixture runs the engine', report.get('skipped') is False
+              and type(report.get('tex_runs')) is int and report['tex_runs'] >= 1)
+        check('PNG control uses the copy path', '(PNG copy)' in _tex_print_text(values.get('engine_log', '')))
+        check('multi-IDAT PNG produces a complete PDF', values.get('pdf_complete'))
+        check('PNG pixels retain their one-by-one dimensions', values.get('embedded_image_dimensions') == [1, 1])
+        check('PDF copies the exact concatenated IDAT stream', values.get('png_idat_stream_copied'))
     elif case.startswith('png-invalid-'):
         check('invalid metadata returns a normal engine input error', normal_engine_input_error(values))
         check('error identifies the invalid metadata', values.get('expected_error', '')
@@ -134,6 +344,24 @@ def verdict(case, values):
             check('invalid palette returns a normal engine input error', normal_engine_input_error(values))
             check('palette rejection identifies metadata bounds',
                   'invalid PNG PLTE length' in _tex_print_text(values.get('engine_log', '')))
+    elif case.startswith('jpeg-framing-'):
+        check('invalid JPEG framing returns a normal engine input error', normal_engine_input_error(values))
+        check('JPEG framing error identifies the exact fixture defect', bool(values.get('expected_error'))
+              and values['expected_error'] in _tex_print_text(values.get('engine_log', '')))
+    elif case.startswith('jpeg-'):
+        check('JPEG fixture compiles without timeout or truncated evidence', values.get('code') == 0
+              and not values.get('timeout') and not values.get('stdout_truncated') and not values.get('pdf_truncated'))
+        report = values.get('build_report', {})
+        check('fresh JPEG fixture runs the engine', report.get('skipped') is False
+              and type(report.get('tex_runs')) is int and report['tex_runs'] >= 1)
+        check('JPEG image produces a complete PDF', values.get('pdf_complete'))
+        check('JPEG pixels retain their one-by-one dimensions', values.get('embedded_image_dimensions') == [1, 1])
+        check('PDF embeds the exact JPEG image with DCTDecode', values.get('jpeg_bytes_embedded'))
+        dpi = values.get('expected_dpi', [])
+        expected = [(473628672 + 50 * value) // (100 * value) for value in dpi] if \
+            len(dpi) == 2 and all(type(value) is int and value > 0 for value in dpi) else None
+        check('JPEG natural size reflects the expected EXIF or fallback DPI', expected is not None
+              and values.get('natural_dimensions_sp') == expected)
     elif case == 'unicode-preview':
         check('watcher completed Unicode preview prewarming', values.get('prewarmed'))
         check('watcher remains alive after prewarming', values.get('alive'))
@@ -174,6 +402,8 @@ def verdict(case, values):
     elif case == 'executable-integrity':
         check('selected executable matches its starting SHA-256', values.get('unchanged')
               and values.get('sha256_start') is not None)
+        if 'source_path' in values:
+            check('isolated executable copy matches its selected source', values.get('copy_matches_source'))
     elif case == 'deep-inputs':
         # TeX has a finite input stack. Its normal capacity error is acceptable.
         check('deep input returns success or a normal capacity error',
@@ -306,33 +536,53 @@ class PerformanceCI(Audit):
         selected = [('engine', self.args.engine)]
         if 'expansion' in selected_cases:
             selected.append(('expansion', self.args.expansion_engine))
+        isolated_bin = self.work / 'bin'
+        isolated_bin.mkdir(exist_ok=True)
         self.report['executables'] = []
-        for role, path in selected:
-            row = {'role': role, 'path': str(path), 'sha256_start': None, 'sha256_end': None}
+        self.report['source_binary'] = str(self.args.engine)
+        for role, source in selected:
+            path = isolated_bin / ('tekai' if role == 'engine' else 'audit_expansion')
+            row = {'role': role, 'source_path': str(source), 'path': str(path),
+                   'source_sha256_start': None, 'source_sha256_end': None,
+                   'sha256_start': None, 'sha256_end': None, 'copy_matches_source': False}
             self.report['executables'].append(row)
+            if role == 'engine':
+                self.args.engine = path
+                self.report['binary'] = str(path)
+            else:
+                self.args.expansion_engine = path
             try:
+                row['source_sha256_start'] = executable_sha256(source)
+                shutil.copy2(source, path)
                 row['sha256_start'] = executable_sha256(path)
             except FileNotFoundError:
-                if role != 'expansion':
+                if role != 'expansion' or row['source_sha256_start'] is not None:
                     raise
                 # Optional expansion absence is reported by its fixture or the
                 # required-dependency check. Appearance mid-run still fails.
                 row['unavailable_at_start'] = True
+                continue
+            row['copy_matches_source'] = row['sha256_start'] == row['source_sha256_start']
+            if not row['copy_matches_source']:
+                raise RuntimeError(f'Isolated {role} executable copy does not match its source SHA-256')
         self.persist()
 
     def verify_executables(self):
         for row in self.report.get('executables', []):
             try:
-                row['sha256_end'] = executable_sha256(Path(row['path']))
-            except FileNotFoundError:
-                row['sha256_end'] = None
+                for path_key, hash_key in (('source_path', 'source_sha256_end'), ('path', 'sha256_end')):
+                    try:
+                        row[hash_key] = executable_sha256(Path(row[path_key]))
+                    except FileNotFoundError:
+                        row[hash_key] = None
             except OSError as error:
                 row['unchanged'] = False
                 self.record('executable-integrity', role=row['role'], path=row['path'],
                             exception=f'Could not recheck selected executable: {error}')
                 continue
-            row['unchanged'] = row['sha256_start'] == row['sha256_end']
-            if row.get('unavailable_at_start') and row['sha256_end'] is None:
+            row['unchanged'] = row['sha256_start'] == row['sha256_end'] \
+                and row['source_sha256_start'] == row['source_sha256_end']
+            if row.get('unavailable_at_start') and row['sha256_end'] is None and row['source_sha256_end'] is None:
                 continue
             self.record('executable-integrity', **row)
 
@@ -591,9 +841,115 @@ class PerformanceCI(Audit):
             expected = 'invalid PNG PLTE length' if kind == 'PLTE' else 'invalid or duplicate PNG tRNS length'
             self.record(name, declared_bytes=size, expected_error=expected,
                         engine_log=log.read_text(errors='replace')[-LOG_TAIL_BYTES:] if log.is_file() else '', **result)
+        if not self.png_framing() or not self.png_decode():
+            return
         if not self.args.quick:
             # Keep the audit's real 24-MiB input as an RSS observation as well.
             super().png()
+
+    def png_framing(self):
+        source = ('\\documentclass{article}\n\\pdfminorversion=5\n\\pdfimageapplygamma=0\n'
+                  '\\pdfcompresslevel=0\n\\pdfobjcompresslevel=0\n\\begin{document}\n'
+                  '\\pdfximage{image.png}\n\\noindent\\pdfrefximage\\pdflastximage\n'
+                  'PNG-CONTROL\n\\end{document}\n')
+        for fixture in _png_framing_fixtures():
+            project = self.project(fixture['name'], source)
+            (project / 'image.png').write_bytes(fixture['content'])
+            result = self.run(self.build_command(project, '--once', '--force'), project, measured=True)
+            log_path = project / 'build/main.log'
+            log = ''
+            if log_path.is_file():
+                with log_path.open('rb') as handle:
+                    handle.seek(max(0, log_path.stat().st_size - LOG_TAIL_BYTES))
+                    log = handle.read(LOG_TAIL_BYTES).decode('utf-8', errors='replace')
+            evidence = {'input_bytes': len(fixture['content']), 'engine_log': log}
+            if 'expected_error' in fixture:
+                evidence['expected_error'] = fixture['expected_error']
+                evidence['pdf_exists_after_failure'] = (project / 'build/main.pdf').exists()
+            else:
+                if result.get('code') == 0:
+                    evidence['build_report'] = self.parsed(result)
+                pdf_path = project / 'build/main.pdf'
+                pdf = b''
+                if pdf_path.is_file():
+                    with pdf_path.open('rb') as handle:
+                        pdf = handle.read(MAX_STDOUT_BYTES + 1)
+                evidence['pdf_truncated'] = len(pdf) > MAX_STDOUT_BYTES
+                evidence.update(_png_copy_pdf_evidence(pdf[:MAX_STDOUT_BYTES], fixture['expected_stream']))
+            self.record(fixture['name'], **evidence, **result)
+            if result.get('timeout'):
+                return False
+        return True
+
+    def png_decode(self):
+        source = ('\\documentclass{article}\n\\pdfminorversion=5\n\\pdfimageapplygamma=1\n'
+                  '\\pdfgamma=1000\n\\pdfimagegamma=1000\n\\pdfcompresslevel=0\n\\pdfobjcompresslevel=0\n'
+                  '\\begin{document}\n\\pdfximage{image.png}\n\\noindent\\pdfrefximage\\pdflastximage\n'
+                  'PNG-DECODE-CONTROL\n\\end{document}\n')
+        for fixture in _png_decode_fixtures():
+            project = self.project(fixture['name'], source)
+            (project / 'image.png').write_bytes(fixture['content'])
+            result = self.run(self.build_command(project, '--once', '--force'), project, measured=True)
+            log_path = project / 'build/main.log'
+            log = ''
+            if log_path.is_file():
+                with log_path.open('rb') as handle:
+                    handle.seek(max(0, log_path.stat().st_size - LOG_TAIL_BYTES))
+                    log = handle.read(LOG_TAIL_BYTES).decode('utf-8', errors='replace')
+            evidence = {'input_bytes': len(fixture['content']), 'engine_log': log}
+            if 'expected_error' in fixture:
+                evidence['expected_error'] = fixture['expected_error']
+                evidence['pdf_exists_after_failure'] = (project / 'build/main.pdf').exists()
+            else:
+                if result.get('code') == 0:
+                    evidence['build_report'] = self.parsed(result)
+                pdf_path = project / 'build/main.pdf'
+                pdf = b''
+                if pdf_path.is_file():
+                    with pdf_path.open('rb') as handle:
+                        pdf = handle.read(MAX_STDOUT_BYTES + 1)
+                evidence['pdf_truncated'] = len(pdf) > MAX_STDOUT_BYTES
+                evidence.update(_png_decoded_pdf_evidence(pdf[:MAX_STDOUT_BYTES], fixture['expected_pixels']))
+            self.record(fixture['name'], **evidence, **result)
+            if result.get('timeout'):
+                return False
+        return True
+
+    def jpeg(self):
+        source = ('\\documentclass{article}\n\\pdfimageresolution=72\n'
+                  '\\pdfcompresslevel=0\n\\pdfobjcompresslevel=0\n\\begin{document}\n'
+                  '\\pdfximage{image.jpg}\n\\setbox0=\\hbox{\\pdfrefximage\\pdflastximage}\n'
+                  '\\typeout{JPEG-WIDTH-SP=\\number\\wd0}\n'
+                  '\\typeout{JPEG-HEIGHT-SP=\\number\\ht0}\n\\noindent\\box0\nJPEG-CONTROL\n\\end{document}\n')
+        for fixture in _jpeg_fixtures(self.args.profile):
+            project = self.project(fixture['name'], source)
+            (project / 'image.jpg').write_bytes(fixture['content'])
+            result = self.run(self.build_command(project, '--once', '--force'), project, measured=True)
+            log_path = project / 'build/main.log'
+            log = ''
+            if log_path.is_file():
+                with log_path.open('rb') as handle:
+                    handle.seek(max(0, log_path.stat().st_size - LOG_TAIL_BYTES))
+                    log = handle.read(LOG_TAIL_BYTES).decode('utf-8', errors='replace')
+            evidence = {key: value for key, value in fixture.items() if key not in ('name', 'content')}
+            evidence.update(input_bytes=len(fixture['content']), engine_log=log)
+            if 'expected_dpi' in fixture:
+                width = re.findall(r'(?m)^JPEG-WIDTH-SP=(\d+)\r?$', log)
+                height = re.findall(r'(?m)^JPEG-HEIGHT-SP=(\d+)\r?$', log)
+                evidence['natural_dimensions_sp'] = [int(width[0]), int(height[0])] \
+                    if len(width) == len(height) == 1 else None
+                if result.get('code') == 0:
+                    evidence['build_report'] = self.parsed(result)
+                pdf_path = project / 'build/main.pdf'
+                pdf = b''
+                if pdf_path.is_file():
+                    with pdf_path.open('rb') as handle:
+                        pdf = handle.read(MAX_STDOUT_BYTES + 1)
+                evidence['pdf_truncated'] = len(pdf) > MAX_STDOUT_BYTES
+                evidence.update(_jpeg_pdf_evidence(pdf[:MAX_STDOUT_BYTES], fixture['content']))
+            self.record(fixture['name'], **evidence, **result)
+            if result.get('timeout'):
+                break
 
     def media(self, name, content, extension):
         project = self.project(name, '\\documentclass{article}\n\\usepackage{graphicx}\n'
