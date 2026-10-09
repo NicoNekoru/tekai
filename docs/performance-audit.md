@@ -37,7 +37,8 @@ python3 tools/audit_runtime.py --case expansion
 The runner requires macOS for RSS measurements. The cache-output checks use
 `pdftotext` and explicitly record a skip if it is unavailable. It creates no
 user project files and does not change the installed tekai binary.
-Bundle extraction happens before timing samples. The current cancellation
+An unmeasured minimal build extracts the bundle and materializes the default
+format before timing samples. The current cancellation
 fixture uses a long finite loop as a fallback in addition to process-group
 cleanup. No probe requires removing or modifying a shared cache. CPU model
 metadata is best effort when the sandbox denies system-information queries.
@@ -368,6 +369,27 @@ in both parser paths. Decode hex as validated ASCII bytes and return
 `ExpandError` for invalid input. These are input-error handling failures,
 not valid TeX output comparisons.
 
+## Static image parser safety concerns
+
+The generated JPEG EXIF reader allocates an APP1 buffer, ignores the `fread`
+result, then follows TIFF offsets and field counts through raw pointers.
+`read_APP1_Exif` and `read_exif_bytes` do not carry the buffer's end address
+into those reads. Even the byte-order check dereferences the pointer after
+skipping zero bytes without verifying that it remains inside the buffer.
+Malformed or truncated metadata can therefore reach unchecked reads.
+
+Replace this parser with checked slice reads. Validate the TIFF header, field
+table extent, and each referenced value before using it. Preserve valid
+resolution metadata through explicit tests. This is a code-level bounds
+finding in `crates/tekai-engine/src/generated/backend/writejpg.rs`, not a
+measured crash or exploit claim.
+
+The image loader also uses manual allocation and handle cleanup through
+`readimage`, `deleteimage`, and `img_free`. Full reentrant or long-lived engine
+use needs ownership checks for each image type before removing the current
+per-pass process boundary. Per-process retention is not proof of an
+accumulating watcher leak.
+
 ## Remaining review targets
 
 The production linter, watcher, watch-event collector, resolver, PDF wrapper,
@@ -377,6 +399,9 @@ Compiler orchestration, cache publication, fingerprints, and parsers have also
 been traced across files. The experimental expansion production code and
 report-only dependency walker have now received function-level review.
 Review of the experimental renderer is ongoing.
+The generated JPEG implementation has received function-level review, along
+with selected image-loader lifetime paths. Other generated backends remain
+review targets.
 
 The generated engine is approximately 115,000 lines. It has not received a
 complete manual function-by-function review in this pass. Generated and

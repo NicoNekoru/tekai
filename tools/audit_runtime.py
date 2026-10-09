@@ -597,8 +597,9 @@ def main():
         audit = Audit(args, Path(temporary).resolve())
         # Bundle extraction is outside the timing samples. Keep every cache
         # writable inside this fixture, never in the user's shared cache.
-        warmup = audit.project('warmup')
-        result = audit.run([args.engine, 'locate', 'article.cls', '--directory', warmup], warmup)
+        warmup = audit.project('warmup', '\\documentclass{article}\n'
+                              '\\begin{document}Warmup\\end{document}\n')
+        result = audit.run(audit.build_command(warmup, '--once'), warmup)
         if result.get('code') != 0:
             raise RuntimeError(f'Isolated runtime warmup failed: {result}')
         for case in args.case or CASES:
