@@ -65,6 +65,69 @@ impl Drop for Project {
 }
 
 #[test]
+fn bundled_engine_rejects_oversized_png_metadata_before_payload_reads() {
+    fn append_chunk(png: &mut Vec<u8>, typ: &[u8; 4], payload: &[u8]) {
+        png.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        png.extend_from_slice(typ);
+        png.extend_from_slice(payload);
+        let mut crc = u32::MAX;
+        for byte in typ.iter().chain(payload) {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(crc & 1));
+            }
+        }
+        png.extend_from_slice(&(!crc).to_be_bytes());
+    }
+
+    let project = Project::new();
+    project.write(
+        "main.tex",
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics[width=1cm]{image.png}\n\\end{document}\n",
+    );
+    let mut header = b"\x89PNG\r\n\x1a\n".to_vec();
+    append_chunk(
+        &mut header,
+        b"IHDR",
+        &[0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0],
+    );
+    let mut valid = header.clone();
+    append_chunk(&mut valid, b"PLTE", &[0, 0, 0]);
+    // Zlib stream for one filter byte and one black RGB pixel.
+    append_chunk(
+        &mut valid,
+        b"IDAT",
+        &[120, 156, 99, 96, 96, 96, 0, 0, 0, 4, 0, 1],
+    );
+    append_chunk(&mut valid, b"IEND", &[]);
+    fs::write(project.0.join("image.png"), valid).unwrap();
+    project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+    assert!(project.0.join("build/main.pdf").is_file());
+
+    for (typ, length, expected) in [
+        (b"PLTE", 0u32, "invalid PNG PLTE length"),
+        (b"PLTE", 4, "invalid PNG PLTE length"),
+        (b"PLTE", 769, "invalid PNG PLTE length"),
+        (b"PLTE", 24 * 1024 * 1024, "invalid PNG PLTE length"),
+        (
+            b"tRNS",
+            24 * 1024 * 1024,
+            "invalid or duplicate PNG tRNS length",
+        ),
+    ] {
+        let mut invalid = header.clone();
+        invalid.extend_from_slice(&length.to_be_bytes());
+        invalid.extend_from_slice(typ);
+        // Declared lengths are large, but the fixture has no chunk payload.
+        fs::write(project.0.join("image.png"), invalid).unwrap();
+        let output = project.run(&["build", "main.tex", "--report-json", "--once", "--force"]);
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+        assert!(log.contains(expected), "{log}");
+    }
+}
+
+#[test]
 fn check_builds_and_caches_without_external_tools_or_tex_installation() {
     let project = Project::new();
     project.write(

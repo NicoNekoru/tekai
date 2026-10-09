@@ -356,19 +356,28 @@ pub unsafe extern "C" fn png_read_info(png_ptr: *mut png_struct_def, _info_ptr: 
     let Some(state) = state(png_ptr) else {
         return;
     };
-    if let Ok(metadata) = parse_metadata_from_file(state.file) {
-        state.width = metadata.width;
-        state.height = metadata.height;
-        state.bit_depth = metadata.bit_depth;
-        state.color_type = metadata.color_type;
-        state.interlace_type = metadata.interlace_type;
-        state.valid = metadata.valid;
-        state.x_pixels_per_meter = metadata.x_pixels_per_meter;
-        state.y_pixels_per_meter = metadata.y_pixels_per_meter;
-        state.gamma_scaled = metadata.gamma_scaled;
-        state.palette = metadata.palette;
-        state.trns = metadata.trns;
-    }
+    let metadata = match parse_metadata_from_file(state.file) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            let message = std::ffi::CString::new(error)
+                .unwrap_or_else(|_| c"invalid PNG metadata".to_owned());
+            crate::utils::pdftex_fail_args(
+                c"invalid PNG metadata: %s".as_ptr(),
+                &[crate::utils::PrintfArg::from(message.as_ptr())],
+            );
+        }
+    };
+    state.width = metadata.width;
+    state.height = metadata.height;
+    state.bit_depth = metadata.bit_depth;
+    state.color_type = metadata.color_type;
+    state.interlace_type = metadata.interlace_type;
+    state.valid = metadata.valid;
+    state.x_pixels_per_meter = metadata.x_pixels_per_meter;
+    state.y_pixels_per_meter = metadata.y_pixels_per_meter;
+    state.gamma_scaled = metadata.gamma_scaled;
+    state.palette = metadata.palette;
+    state.trns = metadata.trns;
 }
 
 #[no_mangle]
@@ -813,24 +822,46 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
         trns: None,
     };
 
+    let mut seen_header = false;
     loop {
         let len = unsafe { read_be_u32_file(fp)? } as usize;
         let mut typ = [0u8; 4];
         unsafe { read_exact_file(fp, &mut typ)? };
+        if !seen_header && &typ != b"IHDR" {
+            return Err("PNG IHDR must be the first chunk".to_string());
+        }
         match &typ {
-            b"IHDR" if len >= 13 => {
+            b"IHDR" => {
+                if seen_header || len != 13 {
+                    return Err("invalid or duplicate PNG IHDR".to_string());
+                }
                 let mut chunk = [0u8; 13];
                 unsafe { read_exact_file(fp, &mut chunk)? };
                 metadata.width = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                 metadata.height = u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
                 metadata.bit_depth = chunk[8];
                 metadata.color_type = chunk[9];
-                metadata.interlace_type = if chunk[12] == PNG_INTERLACE_ADAM7 {
-                    PNG_INTERLACE_ADAM7
-                } else {
-                    PNG_INTERLACE_NONE
+                metadata.interlace_type = chunk[12];
+                let valid_depth = match metadata.color_type {
+                    PNG_COLOR_TYPE_GRAY => matches!(metadata.bit_depth, 1 | 2 | 4 | 8 | 16),
+                    PNG_COLOR_TYPE_PALETTE => matches!(metadata.bit_depth, 1 | 2 | 4 | 8),
+                    PNG_COLOR_TYPE_RGB | PNG_COLOR_TYPE_GRAY_ALPHA | PNG_COLOR_TYPE_RGB_ALPHA => {
+                        matches!(metadata.bit_depth, 8 | 16)
+                    }
+                    _ => false,
                 };
-                unsafe { skip_file_bytes(fp, len - 13)? };
+                if !valid_depth
+                    || metadata.width == 0
+                    || metadata.height == 0
+                    || metadata.width > i32::MAX as u32
+                    || metadata.height > i32::MAX as u32
+                    || chunk[10] != 0
+                    || chunk[11] != 0
+                    || !matches!(chunk[12], PNG_INTERLACE_NONE | PNG_INTERLACE_ADAM7)
+                {
+                    return Err("invalid PNG IHDR fields".to_string());
+                }
+                seen_header = true;
             }
             b"gAMA" if len == 4 => {
                 metadata.valid |= PNG_INFO_GAMA;
@@ -846,6 +877,21 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
                     u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
             }
             b"PLTE" => {
+                // PNG palettes have 1..=256 RGB entries. Validate before allocation.
+                if len == 0 || len > 768 || len % 3 != 0 {
+                    return Err("invalid PNG PLTE length".to_string());
+                }
+                if !metadata.palette.is_empty()
+                    || metadata.trns.is_some()
+                    || !matches!(
+                        metadata.color_type,
+                        PNG_COLOR_TYPE_PALETTE | PNG_COLOR_TYPE_RGB | PNG_COLOR_TYPE_RGB_ALPHA
+                    )
+                    || (metadata.color_type == PNG_COLOR_TYPE_PALETTE
+                        && len / 3 > (1usize << metadata.bit_depth))
+                {
+                    return Err("invalid or duplicate PNG PLTE".to_string());
+                }
                 let mut chunk = vec![0u8; len];
                 unsafe { read_exact_file(fp, &mut chunk)? };
                 metadata.palette = chunk
@@ -858,6 +904,17 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
                     .collect();
             }
             b"tRNS" => {
+                let valid_length = match metadata.color_type {
+                    PNG_COLOR_TYPE_GRAY => len == 2,
+                    PNG_COLOR_TYPE_RGB => len == 6,
+                    PNG_COLOR_TYPE_PALETTE => {
+                        !metadata.palette.is_empty() && len <= metadata.palette.len()
+                    }
+                    _ => false,
+                };
+                if !valid_length || metadata.trns.is_some() {
+                    return Err("invalid or duplicate PNG tRNS length".to_string());
+                }
                 metadata.valid |= PNG_INFO_TRNS;
                 let mut chunk = vec![0u8; len];
                 unsafe { read_exact_file(fp, &mut chunk)? };
@@ -891,7 +948,12 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
                 metadata.valid |= PNG_INFO_SPLT;
                 unsafe { skip_file_bytes(fp, len)? };
             }
-            b"IDAT" => break,
+            b"IDAT" => {
+                if metadata.color_type == PNG_COLOR_TYPE_PALETTE && metadata.palette.is_empty() {
+                    return Err("indexed PNG requires a PLTE chunk".to_string());
+                }
+                break;
+            }
             b"IEND" => {
                 unsafe { skip_file_bytes(fp, len)? };
                 unsafe { skip_file_bytes(fp, 4)? };
@@ -933,6 +995,180 @@ mod tests {
     use std::io::Write;
     use std::os::unix::ffi::OsStrExt;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn append_metadata_chunk(png: &mut Vec<u8>, typ: &[u8; 4], data: &[u8]) {
+        png.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        png.extend_from_slice(typ);
+        png.extend_from_slice(data);
+        png.extend_from_slice(&[0; 4]);
+    }
+
+    fn metadata_fixture(color_type: u8, bit_depth: u8) -> Vec<u8> {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut ihdr = [0; 13];
+        ihdr[..4].copy_from_slice(&1u32.to_be_bytes());
+        ihdr[4..8].copy_from_slice(&1u32.to_be_bytes());
+        ihdr[8] = bit_depth;
+        ihdr[9] = color_type;
+        append_metadata_chunk(&mut png, b"IHDR", &ihdr);
+        png
+    }
+
+    // These fixtures exercise metadata reads, not IDAT decoding or CRC validation.
+    fn read_metadata_fixture(png: &[u8]) -> Result<Metadata, String> {
+        let fp = unsafe { libc::tmpfile() };
+        assert!(!fp.is_null());
+        let written = unsafe { libc::fwrite(png.as_ptr().cast(), 1, png.len(), fp) };
+        assert_eq!(written, png.len());
+        let result = unsafe { parse_metadata_from_file(fp) };
+        unsafe { libc::fclose(fp) };
+        result
+    }
+
+    #[test]
+    fn palette_lengths_are_checked_before_reading_or_allocating_payloads() {
+        for length in [0u32, 1, 2, 4, 769, 24 * 1024 * 1024] {
+            let mut png = metadata_fixture(PNG_COLOR_TYPE_RGB, 8);
+            // Only the header is present. A rejected length must not reach a payload read.
+            png.extend_from_slice(&length.to_be_bytes());
+            png.extend_from_slice(b"PLTE");
+            let error = read_metadata_fixture(&png)
+                .err()
+                .expect("invalid palette accepted");
+            assert_eq!(error, "invalid PNG PLTE length", "length {length}");
+        }
+    }
+
+    #[test]
+    fn palettes_preserve_valid_entries_and_enforce_color_and_depth_limits() {
+        for (color_type, bit_depth, entries) in [
+            (PNG_COLOR_TYPE_RGB, 8, 1),
+            (PNG_COLOR_TYPE_RGB_ALPHA, 16, 256),
+            (PNG_COLOR_TYPE_PALETTE, 1, 2),
+            (PNG_COLOR_TYPE_PALETTE, 8, 256),
+        ] {
+            let mut png = metadata_fixture(color_type, bit_depth);
+            append_metadata_chunk(&mut png, b"PLTE", &[1, 2, 3].repeat(entries));
+            append_metadata_chunk(&mut png, b"IDAT", &[]);
+            let metadata = read_metadata_fixture(&png).unwrap();
+            assert_eq!(metadata.palette.len(), entries);
+            assert_eq!(metadata.palette[entries - 1].red, 1);
+            assert_eq!(metadata.palette[entries - 1].green, 2);
+            assert_eq!(metadata.palette[entries - 1].blue, 3);
+        }
+        for (color_type, bit_depth, entries) in [
+            (PNG_COLOR_TYPE_GRAY, 8, 1),
+            (PNG_COLOR_TYPE_GRAY_ALPHA, 8, 1),
+            (PNG_COLOR_TYPE_PALETTE, 1, 3),
+        ] {
+            let mut png = metadata_fixture(color_type, bit_depth);
+            append_metadata_chunk(&mut png, b"PLTE", &vec![0; entries * 3]);
+            append_metadata_chunk(&mut png, b"IDAT", &[]);
+            assert_eq!(
+                read_metadata_fixture(&png).err().unwrap(),
+                "invalid or duplicate PNG PLTE"
+            );
+        }
+        let mut png = metadata_fixture(PNG_COLOR_TYPE_PALETTE, 8);
+        append_metadata_chunk(&mut png, b"IDAT", &[]);
+        assert_eq!(
+            read_metadata_fixture(&png).err().unwrap(),
+            "indexed PNG requires a PLTE chunk"
+        );
+    }
+
+    #[test]
+    fn transparency_lengths_are_checked_before_reading_or_allocating_payloads() {
+        for (color_type, length) in [
+            (PNG_COLOR_TYPE_GRAY, 3u32),
+            (PNG_COLOR_TYPE_RGB, 7),
+            (PNG_COLOR_TYPE_PALETTE, 257),
+            (PNG_COLOR_TYPE_RGB_ALPHA, 6),
+            (PNG_COLOR_TYPE_GRAY_ALPHA, 2),
+            (PNG_COLOR_TYPE_RGB, 24 * 1024 * 1024),
+        ] {
+            let mut png = metadata_fixture(color_type, 8);
+            if color_type == PNG_COLOR_TYPE_PALETTE {
+                append_metadata_chunk(&mut png, b"PLTE", &[0; 768]);
+            }
+            png.extend_from_slice(&length.to_be_bytes());
+            png.extend_from_slice(b"tRNS");
+            let error = read_metadata_fixture(&png)
+                .err()
+                .expect("invalid transparency accepted");
+            assert_eq!(error, "invalid or duplicate PNG tRNS length");
+        }
+    }
+
+    #[test]
+    fn transparency_preserves_valid_grayscale_rgb_and_palette_values() {
+        for (color_type, length) in [
+            (PNG_COLOR_TYPE_GRAY, 2),
+            (PNG_COLOR_TYPE_RGB, 6),
+            (PNG_COLOR_TYPE_PALETTE, 1),
+            (PNG_COLOR_TYPE_PALETTE, 256),
+        ] {
+            let mut png = metadata_fixture(color_type, 8);
+            if color_type == PNG_COLOR_TYPE_PALETTE {
+                append_metadata_chunk(&mut png, b"PLTE", &[0; 768]);
+            }
+            let transparency = vec![0; length];
+            append_metadata_chunk(&mut png, b"tRNS", &transparency);
+            append_metadata_chunk(&mut png, b"IDAT", &[]);
+            let metadata = read_metadata_fixture(&png).unwrap();
+            assert_eq!(metadata.valid & PNG_INFO_TRNS, PNG_INFO_TRNS);
+            assert_eq!(metadata.trns.unwrap(), transparency);
+        }
+    }
+
+    #[test]
+    fn metadata_rejects_invalid_headers_and_repeated_bounded_chunks() {
+        for (index, value) in [(16, 128), (24, 1), (25, 255), (26, 1), (27, 1), (28, 2)] {
+            let mut png = metadata_fixture(PNG_COLOR_TYPE_RGB, 8);
+            png[index] = value;
+            append_metadata_chunk(&mut png, b"IDAT", &[]);
+            assert_eq!(
+                read_metadata_fixture(&png).err().unwrap(),
+                "invalid PNG IHDR fields"
+            );
+        }
+        for offset in [16, 20] {
+            let mut png = metadata_fixture(PNG_COLOR_TYPE_RGB, 8);
+            png[offset..offset + 4].fill(0);
+            append_metadata_chunk(&mut png, b"IDAT", &[]);
+            assert_eq!(
+                read_metadata_fixture(&png).err().unwrap(),
+                "invalid PNG IHDR fields"
+            );
+        }
+        for typ in [b"IHDR", b"PLTE", b"tRNS"] {
+            let mut png = metadata_fixture(PNG_COLOR_TYPE_RGB, 8);
+            let header = png[16..29].to_vec();
+            let payload = match typ {
+                b"PLTE" => &[0; 3][..],
+                b"tRNS" => &[0; 6][..],
+                _ => &header,
+            };
+            if typ != b"IHDR" {
+                append_metadata_chunk(&mut png, typ, payload);
+            }
+            append_metadata_chunk(&mut png, typ, payload);
+            append_metadata_chunk(&mut png, b"IDAT", &[]);
+            let expected = match typ {
+                b"IHDR" => "invalid or duplicate PNG IHDR",
+                b"PLTE" => "invalid or duplicate PNG PLTE",
+                _ => "invalid or duplicate PNG tRNS length",
+            };
+            assert_eq!(read_metadata_fixture(&png).err().unwrap(), expected);
+        }
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        append_metadata_chunk(&mut png, b"PLTE", &[0; 3]);
+        append_metadata_chunk(&mut png, b"IDAT", &[]);
+        assert_eq!(
+            read_metadata_fixture(&png).err().unwrap(),
+            "PNG IHDR must be the first chunk"
+        );
+    }
 
     #[test]
     fn decoded_cache_is_bounded_and_eviction_keeps_active_pixels_valid() {

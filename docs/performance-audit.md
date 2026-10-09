@@ -9,6 +9,8 @@ cancellation. Cache retention limits alone do not prevent these failures.
 The preview scan now rounds its byte limit down to a UTF-8 character boundary.
 The experimental expander now rejects the three reproduced invalid inputs
 without aborting.
+PNG metadata reads now validate palette, transparency, and header bounds before
+allocating their buffers.
 The other confirmed failures below remain open unless their section says otherwise.
 
 ## Measurement conditions
@@ -201,6 +203,8 @@ definition inputs remain available and later inputs stay outside the scan.
 | Reading a PNG palette | 3-byte palette | Invalid 24 MiB palette | 29.5 to 77.5 MiB peak RSS, both builds accepted |
 | Scheduling EPS conversion | 4 jobs | 32 jobs on 14 CPUs | 4 and 32 simultaneous converter processes |
 
+The PNG row records the original failure. The metadata bounds fix is described below.
+
 ### Auxiliary tools have no shared concurrency limit
 
 The bibliography, index, EPS, SVG, Asymptote, PythonTeX, MetaPost, and gnuplot
@@ -312,18 +316,31 @@ include publication or label it separately.
 
 Relevant functions are in `src/compiler.rs`.
 
-### PNG metadata parsing accepts unbounded palette lengths
+### PNG metadata allocations now enforce format bounds
 
-`parse_metadata_from_file` allocates `PLTE` and `tRNS` buffers using the declared
+`parse_metadata_from_file` allocated `PLTE` and `tRNS` buffers using the declared
 chunk length before validating format-specific bounds. A 1-by-1 RGB PNG with
 an invalid 24 MiB palette was accepted and reached 77.5 MiB peak RSS. Its
 valid three-byte-palette counterpart reached 29.5 MiB.
 
-Validate chunk lengths and structure before allocating. The decode cache
-budget does not cover metadata buffers or the active decoded frame. The
-decoder library's allocation limit does not constrain a caller-allocated
-output buffer, so frame dimensions also need checked arithmetic and an
-explicit memory policy.
+The parser now rejects invalid palette lengths before allocation. Palette
+storage is at most 768 bytes. Transparency payloads must match their color
+type, and indexed transparency cannot exceed the palette entry count, at most
+256 bytes. Header validation checks dimensions, bit depth, color type,
+compression, filter, and interlace values. Duplicate palette and transparency
+chunks are rejected. These are [PNG format limits](https://www.w3.org/TR/png-3/#11PLTE),
+not a new size policy for valid images.
+
+Metadata errors now terminate the engine with a normal error instead of leaving
+default image dimensions. Unit tests cover valid metadata and malformed
+declarations without large payloads. A bundled CLI regression builds a valid
+one-pixel image, then checks that invalid palette and transparency declarations
+exit with code 1 and the expected metadata error. It uses empty executable
+search paths and fixture-owned caches.
+
+The active decoded frame still needs a separate memory policy. The decoder
+library's allocation limit does not constrain a caller-allocated output buffer.
+The compressed input also remains a whole-file read on the decode path.
 
 The confirmed metadata code is in `crates/tekai-engine/src/pngshim.rs`.
 
@@ -412,9 +429,8 @@ Compiler orchestration, cache publication, fingerprints, and parsers have also
 been traced across files. The experimental expansion production code and
 report-only dependency walker have now received function-level review.
 Review of the experimental renderer is ongoing.
-The generated JPEG implementation has received function-level review, along
-with selected image-loader lifetime paths. Other generated backends remain
-review targets.
+The generated JPEG, JBIG2, and image-loader implementations have received
+function-level review. Other generated backends remain review targets.
 
 The generated engine is approximately 115,000 lines. It has not received a
 complete manual function-by-function review in this pass. Generated and
