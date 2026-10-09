@@ -1,0 +1,245 @@
+name: Performance
+
+on:
+  pull_request:
+  workflow_call:
+    inputs:
+      profile:
+        description: 'Diagnostic profile, quick or full'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Quick regression checks or the full diagnostic suite
+        required: true
+        default: full
+        type: choice
+        options:
+          - quick
+          - full
+  schedule:
+    # Tuesday at 07:17 UTC, away from the busy start of the hour.
+    - cron: '17 7 * * 2'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  runner-tests:
+    name: Diagnostic runner tests (Linux, Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.13']
+    steps:
+      - name: Validate the requested profile
+        env:
+          REQUESTED_PROFILE: ${{ inputs.profile }}
+          PERFORMANCE_TRIGGER: ${{ github.event_name }}
+        run: |
+          case "$REQUESTED_PROFILE" in
+            quick|full) ;;
+            '')
+              if [[ "$PERFORMANCE_TRIGGER" != pull_request && "$PERFORMANCE_TRIGGER" != schedule ]]; then
+                printf '%s\n' 'The reusable or manual workflow requires profile quick or full.' >&2
+                exit 2
+              fi
+              ;;
+            *)
+              printf '%s\n' 'The performance profile must be quick or full.' >&2
+              exit 2
+              ;;
+          esac
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Test reporting, deadlines, isolation and owned-process cleanup
+        env:
+          PERFORMANCE_REPORT_DIR: ${{ runner.temp }}/tekai-performance-tests
+        run: |
+          mkdir -p "$PERFORMANCE_REPORT_DIR"
+          test -f tools/test_performance_ci.py
+          test -f tools/test_verify_bundled_papers.py
+          python3 -B -m unittest discover -s tools -p test_audit_runtime.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/audit-runner-tests.log"
+          python3 -B -m unittest discover -s tools -p test_performance_ci.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/performance-runner-tests.log"
+          python3 -B -m unittest discover -s tools -p test_verify_bundled_papers.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/parity-runner-tests.log"
+
+      - name: Upload runner test logs
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: performance-runner-tests-linux-python-${{ matrix.python }}
+          path: ${{ runner.temp }}/tekai-performance-tests/
+          if-no-files-found: warn
+          retention-days: 14
+
+  runtime:
+    name: Runtime diagnostics (${{ matrix.os }})
+    needs: runner-tests
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Tekai's documented runtime support is macOS. Linux above tests the
+        # portable supervisor, not an unsupported Linux release engine.
+        os: ${{ fromJSON((inputs.profile == 'quick' || (inputs.profile == '' && github.event_name == 'pull_request')) && '["macos-15"]' || '["macos-15", "macos-15-intel"]') }}
+    env:
+      PERFORMANCE_PROFILE: ${{ inputs.profile || (github.event_name == 'pull_request' && 'quick' || 'full') }}
+      PERFORMANCE_TIMEOUT: ${{ (inputs.profile == 'quick' || (inputs.profile == '' && github.event_name == 'pull_request')) && '30' || '60' }}
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUST_BACKTRACE: '1'
+      TEKAI_TEXMF_MODE: bundled
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Prepare isolated reports
+        env:
+          PERFORMANCE_REPORT_DIR: ${{ runner.temp }}/tekai-performance-reports
+          CARGO_TARGET_DIR: ${{ runner.temp }}/tekai-performance-target
+          TEKAI_ENGINE_CACHE: ${{ runner.temp }}/tekai-performance-cache/engine
+          TEKAI_FORMAT_CACHE: ${{ runner.temp }}/tekai-performance-cache/formats
+          TEKAI_AUX_CACHE: ${{ runner.temp }}/tekai-performance-cache/aux
+          TEKAI_BIBTEX_CACHE: ${{ runner.temp }}/tekai-performance-cache/bibtex
+        run: |
+          mkdir -p "$PERFORMANCE_REPORT_DIR"
+          printf '%s\n' \
+            "PERFORMANCE_REPORT_DIR=$PERFORMANCE_REPORT_DIR" \
+            "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" \
+            "TEKAI_ENGINE_CACHE=$TEKAI_ENGINE_CACHE" \
+            "TEKAI_FORMAT_CACHE=$TEKAI_FORMAT_CACHE" \
+            "TEKAI_AUX_CACHE=$TEKAI_AUX_CACHE" \
+            "TEKAI_BIBTEX_CACHE=$TEKAI_BIBTEX_CACHE" >> "$GITHUB_ENV"
+          git rev-parse HEAD | tee "$PERFORMANCE_REPORT_DIR/commit.txt"
+          uname -a | tee "$PERFORMANCE_REPORT_DIR/runner.txt"
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Test native process supervision before compiling TeX
+        run: |
+          test -f tools/test_performance_ci.py
+          test -f tools/test_verify_bundled_papers.py
+          python3 -B -m unittest discover -s tools -p test_performance_ci.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/performance-runner-tests.log"
+          python3 -B -m unittest discover -s tools -p test_verify_bundled_papers.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/parity-runner-tests.log"
+
+      - name: Install Rust
+        timeout-minutes: 5
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc -Vv | tee "$PERFORMANCE_REPORT_DIR/rustc.txt"
+
+      - name: Cache downloaded Rust dependencies only
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: performance-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          # Build outputs and Tekai runtime/artifact caches are never restored.
+          enableCrossOsArchive: false
+
+      - name: Install PDF verification tools, without installing TeX
+        timeout-minutes: 5
+        run: |
+          brew list poppler >/dev/null 2>&1 || brew install poppler
+          pdftotext -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/poppler.txt"
+
+      - name: Build the candidate release in a fresh target directory
+        id: build
+        timeout-minutes: 20
+        run: cargo build --release --locked --bin tekai 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-build.log"
+
+      - name: Build the bounded experimental expansion fixture
+        id: expansion
+        if: env.PERFORMANCE_PROFILE == 'full'
+        timeout-minutes: 10
+        run: cargo build --release --locked -p tekai-pdftex --example audit_expansion 2>&1 | tee "$PERFORMANCE_REPORT_DIR/expansion-build.log"
+
+      - name: Enforce deterministic scan, cache, parser and retention regressions
+        id: regressions
+        timeout-minutes: 15
+        env:
+          TEKAI_EMBEDDED_ENGINE_RUNNER: ${{ env.CARGO_TARGET_DIR }}/release/tekai
+        # The normal CI workflow owns the debug, installed-TeX and CLI gates.
+        # This checks their operation-count and correctness invariants in release.
+        run: cargo test --workspace --release --locked --lib -- --test-threads=1 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-library-tests.log"
+
+      - name: Run bounded diagnostics and fixed regression checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (env.PERFORMANCE_PROFILE == 'quick' || steps.expansion.outcome == 'success') }}
+        timeout-minutes: 15
+        run: |
+          performance_args=(
+            --engine "$CARGO_TARGET_DIR/release/tekai"
+            --profile "$PERFORMANCE_PROFILE"
+            --timeout "$PERFORMANCE_TIMEOUT"
+            --output "$PERFORMANCE_REPORT_DIR/performance.json"
+            --require-pdftotext
+            --fail-on-skip
+          )
+          if [[ "$PERFORMANCE_PROFILE" == full ]]; then
+            performance_args+=(--expansion-engine "$CARGO_TARGET_DIR/release/examples/audit_expansion" --require-expansion)
+          fi
+          # Known open issues keep their explicit known_failure status. Timing
+          # and RSS samples are observations, never absolute speed thresholds.
+          python3 -B tools/performance_ci.py "${performance_args[@]}" 2>&1 | tee "$PERFORMANCE_REPORT_DIR/performance.log"
+
+      - name: Compare all paper and transparent-image pages with pinned upstream pdfTeX
+        id: parity
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && env.PERFORMANCE_PROFILE == 'full' }}
+        timeout-minutes: 15
+        run: python3 -B tools/verify_bundled_papers.py --engine "$CARGO_TARGET_DIR/release/tekai" --images 2>&1 | tee "$PERFORMANCE_REPORT_DIR/pdf-parity.log"
+
+      - name: Publish diagnostic summary, including known failures
+        if: always()
+        env:
+          PERFORMANCE_REPORT_DIR: ${{ runner.temp }}/tekai-performance-reports
+          RELEASE_REGRESSION_OUTCOME: ${{ steps.regressions.outcome }}
+          PDF_PARITY_OUTCOME: ${{ steps.parity.outcome }}
+        run: |
+          if [[ -f "$PERFORMANCE_REPORT_DIR/performance.md" ]]; then
+            cat "$PERFORMANCE_REPORT_DIR/performance.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' 'The performance report was not completed. Check the build and runner logs in the artifact. This is not a passing diagnostic result.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf '\n%s\n\n' '## Separate correctness gates' >> "$GITHUB_STEP_SUMMARY"
+          printf 'Release library regressions returned `%s`.\n' "$RELEASE_REGRESSION_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$PERFORMANCE_PROFILE" == full ]]; then
+            printf 'All-page paper and transparent-image parity returned `%s`. Its separate report and log are in the artifact.\n' "$PDF_PARITY_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' 'The quick profile does not run the all-page PDF parity comparison.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload diagnostics even when a regression fails
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: performance-${{ env.PERFORMANCE_PROFILE }}-${{ matrix.os }}-${{ runner.arch }}
+          path: |
+            ${{ runner.temp }}/tekai-performance-reports/
+            target/runtime-parity/report.json
+          if-no-files-found: warn
+          retention-days: 14

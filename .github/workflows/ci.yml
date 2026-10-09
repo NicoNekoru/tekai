@@ -6,6 +6,15 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      performance_profile:
+        description: Quick or full release diagnostics
+        required: false
+        default: quick
+        type: choice
+        options:
+          - quick
+          - full
 
 permissions:
   contents: read
@@ -26,8 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test audit runner permissions and cleanup without compiling TeX
-        run: python3 -B -m unittest discover -s tools -p test_audit_runtime.py
+      - name: Test diagnostic runner permissions and cleanup without compiling TeX
+        run: |
+          test -f tools/test_performance_ci.py
+          test -f tools/test_verify_bundled_papers.py
+          python3 -B -m unittest discover -s tools -p test_audit_runtime.py
+          python3 -B -m unittest discover -s tools -p test_performance_ci.py
+          python3 -B -m unittest discover -s tools -p test_verify_bundled_papers.py
 
       - name: Install Rust
         run: |
@@ -75,3 +89,14 @@ jobs:
           cargo clippy -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked -- -D warnings
           cargo build -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked
           cargo test --workspace --locked -- --test-threads=1
+
+  performance-diagnostics:
+    name: Release diagnostics (${{ inputs.performance_profile || 'quick' }})
+    # Pull requests already trigger performance.yml directly. This same-commit
+    # call also lets a branch's new workflow be checked through core CI dispatch.
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/performance.yml
+    permissions:
+      contents: read
+    with:
+      profile: ${{ inputs.performance_profile || 'quick' }}
