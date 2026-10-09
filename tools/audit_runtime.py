@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import signal
@@ -59,11 +60,19 @@ class Audit:
     def __init__(self, args, work):
         self.args = args
         self.work = work
-        self.report = {'machine': subprocess.check_output(
-            ['sysctl', '-n', 'machdep.cpu.brand_string'], text=True).strip(),
+        machine = platform.machine()
+        try:
+            machine = subprocess.check_output(
+                ['sysctl', '-n', 'machdep.cpu.brand_string'], text=True,
+                stderr=subprocess.DEVNULL, timeout=2).strip() or machine
+        except (OSError, subprocess.SubprocessError):
+            # CPU model metadata must not prevent scoped fixture diagnostics.
+            pass
+        self.report = {'machine': machine,
             'binary': str(args.engine), 'quick': args.quick, 'timeout_seconds': args.timeout,
             'results': []}
-        self.env = dict(os.environ, TEKAI_TEXMF_MODE='bundled')
+        self.env = dict(os.environ, TEKAI_TEXMF_MODE='bundled',
+                        TEKAI_ENGINE_CACHE=str(work / 'runtime-cache'))
         for variable in SEARCH_VARIABLES:
             self.env.pop(variable, None)
         self.pdftext = shutil.which('pdftotext')
@@ -100,9 +109,12 @@ class Audit:
         try:
             stdout, stderr = process.communicate(timeout=self.args.timeout)
             maximum = re.search(r'(\d+)\s+maximum resident set size', stderr)
-            return {'seconds': time.monotonic() - started, 'code': process.returncode,
-                    'peak_mib': int(maximum[1]) / 1048576 if maximum else None,
-                    'stdout': stdout, 'stderr_tail': stderr[-2000:]}
+            result = {'seconds': time.monotonic() - started, 'code': process.returncode,
+                      'peak_mib': int(maximum[1]) / 1048576 if maximum else None,
+                      'stdout': stdout, 'stderr_tail': stderr[-2000:]}
+            if measured:
+                result['rss_available'] = maximum is not None
+            return result
         except subprocess.TimeoutExpired:
             return {'seconds': time.monotonic() - started, 'timeout': True}
         finally:
@@ -255,8 +267,9 @@ class Audit:
             stop_group(process)
 
     def cancel(self):
-        project = self.project('cancel', '\\documentclass{article}\n\\begin{document}\n'
-                               '\\loop\\iftrue\\repeat\n\\end{document}\n')
+        project = self.project('cancel', '\\documentclass{article}\n\\newcount\\auditcount\n'
+                               '\\begin{document}\n\\loop\\advance\\auditcount by1'
+                               '\\ifnum\\auditcount<100000000\\repeat\n\\end{document}\n')
         process = self.start(self.build_command(project), project, self.environment(project))
         child = None
         try:
@@ -421,6 +434,12 @@ def main():
     args.report.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='tekai-second-audit-') as temporary:
         audit = Audit(args, Path(temporary).resolve())
+        # Bundle extraction is outside the timing samples. Keep every cache
+        # writable inside this fixture, never in the user's shared cache.
+        warmup = audit.project('warmup')
+        result = audit.run([args.engine, 'locate', 'article.cls', '--directory', warmup], warmup)
+        if result.get('code') != 0:
+            raise RuntimeError(f'Isolated runtime warmup failed: {result}')
         for case in args.case or CASES:
             getattr(audit, case.replace('-', '_'))()
 

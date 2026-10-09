@@ -19,7 +19,7 @@ and bundled-paper gates before its commit. The 99-page reference comparison
 was pixel-identical. Those gates did not exercise the cases below. This audit
 does not establish remote CI success or a leak-free runtime.
 
-`tools/audit_runtime.py` recreates these fixtures with isolated artifact caches
+`tools/audit_runtime.py` recreates these fixtures with isolated runtime and artifact caches
 and process-group cleanup. Its report records failures rather than treating
 them as a passing correctness suite. The timing samples are diagnostic.
 
@@ -33,6 +33,13 @@ python3 tools/audit_runtime.py --case aux-concurrency
 The runner requires macOS for RSS measurements. The cache-output checks use
 `pdftotext` and explicitly record a skip if it is unavailable. It creates no
 user project files and does not change the installed tekai binary.
+Bundle extraction happens before timing samples. The current cancellation
+fixture uses a long finite loop as a fallback in addition to process-group
+cleanup. No probe requires removing or modifying a shared cache. CPU model
+metadata is best effort when the sandbox denies system-information queries.
+RSS is `null` with `rss_available = false` if the system timer cannot collect
+it. The cancellation and concurrency checks require process inspection
+permission.
 
 ## Confirmed cache correctness failures
 
