@@ -3,6 +3,7 @@ use lopdf::{
     Dictionary as LoDictionary, Document as LoDocument, Object as LoObject, ObjectId as LoObjectId,
     Stream as LoStream,
 };
+use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -77,9 +78,15 @@ pub struct GString {
 pub struct PDFDoc {
     doc: Option<LoDocument>,
     ok: bool,
+    page_error: Option<PageBuildError>,
     catalog: *mut Catalog,
     xref: *mut XRef,
     pages: Vec<Box<Page>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PageBuildError {
+    CyclicInheritance,
 }
 
 #[repr(C)]
@@ -354,22 +361,46 @@ fn object_as_dict(object: &LoObject) -> Option<LoDictionary> {
     }
 }
 
-fn lookup_inherited(doc: &LoDocument, dict: &LoDictionary, key: &[u8]) -> Option<LoObject> {
-    if let Ok(value) = dict.get(key) {
-        return Some(value.clone());
+fn lookup_inherited(
+    doc: &LoDocument,
+    dict: &LoDictionary,
+    key: &[u8],
+) -> Result<Option<LoObject>, PageBuildError> {
+    let mut current = dict;
+    let mut visited = HashSet::new();
+    loop {
+        // A local value, including null or a wrong type, shadows all ancestors.
+        if let Ok(value) = current.get(key) {
+            return Ok(Some(value.clone()));
+        }
+        let Some(parent_id) = current
+            .get(b"Parent")
+            .ok()
+            .and_then(|parent| parent.as_reference().ok())
+        else {
+            return Ok(None);
+        };
+        if !visited.insert(parent_id) {
+            return Err(PageBuildError::CyclicInheritance);
+        }
+        let Some(parent) = doc
+            .get_object(parent_id)
+            .ok()
+            .and_then(|parent| parent.as_dict().ok())
+        else {
+            return Ok(None);
+        };
+        current = parent;
     }
-    let parent_id = dict.get(b"Parent").ok()?.as_reference().ok()?;
-    let parent = doc.get_object(parent_id).ok()?.as_dict().ok()?;
-    lookup_inherited(doc, parent, key)
 }
 
 fn lookup_inherited_dict(
     doc: &LoDocument,
     dict: &LoDictionary,
     key: &[u8],
-) -> Option<LoDictionary> {
-    lookup_inherited(doc, dict, key)
-        .and_then(|value| object_as_dict(&deref_object_from_doc(doc, &value)))
+) -> Result<Option<LoDictionary>, PageBuildError> {
+    Ok(lookup_inherited(doc, dict, key)?
+        .and_then(|value| object_as_dict(&deref_object_from_doc(doc, &value))))
 }
 
 fn deref_object_from_doc(doc: &LoDocument, object: &LoObject) -> LoObject {
@@ -424,7 +455,7 @@ fn int_from_object(object: Option<LoObject>, default: c_int) -> c_int {
     }
 }
 
-fn build_pages(doc_ptr: *mut PDFDoc, doc: &LoDocument) -> Vec<Box<Page>> {
+fn build_pages(doc_ptr: *mut PDFDoc, doc: &LoDocument) -> Result<Vec<Box<Page>>, PageBuildError> {
     let mut pages = Vec::new();
     for (_, id) in doc.get_pages() {
         let page_obj = doc.objects.get(&id).cloned().unwrap_or(LoObject::Null);
@@ -433,7 +464,7 @@ fn build_pages(doc_ptr: *mut PDFDoc, doc: &LoDocument) -> Vec<Box<Page>> {
             .cloned()
             .unwrap_or_default();
         let media_box = rect_from_object(
-            lookup_inherited(doc, &page_dict, b"MediaBox")
+            lookup_inherited(doc, &page_dict, b"MediaBox")?
                 .map(|value| deref_object_from_doc(doc, &value)),
             Rect {
                 x1: 0.0,
@@ -443,27 +474,27 @@ fn build_pages(doc_ptr: *mut PDFDoc, doc: &LoDocument) -> Vec<Box<Page>> {
             },
         );
         let crop_box = rect_from_object(
-            lookup_inherited(doc, &page_dict, b"CropBox")
+            lookup_inherited(doc, &page_dict, b"CropBox")?
                 .map(|value| deref_object_from_doc(doc, &value)),
             media_box,
         );
         let bleed_box = rect_from_object(
-            lookup_inherited(doc, &page_dict, b"BleedBox")
+            lookup_inherited(doc, &page_dict, b"BleedBox")?
                 .map(|value| deref_object_from_doc(doc, &value)),
             crop_box,
         );
         let trim_box = rect_from_object(
-            lookup_inherited(doc, &page_dict, b"TrimBox")
+            lookup_inherited(doc, &page_dict, b"TrimBox")?
                 .map(|value| deref_object_from_doc(doc, &value)),
             crop_box,
         );
         let art_box = rect_from_object(
-            lookup_inherited(doc, &page_dict, b"ArtBox")
+            lookup_inherited(doc, &page_dict, b"ArtBox")?
                 .map(|value| deref_object_from_doc(doc, &value)),
             crop_box,
         );
         let rotate = int_from_object(
-            lookup_inherited(doc, &page_dict, b"Rotate")
+            lookup_inherited(doc, &page_dict, b"Rotate")?
                 .map(|value| deref_object_from_doc(doc, &value)),
             0,
         );
@@ -477,13 +508,13 @@ fn build_pages(doc_ptr: *mut PDFDoc, doc: &LoDocument) -> Vec<Box<Page>> {
             trim_box,
             art_box,
             rotate,
-            resources: lookup_inherited_dict(doc, &page_dict, b"Resources"),
+            resources: lookup_inherited_dict(doc, &page_dict, b"Resources")?,
             group: lookup_direct_dict(doc, &page_dict, b"Group"),
             resources_cache: None,
             group_cache: None,
         }));
     }
-    pages
+    Ok(pages)
 }
 
 fn pdf_version(doc: &LoDocument) -> c_float {
@@ -1002,6 +1033,7 @@ pub unsafe extern "C" fn xpdf_doc_new(file_name: *const c_char) -> *mut PDFDoc {
         return Box::into_raw(Box::new(PDFDoc {
             doc: None,
             ok: false,
+            page_error: None,
             catalog: ptr::null_mut(),
             xref: ptr::null_mut(),
             pages: Vec::new(),
@@ -1017,6 +1049,7 @@ pub unsafe extern "C" fn xpdf_doc_new(file_name: *const c_char) -> *mut PDFDoc {
     let pdf_doc = Box::into_raw(Box::new(PDFDoc {
         doc,
         ok,
+        page_error: None,
         catalog: ptr::null_mut(),
         xref: ptr::null_mut(),
         pages: Vec::new(),
@@ -1024,7 +1057,13 @@ pub unsafe extern "C" fn xpdf_doc_new(file_name: *const c_char) -> *mut PDFDoc {
     if let Some(doc) = unsafe { doc_ref(pdf_doc) }.and_then(|pdf| pdf.doc.as_ref()) {
         let pages = build_pages(pdf_doc, doc);
         if let Some(pdf) = unsafe { doc_mut(pdf_doc) } {
-            pdf.pages = pages;
+            match pages {
+                Ok(pages) => pdf.pages = pages,
+                Err(error) => {
+                    pdf.ok = false;
+                    pdf.page_error = Some(error);
+                }
+            }
         }
     }
     let catalog = Box::into_raw(Box::new(Catalog { doc: pdf_doc }));
@@ -1057,6 +1096,15 @@ pub unsafe extern "C" fn xpdf_doc_delete(doc: *mut PDFDoc) {
 #[no_mangle]
 pub unsafe extern "C" fn xpdf_doc_is_ok(doc: *mut PDFDoc) -> c_int {
     unsafe { doc_ref(doc) }.is_some_and(|doc| doc.ok) as c_int
+}
+
+#[no_mangle]
+/// The returned diagnostic has static storage and survives document deletion.
+pub unsafe extern "C" fn xpdf_doc_error_message(doc: *mut PDFDoc) -> *const c_char {
+    match unsafe { doc_ref(doc) }.and_then(|doc| doc.page_error) {
+        Some(PageBuildError::CyclicInheritance) => c"xpdf: cyclic PDF page Parent chain".as_ptr(),
+        None => c"xpdf: reading PDF image failed".as_ptr(),
+    }
 }
 
 #[no_mangle]
@@ -1350,6 +1398,7 @@ mod tests {
         Box::new(PDFDoc {
             doc: Some(doc),
             ok: true,
+            page_error: None,
             catalog: ptr::null_mut(),
             xref: ptr::null_mut(),
             pages: Vec::new(),
@@ -1378,6 +1427,236 @@ mod tests {
             resources_cache: None,
             group_cache: None,
         }
+    }
+
+    fn parent_dictionary(parent: LoObjectId) -> LoDictionary {
+        let mut dict = LoDictionary::new();
+        dict.set("Parent", LoObject::Reference(parent));
+        dict
+    }
+
+    #[test]
+    fn inherited_values_reject_self_two_parent_and_return_to_page_cycles() {
+        for edges in [
+            vec![((1, 0), (1, 0))],
+            vec![((1, 0), (2, 0)), ((2, 0), (1, 0))],
+            vec![((1, 0), (2, 0)), ((2, 0), (3, 0)), ((3, 0), (1, 0))],
+        ] {
+            let mut doc = LoDocument::new();
+            for (id, parent) in &edges {
+                doc.objects
+                    .insert(*id, LoObject::Dictionary(parent_dictionary(*parent)));
+            }
+            let page = doc.objects.get(&(1, 0)).unwrap().as_dict().unwrap();
+            assert_eq!(
+                lookup_inherited(&doc, page, b"Missing").unwrap_err(),
+                PageBuildError::CyclicInheritance
+            );
+        }
+    }
+
+    #[test]
+    fn inherited_values_use_complete_object_ids_and_nearest_values() {
+        let mut doc = LoDocument::new();
+        let page = parent_dictionary((7, 0));
+        doc.objects
+            .insert((7, 0), LoObject::Dictionary(parent_dictionary((7, 1))));
+        let mut ancestor = LoDictionary::new();
+        ancestor.set("Rotate", 90);
+        doc.objects.insert((7, 1), LoObject::Dictionary(ancestor));
+        assert_eq!(
+            lookup_inherited(&doc, &page, b"Rotate")
+                .unwrap()
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            90
+        );
+        doc.objects
+            .get_mut(&(7, 0))
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Rotate", 180);
+        assert_eq!(
+            lookup_inherited(&doc, &page, b"Rotate")
+                .unwrap()
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            180
+        );
+    }
+
+    #[test]
+    fn local_values_shadow_ancestors_even_on_cyclic_pages() {
+        let mut doc = LoDocument::new();
+        let mut page = parent_dictionary((1, 0));
+        page.set("Rotate", 90);
+        page.set("Resources", LoObject::Null);
+        doc.objects
+            .insert((1, 0), LoObject::Dictionary(page.clone()));
+        assert_eq!(
+            lookup_inherited(&doc, &page, b"Rotate")
+                .unwrap()
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            90
+        );
+        assert!(lookup_inherited(&doc, &page, b"Resources")
+            .unwrap()
+            .unwrap()
+            .is_null());
+        assert!(lookup_inherited_dict(&doc, &page, b"Resources")
+            .unwrap()
+            .is_none());
+        page.set("Resources", 12);
+        assert!(lookup_inherited_dict(&doc, &page, b"Resources")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn missing_broken_and_nonreference_parents_end_inheritance() {
+        let mut doc = LoDocument::new();
+        doc.objects.insert((2, 0), LoObject::Integer(1));
+        for page in [
+            LoDictionary::new(),
+            parent_dictionary((99, 0)),
+            parent_dictionary((2, 0)),
+            {
+                let mut dict = LoDictionary::new();
+                dict.set("Parent", LoObject::Dictionary(LoDictionary::new()));
+                dict
+            },
+        ] {
+            assert!(lookup_inherited(&doc, &page, b"Resources")
+                .unwrap()
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn parent_aliases_and_referenced_resources_keep_existing_resolution_rules() {
+        let mut doc = LoDocument::new();
+        let page = parent_dictionary((1, 0));
+        doc.objects.insert((1, 0), LoObject::Reference((2, 0)));
+        let mut parent = LoDictionary::new();
+        parent.set("Resources", LoObject::Reference((3, 0)));
+        doc.objects.insert((2, 0), LoObject::Dictionary(parent));
+        let mut resources = LoDictionary::new();
+        resources.set("Font", LoObject::Reference((17, 3)));
+        doc.objects.insert((3, 0), LoObject::Dictionary(resources));
+        assert_eq!(
+            lookup_inherited_dict(&doc, &page, b"Resources")
+                .unwrap()
+                .unwrap()
+                .get(b"Font")
+                .unwrap()
+                .as_reference()
+                .unwrap(),
+            (17, 3)
+        );
+        doc.objects
+            .get_mut(&(2, 0))
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Parent", LoObject::Reference((1, 0)));
+        assert_eq!(
+            lookup_inherited(&doc, &page, b"Missing").unwrap_err(),
+            PageBuildError::CyclicInheritance
+        );
+
+        // lopdf's existing reference limit treats reference-only loops as broken parents.
+        doc.objects.insert((2, 0), LoObject::Reference((1, 0)));
+        assert!(lookup_inherited(&doc, &page, b"Missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn deep_acyclic_inheritance_does_not_use_the_host_stack_or_reference_limit() {
+        let mut doc = LoDocument::new();
+        let depth = 4096;
+        for number in 1..depth {
+            doc.objects.insert(
+                (number, 0),
+                LoObject::Dictionary(parent_dictionary((number + 1, 0))),
+            );
+        }
+        let mut root = LoDictionary::new();
+        root.set("Rotate", 270);
+        doc.objects.insert((depth, 0), LoObject::Dictionary(root));
+        let page = parent_dictionary((1, 0));
+        assert_eq!(
+            lookup_inherited(&doc, &page, b"Rotate")
+                .unwrap()
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            270
+        );
+        assert!(lookup_inherited(&doc, &page, b"Missing").unwrap().is_none());
+    }
+
+    fn page_tree_document(cyclic: bool) -> LoDocument {
+        let mut doc = LoDocument::new();
+        let mut catalog = LoDictionary::new();
+        catalog.set("Type", LoObject::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", LoObject::Reference((2, 0)));
+        let mut parent = LoDictionary::new();
+        parent.set("Type", LoObject::Name(b"Pages".to_vec()));
+        parent.set("Kids", LoObject::Array(vec![LoObject::Reference((3, 0))]));
+        parent.set("Count", 1);
+        if cyclic {
+            parent.set("Parent", LoObject::Reference((2, 0)));
+        }
+        parent.set("Group", LoObject::Dictionary(LoDictionary::new()));
+        let mut page = parent_dictionary((2, 0));
+        page.set("Type", LoObject::Name(b"Page".to_vec()));
+        page.set(
+            "MediaBox",
+            LoObject::Array(vec![0.into(), 0.into(), 200.into(), 300.into()]),
+        );
+        doc.objects.insert((1, 0), LoObject::Dictionary(catalog));
+        doc.objects.insert((2, 0), LoObject::Dictionary(parent));
+        doc.objects.insert((3, 0), LoObject::Dictionary(page));
+        doc.trailer.set("Root", LoObject::Reference((1, 0)));
+        doc
+    }
+
+    #[test]
+    fn page_construction_propagates_cycles_and_keeps_group_direct_only() {
+        let cyclic = page_tree_document(true);
+        assert_eq!(
+            build_pages(ptr::null_mut(), &cyclic).err(),
+            Some(PageBuildError::CyclicInheritance)
+        );
+        let valid = page_tree_document(false);
+        let pages = build_pages(ptr::null_mut(), &valid).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].media_box.x2, 200.0);
+        assert_eq!(pages[0].crop_box.y2, 300.0);
+        assert!(pages[0].group.is_none());
+    }
+
+    #[test]
+    fn page_error_message_is_static_and_safe_after_document_deletion() {
+        let mut doc = test_document(LoDocument::new());
+        doc.ok = false;
+        doc.page_error = Some(PageBuildError::CyclicInheritance);
+        let doc_ptr = Box::into_raw(doc);
+        let message = unsafe { xpdf_doc_error_message(doc_ptr) };
+        assert_eq!(unsafe { xpdf_doc_is_ok(doc_ptr) }, 0);
+        unsafe { xpdf_doc_delete(doc_ptr) };
+        assert_eq!(
+            unsafe { CStr::from_ptr(message) }.to_bytes(),
+            b"xpdf: cyclic PDF page Parent chain"
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr(xpdf_doc_error_message(ptr::null_mut())) }.to_bytes(),
+            b"xpdf: reading PDF image failed"
+        );
     }
 
     #[test]

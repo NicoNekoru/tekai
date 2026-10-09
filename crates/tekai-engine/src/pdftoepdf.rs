@@ -150,7 +150,9 @@ unsafe fn find_add_document(file_name: *mut c_char) -> *mut PdfDocument {
         }
         let doc = xpdf_doc_new(file_name);
         if xpdf_doc_is_ok(doc) == 0 || xpdf_doc_ok_to_print(doc) == 0 {
-            pdftex_fail_args(c"xpdf: reading PDF image failed".as_ptr(), &[]);
+            let message = xpdf_doc_error_message(doc);
+            xpdf_doc_delete(doc);
+            pdftex_fail_args(c"%s".as_ptr(), &[PrintfArg::from(message)]);
         }
         let p = Box::into_raw(Box::new(PdfDocument {
             file_name: c_string_dup(file_name),
