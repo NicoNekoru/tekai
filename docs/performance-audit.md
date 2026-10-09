@@ -174,6 +174,8 @@ A signature regression checks in-place edits and atomic replacement with
 preserved size and mtime. A bundled CLI regression switches the database
 between two packages in a separate fixture-owned tree. It verifies a rebuild,
 the newly selected package path in the log, and a subsequent cache hit.
+The release diagnostic now rebuilds and produces the new package's text after
+the same database replacement instead of retaining the old PDF.
 The higher-priority project-file case remains open.
 
 ## Confirmed process and preview failures
@@ -479,6 +481,28 @@ confirmed performance findings.
   checks. Their practical limits still need measurements.
 - Editor indexing repeats source reads and has broad cache invalidation.
 - Persistent artifact caches do not have a global disk-retention policy.
+
+## Local regression checks for the current fixes
+
+The current fixes passed 471 workspace library tests, 10 self-contained CLI
+tests, and 12 audit-runner tests. Both bundled large-paper fixtures passed their
+separate build gate. Thirteen native shared-tree CLI tests passed. The real TeX
+reference test skipped because this machine has no system TeX installation.
+Workspace and standalone-engine lint checks, formatting, and release and
+standalone builds passed. These are local results, not remote CI success.
+
+Release input-identity probes now rebuild and produce the changed text for both
+in-place edits and atomic replacement with preserved mtime. The database probe
+also produces the newly selected package's text. The PNG probe accepts the valid
+palette and rejects the oversized declaration.
+
+The latest lookup probe still reproduces a stale cache hit after adding a
+higher-priority project input. Its recursive symlink fixture still takes
+5.51 seconds for a missing file at depth 12 with only 15 physical directories.
+This is another diagnostic sample, not a portable threshold or a measured
+regression between commits. Lookup dependencies and repeated alias traversal
+remain the next performance and correctness targets. Build-generation races,
+cancellation, format companions, and the other open findings also remain.
 
 ## Fix order and regression checks
 
