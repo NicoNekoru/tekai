@@ -55,6 +55,7 @@ pub mod generated {
 }
 
 mod cache;
+mod directory_graph;
 mod embedded;
 pub mod file_identity;
 pub mod kpathsea;

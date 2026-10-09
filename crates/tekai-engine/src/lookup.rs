@@ -11,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::cache::BudgetCache;
+use crate::directory_graph::DirectoryGraph;
 
 const INDEX_BUDGET: usize = 32 * 1024 * 1024;
 const INDEX_LIMIT: usize = 128;
@@ -34,7 +35,7 @@ struct FileIndex {
     bytes: usize,
     stamp: Option<FileStamp>,
     database: bool,
-    aliases: Vec<(PathBuf, PathBuf)>,
+    graph: Option<DirectoryGraph>,
 }
 
 impl FileIndex {
@@ -46,7 +47,7 @@ impl FileIndex {
             bytes,
             stamp: None,
             database: false,
-            aliases: Vec::new(),
+            graph: None,
         }
     }
 
@@ -62,6 +63,13 @@ impl FileIndex {
     }
 
     fn find(&self, requested: &Path, pattern: &DirectoryPattern) -> Option<PathBuf> {
+        if let Some(graph) = &self.graph {
+            return if pattern.root == self.root {
+                graph.find(pattern.suffix.as_deref(), requested)
+            } else {
+                graph.find_from(&pattern.root, pattern.suffix.as_deref(), requested)
+            };
+        }
         let paths = self.by_name.get(requested.file_name()?)?;
         if self.database {
             return paths
@@ -164,18 +172,27 @@ impl LookupSession {
                 }
             }
         }
-        // A previously indexed ancestor supplies views for overlapping paths
-        // such as project//, project/out// and the default .//.
+        // Physical nodes supply views for overlapping roots, including an
+        // external directory reached through a previously inventoried alias.
         let key = self
             .indices
             .keys()
             .filter_map(|key| match key {
-                IndexKey::Disk(path) if root.starts_with(path) => Some(key.clone()),
+                IndexKey::Disk(_) => self
+                    .indices
+                    .peek(key)
+                    .and_then(|index| index.graph.as_ref())
+                    .filter(|graph| graph.contains_directory(&root))
+                    .map(|_| key.clone()),
                 _ => None,
             })
-            .min_by_key(|key| match key {
-                IndexKey::Disk(path) => path.components().count(),
-                _ => 0,
+            .min_by(|left, right| match (left, right) {
+                (IndexKey::Disk(left), IndexKey::Disk(right)) => left
+                    .components()
+                    .count()
+                    .cmp(&right.components().count())
+                    .then_with(|| left.cmp(right)),
+                _ => std::cmp::Ordering::Equal,
             });
         if let Some(key) = key {
             return self.indices.get(&key)?.find(requested, &pattern);
@@ -195,37 +212,29 @@ impl LookupSession {
             );
         }
         let mut index = FileIndex::new(root.clone());
-        let mut best: Option<(Vec<PathBuf>, PathBuf)> = None;
-        for entry in disk_entries(&root) {
-            if entry.file_type().is_dir() {
-                if index.bytes <= self.budget && entry.path_is_symlink() {
-                    if let Ok(target) = entry.path().canonicalize() {
-                        let alias = entry.into_path();
-                        index.bytes += target.capacity() + alias.capacity() + 128;
-                        index.aliases.push((target, alias));
-                    }
-                }
-                continue;
-            }
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let path = entry.into_path();
-            consider_match(&path, requested, &pattern, &mut best);
-            if index.bytes <= self.budget {
-                index.add(path);
-            }
-        }
-        if index.bytes <= self.budget {
+        if let Some(graph) = DirectoryGraph::build(
+            &root,
+            crate::runtime::installed_bundle_root(),
+            self.budget.saturating_sub(index.bytes),
+        ) {
+            index.bytes += graph.retained_bytes();
+            index.graph = Some(graph);
+            let found = index.find(requested, &pattern);
             let bytes = index.bytes;
             self.indices.insert(key, index, bytes);
-        } else {
-            if self.oversized.len() == INDEX_LIMIT {
-                self.oversized.remove(0);
-            }
-            self.oversized.push(key);
+            return found;
         }
-        best.map(|(_, path)| path)
+        if self.oversized.len() == INDEX_LIMIT {
+            self.oversized.remove(0);
+        }
+        self.oversized.push(key);
+        best_match(
+            disk_entries(&root)
+                .filter(|entry| entry.file_type().is_file())
+                .map(|entry| entry.into_path()),
+            requested,
+            &pattern,
+        )
     }
 
     fn record_output(&mut self, path: &Path) {
@@ -264,38 +273,25 @@ impl LookupSession {
         for key in keys {
             if !self.indices.peek(&key).is_some_and(|index| {
                 path.starts_with(&index.root)
-                    || index
-                        .aliases
-                        .iter()
-                        .any(|(target, _)| path.starts_with(target))
+                    || index.graph.as_ref().is_some_and(|graph| {
+                        parent
+                            .ancestors()
+                            .any(|ancestor| graph.contains_directory(ancestor))
+                    })
             }) {
                 continue;
             }
             if let Some(mut index) = self.indices.remove(&key) {
-                let mut spellings = Vec::new();
-                if path.starts_with(&index.root) {
-                    spellings.push(path.clone());
+                let Some(graph) = &mut index.graph else {
+                    continue;
+                };
+                let previous = graph.retained_bytes();
+                // A newly created directory invalidates the inventory. Known
+                // parents only need one file insertion, shared by every alias.
+                if !graph.add_output(&parent, name) {
+                    continue;
                 }
-                // Alias directories can be empty when inventoried. A later
-                // output must become visible through every alias, not just its
-                // canonical parent or the spelling used by the writer.
-                for (target, alias) in &index.aliases {
-                    if let Ok(tail) = path.strip_prefix(target) {
-                        spellings.push(alias.join(tail));
-                    }
-                }
-                for spelling in spellings {
-                    if !index
-                        .by_name
-                        .get(name)
-                        .is_some_and(|paths| paths.contains(&spelling))
-                    {
-                        index.add(spelling);
-                        if index.bytes > self.budget {
-                            break;
-                        }
-                    }
-                }
+                index.bytes = index.bytes - previous + graph.retained_bytes();
                 let bytes = index.bytes;
                 self.indices.insert(key, index, bytes);
             }
@@ -431,6 +427,7 @@ fn absolute_lexical(path: &Path) -> Option<PathBuf> {
 /// subtrees or exponentially backtracking through repeated `//` wildcards.
 struct DirectoryPattern {
     root: PathBuf,
+    suffix: Option<String>,
     parts: Vec<Option<OsString>>,
 }
 
@@ -451,6 +448,7 @@ impl DirectoryPattern {
         }
         Self {
             root: root.to_path_buf(),
+            suffix: suffix.map(str::to_owned),
             parts,
         }
     }
@@ -770,6 +768,97 @@ mod tests {
         assert_eq!(session.disk_scans, 1);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(external).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn physical_alias_targets_share_the_existing_inventory() {
+        let root = fixture();
+        let external = fixture();
+        fs::create_dir(external.join("deep")).unwrap();
+        fs::write(external.join("deep/shared.sty"), "shared").unwrap();
+        std::os::unix::fs::symlink(&external, root.join("alias")).unwrap();
+        let mut session = LookupSession::new();
+        assert_eq!(
+            session.find(&root, "shared.sty", ".//"),
+            Some(root.join("alias/deep/shared.sty"))
+        );
+        assert_eq!(
+            session.find(&external, "shared.sty", ".//"),
+            Some(external.join("deep/shared.sty"))
+        );
+        assert_eq!(session.disk_scans, 1);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn outputs_in_new_alias_target_directories_rebuild_the_inventory() {
+        let root = fixture();
+        let external = fixture();
+        for alias in ["a", "z"] {
+            std::os::unix::fs::symlink(&external, root.join(alias)).unwrap();
+        }
+        let mut session = LookupSession::new();
+        assert!(session.find(&root, "created.tex", ".//").is_none());
+        fs::create_dir(external.join("new")).unwrap();
+        let output = external.join("new/created.tex");
+        fs::write(&output, "generated").unwrap();
+        session.record_output(&output);
+        assert_eq!(session.indices.retained_bytes(), 0);
+        assert_eq!(
+            session.find(&root, "created.tex", ".//z//"),
+            Some(root.join("z/new/created.tex"))
+        );
+        assert_eq!(session.disk_scans, 2);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cyclic_aliases_keep_lexical_search_priority() {
+        let root = fixture();
+        let external = fixture();
+        let x = external.join("x");
+        let y = external.join("y");
+        fs::create_dir(&x).unwrap();
+        fs::create_dir(&y).unwrap();
+        std::os::unix::fs::symlink(&x, root.join("a")).unwrap();
+        std::os::unix::fs::symlink(&y, root.join("z")).unwrap();
+        std::os::unix::fs::symlink(&y, x.join("b")).unwrap();
+        std::os::unix::fs::symlink(&x, y.join("back")).unwrap();
+        fs::write(x.join("match.sty"), "match").unwrap();
+        let mut session = LookupSession::new();
+        assert_eq!(
+            session.find(&root, "match.sty", ".//back//"),
+            Some(root.join("z/back/match.sty"))
+        );
+        assert!(session
+            .find(&root, "match.sty", ".//back//back//")
+            .is_none());
+        assert_eq!(session.disk_scans, 1);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reused_subtree_views_start_a_fresh_cycle_context() {
+        let root = fixture();
+        let subtree = root.join("sub");
+        fs::create_dir(&subtree).unwrap();
+        std::os::unix::fs::symlink(&root, subtree.join("up")).unwrap();
+        fs::write(root.join("match.sty"), "match").unwrap();
+        let mut session = LookupSession::new();
+        assert!(session.find(&root, "absent.sty", ".//").is_none());
+        assert_eq!(
+            session.find(&subtree, "match.sty", ".//up//"),
+            Some(subtree.join("up/match.sty"))
+        );
+        assert_eq!(session.disk_scans, 1);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
