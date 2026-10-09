@@ -224,9 +224,6 @@ unsafe extern "C" fn compare_info(
 }
 #[no_mangle]
 pub unsafe extern "C" fn avlputobj(mut objptr: integer, mut t: integer) {
-    static mut pp: *mut *mut ::core::ffi::c_void =
-        ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void;
-    static mut oe: *mut oentry = ::core::ptr::null::<oentry>() as *mut oentry;
     if PdfObjTree[t as usize].is_null() {
         PdfObjTree[t as usize] = avl_create(
             Some(
@@ -248,17 +245,50 @@ pub unsafe extern "C" fn avlputobj(mut objptr: integer, mut t: integer) {
             );
         }
     }
-    oe = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<oentry>() as size_t))
-        as *mut oentry;
-    (*oe).int0 = (*objtab.offset(objptr as isize)).int0;
-    (*oe).objptr = objptr;
-    pp = avl_probe(PdfObjTree[t as usize], oe as *mut ::core::ffi::c_void);
+    insert_object_entry(
+        PdfObjTree[t as usize],
+        oentry {
+            int0: (*objtab.offset(objptr as isize)).int0,
+            objptr,
+        },
+    );
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static OBJECT_ENTRY_ALLOCATION_COUNTS: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+}
+
+unsafe fn release_object_entry(entry: *mut oentry) {
+    free(entry as *mut ::core::ffi::c_void);
+    #[cfg(test)]
+    OBJECT_ENTRY_ALLOCATION_COUNTS.with(|counts| {
+        let (allocated, released) = counts.get();
+        counts.set((allocated, released + 1));
+    });
+}
+
+unsafe fn insert_object_entry(tree: *mut avl_table, entry: oentry) {
+    let candidate = xmalloc(::core::mem::size_of::<oentry>() as size_t) as *mut oentry;
+    #[cfg(test)]
+    OBJECT_ENTRY_ALLOCATION_COUNTS.with(|counts| {
+        let (allocated, released) = counts.get();
+        counts.set((allocated + 1, released));
+    });
+    *candidate = entry;
+    let pp = avl_probe(tree, candidate as *mut ::core::ffi::c_void);
     if pp.is_null() {
+        release_object_entry(candidate);
         crate::utils::pdftex_fail_args(
             b"avlstuff.c: avl_probe() out of memory in insertion\0" as *const u8
                 as *const ::core::ffi::c_char,
             &[],
         );
+    }
+    // An equal key leaves the existing entry in the tree and rejects this candidate.
+    if *pp != candidate as *mut ::core::ffi::c_void {
+        release_object_entry(candidate);
     }
 }
 #[no_mangle]
@@ -289,3 +319,134 @@ pub unsafe extern "C" fn avlfindobj(
 #[no_mangle]
 pub static mut mf_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestObjectTree {
+        tree: *mut avl_table,
+        _allocator: Box<libavl_allocator>,
+    }
+
+    impl TestObjectTree {
+        fn new() -> Self {
+            let mut allocator = Box::new(libavl_allocator {
+                libavl_malloc: Some(avl_xmalloc),
+                libavl_free: Some(avl_xfree),
+            });
+            let tree = unsafe {
+                avl_create(
+                    Some(compare_info),
+                    ::core::ptr::null_mut(),
+                    allocator.as_mut(),
+                )
+            };
+            assert!(!tree.is_null());
+            Self {
+                tree,
+                _allocator: allocator,
+            }
+        }
+
+        fn insert(&self, key: integer, object: integer) {
+            unsafe {
+                insert_object_entry(
+                    self.tree,
+                    oentry {
+                        int0: key,
+                        objptr: object,
+                    },
+                );
+            }
+        }
+
+        fn find(&self, key: integer) -> Option<integer> {
+            let query = oentry {
+                int0: key,
+                objptr: 0,
+            };
+            let found = unsafe {
+                avl_find(
+                    self.tree,
+                    &query as *const oentry as *const ::core::ffi::c_void,
+                ) as *const oentry
+            };
+            if found.is_null() {
+                None
+            } else {
+                Some(unsafe { (*found).objptr })
+            }
+        }
+
+        fn len(&self) -> usize {
+            unsafe { (*self.tree).avl_count }
+        }
+    }
+
+    unsafe extern "C" fn release_test_entry(
+        entry: *mut ::core::ffi::c_void,
+        _: *mut ::core::ffi::c_void,
+    ) {
+        unsafe { release_object_entry(entry as *mut oentry) };
+    }
+
+    impl Drop for TestObjectTree {
+        fn drop(&mut self) {
+            unsafe {
+                crate::generated::backend::avl::avl_destroy(
+                    self.tree.cast(),
+                    Some(release_test_entry),
+                );
+            }
+        }
+    }
+
+    fn reset_counts() {
+        OBJECT_ENTRY_ALLOCATION_COUNTS.with(|counts| counts.set((0, 0)));
+    }
+
+    fn allocation_counts() -> (usize, usize) {
+        OBJECT_ENTRY_ALLOCATION_COUNTS.with(|counts| counts.get())
+    }
+
+    #[test]
+    fn unique_object_keys_transfer_each_allocation_to_the_tree() {
+        reset_counts();
+        let tree = TestObjectTree::new();
+        let keys = [3, 1, 2, 0, 9, 8, 7];
+        for key in keys {
+            tree.insert(key, key + 100);
+        }
+        assert_eq!(tree.len(), keys.len());
+        assert_eq!(allocation_counts(), (keys.len(), 0));
+        for key in keys {
+            assert_eq!(tree.find(key), Some(key + 100));
+        }
+        assert_eq!(tree.find(4), None);
+        drop(tree);
+        assert_eq!(allocation_counts(), (keys.len(), keys.len()));
+    }
+
+    #[test]
+    fn repeated_object_keys_release_candidates_and_preserve_the_first_object() {
+        reset_counts();
+        let tree = TestObjectTree::new();
+        tree.insert(0, 100);
+        tree.insert(6, 200);
+        for index in 0..64 {
+            tree.insert(0, 101 + index);
+            tree.insert(6, 201 + index);
+            assert_eq!(tree.len(), 2);
+            assert_eq!(tree.find(0), Some(100));
+            assert_eq!(tree.find(6), Some(200));
+            assert_eq!(
+                allocation_counts(),
+                (4 + 2 * index as usize, 2 + 2 * index as usize)
+            );
+        }
+        assert_eq!(allocation_counts(), (130, 128));
+        drop(tree);
+        assert_eq!(allocation_counts(), (130, 130));
+    }
+}
