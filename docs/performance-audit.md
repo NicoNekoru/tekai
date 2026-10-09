@@ -30,6 +30,8 @@ python3 tools/audit_runtime.py --case lint --case pdf --case cache
 python3 tools/audit_runtime.py --case aux-concurrency
 python3 tools/audit_runtime.py --case input-identity --case source-boundaries --case format-cache
 python3 -B -m unittest discover -s tools -p test_audit_runtime.py
+cargo build --locked --release -p tekai-pdftex --example audit_expansion
+python3 tools/audit_runtime.py --case expansion
 ```
 
 The runner requires macOS for RSS measurements. The cache-output checks use
@@ -43,6 +45,10 @@ RSS is `null` with `rss_available = false` if the system timer cannot collect
 it. The cancellation and concurrency checks explicitly record a skip when
 process inspection is unavailable. The runner tests exercise permission
 denials and owned-process cleanup without launching a compiler.
+The runner checks the system timer with a harmless command before using it.
+When the timer is denied, it measures wall time directly and preserves the
+compiler's exit status rather than reporting the timer's permission failure
+as a build failure.
 
 ## Confirmed cache correctness failures
 
@@ -313,13 +319,64 @@ explicit memory policy.
 
 The confirmed metadata code is in `crates/tekai-engine/src/pngshim.rs`.
 
+## Confirmed experimental expansion failures
+
+These measurements exercise `tekai-pdftex`, the opt-in experimental expansion
+library. They do not describe the default exact engine. The release example
+`audit_expansion` uses finite in-memory inputs and has explicit fixture size
+limits. It does not load formats or read project files.
+
+### Local group changes duplicate the entire expansion state
+
+The first local assignment in each group clones every macro, register, alias,
+and conditional through `current_expansion_state`. A fixture preloads 1,000
+macros, each with 32 replacement tokens, then enters nested groups. Each
+mutating group changes only one small local macro.
+
+| Group depth | Read-only peak RSS | Mutating peak RSS | Mutating expansion time |
+| --- | --- | --- | --- |
+| 1 | 7.1 MiB | 8.1 MiB | 0.137 ms |
+| 16 | 7.1 MiB | 22.5 MiB | 1.891 ms |
+| 64 | 7.1 MiB | 68.4 MiB | 9.789 ms |
+
+Expansion timings exclude definition setup. Both variants at depth 64 emit
+129 tokens. The extra memory comes from full-state copies rather than a
+larger output. This is a nested-scope scaling cost, not evidence of a leak
+after groups close.
+
+Use a save stack containing only changed bindings and share immutable macro
+replacement tokens. Global assignments need a defined invalidation rule for
+saved bindings. They should not require duplicating every unrelated definition.
+Relevant code is `crates/tekai-pdftex/src/expand.rs` in
+`ensure_current_scope_snapshot`, `current_expansion_state`, and scoped setters.
+
+### Finite invalid primitive inputs can abort expansion
+
+Both integer-expression parsers check multiplication overflow and division
+by zero, but use unchecked division for `i64::MIN / -1`. A finite count
+assignment followed by an advance and division aborted the release example
+with exit code -6. The direct expression and the same expression inside
+`\edef` reproduced separate sites, `read_integer_product` and
+`read_integer_product_from_pending`.
+
+`\pdfunescapehex{é}` also aborted with exit code -6. `pdf_unescape_hex` checks
+an even UTF-8 byte count, then assumes an even character count. The two-byte,
+one-character argument reaches an invalid `expect` before digit validation.
+
+Define the supported numeric ranges and use checked arithmetic consistently
+in both parser paths. Decode hex as validated ASCII bytes and return
+`ExpandError` for invalid input. These are input-error handling failures,
+not valid TeX output comparisons.
+
 ## Remaining review targets
 
 The production linter, watcher, watch-event collector, resolver, PDF wrapper,
 PDF import adapter, PNG adapter, low-level support routines, compiler production
 code, and editor integration code have received detailed function-level review.
 Compiler orchestration, cache publication, fingerprints, and parsers have also
-been traced across files. Experimental engine review is ongoing.
+been traced across files. The experimental expansion production code and
+report-only dependency walker have now received function-level review.
+Review of the experimental renderer is ongoing.
 
 The generated engine is approximately 115,000 lines. It has not received a
 complete manual function-by-function review in this pass. Generated and
@@ -338,8 +395,9 @@ confirmed performance findings.
   its join point.
 - Auxiliary fingerprints and snapshots read whole files, sometimes through
   parallel workers.
-- Experimental macro scopes clone all definition and register state when
-  first modified. Nested scopes can multiply the copying cost.
+- Experimental expansion has no aggregate token or scope-storage budget.
+  Recursive numeric and nested expansion helpers need depth and cancellation
+  checks. Their practical limits still need measurements.
 - Editor indexing repeats source reads and has broad cache invalidation.
 - Persistent artifact caches do not have a global disk-retention policy.
 
@@ -358,6 +416,8 @@ replacement with preserved mtime, source replacement with preserved mtime,
 inactive end markers, format replacement, cancellation of a live engine, a symlink
 DAG, long Unicode and escape-heavy lines, a shared-resource multipage PDF,
 a cyclic PDF parent, oversized PNG metadata, and unrelated output sidecars.
+The experimental engine also needs group-storage accounting and error tests
+for arithmetic boundaries and invalid Unicode hex input.
 
 Any output-affecting fixes still need the real-paper fidelity comparison and
 the ARM64 and Intel CI gates. The current audit records failures and proposed

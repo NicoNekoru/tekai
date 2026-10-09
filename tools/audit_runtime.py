@@ -24,7 +24,7 @@ import zlib
 
 REPO = Path(__file__).resolve().parent.parent
 CASES = ('lookup', 'lint', 'cache', 'edit-race', 'input-identity', 'source-boundaries', 'format-cache',
-         'cancel', 'preview', 'pdf', 'png', 'deep-inputs', 'aux-concurrency')
+         'cancel', 'preview', 'pdf', 'png', 'deep-inputs', 'aux-concurrency', 'expansion')
 SEARCH_VARIABLES = (
     'TEXINPUTS', 'BIBINPUTS', 'BSTINPUTS', 'TEXFONTS', 'TFMFONTS', 'AFMFONTS',
     'T1FONTS', 'TTFONTS', 'OPENTYPEFONTS', 'VFFONTS', 'ENCFONTS', 'SFDFONTS',
@@ -79,6 +79,7 @@ class Audit:
         for variable in SEARCH_VARIABLES:
             self.env.pop(variable, None)
         self.pdftext = shutil.which('pdftotext')
+        self.rss_probe = None
 
     def record(self, case, **values):
         row = {'case': case, **values}
@@ -106,9 +107,27 @@ class Audit:
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, start_new_session=True)
 
+    def rss_timer_available(self):
+        if self.rss_probe is None:
+            try:
+                process = self.start(['/usr/bin/true'], self.work, self.env, measured=True)
+            except OSError as error:
+                self.rss_probe = {'available': False, 'stderr_tail': str(error)}
+                return False
+            try:
+                _, stderr = process.communicate(timeout=2)
+                available = process.returncode == 0 and 'maximum resident set size' in stderr
+                self.rss_probe = {'available': available, 'stderr_tail': stderr[-1000:]}
+            except subprocess.TimeoutExpired:
+                self.rss_probe = {'available': False, 'stderr_tail': 'System timer probe timed out'}
+            finally:
+                stop_group(process)
+        return self.rss_probe['available']
+
     def run(self, command, project, env=None, measured=False):
+        use_timer = measured and self.rss_timer_available()
         started = time.monotonic()
-        process = self.start(command, project, env or self.environment(project), measured)
+        process = self.start(command, project, env or self.environment(project), use_timer)
         try:
             stdout, stderr = process.communicate(timeout=self.args.timeout)
             maximum = re.search(r'(\d+)\s+maximum resident set size', stderr)
@@ -117,6 +136,9 @@ class Audit:
                       'stdout': stdout, 'stderr_tail': stderr[-2000:]}
             if measured:
                 result['rss_available'] = maximum is not None
+                result['status_source'] = 'timer' if use_timer else 'command'
+                if not use_timer:
+                    result['rss_unavailable_reason'] = self.rss_probe['stderr_tail']
             return result
         except subprocess.TimeoutExpired:
             return {'seconds': time.monotonic() - started, 'timeout': True}
@@ -535,6 +557,23 @@ class Audit:
                                 code=process.returncode, stdout=stdout, stderr_tail=stderr[-2000:])
             finally:
                 stop_group(process)
+
+    def expansion(self):
+        binary = REPO / 'target/release/examples/audit_expansion'
+        if not binary.is_file():
+            self.record('expansion', skipped=True,
+                        reason='Build the tekai-pdftex audit_expansion release example first')
+            return
+        project = self.project('expansion')
+        for depth in ([1, 64] if self.args.quick else [1, 16, 64]):
+            for mode in ('read-only', 'local'):
+                result = self.run([binary, 'scopes', '1000', str(depth), '32', mode],
+                                  project, measured=True)
+                self.record('expansion-scopes', fixture_binary=str(binary), definitions=1000,
+                            depth=depth, replacement_tokens=32, mode=mode, **result)
+        for mode in ('division-overflow', 'division-overflow-edef', 'hex-unicode'):
+            result = self.run([binary, mode], project)
+            self.record('expansion-invalid-input', input=mode, fixture_binary=str(binary), **result)
 
 
 def main():

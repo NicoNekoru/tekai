@@ -23,6 +23,7 @@ class AuditRunnerTests(unittest.TestCase):
                                     timeout=1, report=self.work / 'report.json')
         with patch('audit_runtime.subprocess.check_output', return_value='Test CPU\n'):
             self.audit = Audit(self.args, self.work)
+        self.audit.rss_probe = {'available': True, 'stderr_tail': ''}
 
     def test_cpu_metadata_permission_failure_keeps_architecture(self):
         with patch('audit_runtime.subprocess.check_output', side_effect=PermissionError()), \
@@ -74,6 +75,37 @@ class AuditRunnerTests(unittest.TestCase):
         self.assertEqual(result['peak_mib'], 1)
         self.assertTrue(result['rss_available'])
         stop.assert_called_once_with(process)
+
+    def test_denied_timer_does_not_replace_command_exit_status(self):
+        self.audit.rss_probe = {'available': False, 'stderr_tail': 'sysctl denied'}
+        process = Mock(returncode=0)
+        process.communicate.return_value = ('output', '')
+        with patch.object(self.audit, 'start', return_value=process) as start, \
+                patch('audit_runtime.stop_group'):
+            result = self.audit.run(['unused'], self.work, measured=True)
+        self.assertFalse(start.call_args.args[-1])
+        self.assertEqual(result['code'], 0)
+        self.assertEqual(result['status_source'], 'command')
+        self.assertFalse(result['rss_available'])
+        self.assertEqual(result['rss_unavailable_reason'], 'sysctl denied')
+
+    def test_timer_permission_probe_is_cached_and_cleans_up(self):
+        self.audit.rss_probe = None
+        process = Mock(returncode=1)
+        process.communicate.return_value = ('', 'sysctl denied')
+        with patch.object(self.audit, 'start', return_value=process) as start, \
+                patch('audit_runtime.stop_group') as stop:
+            self.assertFalse(self.audit.rss_timer_available())
+            self.assertFalse(self.audit.rss_timer_available())
+        start.assert_called_once()
+        stop.assert_called_once_with(process)
+
+    def test_timer_launch_denial_uses_direct_measurement(self):
+        self.audit.rss_probe = None
+        with patch.object(self.audit, 'start', side_effect=PermissionError()), \
+                patch('audit_runtime.stop_group') as stop:
+            self.assertFalse(self.audit.rss_timer_available())
+        stop.assert_not_called()
 
     def test_timeout_always_cleans_up_the_owned_group(self):
         process = Mock()
