@@ -186,7 +186,9 @@ jobs:
           TEKAI_EMBEDDED_ENGINE_RUNNER: ${{ env.CARGO_TARGET_DIR }}/release/tekai
         # The normal CI workflow owns the debug, installed-TeX and CLI gates.
         # This checks their operation-count and correctness invariants in release.
-        run: cargo test --workspace --release --locked --lib -- --test-threads=1 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-library-tests.log"
+        # Match the CLI's embedding features. The static archive's optional C
+        # main cannot be linked into a Rust test harness under fat LTO.
+        run: cargo test --workspace --release --locked --lib --no-default-features -- --test-threads=1 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-library-tests.log"
 
       - name: Run bounded diagnostics and fixed regression checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' && (env.PERFORMANCE_PROFILE == 'quick' || steps.expansion.outcome == 'success') }}
