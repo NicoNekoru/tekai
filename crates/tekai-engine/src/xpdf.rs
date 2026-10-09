@@ -17,6 +17,31 @@ const PDF_STRING_DICT: &[u8] = b"dict\0";
 const PDF_STRING_STREAM: &[u8] = b"stream\0";
 const PDF_STRING_REF: &[u8] = b"ref\0";
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CacheCloneCounts {
+    object_dict: usize,
+    object_stream: usize,
+    object_stream_bytes: usize,
+    stream_dict: usize,
+    page_group: usize,
+    page_resources: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static CACHE_CLONES: std::cell::Cell<CacheCloneCounts> = const {
+        std::cell::Cell::new(CacheCloneCounts {
+            object_dict: 0,
+            object_stream: 0,
+            object_stream_bytes: 0,
+            stream_dict: 0,
+            page_group: 0,
+            page_resources: 0,
+        })
+    };
+}
+
 #[repr(C)]
 pub struct Object {
     value: LoObject,
@@ -133,23 +158,36 @@ impl Object {
     }
 
     fn dict(&mut self) -> Option<*mut Dict> {
-        let dict = match &self.value {
-            LoObject::Dictionary(dict) => dict.clone(),
-            LoObject::Stream(stream) => stream.dict.clone(),
-            _ => return None,
-        };
         if self.dict_cache.is_none() {
+            let dict = match &self.value {
+                LoObject::Dictionary(dict) => dict.clone(),
+                LoObject::Stream(stream) => stream.dict.clone(),
+                _ => return None,
+            };
+            #[cfg(test)]
+            CACHE_CLONES.with(|counts| {
+                let mut value = counts.get();
+                value.object_dict += 1;
+                counts.set(value);
+            });
             self.dict_cache = Some(Box::new(Dict::new(dict, self.doc)));
         }
         self.dict_cache.as_deref_mut().map(|dict| dict as *mut Dict)
     }
 
     fn stream(&mut self) -> Option<*mut Stream> {
-        let stream = match &self.value {
-            LoObject::Stream(stream) => stream.clone(),
-            _ => return None,
-        };
         if self.stream_cache.is_none() {
+            let stream = match &self.value {
+                LoObject::Stream(stream) => stream.clone(),
+                _ => return None,
+            };
+            #[cfg(test)]
+            CACHE_CLONES.with(|counts| {
+                let mut value = counts.get();
+                value.object_stream += 1;
+                value.object_stream_bytes += stream.content.len();
+                counts.set(value);
+            });
             self.stream_cache = Some(Box::new(Stream::new(stream, self.doc)));
         }
         self.stream_cache
@@ -180,7 +218,14 @@ impl Stream {
 
     fn dict(&mut self) -> *mut Dict {
         if self.dict_cache.is_none() {
-            self.dict_cache = Some(Box::new(Dict::new(self.stream.dict.clone(), self.doc)));
+            let dict = self.stream.dict.clone();
+            #[cfg(test)]
+            CACHE_CLONES.with(|counts| {
+                let mut value = counts.get();
+                value.stream_dict += 1;
+                counts.set(value);
+            });
+            self.dict_cache = Some(Box::new(Dict::new(dict, self.doc)));
         }
         self.dict_cache
             .as_deref_mut()
@@ -1206,10 +1251,16 @@ pub unsafe extern "C" fn xpdf_page_group(page: *mut Page) -> *mut Dict {
     let Some(page) = (unsafe { page.as_mut() }) else {
         return ptr::null_mut();
     };
-    let Some(group) = page.group.clone() else {
-        return ptr::null_mut();
-    };
     if page.group_cache.is_none() {
+        let Some(group) = page.group.clone() else {
+            return ptr::null_mut();
+        };
+        #[cfg(test)]
+        CACHE_CLONES.with(|counts| {
+            let mut value = counts.get();
+            value.page_group += 1;
+            counts.set(value);
+        });
         page.group_cache = Some(Box::new(Dict::new(group, page.doc)));
     }
     page.group_cache
@@ -1223,10 +1274,16 @@ pub unsafe extern "C" fn xpdf_page_resource_dict(page: *mut Page) -> *mut Dict {
     let Some(page) = (unsafe { page.as_mut() }) else {
         return ptr::null_mut();
     };
-    let Some(resources) = page.resources.clone() else {
-        return ptr::null_mut();
-    };
     if page.resources_cache.is_none() {
+        let Some(resources) = page.resources.clone() else {
+            return ptr::null_mut();
+        };
+        #[cfg(test)]
+        CACHE_CLONES.with(|counts| {
+            let mut value = counts.get();
+            value.page_resources += 1;
+            counts.set(value);
+        });
         page.resources_cache = Some(Box::new(Dict::new(resources, page.doc)));
     }
     page.resources_cache
@@ -1280,6 +1337,376 @@ pub unsafe extern "C" fn xpdf_gfx_8bit_font_char_name(
 mod tests {
     use super::*;
     use std::slice;
+
+    fn reset_clone_counts() {
+        CACHE_CLONES.with(|counts| counts.set(CacheCloneCounts::default()));
+    }
+
+    fn clone_counts() -> CacheCloneCounts {
+        CACHE_CLONES.with(std::cell::Cell::get)
+    }
+
+    fn test_document(doc: LoDocument) -> Box<PDFDoc> {
+        Box::new(PDFDoc {
+            doc: Some(doc),
+            ok: true,
+            catalog: ptr::null_mut(),
+            xref: ptr::null_mut(),
+            pages: Vec::new(),
+        })
+    }
+
+    fn test_page(resources: Option<LoDictionary>, group: Option<LoDictionary>) -> Page {
+        let rect = Rect {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        Page {
+            doc: ptr::null_mut(),
+            id: (1, 0),
+            dict: LoDictionary::new(),
+            media_box: rect,
+            crop_box: rect,
+            bleed_box: rect,
+            trim_box: rect,
+            art_box: rect,
+            rotate: 0,
+            resources,
+            group,
+            resources_cache: None,
+            group_cache: None,
+        }
+    }
+
+    #[test]
+    fn wide_dictionary_getters_clone_wrapper_source_once() {
+        reset_clone_counts();
+        let mut dict = LoDictionary::new();
+        for index in 0..1024 {
+            dict.set(format!("Key{index:04}"), LoObject::Integer(index));
+        }
+        let mut object = Object::new(LoObject::Dictionary(dict), ptr::null_mut());
+        let object_ptr = &mut object as *mut Object;
+        let mut out = Object::new(LoObject::Null, ptr::null_mut());
+        let out_ptr = &mut out as *mut Object;
+
+        assert_eq!(unsafe { xpdf_object_dict_get_length(object_ptr) }, 1024);
+        let dict_ptr = unsafe { xpdf_object_get_dict(object_ptr) };
+        assert!(!dict_ptr.is_null());
+        let first_key = unsafe { xpdf_object_dict_get_key(object_ptr, 0) };
+        for _ in 0..3 {
+            for index in 0..1024 {
+                let key = unsafe { xpdf_object_dict_get_key(object_ptr, index) };
+                assert_eq!(
+                    unsafe { CStr::from_ptr(key) }.to_bytes(),
+                    format!("Key{index:04}").as_bytes()
+                );
+                assert_eq!(
+                    unsafe { xpdf_object_dict_get_val_nf(object_ptr, index, out_ptr) },
+                    out_ptr
+                );
+                assert_eq!(unsafe { xpdf_object_get_int(out_ptr) }, index);
+            }
+            assert_eq!(unsafe { xpdf_object_get_dict(object_ptr) }, dict_ptr);
+            assert_eq!(
+                unsafe { xpdf_object_dict_get_key(object_ptr, 0) },
+                first_key
+            );
+            assert_eq!(unsafe { xpdf_object_dict_get_length(object_ptr) }, 1024);
+        }
+        assert_eq!(
+            clone_counts(),
+            CacheCloneCounts {
+                object_dict: 1,
+                ..CacheCloneCounts::default()
+            }
+        );
+    }
+
+    #[test]
+    fn stream_cache_clones_payload_once_and_preserves_cursor() {
+        reset_clone_counts();
+        let payload_len = 1024 * 1024;
+        let payload = (0..payload_len)
+            .map(|index| b'a' + (index % 26) as u8)
+            .collect::<Vec<_>>();
+        let mut dict = LoDictionary::new();
+        dict.set("Referenced", LoObject::Reference((17, 3)));
+        let mut object = Object::new(
+            LoObject::Stream(LoStream::new(dict, payload)),
+            ptr::null_mut(),
+        );
+        let object_ptr = &mut object as *mut Object;
+        let stream_ptr = unsafe { xpdf_object_get_stream(object_ptr) };
+        assert!(!stream_ptr.is_null());
+        assert_eq!(unsafe { xpdf_stream_get_char(stream_ptr) }, b'a' as c_int);
+        let stream_dict_ptr = unsafe { xpdf_object_stream_get_dict(object_ptr) };
+        let object_dict_ptr = unsafe { xpdf_object_get_dict(object_ptr) };
+        assert!(!stream_dict_ptr.is_null());
+        assert!(!object_dict_ptr.is_null());
+        assert_ne!(stream_dict_ptr, object_dict_ptr);
+        for _ in 0..32 {
+            assert_eq!(unsafe { xpdf_object_get_stream(object_ptr) }, stream_ptr);
+            assert_eq!(
+                unsafe { xpdf_object_stream_get_undecoded_stream(object_ptr) },
+                stream_ptr
+            );
+            assert_eq!(
+                unsafe { xpdf_stream_get_undecoded_stream(stream_ptr) },
+                stream_ptr
+            );
+            assert_eq!(
+                unsafe { xpdf_object_stream_get_dict(object_ptr) },
+                stream_dict_ptr
+            );
+            assert_eq!(unsafe { xpdf_stream_get_dict(stream_ptr) }, stream_dict_ptr);
+            assert_eq!(unsafe { xpdf_object_get_dict(object_ptr) }, object_dict_ptr);
+        }
+        assert_eq!(unsafe { xpdf_stream_get_char(stream_ptr) }, b'b' as c_int);
+
+        let mut len = 0;
+        let tail = unsafe { xpdf_stream_get_remaining_data(stream_ptr, &mut len) };
+        assert_eq!(len, payload_len - 2);
+        assert_eq!(unsafe { *tail }, b'c');
+        let cached_data = unsafe { stream_ptr.as_ref() }
+            .unwrap()
+            .stream
+            .content
+            .as_ptr();
+        assert_eq!(tail, unsafe { cached_data.add(2) });
+        assert_eq!(unsafe { xpdf_object_get_stream(object_ptr) }, stream_ptr);
+        assert_eq!(unsafe { xpdf_stream_get_char(stream_ptr) }, libc::EOF);
+        unsafe { xpdf_stream_reset(stream_ptr) };
+        assert_eq!(unsafe { xpdf_stream_get_char(stream_ptr) }, b'a' as c_int);
+        assert_eq!(unsafe { *tail }, b'c');
+        assert_eq!(
+            clone_counts(),
+            CacheCloneCounts {
+                object_dict: 1,
+                object_stream: 1,
+                object_stream_bytes: payload_len,
+                stream_dict: 1,
+                ..CacheCloneCounts::default()
+            }
+        );
+    }
+
+    #[test]
+    fn page_dictionary_caches_keep_handles_and_keys_stable() {
+        reset_clone_counts();
+        let mut nested = LoDictionary::new();
+        nested.set("Font", LoObject::Reference((17, 3)));
+        let mut resources = LoDictionary::new();
+        resources.set("Nested", LoObject::Dictionary(nested));
+        let mut group = LoDictionary::new();
+        group.set("S", LoObject::Name(b"Transparency".to_vec()));
+        let mut page = test_page(Some(resources), Some(group));
+        let page_ptr = &mut page as *mut Page;
+        let resources_ptr = unsafe { xpdf_page_resource_dict(page_ptr) };
+        let group_ptr = unsafe { xpdf_page_group(page_ptr) };
+        assert!(!resources_ptr.is_null());
+        assert!(!group_ptr.is_null());
+        let resources_key = unsafe { xpdf_dict_get_key(resources_ptr, 0) };
+        let group_key = unsafe { xpdf_dict_get_key(group_ptr, 0) };
+        for _ in 0..32 {
+            assert_eq!(unsafe { xpdf_page_resource_dict(page_ptr) }, resources_ptr);
+            assert_eq!(unsafe { xpdf_page_group(page_ptr) }, group_ptr);
+            assert_eq!(
+                unsafe { xpdf_dict_get_key(resources_ptr, 0) },
+                resources_key
+            );
+            assert_eq!(unsafe { xpdf_dict_get_key(group_ptr, 0) }, group_key);
+        }
+        assert_eq!(
+            unsafe { CStr::from_ptr(resources_key) }.to_bytes(),
+            b"Nested"
+        );
+        assert_eq!(unsafe { CStr::from_ptr(group_key) }.to_bytes(), b"S");
+        let mut out = Object::new(LoObject::Null, ptr::null_mut());
+        unsafe { xpdf_dict_get_val_nf(resources_ptr, 0, &mut out) };
+        assert_eq!(
+            out.value
+                .as_dict()
+                .unwrap()
+                .get(b"Font")
+                .unwrap()
+                .as_reference()
+                .unwrap(),
+            (17, 3)
+        );
+        unsafe { xpdf_dict_get_val_nf(group_ptr, 0, &mut out) };
+        assert_eq!(out.value.as_name().unwrap(), b"Transparency");
+        assert_eq!(
+            clone_counts(),
+            CacheCloneCounts {
+                page_group: 1,
+                page_resources: 1,
+                ..CacheCloneCounts::default()
+            }
+        );
+    }
+
+    #[test]
+    fn cached_dictionary_getters_preserve_references_and_owned_outputs() {
+        reset_clone_counts();
+        let mut doc = LoDocument::new();
+        doc.objects.insert((17, 3), LoObject::Integer(41));
+        let mut doc = test_document(doc);
+        let doc_ptr = doc.as_mut() as *mut PDFDoc;
+        let mut nested = LoDictionary::new();
+        nested.set("Reference", LoObject::Reference((17, 3)));
+        let mut dict = LoDictionary::new();
+        dict.set("Reference", LoObject::Reference((17, 3)));
+        dict.set("Nested", LoObject::Dictionary(nested));
+        let mut object = Object::new(LoObject::Dictionary(dict), doc_ptr);
+        let object_ptr = &mut object as *mut Object;
+        let dict_ptr = unsafe { xpdf_object_get_dict(object_ptr) };
+        let mut out = Object::new(LoObject::Null, ptr::null_mut());
+        let out_ptr = &mut out as *mut Object;
+        for _ in 0..4 {
+            unsafe { xpdf_object_dict_get_val_nf(object_ptr, 0, out_ptr) };
+            let reference = unsafe { xpdf_object_get_ref(out_ptr) };
+            assert_eq!((reference.num, reference.gen), (17, 3));
+            assert_eq!(out.doc, doc_ptr);
+            unsafe { xpdf_object_dict_lookup_nf(object_ptr, c"Reference".as_ptr(), out_ptr) };
+            assert_eq!(out.value.as_reference().unwrap(), (17, 3));
+            unsafe { xpdf_object_dict_get_val(object_ptr, 0, out_ptr) };
+            assert_eq!(unsafe { xpdf_object_get_int(out_ptr) }, 41);
+            unsafe { xpdf_object_dict_lookup(object_ptr, c"Reference".as_ptr(), out_ptr) };
+            assert_eq!(unsafe { xpdf_object_get_int(out_ptr) }, 41);
+            assert_eq!(unsafe { xpdf_object_get_dict(object_ptr) }, dict_ptr);
+        }
+
+        unsafe { xpdf_object_init_dict_from_dict(out_ptr, ptr::null_mut(), dict_ptr) };
+        assert_eq!(out.doc, doc_ptr);
+        out.value.as_dict_mut().unwrap().set("OwnedOutput", true);
+        assert_eq!(unsafe { xpdf_object_dict_get_length(out_ptr) }, 3);
+        assert_eq!(unsafe { xpdf_dict_get_length(dict_ptr) }, 2);
+        unsafe { xpdf_object_free_contents(out_ptr) };
+        assert_eq!(unsafe { xpdf_object_is_null(out_ptr) }, 1);
+        assert_eq!(unsafe { xpdf_object_get_dict(object_ptr) }, dict_ptr);
+        assert_eq!(unsafe { xpdf_dict_get_length(dict_ptr) }, 2);
+        assert_eq!(
+            clone_counts(),
+            CacheCloneCounts {
+                object_dict: 2,
+                ..CacheCloneCounts::default()
+            }
+        );
+    }
+
+    #[test]
+    fn object_reset_and_free_contents_invalidate_caches() {
+        reset_clone_counts();
+        let mut first_doc = test_document(LoDocument::new());
+        let first_doc_ptr = first_doc.as_mut() as *mut PDFDoc;
+        let mut second_doc = test_document(LoDocument::new());
+        let second_doc_ptr = second_doc.as_mut() as *mut PDFDoc;
+        let mut object = Object::new(
+            LoObject::Stream(LoStream::new(LoDictionary::new(), b"ab".to_vec())),
+            first_doc_ptr,
+        );
+        let object_ptr = &mut object as *mut Object;
+        for (content, doc_ptr) in [(b"ab", first_doc_ptr), (b"cd", second_doc_ptr)] {
+            if doc_ptr == second_doc_ptr {
+                object.reset(
+                    LoObject::Stream(LoStream::new(LoDictionary::new(), content.to_vec())),
+                    doc_ptr,
+                );
+                assert!(object.dict_cache.is_none());
+                assert!(object.stream_cache.is_none());
+            }
+            let dict_ptr = unsafe { xpdf_object_get_dict(object_ptr) };
+            let stream_ptr = unsafe { xpdf_object_get_stream(object_ptr) };
+            let stream_dict_ptr = unsafe { xpdf_object_stream_get_dict(object_ptr) };
+            assert_eq!(unsafe { dict_ptr.as_ref() }.unwrap().doc, doc_ptr);
+            assert_eq!(unsafe { stream_ptr.as_ref() }.unwrap().doc, doc_ptr);
+            assert_eq!(unsafe { stream_dict_ptr.as_ref() }.unwrap().doc, doc_ptr);
+            assert_eq!(
+                unsafe { xpdf_stream_get_char(stream_ptr) },
+                content[0] as c_int
+            );
+            assert_eq!(unsafe { xpdf_object_get_stream(object_ptr) }, stream_ptr);
+            assert_eq!(
+                unsafe { xpdf_stream_get_char(stream_ptr) },
+                content[1] as c_int
+            );
+        }
+        // Cached handles must not be inspected after their owning object is reset.
+        unsafe { xpdf_object_free_contents(object_ptr) };
+        assert!(object.dict_cache.is_none());
+        assert!(object.stream_cache.is_none());
+        assert!(object.string_cache.is_none());
+        assert_eq!(object.name_cache.as_bytes(), b"");
+        assert_eq!(object.doc, second_doc_ptr);
+        assert!(unsafe { xpdf_object_get_dict(object_ptr) }.is_null());
+        assert!(unsafe { xpdf_object_get_stream(object_ptr) }.is_null());
+
+        let mut dict = LoDictionary::new();
+        dict.set("New", 99);
+        object.reset(LoObject::Dictionary(dict), ptr::null_mut());
+        let dict_ptr = unsafe { xpdf_object_get_dict(object_ptr) };
+        let mut out = Object::new(LoObject::Null, ptr::null_mut());
+        unsafe { xpdf_dict_lookup(dict_ptr, c"New".as_ptr(), &mut out) };
+        assert_eq!(unsafe { xpdf_object_get_int(&mut out) }, 99);
+        assert_eq!(
+            clone_counts(),
+            CacheCloneCounts {
+                object_dict: 3,
+                object_stream: 2,
+                object_stream_bytes: 4,
+                stream_dict: 2,
+                ..CacheCloneCounts::default()
+            }
+        );
+    }
+
+    #[test]
+    fn absent_and_wrong_type_getters_do_not_clone() {
+        reset_clone_counts();
+        for value in [
+            LoObject::Null,
+            LoObject::Integer(1),
+            LoObject::Boolean(true),
+            LoObject::Name(b"Name".to_vec()),
+            LoObject::Array(Vec::new()),
+            LoObject::Reference((17, 3)),
+        ] {
+            let mut object = Object::new(value, ptr::null_mut());
+            for _ in 0..3 {
+                assert!(unsafe { xpdf_object_get_dict(&mut object) }.is_null());
+                assert!(unsafe { xpdf_object_get_stream(&mut object) }.is_null());
+            }
+        }
+        let mut page = test_page(None, None);
+        for _ in 0..3 {
+            assert!(unsafe { xpdf_page_group(&mut page) }.is_null());
+            assert!(unsafe { xpdf_page_resource_dict(&mut page) }.is_null());
+            assert!(unsafe { xpdf_page_group(ptr::null_mut()) }.is_null());
+            assert!(unsafe { xpdf_page_resource_dict(ptr::null_mut()) }.is_null());
+            assert!(unsafe { xpdf_object_get_dict(ptr::null_mut()) }.is_null());
+            assert!(unsafe { xpdf_object_get_stream(ptr::null_mut()) }.is_null());
+        }
+        assert_eq!(clone_counts(), CacheCloneCounts::default());
+    }
+
+    #[test]
+    fn cache_clone_counters_are_thread_local() {
+        reset_clone_counts();
+        let counts = std::thread::spawn(|| {
+            reset_clone_counts();
+            let mut object =
+                Object::new(LoObject::Dictionary(LoDictionary::new()), ptr::null_mut());
+            assert!(!unsafe { xpdf_object_get_dict(&mut object) }.is_null());
+            clone_counts()
+        })
+        .join()
+        .unwrap();
+        assert_eq!(counts.object_dict, 1);
+        assert_eq!(clone_counts(), CacheCloneCounts::default());
+    }
 
     #[test]
     fn stream_remaining_data_returns_tail_and_advances_to_eof() {
