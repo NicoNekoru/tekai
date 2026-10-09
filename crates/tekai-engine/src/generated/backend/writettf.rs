@@ -516,7 +516,6 @@ static mut new_ntabs: TTF_USHORT = 0;
 static mut glyph_tab: *mut glyph_entry = ::core::ptr::null::<glyph_entry>() as *mut glyph_entry;
 static mut glyph_index: *mut ::core::ffi::c_long =
     ::core::ptr::null::<::core::ffi::c_long>() as *mut ::core::ffi::c_long;
-static mut cmap_tab: *mut cmap_entry = ::core::ptr::null::<cmap_entry>() as *mut cmap_entry;
 static mut new_cmap_tab: [cmap_entry; 2] = [cmap_entry {
     platform_id: 0,
     encoding_id: 0,
@@ -1747,9 +1746,6 @@ unsafe extern "C" fn ttf_read_cmap(
     cmap_offset = (xftell(ttf_file, cur_file_name as const_string)
         - (2 as ::core::ffi::c_int * TTF_USHORT_SIZE) as ::core::ffi::c_long)
         as TTF_ULONG;
-    cmap_tab = xmalloc(
-        (ncmapsubtabs as size_t).wrapping_mul(::core::mem::size_of::<cmap_entry>() as size_t),
-    ) as *mut cmap_entry;
     i = 0 as ::core::ffi::c_long;
     loop {
         if !(i < ncmapsubtabs as ::core::ffi::c_long) {

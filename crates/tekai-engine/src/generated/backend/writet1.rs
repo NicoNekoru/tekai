@@ -3693,6 +3693,32 @@ unsafe extern "C" fn t1_read_subrs() {
     }
 }
 pub const POST_SUBRS_SCAN: ::core::ffi::c_int = 5 as ::core::ffi::c_int;
+
+#[cfg(test)]
+std::thread_local! {
+    static CS_RELEASE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+unsafe fn release_cs_entries(mut ptr: *mut cs_entry, end: *mut cs_entry) {
+    while ptr < end {
+        if !(*ptr).data.is_null() {
+            #[cfg(test)]
+            CS_RELEASE_CALLS.with(|calls| calls.set(calls.get() + 1));
+            free((*ptr).data as *mut ::core::ffi::c_void);
+        }
+        (*ptr).data = ::core::ptr::null_mut::<byte>();
+        if (*ptr).name != &raw mut notdef as *mut ::core::ffi::c_char {
+            if !(*ptr).name.is_null() {
+                #[cfg(test)]
+                CS_RELEASE_CALLS.with(|calls| calls.set(calls.get() + 1));
+                free((*ptr).name as *mut ::core::ffi::c_void);
+            }
+            (*ptr).name = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        }
+        ptr = ptr.offset(1);
+    }
+}
+
 unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut r: *mut byte = ::core::ptr::null_mut::<byte>();
@@ -3808,16 +3834,7 @@ unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
             t1_line_ptr = eol(t1_line_array as *mut ::core::ffi::c_char) as *mut t1_line_entry;
             t1_putline();
         }
-        if !(*ptr).data.is_null() {
-            free((*ptr).data as *mut ::core::ffi::c_void);
-        }
-        (*ptr).data = ::core::ptr::null_mut::<byte>();
-        if (*ptr).name != &raw mut notdef as *mut ::core::ffi::c_char {
-            if !(*ptr).name.is_null() {
-                free((*ptr).name as *mut ::core::ffi::c_void);
-            }
-            (*ptr).name = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        }
+        release_cs_entries(ptr, ptr.offset(1));
         ptr = ptr.offset(1);
     }
     sprintf(
@@ -3828,6 +3845,8 @@ unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
     t1_line_ptr = eol(t1_line_array as *mut ::core::ffi::c_char) as *mut t1_line_entry;
     t1_putline();
     if is_subr != 0 {
+        // Emission uses subr_max + 1, but all subr_size entries own their storage.
+        release_cs_entries(end_tab, tab.offset(subr_size as isize));
         if !return_cs.is_null() {
             free(return_cs as *mut ::core::ffi::c_void);
         }
@@ -4196,3 +4215,192 @@ pub unsafe extern "C" fn t1_free() {
     t1_buf_array = ::core::ptr::null_mut::<t1_buf_entry>();
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+#[cfg(test)]
+mod tests {
+    use super::{cs_entry, init_cs_entry, notdef, release_cs_entries, CS_RELEASE_CALLS};
+    use std::ptr;
+
+    struct OwnedEntries(Vec<cs_entry>);
+
+    impl OwnedEntries {
+        fn new(count: usize) -> Self {
+            let mut entries = Vec::with_capacity(count);
+            for _ in 0..count {
+                let mut entry = std::mem::MaybeUninit::<cs_entry>::uninit();
+                unsafe {
+                    init_cs_entry(entry.as_mut_ptr());
+                    entries.push(entry.assume_init());
+                }
+            }
+            Self(entries)
+        }
+
+        fn add_owned(&mut self, index: usize, with_name: bool) {
+            let entry = &mut self.0[index];
+            unsafe {
+                entry.data = libc::malloc(1) as *mut super::byte;
+                assert!(!entry.data.is_null());
+                *entry.data = index as super::byte;
+                if with_name {
+                    entry.name = libc::malloc(2) as *mut libc::c_char;
+                    assert!(!entry.name.is_null());
+                    *entry.name = b'a' as libc::c_char;
+                    *entry.name.add(1) = 0;
+                }
+            }
+            entry.len = 1;
+            entry.cslen = 1;
+            entry.valid = 1;
+        }
+
+        fn release_tail(&mut self, emitted_count: usize) {
+            assert!(emitted_count <= self.0.len());
+            let count = self.0.len();
+            let tab = self.0.as_mut_ptr();
+            unsafe { release_cs_entries(tab.add(emitted_count), tab.add(count)) };
+        }
+    }
+
+    impl Drop for OwnedEntries {
+        fn drop(&mut self) {
+            self.release_tail(0);
+        }
+    }
+
+    fn reset_release_calls() {
+        CS_RELEASE_CALLS.with(|calls| calls.set(0));
+    }
+
+    fn release_calls() -> usize {
+        CS_RELEASE_CALLS.with(|calls| calls.get())
+    }
+
+    #[test]
+    fn subroutine_cleanup_releases_unused_tail_only() {
+        let mut entries = OwnedEntries::new(5);
+        for index in 0..5 {
+            entries.add_owned(index, true);
+        }
+        let prefix_data = [entries.0[0].data, entries.0[1].data];
+        let prefix_names = [entries.0[0].name, entries.0[1].name];
+        reset_release_calls();
+
+        entries.release_tail(2);
+
+        assert_eq!(release_calls(), 6);
+        for index in 0..2 {
+            assert_eq!(entries.0[index].data, prefix_data[index]);
+            assert_eq!(entries.0[index].name, prefix_names[index]);
+            assert_eq!(unsafe { *entries.0[index].data }, index as super::byte);
+        }
+        for entry in &entries.0[2..] {
+            assert!(entry.data.is_null());
+            assert!(entry.name.is_null());
+            assert_eq!(entry.len, 1);
+            assert_eq!(entry.cslen, 1);
+            assert_eq!(entry.valid, 1);
+            assert_eq!(entry.used, 0);
+        }
+    }
+
+    #[test]
+    fn subroutine_cleanup_skips_interior_holes() {
+        let mut entries = OwnedEntries::new(5);
+        entries.add_owned(0, true);
+        entries.add_owned(2, false);
+        entries.add_owned(4, true);
+        reset_release_calls();
+
+        entries.release_tail(0);
+
+        assert_eq!(release_calls(), 5);
+        assert!(entries.0.iter().all(|entry| entry.data.is_null()));
+        assert!(entries.0.iter().all(|entry| entry.name.is_null()));
+        assert_eq!(entries.0[1].valid, 0);
+        assert_eq!(entries.0[3].valid, 0);
+        entries.release_tail(0);
+        assert_eq!(release_calls(), 5);
+    }
+
+    #[test]
+    fn subroutine_cleanup_handles_null_entries() {
+        let mut entries = OwnedEntries::new(3);
+        reset_release_calls();
+
+        entries.release_tail(0);
+        unsafe { release_cs_entries(ptr::null_mut(), ptr::null_mut()) };
+
+        assert_eq!(release_calls(), 0);
+    }
+
+    #[test]
+    fn subroutine_cleanup_at_full_cutoff_releases_nothing() {
+        let mut entries = OwnedEntries::new(3);
+        for index in 0..3 {
+            entries.add_owned(index, true);
+        }
+        let data = entries.0.iter().map(|entry| entry.data).collect::<Vec<_>>();
+        let names = entries.0.iter().map(|entry| entry.name).collect::<Vec<_>>();
+        reset_release_calls();
+
+        entries.release_tail(3);
+
+        assert_eq!(release_calls(), 0);
+        assert_eq!(
+            entries.0.iter().map(|entry| entry.data).collect::<Vec<_>>(),
+            data
+        );
+        assert_eq!(
+            entries.0.iter().map(|entry| entry.name).collect::<Vec<_>>(),
+            names
+        );
+    }
+
+    #[test]
+    fn subroutine_cleanup_with_zero_emitted_entries_releases_all() {
+        let mut entries = OwnedEntries::new(3);
+        for index in 0..3 {
+            entries.add_owned(index, true);
+        }
+        reset_release_calls();
+
+        entries.release_tail(0);
+
+        assert_eq!(release_calls(), 6);
+        assert!(entries.0.iter().all(|entry| entry.data.is_null()));
+        assert!(entries.0.iter().all(|entry| entry.name.is_null()));
+    }
+
+    #[test]
+    fn subroutine_cleanup_preserves_borrowed_notdef_name() {
+        let mut entries = OwnedEntries::new(1);
+        entries.add_owned(0, false);
+        let borrowed = unsafe { &raw mut notdef as *mut libc::c_char };
+        entries.0[0].name = borrowed;
+        reset_release_calls();
+
+        entries.release_tail(0);
+
+        assert_eq!(release_calls(), 1);
+        assert!(entries.0[0].data.is_null());
+        assert_eq!(entries.0[0].name, borrowed);
+        entries.release_tail(0);
+        assert_eq!(release_calls(), 1);
+    }
+
+    #[test]
+    fn subroutine_cleanup_releases_name_only_entry() {
+        let mut entries = OwnedEntries::new(1);
+        entries.0[0].name = unsafe { libc::malloc(1) as *mut libc::c_char };
+        assert!(!entries.0[0].name.is_null());
+        reset_release_calls();
+
+        entries.release_tail(0);
+
+        assert_eq!(release_calls(), 1);
+        assert!(entries.0[0].data.is_null());
+        assert!(entries.0[0].name.is_null());
+        assert_eq!(entries.0[0].valid, 0);
+    }
+}
