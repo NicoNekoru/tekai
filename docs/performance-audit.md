@@ -13,6 +13,9 @@ PNG metadata reads now validate palette, transparency, and header bounds before
 allocating their buffers.
 Compiler fingerprint fast paths now check physical file identity as well as
 mtime, so preserved timestamps no longer hide the reproduced source edits.
+Recursive disk lookup now inventories canonical directories instead of
+expanding every alias path. Ordinary Unix directory entries also avoid
+redundant metadata reads and child-directory canonicalization.
 The other confirmed failures below remain open unless their section says otherwise.
 
 ## Measurement conditions
@@ -118,8 +121,9 @@ to ignored comments can therefore still hit the content cache.
 
 Entries without an identity rehash instead of trusting mtime. Platforms
 without the Unix change-time identity also rehash. The build-state version
-is now 38. Regression tests cover same-length and longer edits, atomic
-replacement, legacy entries, unchanged-content reuse, and the metadata-only
+is now 39, including the directory-graph lookup change. Regression tests cover
+same-length and longer edits, atomic replacement, legacy entries,
+unchanged-content reuse, and the metadata-only
 fast path. A bundled CLI test checks actual rebuilds after preserved-mtime
 edits and cache hits after an identical replacement.
 
@@ -227,7 +231,7 @@ definition inputs remain available and later inputs stay outside the scan.
 | Reading a PNG palette | 3-byte palette | Invalid 24 MiB palette | 29.5 to 77.5 MiB peak RSS, both builds accepted |
 | Scheduling EPS conversion | 4 jobs | 32 jobs on 14 CPUs | 4 and 32 simultaneous converter processes |
 
-The PNG row records the original failure. The metadata bounds fix is described below.
+The PNG and symlink rows record the original failures. Their fixes are described below.
 
 ### Auxiliary tools have no shared concurrency limit
 
@@ -256,7 +260,7 @@ Relevant code is in `src/compiler.rs`, including
 `run_bibtex_jobs_if_stale_for_jobs`, `run_makeindex_jobs_if_stale`,
 `run_eps_conversion_jobs_if_needed`, and `run_svg_conversion_jobs_if_needed`.
 
-### Directory aliases still multiply traversal work
+### Directory alias lookup now uses a canonical directory graph
 
 `disk_entries` follows directory symlinks. Avoiding ancestor cycles does not
 avoid a directed acyclic graph in which two aliases at each level point to
@@ -267,13 +271,42 @@ The lookup of a missing file took 2.69 seconds with 15 physical directories
 and exceeded the 12-second diagnostic timeout with 19 directories. There
 were no directory cycles.
 
-A physical directory index should separate scanned directory identity from
-logical alias paths. Deduplicating canonical paths without retaining alias
-semantics would break explicit lookup paths and precedence. This needs a
-graph-aware resolver rather than an extra cache-size adjustment.
+`directory_graph.rs` now inventories each reachable canonical directory once
+and retains sorted, named edges for every alias. Recursive wildcard matching
+uses explicit frames and memoized misses instead of building all logical
+paths. Missing basenames return immediately after inventory. Qualified names,
+literal alias components, and nested wildcard priority retain their search
+semantics. Matching constructs a candidate spelling only at a terminal file.
 
-The confirmed function is `disk_entries` in
-`crates/tekai-engine/src/lookup.rs`.
+The 24-layer binary-alias regression reads 25 directories and evaluates 50
+states for a present basename with a missing suffix component. A 48-layer
+fixture with no usable terminal spelling evaluates 66 states on macOS.
+Adding a short usable alias evaluates 68 states and returns that alias.
+These are operation-count assertions, not timing thresholds. The release
+depth-12 missing-file diagnostic takes about 9 ms on this machine, compared
+with the earlier 5.51-second sample. RSS is unavailable under the sandbox.
+
+The matcher tracks physical ancestors inside cyclic components and includes
+consumed symlink hops in its memo keys on macOS and Linux. Raw symlink targets
+and leaf file symlinks contribute their hidden hops. A filesystem regression
+checks the actual supported-platform hop boundary. Final lexical validation
+still checks that a returned spelling can be opened.
+
+Overlapping query roots reuse graph nodes with a fresh ancestor context.
+Outputs in known directories update physical file membership once for every
+alias. Outputs in newly created directories evict affected inventories for
+rebuilding. Database-only paths still use the filename database rather than
+scanning the tree. Ordinary Unix entries use directory-entry types and join
+actual child names onto canonical parents. The 80-file regression records
+zero explicit metadata followups and zero child-directory canonicalizations.
+
+Inventory retention remains byte- and entry-bounded. Matcher memo retention
+has a separate 32 MiB ceiling. These are allocation estimates, not a bound on
+total process RSS. Adversarial cyclic matching, path-length failures, and
+matching after memo admission stops can still take excessive time. Oversized
+inventories retain the old streaming fallback, which can still expand aliases.
+The redesign fixes the reproduced acyclic alias explosion, not every possible
+filesystem graph. The higher-priority input cache bug also remains open.
 
 ### The linter and formatter repeat prefix scans
 
@@ -484,12 +517,18 @@ confirmed performance findings.
 
 ## Local regression checks for the current fixes
 
-The current fixes passed 471 workspace library tests, 10 self-contained CLI
-tests, and 12 audit-runner tests. Both bundled large-paper fixtures passed their
-separate build gate. Thirteen native shared-tree CLI tests passed. The real TeX
-reference test skipped because this machine has no system TeX installation.
-Workspace and standalone-engine lint checks, formatting, and release and
-standalone builds passed. These are local results, not remote CI success.
+The current fixes passed 488 workspace library tests, 11 self-contained CLI
+tests, 13 native shared-tree CLI tests, and 102 Python tool tests.
+Both bundled large-paper fixtures passed their build gate. The real TeX
+reference test skipped locally because this machine has no system TeX
+installation. Workspace and standalone-engine lint checks, formatting, and
+release and standalone builds passed. The separate upstream comparison passed
+all 99 paper and transparent-image pages with matching text and pixels.
+These are local results, not remote CI success.
+
+The full native performance profile passed 42 gates, recorded 33 observations,
+and reproduced eight known failures with no unexpected failures or skips.
+The engine and expansion executable hashes matched at the start and end.
 
 Release input-identity probes now rebuild and produce the changed text for both
 in-place edits and atomic replacement with preserved mtime. The database probe
@@ -497,20 +536,64 @@ also produces the newly selected package's text. The PNG probe accepts the valid
 palette and rejects the oversized declaration.
 
 The latest lookup probe still reproduces a stale cache hit after adding a
-higher-priority project input. Its recursive symlink fixture still takes
-5.51 seconds for a missing file at depth 12 with only 15 physical directories.
-This is another diagnostic sample, not a portable threshold or a measured
-regression between commits. Lookup dependencies and repeated alias traversal
-remain the next performance and correctness targets. Build-generation races,
-cancellation, format companions, and the other open findings also remain.
+higher-priority project input. Its recursive symlink fixture now returns the
+missing-file result without enumerating every alias path. Lookup dependencies,
+build-generation races, cancellation, format companions, and the other open
+findings remain.
+
+## Continuous performance checks
+
+`tools/performance_ci.py` separates fixed correctness gates from timings and
+open failures. The quick profile covers lookup, linter checks, source identity,
+PNG bounds, Unicode preview, cache hits, and decoded images. The full profile
+adds every audit fixture, rotating watcher inputs, and experimental expansion.
+Successful probes for unresolved scaling costs are observations, not evidence
+that their complexity or memory use is fixed.
+
+Known failures require the exact reproduced behavior and a working control
+where applicable. An unrelated error still fails the run. Missing dependencies
+are explicit skips, with strict CI options rejecting those skips. Wall time
+and RSS stay outside correctness evidence. Unavailable RSS remains unavailable
+rather than becoming zero.
+
+```sh
+python3 -B -m unittest discover -s tools -p 'test_*.py'
+python3 -B tools/performance_ci.py --engine target/release/tekai --profile quick
+cargo build --release --locked -p tekai-pdftex --example audit_expansion
+python3 -B tools/performance_ci.py --engine target/release/tekai --profile full --require-expansion
+python3 -B tools/verify_bundled_papers.py --engine target/release/tekai --images
+```
+
+The performance workflow runs quick release diagnostics for pull requests and
+full diagnostics on ARM64 and Intel macOS for manual or weekly runs. Core CI
+can call either profile from the same branch commit without a release or pull
+request. Linux tests the portable Python supervisor on Python 3.10 and 3.13,
+not an unsupported Linux runtime. Scheduled runs require the workflow on the
+default branch.
+
+Every compiler probe has a finite input and a command deadline. The supervisor
+owns each process group, stops descendants, and reaps the direct child. All
+runtime and artifact caches, home directories, and temporary inputs are
+fixture-owned. The runner records streamed executable hashes at the start
+and end, rejecting a changed or unavailable executable at the final check.
+Reports distinguish passed gates, known failures, observations,
+and skips, and CI uploads them even after a failure. Release library tests
+enforce deterministic scan and retention assertions. The full profile also
+runs the separate all-page upstream PDF comparison.
+
+The parity runner now isolates all four candidate caches and uses owned
+process groups with bounded output capture and deadlines. It rejects oversized
+successful text output rather than weakening the equality check. SIGTERM
+cleans up the main-thread command. Rendering workers clean up within their
+individual deadlines, so interruption can wait for those workers.
 
 ## Fix order and regression checks
 
 First define shared contracts for build generations, lookup dependencies,
 file identity, bounded auxiliary scheduling, and process cancellation. Fixing the stale-output and orphan
 cases takes priority over improving benchmark numbers. Then remove repeated
-linter scans and PDF clones, replace alias traversal with a physical directory
-graph, and stream job-scoped artifact caching.
+linter scans and PDF clones, tighten the remaining graph-matching limits,
+and stream job-scoped artifact caching.
 
 Regression checks should test outcomes and bounded operation counts rather
 than relying only on timing thresholds. Required cases include edits after
