@@ -558,7 +558,9 @@ impl HotPreviewState {
         let mut build_options = options.build_options.clone();
         build_options.main = hmr_main;
         build_options.job_name = Some(hot_preview_job_name(&options.build_options));
-        build_options.engine = Engine::TekaiPdftex;
+        // The CLI embeds this engine. Do not require a standalone sibling that
+        // may only exist in a development checkout, not a single-binary install.
+        build_options.engine = Engine::PdfLatex;
         build_options.runner = Runner::Direct;
         build_options.bib_mode = BibMode::None;
         build_options.draft_prepass = DraftPrepass::Never;
@@ -2363,6 +2365,39 @@ mod tests {
             static_document: None,
             warmed: false,
         }
+    }
+
+    #[test]
+    fn hot_preview_preparation_uses_the_embedded_engine() {
+        let root = unique_temp_dir("tekai-hot-preview-embedded-engine");
+        fs::create_dir_all(&root).unwrap();
+        let main = root.join("main.tex");
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}\nA preview.\n\\end{document}\n",
+        )
+        .unwrap();
+        let options = watch_options(&main, &root);
+        let mut state = target_test_state();
+        let document = state.prepare_document(&options, &[]).unwrap().unwrap();
+
+        assert_eq!(document.build_options.engine, Engine::PdfLatex);
+        assert_eq!(document.build_options.runner, Runner::Direct);
+        assert_eq!(document.build_options.bib_mode, BibMode::None);
+        assert_eq!(document.build_options.draft_prepass, DraftPrepass::Never);
+        assert!(document.build_options.fast);
+        assert!(document.build_options.once);
+        assert!(document.build_options.force);
+        assert!(document.build_options.precompile_preamble);
+        assert_eq!(document.build_options.max_runs, 1);
+        assert!(!document.build_options.synctex);
+        assert!(document.build_options.main.ends_with(".tekai-hmr/main.tex"));
+        assert_eq!(
+            document.warm_out_dir,
+            document.build_options.out_dir.join(HOT_PREVIEW_WARM_DIR)
+        );
+        assert!(document.build_options.main.is_file());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
