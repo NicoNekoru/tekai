@@ -58,6 +58,7 @@ mod cache;
 mod directory_graph;
 mod embedded;
 pub mod file_identity;
+mod jpeg_exif;
 pub mod kpathsea;
 pub mod lookup;
 pub mod md5;

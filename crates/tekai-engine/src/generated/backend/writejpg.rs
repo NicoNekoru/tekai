@@ -24,12 +24,6 @@ extern "C" {
         __nitems: size_t,
         __stream: *mut FILE,
     ) -> ::core::ffi::c_ulong;
-    fn free(_: *mut ::core::ffi::c_void);
-    fn memcmp(
-        __s1: *const ::core::ffi::c_void,
-        __s2: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
     fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
     fn xfseek(
         fp: *mut FILE,
@@ -38,8 +32,6 @@ extern "C" {
         filename: const_string,
     );
     fn xftell(fp: *mut FILE, filename: const_string) -> ::core::ffi::c_long;
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
     static mut pdfbuf: *mut eightbits;
     static mut pdfbufsize: integer;
     static mut pdfptr: integer;
@@ -242,271 +234,22 @@ pub const JPG_GRAY: ::core::ffi::c_int = 1;
 pub const JPG_RGB: ::core::ffi::c_int = 3;
 pub const JPG_CMYK: ::core::ffi::c_int = 4;
 unsafe extern "C" fn read2bytes(mut f: *mut FILE) -> ::core::ffi::c_uint {
-    let mut c: ::core::ffi::c_int = xgetc(f);
-    return ((c << 8 as ::core::ffi::c_int) + xgetc(f)) as ::core::ffi::c_uint;
-}
-unsafe extern "C" fn get_unsigned_byte(mut file: *mut FILE) -> ::core::ffi::c_uchar {
-    let mut ch: ::core::ffi::c_int = 0;
-    ch = fast_fgetc(file);
-    return ch as ::core::ffi::c_uchar;
-}
-unsafe extern "C" fn get_unsigned_pair(mut file: *mut FILE) -> ::core::ffi::c_ushort {
-    let mut pair: ::core::ffi::c_ushort = get_unsigned_byte(file) as ::core::ffi::c_ushort;
-    pair = ((pair as ::core::ffi::c_int) << 8 as ::core::ffi::c_int
-        | get_unsigned_byte(file) as ::core::ffi::c_int) as ::core::ffi::c_ushort;
-    return pair;
-}
-unsafe extern "C" fn read_exif_bytes(
-    mut p: *mut *mut ::core::ffi::c_uchar,
-    mut n: ::core::ffi::c_int,
-    mut b: ::core::ffi::c_int,
-) -> ::core::ffi::c_uint {
-    let mut rval: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
-    let mut pp: *mut ::core::ffi::c_uchar = *p;
-    if b != 0 {
-        let mut current_block_6: u64;
-        match n {
-            4 => {
-                let fresh8 = pp;
-                pp = pp.offset(1);
-                rval = rval.wrapping_add(*fresh8 as ::core::ffi::c_uint);
-                rval <<= 8 as ::core::ffi::c_int;
-                let fresh9 = pp;
-                pp = pp.offset(1);
-                rval = rval.wrapping_add(*fresh9 as ::core::ffi::c_uint);
-                rval <<= 8 as ::core::ffi::c_int;
-                current_block_6 = 2035738867698081325;
-            }
-            2 => {
-                current_block_6 = 2035738867698081325;
-            }
-            _ => {
-                current_block_6 = 7815301370352969686;
-            }
-        }
-        match current_block_6 {
-            2035738867698081325 => {
-                let fresh10 = pp;
-                pp = pp.offset(1);
-                rval = rval.wrapping_add(*fresh10 as ::core::ffi::c_uint);
-                rval <<= 8 as ::core::ffi::c_int;
-                rval = rval.wrapping_add(*pp as ::core::ffi::c_uint);
-            }
-            _ => {}
-        }
-    } else {
-        pp = pp.offset(n as isize);
-        let mut current_block_16: u64;
-        match n {
-            4 => {
-                pp = pp.offset(-1);
-                rval = rval.wrapping_add(*pp as ::core::ffi::c_uint);
-                rval <<= 8 as ::core::ffi::c_int;
-                pp = pp.offset(-1);
-                rval = rval.wrapping_add(*pp as ::core::ffi::c_uint);
-                rval <<= 8 as ::core::ffi::c_int;
-                current_block_16 = 10256748123573275224;
-            }
-            2 => {
-                current_block_16 = 10256748123573275224;
-            }
-            _ => {
-                current_block_16 = 17407779659766490442;
-            }
-        }
-        match current_block_16 {
-            10256748123573275224 => {
-                pp = pp.offset(-1);
-                rval = rval.wrapping_add(*pp as ::core::ffi::c_uint);
-                rval <<= 8 as ::core::ffi::c_int;
-                pp = pp.offset(-1);
-                rval = rval.wrapping_add(*pp as ::core::ffi::c_uint);
-            }
-            _ => {}
-        }
+    let high = xgetc(f);
+    let low = xgetc(f);
+    if high == libc::EOF || low == libc::EOF {
+        crate::utils::pdftex_fail_args(
+            b"reading JPEG image failed (premature file end)\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[],
+        );
     }
-    *p = (*p).offset(n as isize);
-    return rval;
-}
-unsafe extern "C" fn read_APP1_Exif(
-    mut fp: *mut FILE,
-    mut length: ::core::ffi::c_ushort,
-    mut xx: *mut ::core::ffi::c_int,
-    mut yy: *mut ::core::ffi::c_int,
-) {
-    let mut current_block: u64;
-    let mut buffer: *mut ::core::ffi::c_uchar = xmalloc(
-        (length as size_t).wrapping_mul(::core::mem::size_of::<::core::ffi::c_uchar>() as size_t),
-    ) as *mut ::core::ffi::c_uchar;
-    let mut p: *mut ::core::ffi::c_uchar = ::core::ptr::null_mut::<::core::ffi::c_uchar>();
-    let mut rp: *mut ::core::ffi::c_uchar = ::core::ptr::null_mut::<::core::ffi::c_uchar>();
-    let mut tiff_header: *mut ::core::ffi::c_uchar =
-        ::core::ptr::null_mut::<::core::ffi::c_uchar>();
-    let mut bigendian: ::core::ffi::c_char = 0;
-    let mut i: ::core::ffi::c_int = 0;
-    let mut num_fields: ::core::ffi::c_int = 0;
-    let mut tag: ::core::ffi::c_int = 0;
-    let mut type_0: ::core::ffi::c_int = 0;
-    let mut value: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-    let mut num: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-    let mut den: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-    let mut xres: ::core::ffi::c_double = 72.0f64;
-    let mut yres: ::core::ffi::c_double = 72.0f64;
-    let mut res_unit: ::core::ffi::c_double = 1.0f64;
-    fread(
-        buffer as *mut ::core::ffi::c_void,
-        length as size_t,
-        1 as size_t,
-        fp,
-    );
-    p = buffer;
-    while p < buffer.offset(length as ::core::ffi::c_int as isize)
-        && *p as ::core::ffi::c_int == 0 as ::core::ffi::c_int
-    {
-        p = p.offset(1);
-    }
-    tiff_header = p;
-    if *p as ::core::ffi::c_int == 'M' as i32
-        && *p.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 'M' as i32
-    {
-        bigendian = 1 as ::core::ffi::c_char;
-        current_block = 11650488183268122163;
-    } else if *p as ::core::ffi::c_int == 'I' as i32
-        && *p.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 'I' as i32
-    {
-        bigendian = 0 as ::core::ffi::c_char;
-        current_block = 11650488183268122163;
-    } else {
-        current_block = 5902651919372197310;
-    }
-    match current_block {
-        11650488183268122163 => {
-            p = p.offset(2 as ::core::ffi::c_int as isize);
-            i = read_exif_bytes(
-                &raw mut p,
-                2 as ::core::ffi::c_int,
-                bigendian as ::core::ffi::c_int,
-            ) as ::core::ffi::c_int;
-            if !(i != 42 as ::core::ffi::c_int) {
-                i = read_exif_bytes(
-                    &raw mut p,
-                    4 as ::core::ffi::c_int,
-                    bigendian as ::core::ffi::c_int,
-                ) as ::core::ffi::c_int;
-                p = tiff_header.offset(i as isize);
-                num_fields = read_exif_bytes(
-                    &raw mut p,
-                    2 as ::core::ffi::c_int,
-                    bigendian as ::core::ffi::c_int,
-                ) as ::core::ffi::c_int;
-                loop {
-                    let fresh5 = num_fields;
-                    num_fields = num_fields - 1;
-                    if !(fresh5 > 0 as ::core::ffi::c_int) {
-                        break;
-                    }
-                    tag = read_exif_bytes(
-                        &raw mut p,
-                        2 as ::core::ffi::c_int,
-                        bigendian as ::core::ffi::c_int,
-                    ) as ::core::ffi::c_int;
-                    type_0 = read_exif_bytes(
-                        &raw mut p,
-                        2 as ::core::ffi::c_int,
-                        bigendian as ::core::ffi::c_int,
-                    ) as ::core::ffi::c_int;
-                    read_exif_bytes(
-                        &raw mut p,
-                        4 as ::core::ffi::c_int,
-                        bigendian as ::core::ffi::c_int,
-                    );
-                    match type_0 {
-                        1 => {
-                            let fresh6 = p;
-                            p = p.offset(1);
-                            value = *fresh6 as ::core::ffi::c_int;
-                            p = p.offset(3 as ::core::ffi::c_int as isize);
-                        }
-                        3 => {
-                            value = read_exif_bytes(
-                                &raw mut p,
-                                2 as ::core::ffi::c_int,
-                                bigendian as ::core::ffi::c_int,
-                            ) as ::core::ffi::c_int;
-                            p = p.offset(2 as ::core::ffi::c_int as isize);
-                        }
-                        4 | 9 => {
-                            value = read_exif_bytes(
-                                &raw mut p,
-                                4 as ::core::ffi::c_int,
-                                bigendian as ::core::ffi::c_int,
-                            ) as ::core::ffi::c_int;
-                        }
-                        5 | 10 => {
-                            value = read_exif_bytes(
-                                &raw mut p,
-                                4 as ::core::ffi::c_int,
-                                bigendian as ::core::ffi::c_int,
-                            ) as ::core::ffi::c_int;
-                            rp = tiff_header.offset(value as isize);
-                            num = read_exif_bytes(
-                                &raw mut rp,
-                                4 as ::core::ffi::c_int,
-                                bigendian as ::core::ffi::c_int,
-                            ) as ::core::ffi::c_int;
-                            den = read_exif_bytes(
-                                &raw mut rp,
-                                4 as ::core::ffi::c_int,
-                                bigendian as ::core::ffi::c_int,
-                            ) as ::core::ffi::c_int;
-                        }
-                        7 => {
-                            let fresh7 = p;
-                            p = p.offset(1);
-                            value = *fresh7 as ::core::ffi::c_int;
-                            p = p.offset(3 as ::core::ffi::c_int as isize);
-                        }
-                        2 | _ => {
-                            p = p.offset(4 as ::core::ffi::c_int as isize);
-                        }
-                    }
-                    match tag {
-                        282 => {
-                            if den != 0 as ::core::ffi::c_int {
-                                xres = (num / den) as ::core::ffi::c_double;
-                            }
-                        }
-                        283 => {
-                            if den != 0 as ::core::ffi::c_int {
-                                yres = (num / den) as ::core::ffi::c_double;
-                            }
-                        }
-                        296 => match value {
-                            2 => {
-                                res_unit = 1.0f64;
-                            }
-                            3 => {
-                                res_unit = 2.54f64;
-                            }
-                            _ => {}
-                        },
-                        _ => {}
-                    }
-                }
-                *xx = (xres * res_unit) as ::core::ffi::c_int;
-                *yy = (yres * res_unit) as ::core::ffi::c_int;
-            }
-        }
-        _ => {}
-    }
-    free(buffer as *mut ::core::ffi::c_void);
+    ((high as ::core::ffi::c_uint) << 8) | low as ::core::ffi::c_uint
 }
 #[no_mangle]
 pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
     let mut units: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     let mut appmk: ::core::ffi::c_ushort = 0;
-    let mut length: ::core::ffi::c_ushort = 0;
     let mut jpg_id: [::core::ffi::c_uchar; 5] =
         ::core::mem::transmute::<[u8; 5], [::core::ffi::c_uchar; 5]>(*b"JFIF\0");
     let ref mut fresh0 = (*image_array.offset(img as isize)).y_res;
@@ -588,36 +331,34 @@ pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
             (*image_array.offset(img as isize)).y_res = (*image_array.offset(img as isize)).x_res;
         }
     } else if appmk as ::core::ffi::c_int == 0xffe1 as ::core::ffi::c_int {
-        let mut fp: *mut FILE = (*(*image_array.offset(img as isize)).image_struct.jpg).file;
-        let mut xxres: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-        let mut yyres: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-        let mut app_sig: [::core::ffi::c_char; 32] = [0; 32];
-        length = (get_unsigned_pair(fp) as ::core::ffi::c_int - 2 as ::core::ffi::c_int)
-            as ::core::ffi::c_ushort;
-        if length as ::core::ffi::c_int > 5 as ::core::ffi::c_int {
-            if fread(
-                &raw mut app_sig as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-                ::core::mem::size_of::<::core::ffi::c_char>() as size_t,
-                5 as size_t,
-                fp,
-            ) != 5 as ::core::ffi::c_ulong
-            {
-                return;
-            }
-            length =
-                (length as ::core::ffi::c_int - 5 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
-            if memcmp(
-                &raw mut app_sig as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
-                b"Exif\0\0" as *const u8 as *const ::core::ffi::c_char
-                    as *const ::core::ffi::c_void,
-                5 as size_t,
-            ) == 0
-            {
-                read_APP1_Exif(fp, length, &raw mut xxres, &raw mut yyres);
-            }
+        let fp = (*(*image_array.offset(img as isize)).image_struct.jpg).file;
+        let segment_length = read2bytes(fp) as u16;
+        let Some(payload_length) = crate::jpeg_exif::app1_payload_length(segment_length) else {
+            crate::utils::pdftex_fail_args(
+                b"reading JPEG image failed (invalid APP1 segment length)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
+        };
+        // The declared u16 extent bounds both allocation and TIFF traversal.
+        let mut payload = vec![0u8; payload_length];
+        if fread(
+            payload.as_mut_ptr() as *mut ::core::ffi::c_void,
+            1 as size_t,
+            payload_length as size_t,
+            fp,
+        ) != payload_length as ::core::ffi::c_ulong
+        {
+            crate::utils::pdftex_fail_args(
+                b"reading JPEG image failed (premature file end)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
         }
-        (*image_array.offset(img as isize)).x_res = xxres as integer;
-        (*image_array.offset(img as isize)).y_res = yyres as integer;
+        if let Some((xres, yres)) = crate::jpeg_exif::parse_exif_resolution(&payload) {
+            (*image_array.offset(img as isize)).x_res = xres as integer;
+            (*image_array.offset(img as isize)).y_res = yres as integer;
+        }
     }
     xfseek(
         (*(*image_array.offset(img as isize)).image_struct.jpg).file,
@@ -633,17 +374,32 @@ pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
                 &[],
             );
         }
-        if fast_fgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file)
-            != 0xff as ::core::ffi::c_int
-        {
+        let marker_prefix =
+            fast_fgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file);
+        if marker_prefix == libc::EOF {
+            crate::utils::pdftex_fail_args(
+                b"reading JPEG image failed (premature file end)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
+        }
+        if marker_prefix != 0xff as ::core::ffi::c_int {
             crate::utils::pdftex_fail_args(
                 b"reading JPEG image failed (no marker found)\0" as *const u8
                     as *const ::core::ffi::c_char,
                 &[],
             );
         }
+        let marker = xgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file);
+        if marker == libc::EOF {
+            crate::utils::pdftex_fail_args(
+                b"reading JPEG image failed (premature file end)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
+        }
         let mut current_block_62: u64;
-        match xgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file) {
+        match marker {
             197 | 198 | 199 | 201 | 202 | 203 | 205 | 206 | 207 => {
                 crate::utils::pdftex_fail_args(
                     b"unsupported type of compression\0" as *const u8 as *const ::core::ffi::c_char,
