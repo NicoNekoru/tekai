@@ -19,6 +19,20 @@ and bundled-paper gates before its commit. The 99-page reference comparison
 was pixel-identical. Those gates did not exercise the cases below. This audit
 does not establish remote CI success or a leak-free runtime.
 
+`tools/audit_runtime.py` recreates these fixtures with isolated artifact caches
+and process-group cleanup. Its report records failures rather than treating
+them as a passing correctness suite. The timing samples are diagnostic.
+
+```sh
+python3 tools/audit_runtime.py --quick
+python3 tools/audit_runtime.py --case lookup --case edit-race --case cancel
+python3 tools/audit_runtime.py --case lint --case pdf --case cache
+```
+
+The runner requires macOS for RSS measurements. The cache-output checks use
+`pdftotext` and explicitly record a skip if it is unavailable. It creates no
+user project files and does not change the installed tekai binary.
+
 ## Confirmed cache correctness failures
 
 ### Changes during compilation can publish a stale PDF as fresh
@@ -94,14 +108,14 @@ and `editors/nvim/lua/tekai/init.lua`.
 
 ### Preview scanning can abort on non ASCII input
 
-`discover_input_paths` slices a UTF-8 string at byte 8192 without checking a
+`hot_preview_definition_inputs` slices a UTF-8 string at byte 8192 without checking a
 character boundary. A body with an accented character spanning bytes 8191
 through 8193 compiled successfully, then aborted the preview watcher with
 exit code -6 during prewarming.
 
 Use a byte parser or round the limit down to a character boundary. Add a
 regression test with multibyte characters at every bounded scan boundary.
-The confirmed site is `src/watch.rs` in `discover_input_paths`.
+The confirmed site is `src/watch.rs` in `hot_preview_definition_inputs`.
 
 ## Confirmed scaling and memory problems
 
@@ -217,7 +231,7 @@ The confirmed metadata code is in `crates/tekai-engine/src/pngshim.rs`.
 ## Remaining review targets
 
 The production linter, watcher, watch-event collector, resolver, PDF wrapper,
-PDF import adapter, and editor integration code have received detailed
+PDF import adapter, PNG adapter, low-level support routines, and editor integration code have received detailed
 function-level review. Compiler orchestration, cache publication, fingerprints,
 and selected parser paths have also been traced across files. Review of the
 remaining compiler helpers and experimental engine is ongoing.

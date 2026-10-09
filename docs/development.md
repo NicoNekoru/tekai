@@ -2,6 +2,11 @@
 
 ## Workspace layout
 
+The ongoing [performance audit](performance-audit.md) records confirmed
+worst-case costs, cache failures, and review coverage. Its diagnostic runner
+is separate from correctness gates and does not turn a reproduced failure
+into CI success.
+
 The workspace contains three Rust packages:
 
 | Package | Role |
