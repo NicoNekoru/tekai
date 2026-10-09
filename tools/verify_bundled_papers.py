@@ -3,15 +3,22 @@
 
 Maintainer-only gate. The reference is a checksum-pinned 1.7 MB archive, not
 MacTeX. Poppler is used only to verify results. Neither is a runtime dependency.
+SIGTERM interrupts the main-thread command and stops its process group. Render
+workers clean up within their individual timeouts, so interruption can wait for
+an active worker before the CLI exits.
 """
 
 import argparse
 import concurrent.futures
+from functools import partial
 import hashlib
 import io
 import json
+import math
+import os
 from pathlib import Path, PurePosixPath
 import shutil
+import signal
 import subprocess
 import tarfile
 import tempfile
@@ -24,20 +31,85 @@ REFERENCE = {
     "revision": "78096",
 }
 CASES = [("arXiv-2605.26379v1", "one"), ("arXiv-2511.08544v3", "two")]
+COMMAND_TIMEOUT_SECONDS = 180
+MAX_COMMAND_TIMEOUT_SECONDS = 300
+REAP_TIMEOUT_SECONDS = 5
+MAX_STDOUT_BYTES = 8 * 1024 * 1024
+LOG_TAIL_BYTES = 8192
 
 
-def command(args, **kwargs):
-    result = subprocess.run([str(arg) for arg in args], capture_output=True, **kwargs)
-    if result.returncode:
-        raise RuntimeError(result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace"))
-    return result.stdout
+def stop_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    finally:
+        process.wait(timeout=REAP_TIMEOUT_SECONDS)
 
 
-def main():
+def log_tail(handle):
+    handle.seek(0, os.SEEK_END)
+    handle.seek(max(0, handle.tell() - LOG_TAIL_BYTES))
+    return handle.read(LOG_TAIL_BYTES).decode(errors="replace")
+
+
+def command(args, *, timeout=COMMAND_TIMEOUT_SECONDS, **kwargs):
+    """Spool logs, bound returned bytes, and stop the owned group on every exit."""
+    if not math.isfinite(timeout) or not 0 < timeout <= MAX_COMMAND_TIMEOUT_SECONDS:
+        raise ValueError("Command timeout must be finite, positive and at most 300 seconds")
+    if os.name != "posix":
+        raise RuntimeError("The parity gate requires POSIX process groups")
+    argv = [str(arg) for arg in args]
+    # File-backed logs cannot fill a pipe or keep communicate waiting on an
+    # orphan. Only bounded stdout and diagnostic tails enter Python memory.
+    with tempfile.TemporaryFile(prefix="tekai-parity-stdout-") as stdout, \
+            tempfile.TemporaryFile(prefix="tekai-parity-stderr-") as stderr:
+        process = subprocess.Popen(argv, stdout=stdout, stderr=stderr,
+                                   start_new_session=True, **kwargs)
+        timed_out = False
+        try:
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+        finally:
+            # Stop descendants even when the direct command already exited.
+            stop_group(process)
+        if timed_out or process.returncode:
+            reason = f"timed out after {timeout:g} seconds" if timed_out else f"exited with code {process.returncode}"
+            raise RuntimeError(f"{argv[0]} {reason}\n{log_tail(stdout)}\n{log_tail(stderr)}")
+        stdout.seek(0)
+        output = stdout.read(MAX_STDOUT_BYTES + 1)
+        if len(output) > MAX_STDOUT_BYTES:
+            # Truncating successful pdftotext output could hide a parity error.
+            raise RuntimeError(f"{argv[0]} stdout exceeds the {MAX_STDOUT_BYTES}-byte capture limit")
+        return output
+
+
+def candidate_environment(work):
+    work = Path(work).resolve()
+    env = {"PATH": "", "HOME": str(work / "home"), "TMPDIR": str(work / "tmp"),
+           "TEKAI_TEXMF_MODE": "bundled"}
+    for name, folder in (("ENGINE", "engine"), ("FORMAT", "formats"),
+                         ("AUX", "aux"), ("BIBTEX", "bibtex")):
+        cache = work / "cache" / folder
+        cache.mkdir(parents=True, exist_ok=True)
+        env[f"TEKAI_{name}_CACHE"] = str(cache)
+    (work / "home").mkdir(exist_ok=True)
+    (work / "tmp").mkdir(exist_ok=True)
+    return env
+
+
+def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", type=Path, default=bundle.ROOT / "target/debug/tekai")
     parser.add_argument("--images", action="store_true", help="also compare a page of 32 unique and repeated transparent PNGs")
+    parser.add_argument("--timeout", type=float, default=COMMAND_TIMEOUT_SECONDS,
+                        help="Per-command safety timeout in seconds, greater than 0 and at most 300")
     args = parser.parse_args()
+    if not math.isfinite(args.timeout) or not 0 < args.timeout <= MAX_COMMAND_TIMEOUT_SECONDS:
+        parser.error("--timeout must be finite, greater than 0 and at most 300 seconds")
+    run = partial(command, timeout=args.timeout)
     poppler = {name: shutil.which(name) for name in ["pdfinfo", "pdftotext", "pdftoppm", "pdffonts"]}
     if not all(poppler.values()):
         raise SystemExit("This maintainer gate requires Poppler; Tekai itself does not")
@@ -46,6 +118,7 @@ def main():
     renders = bundle.ROOT / "tmp/pdfs"
     renders.mkdir(parents=True, exist_ok=True)
     cache = bundle.ROOT / "target/runtime-downloads" / (REFERENCE["sha512"] + ".tar.xz")
+    cache.parent.mkdir(parents=True, exist_ok=True)
     data = cache.read_bytes() if cache.exists() else bundle.download(REFERENCE["url"])
     if hashlib.sha512(data).hexdigest() != REFERENCE["sha512"]:
         raise ValueError("Reference pdfTeX archive checksum mismatch")
@@ -54,7 +127,7 @@ def main():
     report = {"reference": REFERENCE, "engine": str(args.engine.resolve()), "format": format_id,
               "bundle": (bundle.DEST / "bundle-id.txt").read_text().strip(), "cases": []}
     with tempfile.TemporaryDirectory(prefix="reference-", dir=target) as temporary:
-        work = Path(temporary)
+        work = Path(temporary).resolve()
         engine = work / "pdftex"
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:xz") as archive:
             entries = [entry for entry in archive if entry.isfile() and PurePosixPath(entry.name).name == "pdftex"]
@@ -62,7 +135,7 @@ def main():
                 raise ValueError("Reference archive must contain exactly one pdftex binary")
             engine.write_bytes(archive.extractfile(entries[0]).read())
         engine.chmod(0o755)
-        report["reference_version"] = command([engine, "--version"]).decode().splitlines()[0]
+        report["reference_version"] = run([engine, "--version"]).decode().splitlines()[0]
         (work / "texmf.cnf").write_text("\n".join([
             "main_memory = 5000000", "pool_size = 6250000", "max_strings = 500000",
             "hash_extra = 600000", "font_mem_size = 8000000", "font_max = 9000",
@@ -86,12 +159,12 @@ def main():
             cases.append(("transparent-images", "images", source))
         for case, suffix, source in cases:
             candidate = bundle.ROOT / f"target/runtime-complete-paper-{suffix}"
-            env = {"PATH": "", "TEKAI_ENGINE_CACHE": str(work / "cache"),
-                   "TEKAI_TEXMF_MODE": "bundled"}
-            command([args.engine.resolve(), "build", source / "main.tex",
+            env = candidate_environment(work)
+            run([args.engine.resolve(), "build", source / "main.tex",
                      "--out-dir", candidate, "--force", "--quiet"], env=env)
-            tree = next((work / "cache").glob("texmf-*/texmf-dist"))
-            if tree.parent.name != "texmf-" + report["bundle"] or not (work / "cache" / f"pdflatex-{format_id}.fmt.raw").is_file():
+            engine_cache = Path(env["TEKAI_ENGINE_CACHE"])
+            tree = next(engine_cache.glob("texmf-*/texmf-dist"))
+            if tree.parent.name != "texmf-" + report["bundle"] or not (engine_cache / f"pdflatex-{format_id}.fmt.raw").is_file():
                 raise ValueError("Rebuild the candidate; it does not embed the current bundle and format")
             reference = work / case
             reference.mkdir()
@@ -107,27 +180,42 @@ def main():
                 "ENCFONTS": f"{tree}/fonts/enc//", "TEXFONTMAPS": f"{tree}/fonts/map//",
                 "PKFONTS": f"{tree}/fonts/pk//", "MKTEXPK": "0", "MKTEXTFM": "0", "MKTEXFMT": "0",
             }
-            command([engine, "-fmt=pdflatex", "-no-shell-escape", "-interaction=nonstopmode",
+            run([engine, "-fmt=pdflatex", "-no-shell-escape", "-interaction=nonstopmode",
                      "-halt-on-error", f"-output-directory={reference}", "main.tex"], cwd=source, env=env)
             left, right = candidate / "main.pdf", reference / "main.pdf"
-            info = command([poppler["pdfinfo"], left]).decode()
-            text_matches = command([poppler["pdftotext"], left, "-"]) == command([poppler["pdftotext"], right, "-"])
+            info = run([poppler["pdfinfo"], left]).decode()
+            text_matches = run([poppler["pdftotext"], left, "-"]) == run([poppler["pdftotext"], right, "-"])
             with tempfile.TemporaryDirectory(prefix="runtime-parity-", dir=renders) as rendered:
                 rendered = Path(rendered)
                 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                    list(pool.map(lambda item: command([poppler["pdftoppm"], "-r", "144", item[0], rendered / item[1]]),
+                    # On interruption, the executor waits for workers. Their
+                    # command deadlines still bound process-group cleanup.
+                    list(pool.map(lambda item: run([poppler["pdftoppm"], "-r", "144", item[0], rendered / item[1]]),
                                   [(left, "candidate"), (right, "reference")]))
                 pages = sorted(rendered.glob("candidate-*.ppm"))
                 references = sorted(rendered.glob("reference-*.ppm"))
                 changed = [index + 1 for index, (a, b) in enumerate(zip(pages, references)) if a.read_bytes() != b.read_bytes()]
                 result = {"case": case, "pages": len(pages), "reference_pages": len(references),
                           "changed_pages": changed, "text_matches": text_matches, "pdfinfo": info,
-                          "pdffonts": command([poppler["pdffonts"], left]).decode()}
+                          "pdffonts": run([poppler["pdffonts"], left]).decode()}
             report["cases"].append(result)
             (target / "report.json").write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps({key: value for key, value in result.items() if key not in {"pdfinfo", "pdffonts"}}), flush=True)
             if changed or not text_matches or len(pages) != len(references):
                 raise SystemExit("PDF parity failed; see target/runtime-parity/report.json")
+
+
+def main():
+    previous_handler = signal.getsignal(signal.SIGTERM)
+
+    def terminate(_number, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, terminate)
+    try:
+        return _main()
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
 
 
 if __name__ == "__main__":
