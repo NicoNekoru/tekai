@@ -690,7 +690,7 @@ fn hot_preview_definition_inputs(doc_dir: &Path, root_source: &str) -> Result<St
         return Ok(String::new());
     };
     let body = &root_source[begin + "\\begin{document}".len()..];
-    let scan_limit = body.len().min(8_192);
+    let scan_limit = floor_char_boundary(body, 8_192);
     let mut definitions = String::new();
     let mut offset = 0;
     while let Some((input_start, input_end, name)) = next_input_command(&body[..scan_limit], offset)
@@ -2264,6 +2264,38 @@ mod tests {
 
         assert!(definitions.contains("\\important"), "{definitions}");
         assert!(!definitions.contains("\\section{Body}"), "{definitions}");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn hot_preview_definition_scan_keeps_utf8_boundaries_and_byte_limit() {
+        let root = unique_temp_dir("tekai-hot-preview-definition-utf8");
+        fs::create_dir_all(&root).expect("failed to create definition fixture");
+        fs::write(
+            root.join("document_commands.tex"),
+            "\\newcommand{\\beforelimit}{Before}\n",
+        )
+        .expect("failed to write early definition input");
+        fs::write(
+            root.join("other_commands.tex"),
+            "\\newcommand{\\afterlimit}{After}\n",
+        )
+        .expect("failed to write late definition input");
+        let early_input = "\\input{document_commands}\n";
+
+        for ch in ['é', '界', '🙂'] {
+            for split in 0..=ch.len_utf8() {
+                let padding = "a".repeat(8_192 - split - early_input.len());
+                let source = format!(
+                    "\\begin{{document}}{early_input}{padding}{ch}\n\\input{{other_commands}}\n\\end{{document}}"
+                );
+                let definitions = hot_preview_definition_inputs(&root, &source)
+                    .expect("definition scan must accept every UTF-8 boundary");
+                assert!(definitions.contains("\\beforelimit"), "{ch} split {split}");
+                assert!(!definitions.contains("\\afterlimit"), "{ch} split {split}");
+            }
+        }
 
         let _ = fs::remove_dir_all(root);
     }

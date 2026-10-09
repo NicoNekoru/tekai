@@ -6,6 +6,9 @@ urgent problems are stale PDFs after changes during compilation, stale cache
 hits when lookup precedence changes, and engine processes surviving
 cancellation. Cache retention limits alone do not prevent these failures.
 
+The preview scan now rounds its byte limit down to a UTF-8 character boundary.
+The other confirmed failures below remain open unless their section says otherwise.
+
 ## Measurement conditions
 
 Measurements on 9 October 2026 used the release candidate on an Apple M4 Pro
@@ -170,16 +173,18 @@ plugins also need to agree with this ownership contract.
 Relevant files are `src/compiler.rs`, `editors/vscode/src/extension.ts`,
 and `editors/nvim/lua/tekai/init.lua`.
 
-### Preview scanning can abort on non ASCII input
+### Preview scanning aborted on non ASCII input
 
-`hot_preview_definition_inputs` slices a UTF-8 string at byte 8192 without checking a
+`hot_preview_definition_inputs` sliced a UTF-8 string at byte 8192 without checking a
 character boundary. A body with an accented character spanning bytes 8191
 through 8193 compiled successfully, then aborted the preview watcher with
 exit code -6 during prewarming.
 
-Use a byte parser or round the limit down to a character boundary. Add a
-regression test with multibyte characters at every bounded scan boundary.
-The confirmed site is `src/watch.rs` in `hot_preview_definition_inputs`.
+`hot_preview_definition_inputs` in `src/watch.rs` now uses the existing
+`floor_char_boundary` helper. The scan remains at most 8,192 bytes.
+A regression test covers two-, three-, and four-byte characters at every
+position crossing the limit, plus exact boundaries. It checks that early
+definition inputs remain available and later inputs stay outside the scan.
 
 ## Confirmed scaling and memory problems
 
