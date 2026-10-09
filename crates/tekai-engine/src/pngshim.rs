@@ -304,6 +304,17 @@ unsafe fn state_from_any<'a>(
     state(png_ptr).or_else(|| state_from_info(info_ptr))
 }
 
+unsafe fn png_decode_fail(error: String) -> ! {
+    let message =
+        std::ffi::CString::new(error).unwrap_or_else(|_| c"invalid PNG image data".to_owned());
+    unsafe {
+        crate::utils::pdftex_fail_args(
+            c"invalid PNG image data: %s".as_ptr(),
+            &[crate::utils::PrintfArg::from(message.as_ptr())],
+        );
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn png_get_libpng_ver(_: *mut c_void) -> *const c_char {
     PNG_LIBPNG_VER_STRING.as_ptr().cast()
@@ -450,7 +461,9 @@ pub unsafe extern "C" fn png_read_update_info(
 ) {
     if let Some(state) = state(png_ptr) {
         if state.strip_16 || state.trns_to_alpha || state.strip_alpha || state.gamma.is_some() {
-            let _ = state.ensure_decoded();
+            if let Err(error) = state.ensure_decoded() {
+                png_decode_fail(error);
+            }
         }
     }
 }
@@ -464,8 +477,8 @@ pub unsafe extern "C" fn png_read_row(
     let Some(state) = state(png_ptr) else {
         return;
     };
-    if state.ensure_decoded().is_err() {
-        return;
+    if let Err(error) = state.ensure_decoded() {
+        png_decode_fail(error);
     }
     let Some(decoded) = state.decoded.as_ref() else {
         return;
@@ -483,8 +496,8 @@ pub unsafe extern "C" fn png_read_image(png_ptr: *mut png_struct_def, image: *mu
     let Some(state) = state(png_ptr) else {
         return;
     };
-    if state.ensure_decoded().is_err() {
-        return;
+    if let Err(error) = state.ensure_decoded() {
+        png_decode_fail(error);
     }
     let Some(decoded) = state.decoded.as_ref() else {
         return;
@@ -515,8 +528,8 @@ pub unsafe extern "C" fn png_decoded_data(
     let Some(state) = state(png_ptr.cast::<png_struct_def>()) else {
         return ptr::null();
     };
-    if state.ensure_decoded().is_err() {
-        return ptr::null();
+    if let Err(error) = state.ensure_decoded() {
+        png_decode_fail(error);
     }
     let Some(decoded) = state.decoded.as_ref() else {
         return ptr::null();
@@ -765,15 +778,55 @@ unsafe fn read_exact_file(fp: *mut libc::FILE, buf: &mut [u8]) -> Result<(), Str
     }
 }
 
-unsafe fn skip_file_bytes(fp: *mut libc::FILE, len: usize) -> Result<(), String> {
-    if len == 0 {
-        return Ok(());
+pub(crate) fn checked_png_chunk_length(length: u32) -> Result<usize, &'static str> {
+    if length > i32::MAX as u32 {
+        return Err("invalid PNG chunk length");
     }
-    if unsafe { libc::fseeko(fp, len as libc::off_t, libc::SEEK_CUR) } == 0 {
-        Ok(())
-    } else {
-        Err("PNG seek failed".to_string())
+    usize::try_from(length).map_err(|_| "invalid PNG chunk length")
+}
+
+pub(crate) fn checked_png_chunk_end(
+    header_offset: u64,
+    length: usize,
+    file_extent: u64,
+) -> Result<u64, &'static str> {
+    let length = u64::try_from(length).map_err(|_| "PNG chunk exceeds file extent")?;
+    let next_offset = header_offset
+        .checked_add(8)
+        .and_then(|offset| offset.checked_add(length))
+        .and_then(|offset| offset.checked_add(4))
+        .ok_or("PNG chunk exceeds file extent")?;
+    if next_offset > file_extent {
+        return Err("PNG chunk exceeds file extent");
     }
+    Ok(next_offset)
+}
+
+pub(crate) fn checked_png_idat_total(total: u64, length: usize) -> Result<u64, &'static str> {
+    total
+        .checked_add(u64::try_from(length).map_err(|_| "PNG IDAT length overflow")?)
+        .ok_or("PNG IDAT length overflow")
+}
+
+pub(crate) unsafe fn png_file_extent(fp: *mut libc::FILE) -> Result<u64, &'static str> {
+    if fp.is_null() {
+        return Err("null FILE");
+    }
+    if unsafe { libc::fseeko(fp, 0, libc::SEEK_END) } != 0 {
+        return Err("PNG seek failed");
+    }
+    u64::try_from(unsafe { libc::ftello(fp) }).map_err(|_| "PNG tell failed")
+}
+
+pub(crate) unsafe fn seek_png_absolute(
+    fp: *mut libc::FILE,
+    offset: u64,
+) -> Result<(), &'static str> {
+    let offset = libc::off_t::try_from(offset).map_err(|_| "PNG seek failed")?;
+    if unsafe { libc::fseeko(fp, offset, libc::SEEK_SET) } != 0 {
+        return Err("PNG seek failed");
+    }
+    Ok(())
 }
 
 unsafe fn read_be_u32_file(fp: *mut libc::FILE) -> Result<u32, String> {
@@ -797,12 +850,8 @@ struct Metadata {
 }
 
 unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, String> {
-    if fp.is_null() {
-        return Err("null FILE".to_string());
-    }
-    if unsafe { libc::fseeko(fp, 0, libc::SEEK_SET) } != 0 {
-        return Err("seek start failed".to_string());
-    }
+    let file_extent = unsafe { png_file_extent(fp)? };
+    unsafe { seek_png_absolute(fp, 0)? };
     let mut signature = [0u8; 8];
     unsafe { read_exact_file(fp, &mut signature)? };
     if &signature != b"\x89PNG\r\n\x1a\n" {
@@ -823,18 +872,54 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
     };
 
     let mut seen_header = false;
+    let mut header_offset = 8u64;
     loop {
-        let len = unsafe { read_be_u32_file(fp)? } as usize;
+        let len = checked_png_chunk_length(unsafe { read_be_u32_file(fp)? })?;
         let mut typ = [0u8; 4];
         unsafe { read_exact_file(fp, &mut typ)? };
         if !seen_header && &typ != b"IHDR" {
             return Err("PNG IHDR must be the first chunk".to_string());
         }
+        // Keep allocation-bound diagnostics ahead of missing payload extents.
+        match &typ {
+            b"IHDR" if seen_header || len != 13 => {
+                return Err("invalid or duplicate PNG IHDR".to_string());
+            }
+            b"PLTE" => {
+                if len == 0 || len > 768 || len % 3 != 0 {
+                    return Err("invalid PNG PLTE length".to_string());
+                }
+                if !metadata.palette.is_empty()
+                    || metadata.trns.is_some()
+                    || !matches!(
+                        metadata.color_type,
+                        PNG_COLOR_TYPE_PALETTE | PNG_COLOR_TYPE_RGB | PNG_COLOR_TYPE_RGB_ALPHA
+                    )
+                    || (metadata.color_type == PNG_COLOR_TYPE_PALETTE
+                        && len / 3 > (1usize << metadata.bit_depth))
+                {
+                    return Err("invalid or duplicate PNG PLTE".to_string());
+                }
+            }
+            b"tRNS" => {
+                let valid_length = match metadata.color_type {
+                    PNG_COLOR_TYPE_GRAY => len == 2,
+                    PNG_COLOR_TYPE_RGB => len == 6,
+                    PNG_COLOR_TYPE_PALETTE => {
+                        !metadata.palette.is_empty() && len <= metadata.palette.len()
+                    }
+                    _ => false,
+                };
+                if !valid_length || metadata.trns.is_some() {
+                    return Err("invalid or duplicate PNG tRNS length".to_string());
+                }
+            }
+            b"IEND" if len != 0 => return Err("invalid PNG IEND length".to_string()),
+            _ => {}
+        }
+        let next_offset = checked_png_chunk_end(header_offset, len, file_extent)?;
         match &typ {
             b"IHDR" => {
-                if seen_header || len != 13 {
-                    return Err("invalid or duplicate PNG IHDR".to_string());
-                }
                 let mut chunk = [0u8; 13];
                 unsafe { read_exact_file(fp, &mut chunk)? };
                 metadata.width = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -877,21 +962,6 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
                     u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
             }
             b"PLTE" => {
-                // PNG palettes have 1..=256 RGB entries. Validate before allocation.
-                if len == 0 || len > 768 || len % 3 != 0 {
-                    return Err("invalid PNG PLTE length".to_string());
-                }
-                if !metadata.palette.is_empty()
-                    || metadata.trns.is_some()
-                    || !matches!(
-                        metadata.color_type,
-                        PNG_COLOR_TYPE_PALETTE | PNG_COLOR_TYPE_RGB | PNG_COLOR_TYPE_RGB_ALPHA
-                    )
-                    || (metadata.color_type == PNG_COLOR_TYPE_PALETTE
-                        && len / 3 > (1usize << metadata.bit_depth))
-                {
-                    return Err("invalid or duplicate PNG PLTE".to_string());
-                }
                 let mut chunk = vec![0u8; len];
                 unsafe { read_exact_file(fp, &mut chunk)? };
                 metadata.palette = chunk
@@ -904,17 +974,6 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
                     .collect();
             }
             b"tRNS" => {
-                let valid_length = match metadata.color_type {
-                    PNG_COLOR_TYPE_GRAY => len == 2,
-                    PNG_COLOR_TYPE_RGB => len == 6,
-                    PNG_COLOR_TYPE_PALETTE => {
-                        !metadata.palette.is_empty() && len <= metadata.palette.len()
-                    }
-                    _ => false,
-                };
-                if !valid_length || metadata.trns.is_some() {
-                    return Err("invalid or duplicate PNG tRNS length".to_string());
-                }
                 metadata.valid |= PNG_INFO_TRNS;
                 let mut chunk = vec![0u8; len];
                 unsafe { read_exact_file(fp, &mut chunk)? };
@@ -922,31 +981,24 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
             }
             b"sBIT" => {
                 metadata.valid |= PNG_INFO_SBIT;
-                unsafe { skip_file_bytes(fp, len)? };
             }
             b"cHRM" => {
                 metadata.valid |= PNG_INFO_CHRM;
-                unsafe { skip_file_bytes(fp, len)? };
             }
             b"iCCP" => {
                 metadata.valid |= PNG_INFO_ICCP;
-                unsafe { skip_file_bytes(fp, len)? };
             }
             b"sRGB" => {
                 metadata.valid |= PNG_INFO_SRGB;
-                unsafe { skip_file_bytes(fp, len)? };
             }
             b"bKGD" => {
                 metadata.valid |= PNG_INFO_BKGD;
-                unsafe { skip_file_bytes(fp, len)? };
             }
             b"hIST" => {
                 metadata.valid |= PNG_INFO_HIST;
-                unsafe { skip_file_bytes(fp, len)? };
             }
             b"sPLT" => {
                 metadata.valid |= PNG_INFO_SPLT;
-                unsafe { skip_file_bytes(fp, len)? };
             }
             b"IDAT" => {
                 if metadata.color_type == PNG_COLOR_TYPE_PALETTE && metadata.palette.is_empty() {
@@ -954,14 +1006,12 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
                 }
                 break;
             }
-            b"IEND" => {
-                unsafe { skip_file_bytes(fp, len)? };
-                unsafe { skip_file_bytes(fp, 4)? };
-                break;
-            }
-            _ => unsafe { skip_file_bytes(fp, len)? },
+            b"IEND" => break,
+            _ => {}
         }
-        unsafe { skip_file_bytes(fp, 4)? };
+        // This checkpoint checks CRC extent, not the checksum bytes themselves.
+        unsafe { seek_png_absolute(fp, next_offset)? };
+        header_offset = next_offset;
     }
     let _ = unsafe { libc::fseeko(fp, 0, libc::SEEK_SET) };
     Ok(metadata)
@@ -1023,6 +1073,220 @@ mod tests {
         let result = unsafe { parse_metadata_from_file(fp) };
         unsafe { libc::fclose(fp) };
         result
+    }
+
+    #[test]
+    fn chunk_lengths_and_extents_reject_signed_loops_without_payload_allocations() {
+        for length in [0xffff_fff4, 0x8000_0000, u32::MAX] {
+            assert_eq!(
+                checked_png_chunk_length(length),
+                Err("invalid PNG chunk length")
+            );
+        }
+        assert_eq!(checked_png_chunk_length(0), Ok(0));
+        assert_eq!(
+            checked_png_chunk_length(i32::MAX as u32),
+            Ok(i32::MAX as usize)
+        );
+        assert_eq!(checked_png_chunk_end(33, 3, 48), Ok(48));
+        for extent in 33..48 {
+            assert_eq!(
+                checked_png_chunk_end(33, 3, extent),
+                Err("PNG chunk exceeds file extent")
+            );
+        }
+        assert_eq!(
+            checked_png_chunk_end(33, i32::MAX as usize, 41),
+            Err("PNG chunk exceeds file extent")
+        );
+        assert_eq!(
+            checked_png_chunk_end(u64::MAX - 7, 0, u64::MAX),
+            Err("PNG chunk exceeds file extent")
+        );
+    }
+
+    #[test]
+    fn metadata_checks_complete_chunk_extents_before_first_idat() {
+        for (length, expected) in [
+            (0xffff_fff4u32, "invalid PNG chunk length"),
+            (0x8000_0000, "invalid PNG chunk length"),
+            (0x7fff_ffff, "PNG chunk exceeds file extent"),
+        ] {
+            let mut png = metadata_fixture(PNG_COLOR_TYPE_RGB, 8);
+            png.extend_from_slice(&length.to_be_bytes());
+            png.extend_from_slice(b"IDAT");
+            assert_eq!(read_metadata_fixture(&png).err().unwrap(), expected);
+        }
+        let header = metadata_fixture(PNG_COLOR_TYPE_RGB, 8);
+        let mut png = header.clone();
+        append_metadata_chunk(&mut png, b"IDAT", &[1, 2, 3]);
+        for length in header.len()..header.len() + 8 {
+            assert_eq!(
+                read_metadata_fixture(&png[..length]).err().unwrap(),
+                "short PNG read"
+            );
+        }
+        for length in header.len() + 8..png.len() {
+            assert_eq!(
+                read_metadata_fixture(&png[..length]).err().unwrap(),
+                "PNG chunk exceeds file extent"
+            );
+        }
+        assert_eq!(read_metadata_fixture(&png).unwrap().width, 1);
+        for typ in [b"IEND", b"abcd"] {
+            let mut png = header.clone();
+            append_metadata_chunk(&mut png, typ, &[1]);
+            png.pop();
+            let expected = if typ == b"IEND" {
+                "invalid PNG IEND length"
+            } else {
+                "PNG chunk exceeds file extent"
+            };
+            assert_eq!(read_metadata_fixture(&png).err().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn wide_idat_totals_and_forward_chunk_progress_are_checked() {
+        assert_eq!(
+            checked_png_idat_total(i32::MAX as u64, 1),
+            Ok(2_147_483_648)
+        );
+        assert_eq!(
+            checked_png_idat_total(u64::MAX, 1),
+            Err("PNG IDAT length overflow")
+        );
+        let mut png = metadata_fixture(PNG_COLOR_TYPE_RGB, 8);
+        append_metadata_chunk(&mut png, b"IDAT", &[1, 2]);
+        append_metadata_chunk(&mut png, b"IDAT", &[3, 4, 5]);
+        append_metadata_chunk(&mut png, b"IEND", &[]);
+        let mut offset = 8u64;
+        let mut total = 0u64;
+        let mut chunks = 0;
+        let mut copied = Vec::new();
+        while offset < png.len() as u64 {
+            let start = offset as usize;
+            let length = checked_png_chunk_length(u32::from_be_bytes(
+                png[start..start + 4].try_into().unwrap(),
+            ))
+            .unwrap();
+            let next = checked_png_chunk_end(offset, length, png.len() as u64).unwrap();
+            assert!(next > offset);
+            if &png[start + 4..start + 8] == b"IDAT" {
+                total = checked_png_idat_total(total, length).unwrap();
+                copied.extend_from_slice(&png[start + 8..start + 8 + length]);
+            }
+            chunks += 1;
+            offset = next;
+        }
+        assert_eq!(chunks, 4);
+        assert_eq!(offset, png.len() as u64);
+        assert_eq!(total, 5);
+        assert_eq!(copied, [1, 2, 3, 4, 5]);
+    }
+
+    fn append_decode_chunk(png: &mut Vec<u8>, typ: &[u8; 4], data: &[u8]) {
+        append_metadata_chunk(png, typ, data);
+        let mut crc = u32::MAX;
+        for byte in typ.iter().chain(data) {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
+            }
+        }
+        let end = png.len();
+        png[end - 4..end].copy_from_slice(&(!crc).to_be_bytes());
+    }
+
+    fn decode_fixture(color_type: u8, idat: &[u8], invalid_crc: bool) -> Vec<u8> {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut ihdr = [0u8; 13];
+        ihdr[..4].copy_from_slice(&1u32.to_be_bytes());
+        ihdr[4..8].copy_from_slice(&1u32.to_be_bytes());
+        ihdr[8] = 8;
+        ihdr[9] = color_type;
+        append_decode_chunk(&mut png, b"IHDR", &ihdr);
+        append_decode_chunk(&mut png, b"IDAT", idat);
+        if invalid_crc {
+            let crc_start = png.len() - 4;
+            png[crc_start] ^= 1;
+        }
+        append_decode_chunk(&mut png, b"IEND", &[]);
+        png
+    }
+
+    fn compressed_scanline(data: &[u8]) -> Vec<u8> {
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn complete_framing_decode_errors_do_not_cache_pixels() {
+        reset_decode_cache();
+        for (color_type, scanline) in [
+            (PNG_COLOR_TYPE_GRAY, &[0, 10][..]),
+            (PNG_COLOR_TYPE_RGB, &[0, 10, 20, 30][..]),
+            (PNG_COLOR_TYPE_RGB_ALPHA, &[0, 10, 20, 30, 128][..]),
+        ] {
+            let valid_idat = compressed_scanline(scanline);
+            for (case, idat, invalid_crc) in [
+                ("zlib", vec![0, 0], false),
+                ("crc", valid_idat.clone(), true),
+                ("short scanline", compressed_scanline(&[0]), false),
+            ] {
+                let png = decode_fixture(color_type, &idat, invalid_crc);
+                let fp = unsafe { libc::tmpfile() };
+                assert!(!fp.is_null());
+                assert_eq!(
+                    unsafe { libc::fwrite(png.as_ptr().cast(), 1, png.len(), fp) },
+                    png.len()
+                );
+                let metadata = unsafe { parse_metadata_from_file(fp) }.unwrap();
+                let mut state = PngState::new();
+                state.file = fp;
+                state.width = metadata.width;
+                state.height = metadata.height;
+                state.color_type = metadata.color_type;
+                state.gamma = Some((1.0, 1.0));
+                let key = state.decode_cache_key().unwrap();
+                let error = state
+                    .ensure_decoded()
+                    .expect_err("malformed IDAT was decoded");
+                let expected = match case {
+                    "zlib" => "Corrupt deflate stream. BadZlibHeader".to_string(),
+                    "short scanline" => {
+                        "IDAT or fDAT chunk does not have enough data for image.".to_string()
+                    }
+                    "crc" => {
+                        let crc_start = 33 + 8 + idat.len();
+                        let stored =
+                            u32::from_be_bytes(png[crc_start..crc_start + 4].try_into().unwrap());
+                        let actual = stored ^ 0x0100_0000;
+                        format!(
+                            "CRC error: expected 0x{stored:x} have 0x{actual:x} while decoding ChunkType {{ type: IDAT, critical: true, private: false, reserved: false, safecopy: false }} chunk."
+                        )
+                    }
+                    _ => unreachable!(),
+                };
+                assert_eq!(error, expected, "{case}, color {color_type}");
+                eprintln!("{case}, color {color_type}: invalid PNG image data: {error}");
+                assert!(state.decoded.is_none());
+                PNG_DECODE_CACHE.with(|cache| assert!(cache.borrow_mut().get(&key).is_none()));
+                assert_eq!(state.ensure_decoded().unwrap_err(), error);
+                unsafe { libc::fclose(fp) };
+            }
+            let mut valid = PngState::new();
+            valid.data = decode_fixture(color_type, &valid_idat, false);
+            valid.width = 1;
+            valid.height = 1;
+            valid.color_type = color_type;
+            valid.gamma = Some((1.0, 1.0));
+            valid.ensure_decoded().unwrap();
+            assert_eq!(valid.decoded.unwrap().data, scanline[1..]);
+        }
+        reset_decode_cache();
     }
 
     #[test]

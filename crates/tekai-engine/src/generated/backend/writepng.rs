@@ -2397,85 +2397,65 @@ unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
         pdfendstream();
     }
 }
-unsafe extern "C" fn spng_getint(mut fp: *mut FILE) -> ::core::ffi::c_int {
-    let mut buf: [::core::ffi::c_uchar; 4] = [0; 4];
-    if fread(
-        &raw mut buf as *mut ::core::ffi::c_uchar as *mut ::core::ffi::c_void,
-        1 as size_t,
-        4 as size_t,
-        fp,
-    ) != 4 as ::core::ffi::c_ulong
-    {
-        crate::utils::pdftex_fail_args(
-            b"writepng: reading chunk type failed\0" as *const u8 as *const ::core::ffi::c_char,
-            &[],
-        );
-    }
-    return ((((((buf[0 as ::core::ffi::c_int as usize] as ::core::ffi::c_int)
-        << 8 as ::core::ffi::c_int)
-        + buf[1 as ::core::ffi::c_int as usize] as ::core::ffi::c_int)
-        << 8 as ::core::ffi::c_int)
-        + buf[2 as ::core::ffi::c_int as usize] as ::core::ffi::c_int)
-        << 8 as ::core::ffi::c_int)
-        + buf[3 as ::core::ffi::c_int as usize] as ::core::ffi::c_int;
-}
 pub const SPNG_CHUNK_IDAT: ::core::ffi::c_int = 1229209940;
 pub const SPNG_CHUNK_IEND: ::core::ffi::c_int = 1229278788;
+
+unsafe fn png_copy_fail(message: &'static str) -> ! {
+    let message = std::ffi::CString::new(message).expect("static PNG error contains no NUL");
+    crate::utils::pdftex_fail_args(
+        c"writepng: %s".as_ptr(),
+        &[crate::utils::PrintfArg::from(message.as_ptr())],
+    );
+}
+
+unsafe fn read_copy_png_chunk(
+    fp: *mut FILE,
+    header_offset: u64,
+    file_extent: u64,
+) -> (usize, u32, u64) {
+    let mut header = [0u8; 8];
+    if fread(header.as_mut_ptr().cast(), 1, header.len(), fp)
+        != header.len() as ::core::ffi::c_ulong
+    {
+        png_copy_fail("short PNG read");
+    }
+    let raw_length = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+    let length = crate::pngshim::checked_png_chunk_length(raw_length)
+        .unwrap_or_else(|error| png_copy_fail(error));
+    let chunk_type = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+    if chunk_type == SPNG_CHUNK_IEND as u32 && length != 0 {
+        png_copy_fail("invalid PNG IEND length");
+    }
+    let next_offset = crate::pngshim::checked_png_chunk_end(header_offset, length, file_extent)
+        .unwrap_or_else(|error| png_copy_fail(error));
+    (length, chunk_type, next_offset)
+}
+
 unsafe extern "C" fn copy_png(mut img: integer) {
-    let mut fp: *mut FILE = png_get_io_ptr(
+    let fp = png_get_io_ptr(
         (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
     ) as *mut FILE;
-    let mut i: ::core::ffi::c_int = 0;
-    let mut len: ::core::ffi::c_int = 0;
-    let mut type_0: ::core::ffi::c_int = 0;
-    let mut streamlength: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-    let mut endflag: boolean = false_0;
-    let mut idat: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-    if fseek(fp, 8 as ::core::ffi::c_long, SEEK_SET) != 0 as ::core::ffi::c_int {
-        crate::utils::pdftex_fail_args(
-            b"writepng: fseek in PNG file failed\0" as *const u8 as *const ::core::ffi::c_char,
-            &[],
-        );
-    }
+    let file_extent =
+        crate::pngshim::png_file_extent(fp.cast()).unwrap_or_else(|error| png_copy_fail(error));
+    let mut streamlength = 0u64;
+    let mut header_offset = 8u64;
+    crate::pngshim::seek_png_absolute(fp.cast(), header_offset)
+        .unwrap_or_else(|error| png_copy_fail(error));
     loop {
-        len = spng_getint(fp);
-        type_0 = spng_getint(fp);
-        let mut current_block_7: u64;
-        match type_0 {
-            SPNG_CHUNK_IEND => {
-                endflag = true_0 as boolean;
-                current_block_7 = 1917311967535052937;
-            }
-            SPNG_CHUNK_IDAT => {
-                streamlength += len;
-                current_block_7 = 3343632758709677197;
-            }
-            _ => {
-                current_block_7 = 3343632758709677197;
-            }
-        }
-        match current_block_7 {
-            3343632758709677197 => {
-                if fseek(
-                    fp,
-                    (len + 4 as ::core::ffi::c_int) as ::core::ffi::c_long,
-                    SEEK_CUR,
-                ) != 0 as ::core::ffi::c_int
-                {
-                    crate::utils::pdftex_fail_args(
-                        b"writepng: fseek in PNG file failed\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[],
-                    );
-                }
-            }
-            _ => {}
-        }
-        if !(endflag == false_0) {
+        let (length, chunk_type, next_offset) = read_copy_png_chunk(fp, header_offset, file_extent);
+        if chunk_type == SPNG_CHUNK_IEND as u32 {
             break;
         }
+        if chunk_type == SPNG_CHUNK_IDAT as u32 {
+            streamlength = crate::pngshim::checked_png_idat_total(streamlength, length)
+                .unwrap_or_else(|error| png_copy_fail(error));
+        }
+        // Forward, checked extents include CRC bytes without validating their checksum.
+        crate::pngshim::seek_png_absolute(fp.cast(), next_offset)
+            .unwrap_or_else(|error| png_copy_fail(error));
+        header_offset = next_offset;
     }
-    crate::utils::pdf_printf_args(b"/Length %d\n/Filter/FlateDecode\n/DecodeParms<</Colors %d/Columns %d/BitsPerComponent %i/Predictor 10>>\n>>\nstream\n\0"
+    crate::utils::pdf_printf_args(b"/Length %llu\n/Filter/FlateDecode\n/DecodeParms<</Colors %d/Columns %d/BitsPerComponent %i/Predictor 10>>\n>>\nstream\n\0"
             as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(streamlength), crate::utils::PrintfArg::from(if png_get_color_type(
             (*image_array.offset(img as isize)).image_struct.png.png_ptr
                 as png_const_structrp,
@@ -2497,90 +2477,57 @@ unsafe extern "C" fn copy_png(mut img: integer) {
             (*image_array.offset(img as isize)).image_struct.png.info_ptr
                 as png_const_inforp,
         ) as ::core::ffi::c_int)]);
-    endflag = false_0 as boolean;
-    if fseek(fp, 8 as ::core::ffi::c_long, SEEK_SET) != 0 as ::core::ffi::c_int {
-        crate::utils::pdftex_fail_args(
-            b"writepng: fseek in PNG file failed\0" as *const u8 as *const ::core::ffi::c_char,
-            &[],
-        );
-    }
+
+    let mut idat = 0;
+    let mut copied_length = 0u64;
+    header_offset = 8;
+    crate::pngshim::seek_png_absolute(fp.cast(), header_offset)
+        .unwrap_or_else(|error| png_copy_fail(error));
     loop {
-        len = spng_getint(fp);
-        type_0 = spng_getint(fp);
-        match type_0 {
-            SPNG_CHUNK_IDAT => {
-                if idat == 2 as ::core::ffi::c_int {
-                    crate::utils::pdftex_fail_args(
-                        b"writepng: IDAT chunk sequence broken\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[],
-                    );
-                }
-                idat = 1 as ::core::ffi::c_int;
-                while len > 0 as ::core::ffi::c_int {
-                    i = if len > pdfbufsize {
-                        pdfbufsize as ::core::ffi::c_int
+        let (length, chunk_type, next_offset) = read_copy_png_chunk(fp, header_offset, file_extent);
+        if chunk_type == SPNG_CHUNK_IDAT as u32 {
+            if idat == 2 {
+                png_copy_fail("IDAT chunk sequence broken");
+            }
+            idat = 1;
+            copied_length = crate::pngshim::checked_png_idat_total(copied_length, length)
+                .unwrap_or_else(|error| png_copy_fail(error));
+            let mut remaining = length;
+            while remaining > 0 {
+                let count = remaining.min(pdfbufsize as usize) as integer;
+                if (count + pdfptr) as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
+                    if pdfosmode != 0 {
+                        zpdfosgetosbuf(count);
+                    } else if count as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
+                        png_copy_fail("PDF output buffer overflowed");
                     } else {
-                        len
-                    };
-                    if (i as integer + pdfptr) as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
-                    {
-                        if pdfosmode != 0 {
-                            zpdfosgetosbuf(i);
-                        } else if i as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-                            crate::utils::pdftex_fail_args(
-                                b"PDF output buffer overflowed\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[],
-                            );
-                        } else {
-                            pdfflush();
-                        }
+                        pdfflush();
                     }
-                    fread(
-                        pdfbuf.offset(pdfptr as isize) as *mut eightbits
-                            as *mut ::core::ffi::c_void,
-                        1 as size_t,
-                        i as size_t,
-                        fp,
-                    );
-                    pdfptr += i;
-                    len -= i;
                 }
-                if fseek(fp, 4 as ::core::ffi::c_long, SEEK_CUR) != 0 as ::core::ffi::c_int {
-                    crate::utils::pdftex_fail_args(
-                        b"writepng: fseek in PNG file failed\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[],
-                    );
-                }
-            }
-            SPNG_CHUNK_IEND => {
-                pdfendstream();
-                endflag = true_0 as boolean;
-            }
-            _ => {
-                if idat == 1 as ::core::ffi::c_int {
-                    idat = 2 as ::core::ffi::c_int;
-                }
-                if fseek(
+                if fread(
+                    pdfbuf.offset(pdfptr as isize).cast(),
+                    1,
+                    count as size_t,
                     fp,
-                    (len + 4 as ::core::ffi::c_int) as ::core::ffi::c_long,
-                    SEEK_CUR,
-                ) != 0 as ::core::ffi::c_int
+                ) != count as ::core::ffi::c_ulong
                 {
-                    crate::utils::pdftex_fail_args(
-                        b"writepng: fseek in PNG file failed\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[],
-                    );
+                    png_copy_fail("short PNG read");
                 }
+                pdfptr += count;
+                remaining -= count as usize;
             }
-        }
-        if !(endflag == false_0) {
+        } else if chunk_type == SPNG_CHUNK_IEND as u32 {
+            if copied_length != streamlength {
+                png_copy_fail("PNG IDAT length changed while copying");
+            }
+            pdfendstream();
             break;
+        } else if idat == 1 {
+            idat = 2;
         }
+        crate::pngshim::seek_png_absolute(fp.cast(), next_offset)
+            .unwrap_or_else(|error| png_copy_fail(error));
+        header_offset = next_offset;
     }
 }
 static mut last_png_needs_page_group: boolean = 0;

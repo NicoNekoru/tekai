@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
 
-const BUILD_STATE_VERSION: u32 = 40;
+const BUILD_STATE_VERSION: u32 = 41;
 const BIB_STATE_VERSION: u32 = 11;
 const INDEX_STATE_VERSION: u32 = 10;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
