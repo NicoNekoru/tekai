@@ -16,6 +16,11 @@ mtime, so preserved timestamps no longer hide the reproduced source edits.
 Recursive disk lookup now inventories canonical directories instead of
 expanding every alias path. Ordinary Unix directory entries also avoid
 redundant metadata reads and child-directory canonicalization.
+PDF wrappers now check their caches before copying dictionaries or streams.
+Inherited page attributes use iterative parent traversal and reject cycles
+with a normal input error.
+Duplicate watcher notifications no longer select an unchanged source's EOF
+as a preview edit and replace a valid PDF with a placeholder.
 The other confirmed failures below remain open unless their section says otherwise.
 
 ## Measurement conditions
@@ -325,16 +330,25 @@ Keep suppression, verbatim, and math-safety behavior unchanged.
 
 The confirmed code is in `src/lint.rs`.
 
-### PDF wrappers clone values before checking their caches
+### PDF wrappers now check their caches before cloning
 
-`Object::dict` clones the entire dictionary before checking whether its cached
-wrapper exists. Dictionary key and value access repeat this clone inside
-`pdftoepdf::copy_dict`. A one-page PDF of 113 KB with an 8,192-entry dictionary
+Previously, `Object::dict` cloned the entire dictionary before checking whether
+its cached wrapper existed. Dictionary key and value access repeated the clone
+inside `pdftoepdf::copy_dict`. A one-page PDF of 113 KB with an 8,192-entry dictionary
 took 2.83 seconds to import.
 
-`Object::stream` has the same ordering problem for stream content. Page
-resource and group wrappers also clone before checking their caches. Check
-cache availability first, then borrow or share immutable parsed objects.
+`Object::dict`, `Object::stream`, and the page resource and group getters now
+copy their source only on a cache miss. Their owned boxes and raw-handle
+lifetimes stay unchanged. Deterministic tests count the actual clone sites.
+Three scans over a 1,024-entry dictionary make one cached dictionary copy.
+Repeated getters for a 1 MiB stream make one payload copy and preserve the
+read cursor. Further tests check stable keys, nested references, independent
+output ownership, reset invalidation, missing values, and parallel counters.
+
+The latest native full-profile samples for the 8,192-entry fixture decreased
+from 3.09 seconds before this change to 68 ms afterward. These are individual
+observations on the same machine, not timing thresholds or a claim that every
+PDF operation is linear.
 
 `build_pages` eagerly clones inherited resources for every page. Importing
 only page 1 still clones the shared dictionary for all 256 pages. Keep page
@@ -343,15 +357,44 @@ metadata lazy or share inherited dictionaries by object identity.
 Relevant code is in `crates/tekai-engine/src/xpdf.rs` and
 `crates/tekai-engine/src/pdftoepdf.rs`.
 
-### PDF parent cycles can hang the engine
+### PDF parent cycles now return a controlled input error
 
 A 428-byte malformed PDF has a valid page enumeration but a self-referencing
-page-tree parent. `lookup_inherited` follows `Parent` recursively with no
-visited set or depth limit. The import exceeded a 15-second timeout. The
+page-tree parent. Previously, `lookup_inherited` followed `Parent` recursively
+with no visited set or depth limit. The import exceeded a 15-second timeout. The
 diagnostic driver then killed the owned process group.
 
-Use an iterative traversal with object-identity cycle detection and a defined
-depth limit. Report malformed inheritance rather than looping indefinitely.
+Traversal now borrows dictionaries iteratively and tracks complete object
+identities, including generations. A repeated parent returns an error through
+page construction and marks the document invalid. The import adapter frees the
+unregistered document and reports `xpdf: cyclic PDF page Parent chain` with
+a normal engine exit status. The diagnostic has static storage and remains
+valid after deletion.
+
+Local values still shadow ancestors, including null and wrong-typed values.
+The nearest ancestor wins, broken or non-reference parents end lookup, and
+page groups remain direct-only. The 4,096-parent regression has no new fixed
+parent-depth cutoff. Existing bounded reference dereferencing is unchanged.
+Cycle detection applies when an inherited lookup follows the chain, not to
+every parent link in an otherwise unused graph.
+
+### Duplicate watcher events no longer replace a valid preview
+
+The full rotating-input fixture caught a duplicate notification after a
+successful full preview build. Its snapshot already matched the source.
+Selecting EOF as the edit point removed the input-only body from the snippet
+and replaced the correct PDF with `Live preview source changed.`
+
+Target selection now rejects a source identical to its remembered snapshot.
+The existing ordinary build/cache path handles that event, preserving failure
+handling rather than assuming the current PDF is valid. Four unit regressions
+cover synchronized duplicates, genuine body edits, unknown snapshots and
+prewarming, and a duplicate after preamble fallback. The native fixture still
+requires every rotated input's text in the PDF. It does not accept the
+placeholder or substitute a direct body marker for the included source.
+
+This change can still trigger ordinary full/cache work. Multi-source preview
+selection and output-generation tracking remain separate design concerns.
 
 ### Settled caches load unrelated outputs into memory
 
@@ -517,8 +560,8 @@ confirmed performance findings.
 
 ## Local regression checks for the current fixes
 
-The current fixes passed 488 workspace library tests, 11 self-contained CLI
-tests, 13 native shared-tree CLI tests, and 102 Python tool tests.
+The current fixes passed 507 workspace library tests, 11 self-contained CLI
+tests, 13 native shared-tree CLI tests, and 116 Python tool tests.
 Both bundled large-paper fixtures passed their build gate. The real TeX
 reference test skipped locally because this machine has no system TeX
 installation. Workspace and standalone-engine lint checks, formatting, and
@@ -526,8 +569,8 @@ release and standalone builds passed. The separate upstream comparison passed
 all 99 paper and transparent-image pages with matching text and pixels.
 These are local results, not remote CI success.
 
-The full native performance profile passed 42 gates, recorded 33 observations,
-and reproduced eight known failures with no unexpected failures or skips.
+The full native performance profile passed 47 gates, recorded 29 observations,
+and reproduced seven known failures with no unexpected failures or skips.
 The engine and expansion executable hashes matched at the start and end.
 
 Release input-identity probes now rebuild and produce the changed text for both
@@ -555,6 +598,12 @@ where applicable. An unrelated error still fails the run. Missing dependencies
 are explicit skips, with strict CI options rejecting those skips. Wall time
 and RSS stay outside correctness evidence. Unavailable RSS remains unavailable
 rather than becoming zero.
+
+Expected engine errors require the child's normal exit status, not just the
+parent CLI's exit code. A wrapped signal or panic cannot pass the PNG bounds,
+deep-input capacity, or PDF-cycle gates. Missing-file graph checks also require
+the exact fixture input in the not-found diagnostic. The PDF-cycle check
+accounts for TeX log wrapping without accepting a different error phrase.
 
 ```sh
 python3 -B -m unittest discover -s tools -p 'test_*.py'
