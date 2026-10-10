@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import itertools
 import json
 import math
 import os
@@ -12,6 +13,7 @@ import sys
 import tempfile
 import time
 import unittest
+import weakref
 from unittest.mock import Mock, patch
 
 import benchmark_runtime as bench
@@ -51,8 +53,12 @@ def calibration_pilots(baseline_rates, candidate_rates=None, slot_rates=None):
 def mocked_fixture(root, _binary, _case):
     project, out = root / 'project', root / 'out'
     bench.document(project)
+    config = project / 'tekai.toml'
+    config.write_bytes(bench.EMPTY_CONFIG_BYTES)
     out.mkdir()
-    return dict(root=root, project=project, out=out, env=bench.isolated_environment(root),
+    env = bench.isolated_environment(root)
+    env['TEXINPUTS'] = f'{project}//:{out}//:'
+    return dict(root=root, project=project, out=out, config=config, dependencies=[], env=env,
                 input_sha256=bench.fixture_sha256(project))
 
 
@@ -338,18 +344,19 @@ class StatisticsTests(unittest.TestCase):
             captures = [work / 'stdout', work / 'stderr']
             for path in captures:
                 path.touch()
-            process = Mock(command_id=1, capture_paths=captures)
+            process = Mock(command_id=1, capture_paths=captures, launch_timing=[10] * 5)
             process.wait.return_value = 0
             runner = bench.Supervisor(work, 1, 100)
             with patch.object(runner, 'remaining', return_value=1), patch.object(runner, 'start', return_value=process), \
                     patch.object(runner, 'stop'), patch.object(runner, 'captured', return_value=('ok', '', False)), \
-                    patch.object(bench.time, 'monotonic', side_effect=(10, 10.03, 10.07, 10.08)):
+                    patch.object(bench.time, 'monotonic', side_effect=(10 + value / 10000 for value in itertools.count())):
                 result = runner.execute([], work, {})
             start, launch, end = result['parent_timing']
-            self.assertEqual((start, launch), (10, 10.03))
+            self.assertEqual(start, 10)
             self.assertGreaterEqual(end, launch)
             self.assertEqual(result['seconds'], end - start)
             self.assertFalse(any(path.exists() for path in captures))
+            runner.close()
 
 
 @unittest.skipUnless(os.name == 'posix', 'Owned process groups require POSIX')
@@ -368,6 +375,50 @@ class SupervisionTests(unittest.TestCase):
         self.assertEqual(result['stdout'].strip(), 'ok')
         self.assertGreater(result['seconds'], 0)
         self.assertFalse(self.runner.owned)
+        timing = result['command_timing']
+        self.assertEqual(len(timing), 12)
+        self.assertEqual(timing, sorted(timing))
+        self.assertEqual(result['parent_timing'], [timing[index] for index in (0, 6, 9)])
+
+    def test_one_persistent_waiter_is_reused_and_shutdown_is_idempotent(self):
+        workers = []
+        for _ in range(12):
+            self.runner.execute([sys.executable, '-c', 'pass'], self.work, os.environ.copy())
+            workers.append(self.runner._waiter)
+        self.assertEqual(len({id(worker) for worker in workers}), 1)
+        self.assertTrue(workers[0].is_alive())
+        self.runner.close()
+        self.runner.close()
+        self.assertFalse(workers[0].is_alive())
+        with self.assertRaisesRegex(bench.BenchmarkError, 'closed'):
+            self.runner.execute([], self.work, {})
+
+    def test_idle_waiter_does_not_retain_the_previous_process(self):
+        references = []
+        original_start = self.runner.start
+
+        def start(*args):
+            process = original_start(*args)
+            references.append(weakref.ref(process))
+            return process
+
+        with patch.object(self.runner, 'start', side_effect=start):
+            self.runner.execute([sys.executable, '-c', 'pass'], self.work, os.environ.copy())
+        bench.gc.collect()
+        self.assertIsNone(references[0]())
+
+    def test_waiter_failure_is_reported_and_can_accept_the_next_command(self):
+        captures = [self.work / 'mock.stdout', self.work / 'mock.stderr']
+        for path in captures:
+            path.touch()
+        process = Mock(command_id=1, capture_paths=captures)
+        process.launch_timing = [time.monotonic()] * 5
+        process.wait.side_effect = OSError('controlled wait failure')
+        with patch.object(self.runner, 'start', return_value=process), patch.object(self.runner, 'stop'):
+            with self.assertRaisesRegex(bench.BenchmarkError, 'Process waiter failed'):
+                self.runner.execute([], self.work, {})
+        self.runner.execute([sys.executable, '-c', 'pass'], self.work, os.environ.copy())
+        self.assertTrue(self.runner._waiter.is_alive())
 
     def test_error_and_output_overflow_are_not_usable_samples(self):
         for code in ('raise SystemExit(7)', f'print("x" * {bench.MAX_CAPTURE_BYTES + 1})'):
@@ -417,10 +468,218 @@ class SupervisionTests(unittest.TestCase):
 
 
 class FixtureTests(unittest.TestCase):
+    def test_startup_oracle_requires_the_selected_package_version_and_no_pdf(self):
+        fixture = {'command': [], 'project': Path('/project'), 'env': {}, 'expected_version': '0.5.0'}
+        for stdout, stderr, valid in (('tekai 0.5.0\n', '', True), ('tekai 0.4.0\n', '', False),
+                                      ('tekai 0.5.0\nextra\n', '', False), ('tekai 0.5.0\n', 'warning', False)):
+            runner = Mock()
+            runner.execute.return_value = {'stdout': stdout, 'stderr_tail': stderr}
+            with self.subTest(stdout=stdout, stderr=stderr), patch.object(bench, 'check_pdf') as pdf:
+                if valid:
+                    result = bench.execute_fixture(runner, fixture, 'cli-startup')
+                    self.assertEqual(result['output_validation'], {'expected_stdout': 'tekai 0.5.0\n',
+                                      'stdout_verified': True, 'stderr_empty': True, 'expected_version': '0.5.0'})
+                else:
+                    with self.assertRaises(bench.BenchmarkError):
+                        bench.execute_fixture(runner, fixture, 'cli-startup')
+                pdf.assert_not_called()
+        fixture['expected_version'] = '0.6.0-rc.1+test'
+        runner = Mock()
+        runner.execute.return_value = {'stdout': 'tekai 0.6.0-rc.1+test\n', 'stderr_tail': ''}
+        self.assertTrue(bench.execute_fixture(runner, fixture, 'cli-startup')['output_validation']['stdout_verified'])
+
+    def test_config_and_real_dependency_workload_are_hashed_and_explicit(self):
+        with tempfile.TemporaryDirectory(prefix='test-cache-dependencies-') as temporary:
+            root = Path(temporary)
+            (root / 'tekai.toml').write_text('[build]\nforce = true\n', encoding='utf-8')
+            fixture = bench.make_fixture(root / 'owned', Path('/tekai'), 'warm-build-cache')
+            self.assertEqual(len(fixture['dependencies']), bench.CACHE_DEPENDENCY_COUNT)
+            source = (fixture['project'] / 'main.tex').read_text()
+            for path in fixture['dependencies']:
+                self.assertIn('\\input{' + path.relative_to(fixture['project']).as_posix() + '}', source)
+            self.assertFalse((fixture['project'] / 'unused-tree').exists())
+            self.assertEqual(fixture['config'].read_bytes(), bench.EMPTY_CONFIG_BYTES)
+            self.assertEqual(bench.executable_sha256(fixture['config']), bench.EMPTY_CONFIG_SHA256)
+            position = fixture['command'].index('--config')
+            self.assertEqual(fixture['command'][position + 1], fixture['config'])
+            before = fixture['input_sha256']
+            fixture['config'].write_text('[build]\nforce = true\n', encoding='utf-8')
+            self.assertNotEqual(before, bench.fixture_sha256(fixture['project']))
+            self.assertEqual({key: fixture['env'][key] for key in ('LC_ALL', 'LANG', 'TZ')},
+                             {'LC_ALL': 'C', 'LANG': 'C', 'TZ': 'UTC'})
+
+    def test_state_oracle_generated_dependency_counts_and_mutation_properties(self):
+        rng = random.Random(8706)
+        with tempfile.TemporaryDirectory(prefix='test-cache-state-') as temporary:
+            work = Path(temporary)
+            for trial in range(16):
+                root = work / str(trial)
+                project, out = root / 'project', root / 'out'
+                dependencies = bench.dependency_document(project, rng.randrange(1, 32))
+                out.mkdir()
+                fixture = {'project': project, 'out': out, 'dependencies': dependencies}
+                inputs = [project / 'main.tex', *dependencies]
+                rng.shuffle(inputs)
+                state = out / '.tekai-main.state.toml'
+                source = 'version = 1\n' + '\n'.join('[[inputs]]\npath = ' + json.dumps(str(path.resolve())) + '\nlen = 0\n'
+                                                        for path in inputs)
+                state.write_text(source, encoding='utf-8')
+                initial = bench.cache_state_snapshot(fixture, establish=True)
+                self.assertEqual(initial['referenced_dependency_count'], len(dependencies))
+                self.assertEqual(initial['recorded_input_count'], len(inputs))
+                self.assertEqual(bench.cache_state_snapshot(fixture), initial)
+                # Same bytes rewritten are still a mutation because identity
+                # timestamps detect state writes on the claimed no-write route.
+                state.write_text(source, encoding='utf-8')
+                with self.assertRaisesRegex(bench.BenchmarkError, 'mutated'):
+                    bench.cache_state_snapshot(fixture)
+                state.write_text('version = 1\n[[inputs]]\npath = ' + json.dumps(str((project / 'main.tex').resolve())) + '\n', encoding='utf-8')
+                with self.assertRaisesRegex(bench.BenchmarkError, 'omits'):
+                    bench.cache_state_snapshot(fixture, establish=True)
+                with patch.object(bench, 'MAX_STATE_BYTES', 4), self.assertRaisesRegex(bench.BenchmarkError, 'finite size'):
+                    bench.cache_state_snapshot(fixture, establish=True)
+
+    def test_parent_resource_snapshot_is_diagnostic_and_reports_cumulative_scope(self):
+        snapshot = bench.parent_snapshot()
+        self.assertFalse(snapshot['used_for_gate'])
+        self.assertIn('cumulative', snapshot['scope'])
+        self.assertEqual(len(snapshot['gc_counts']), 3)
+        self.assertEqual(len(snapshot['gc_generations']), 3)
+        self.assertGreaterEqual(snapshot['active_thread_count'], 1)
+        self.assertEqual(snapshot['peak_rss_raw_unit'], 'bytes' if sys.platform == 'darwin' else 'KiB')
+        json.dumps(snapshot, allow_nan=False)
+
+    def test_native_darwin_parent_memory_has_explicit_abi_and_unavailable_path(self):
+        def observe(_pid, flavor, pointer):
+            self.assertEqual(flavor, 0)
+            pointer._obj.ri_resident_size = 123456
+            pointer._obj.ri_phys_footprint = 654321
+            pointer._obj.ri_pageins = 9
+            return 0
+
+        self.assertEqual(bench.ctypes.sizeof(bench.DarwinUsageV0), 96)
+        with patch.object(bench, '_darwin_rusage', side_effect=observe):
+            observed = bench.darwin_parent_memory()
+        self.assertEqual(observed['current_rss_bytes'], 123456)
+        self.assertEqual(observed['physical_footprint_bytes'], 654321)
+        self.assertEqual(observed['parent_pageins'], 9)
+        self.assertIn('proc_pid_rusage', observed['current_rss_source'])
+        with patch.object(bench.platform, 'system', return_value='Darwin'), \
+                patch.object(bench, 'darwin_parent_memory', side_effect=OSError('unsupported ABI')):
+            observed = bench.parent_snapshot()
+        self.assertEqual(observed['current_rss_status'], 'unavailable')
+        self.assertIn('unsupported ABI', observed['current_rss_unavailable_reason'])
+
+    def test_journal_releases_commands_and_restores_exact_evidence_once(self):
+        rng = random.Random(97622)
+        with tempfile.TemporaryDirectory(prefix='test-command-journal-') as temporary:
+            journal = bench.CommandJournal(Path(temporary) / 'report.json')
+            originals, batches = [], []
+            try:
+                for sequence in range(12):
+                    count = rng.randrange(1, 33)
+                    commands = [{'command_id': sequence * 100 + index, 'seconds': rng.random()}
+                                for index in range(count)]
+                    originals.append(commands)
+                    batch = {'commands': commands, 'iterations': count}
+                    batches.append(batch)
+                    journal.append(0, 'samples', [(sequence, 'baseline', batch)])
+                    self.assertEqual(batch['commands'], [])
+                    self.assertEqual(batch['command_journal'], {'record': sequence, 'batch': 0})
+                binding = journal.binding()
+                self.assertEqual(binding['sha256'], bench.executable_sha256(journal.path))
+                self.assertEqual(binding['bytes'], journal.path.stat().st_size)
+                self.assertEqual(binding['records'], 12)
+                journal.restore()
+                self.assertEqual([batch['commands'] for batch in batches], originals)
+            finally:
+                journal.close()
+
+    def test_journal_overflow_and_tampering_preserve_owned_evidence_and_fail_closed(self):
+        with tempfile.TemporaryDirectory(prefix='test-command-journal-errors-') as temporary:
+            journal = bench.CommandJournal(Path(temporary) / 'report.json')
+            first = {'commands': [{'command_id': 1}], 'iterations': 1}
+            second = {'commands': [{'command_id': 2}], 'iterations': 1}
+            try:
+                journal.append(0, 'samples', [(0, 'baseline', first)])
+                previous = journal.path.read_bytes()
+                with patch.object(bench, 'MAX_REPORT_BYTES', len(previous)), self.assertRaises(bench.ReportTooLarge):
+                    journal.append(0, 'samples', [(1, 'candidate', second)])
+                self.assertEqual(journal.path.read_bytes(), previous)
+                self.assertEqual(second['commands'], [{'command_id': 2}])
+                with journal.path.open('ab') as handle:
+                    handle.write(b'partial')
+                with self.assertRaisesRegex(bench.BenchmarkError, 'bytes or hash'):
+                    journal.restore()
+            finally:
+                journal.close()
+
+    def test_journal_overflow_retains_active_unit_in_compact_error_checkpoint(self):
+        with tempfile.TemporaryDirectory(prefix='test-journal-active-unit-overflow-') as temporary:
+            work = Path(temporary)
+            source = work / 'binary'
+            source.write_bytes(b'executable fixture')
+            source.chmod(0o700)
+            metadata, output = work / 'metadata.json', work / 'report.json'
+            metadata.write_text(json.dumps({'runner_label': 'test', 'toolchain': 'exact',
+                                 **{label: {'revision': 'a' * 40, 'build_command': 'test', 'expected_version': '0.5.0'}
+                                    for label in bench.LABELS}}), encoding='utf-8')
+            original_append, original_persist = bench.CommandJournal.append, bench.persist
+            journal_before = []
+
+            def append(journal, case_index, phase, rows):
+                if phase == 'samples':
+                    journal_before.append(journal.path.read_bytes())
+                    with patch.object(bench, 'MAX_REPORT_BYTES', journal.bytes):
+                        return original_append(journal, case_index, phase, rows)
+                return original_append(journal, case_index, phase, rows)
+
+            def persist(report, path):
+                # A final full artifact may exceed its cap even though the
+                # prior compact error checkpoint fits. Force that distinct
+                # path without changing the normal compact checkpoint limit.
+                if report.get('report_kind') == 'complete-report':
+                    with patch.object(bench, 'MAX_REPORT_BYTES', 1):
+                        return original_persist(report, path)
+                return original_persist(report, path)
+
+            def initialize(_runner, _fixture, _case, initializing=False):
+                return {'command_id': 0, 'seconds': 1, 'parent_timing': [0, 0.1, 1],
+                        'command_timing': [0] * 12, 'output_validation': {'verified': True}}
+
+            def measured(_runner, _fixture, _case, iterations):
+                return {'iterations': iterations, 'seconds': iterations * 0.01,
+                        'commands': [{'command_id': index, 'seconds': 0.01} for index in range(iterations)],
+                        'output_validation': {'verified': True}}
+
+            with patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
+                    patch.object(bench, 'make_fixture', side_effect=mocked_fixture), \
+                    patch.object(bench, 'execute_fixture', side_effect=initialize), \
+                    patch.object(bench, 'batch', side_effect=measured), \
+                    patch.object(bench.CommandJournal, 'append', autospec=True, side_effect=append), \
+                    patch.object(bench, 'persist', side_effect=persist), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                result = bench.main(['--baseline', str(source), '--candidate', str(source),
+                                     '--metadata', str(metadata), '--output', str(output), '--pairs', '40', '--gate'])
+            self.assertEqual(result, 1)
+            checkpoint = json.loads(output.read_text())
+            manifest = json.loads(output.with_suffix('.overflow.json').read_text())
+            self.assertEqual((checkpoint['status'], checkpoint['exit_code'], checkpoint['report_kind']),
+                             ('error', 1, 'compact-checkpoint'))
+            self.assertEqual(manifest['retained_checkpoint'], str(output.resolve()))
+            self.assertFalse(manifest['samples_dropped'])
+            active = checkpoint['results'][0]['samples']
+            self.assertEqual(len(active), 4)
+            self.assertTrue(all(len(sample[label]['commands']) == sample['iterations']
+                                for sample in active for label in bench.LABELS))
+            journal = Path(checkpoint['raw_command_journal']['path'])
+            self.assertEqual(journal.read_bytes(), journal_before[0])
+            self.assertEqual(bench.executable_sha256(journal), checkpoint['raw_command_journal']['sha256'])
+
     def test_future_cli_defaults_and_finite_upper_bounds(self):
         args = bench.parser().parse_args(['--baseline', 'A', '--candidate', 'B', '--metadata', 'M'])
-        self.assertEqual((args.pairs, args.budget), (128, 2700))
-        for flag, value in (('--pairs', '132'), ('--budget', '2701')):
+        self.assertEqual((args.pairs, args.budget), (128, 3600))
+        for flag, value in (('--pairs', '132'), ('--budget', '3601')):
             with patch.object(bench, 'load_metadata') as load, contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     bench.main(['--baseline', 'A', '--candidate', 'B', '--metadata', 'M', flag, value])
@@ -458,16 +717,17 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), previous)
             self.assertEqual(list(Path(temporary).glob('*.tmp')), [])
 
-    def test_maximum_sampling_serialization_has_finite_headroom(self):
+    def test_maximum_sampling_requires_the_finite_journal_and_final_report_guards(self):
         # A full 512-command batch bounds the largest command IDs and long
         # finite float spellings. Compute repetition exactly without allocating
-        # all 393216 commands. Only the cache case has reported build telemetry.
+        # all 524288 commands. Only the cache case has reported build telemetry.
         commands = []
         for index in range(512):
             start = 100000.123456789 + index
             end = start + 0.987654321012345
             commands.append({'command_id': 999999 + index, 'seconds': end - start,
-                             'parent_timing': [start, start + 0.123456789012345, end]})
+                             'parent_timing': [start, start + 0.123456789012345, end],
+                             'command_timing': [start + number / 100000 for number in range(12)]})
         batch = {'iterations': 512, 'seconds': sum(item['seconds'] for item in commands),
                  'commands': commands, 'output_validation': {'verified': True}}
         ordinary_size = len(json.dumps(batch, separators=(',', ':'), allow_nan=False).encode())
@@ -476,9 +736,12 @@ class FixtureTests(unittest.TestCase):
         cache_size = len(json.dumps(batch, separators=(',', ':'), allow_nan=False).encode())
         # 128 pairs have two batches apiece. A generous 8MiB covers all fixed
         # inventories, pilots, schedules, unit/host metadata and UTF-8 provenance.
-        bounded_bytes = 256 * (2 * ordinary_size + cache_size) + 8 * 1024 * 1024
-        self.assertGreater(bounded_bytes, 64 * 1024 * 1024)
-        self.assertLess(bounded_bytes, bench.MAX_REPORT_BYTES)
+        bounded_bytes = 256 * (3 * ordinary_size + cache_size) + 8 * 1024 * 1024
+        # Legal iteration ceilings do not promise unlimited evidence storage.
+        # Hard caps reject an oversized report, preserving its raw journal and
+        # last compact checkpoint instead of trimming any command records.
+        self.assertGreater(bounded_bytes, bench.MAX_REPORT_BYTES)
+        self.assertLess(8 * cache_size, bench.MAX_JOURNAL_RECORD_BYTES)
     def test_sides_have_equal_inputs_and_disjoint_private_caches(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-isolation-') as temporary:
             work = Path(temporary)
@@ -529,7 +792,8 @@ class FixtureTests(unittest.TestCase):
                     response = {'stdout': json.dumps(report), 'command_id': 1, 'seconds': 0.02}
                     with self.subTest(initializing=initializing, optional=optional), \
                             patch.object(runner, 'execute', return_value=response), \
-                            patch.object(bench, 'check_fixture_output', return_value={'verified': True}):
+                            patch.object(bench, 'check_fixture_output', return_value={'verified': True}), \
+                            patch.object(bench, 'cache_state_snapshot', return_value={'verified': True}):
                         result = bench.execute_fixture(runner, fixture, 'warm-build-cache', initializing=initializing)
                     diagnostic = result['reported_build_timing']
                     self.assertEqual(result['seconds'], 0.02)
@@ -551,9 +815,11 @@ class FixtureTests(unittest.TestCase):
                        bench.reported_build_timing({'elapsed_ms': None}, 0.02)]
         responses = [{'command_id': index + 1, 'seconds': seconds,
                       'parent_timing': [float(index), float(index), float(index) + seconds],
+                      'command_timing': [float(index)] * 12,
                       'reported_build_timing': diagnostic, 'output_validation': {'verified': True}}
                      for index, (seconds, diagnostic) in enumerate(zip((0.01, 0.02), diagnostics))]
-        with patch.object(bench, 'execute_fixture', side_effect=responses):
+        with patch.object(bench, 'execute_fixture', side_effect=responses), \
+                patch.object(bench, 'cache_state_snapshot', return_value={'verified': True}):
             result = bench.batch(None, {}, 'warm-build-cache', 2)
         self.assertEqual(result['seconds'], 0.03)
         self.assertEqual(result['iterations'], 2)
@@ -656,7 +922,7 @@ class FixtureTests(unittest.TestCase):
             os.link(source, alias)
             metadata = work / 'metadata.json'
             metadata.write_text(json.dumps({'runner_label': 'test', 'toolchain': 'exact',
-                               **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}), encoding='utf-8')
+                               **{label: {'revision': 'a' * 40, 'build_command': 'test', 'expected_version': '0.5.0'} for label in bench.LABELS}}), encoding='utf-8')
             with patch.object(bench.Supervisor, 'start') as start, contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as failure:
                     bench.main(['--baseline', str(source), '--candidate', str(source), '--metadata', str(metadata),
@@ -669,7 +935,10 @@ class FixtureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='test-paired-metadata-') as temporary:
             path = Path(temporary) / 'metadata.json'
             metadata = {'runner_label': 'test', 'toolchain': 'rustc exact version', 'optional': {'lto': 'fat'},
-                        **{label: {'revision': 'a' * 40, 'build_command': 'cargo build --release'} for label in bench.LABELS}}
+                        **{label: {'revision': 'a' * 40, 'build_command': 'cargo build --release', 'expected_version': '0.5.0'} for label in bench.LABELS}}
+            path.write_text(json.dumps(metadata), encoding='utf-8')
+            self.assertEqual(bench.load_metadata(path), metadata)
+            metadata['baseline']['expected_version'] = '0.6.0-rc.1+test'
             path.write_text(json.dumps(metadata), encoding='utf-8')
             self.assertEqual(bench.load_metadata(path), metadata)
             del metadata['toolchain']
@@ -681,7 +950,7 @@ class FixtureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='test-paired-metadata-hashes-') as temporary:
             path = Path(temporary) / 'metadata.json'
             metadata = {'runner_label': 'test', 'toolchain': 'exact',
-                        **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}
+                        **{label: {'revision': 'a' * 40, 'build_command': 'test', 'expected_version': '0.5.0'} for label in bench.LABELS}}
             for label in bench.LABELS:
                 for value in ('0' * 64, '0123456789abcdef' * 4):
                     metadata[label]['artifact_sha256'] = value
@@ -707,7 +976,7 @@ class FixtureTests(unittest.TestCase):
                     '--output', str(output), '--gate']
             for supplied in (False, True):
                 provenance = {'runner_label': 'test', 'toolchain': 'exact',
-                              **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}
+                              **{label: {'revision': 'a' * 40, 'build_command': 'test', 'expected_version': '0.5.0'} for label in bench.LABELS}}
                 if supplied:
                     for label in bench.LABELS:
                         provenance[label]['artifact_sha256'] = bench.executable_sha256(source)
@@ -742,7 +1011,7 @@ class FixtureTests(unittest.TestCase):
             actual = bench.executable_sha256(source)
             for mismatch in bench.LABELS:
                 provenance = {'runner_label': 'test', 'toolchain': 'exact',
-                              **{label: {'revision': 'a' * 40, 'build_command': 'test', 'artifact_sha256': actual}
+                              **{label: {'revision': 'a' * 40, 'build_command': 'test', 'artifact_sha256': actual, 'expected_version': '0.5.0'}
                                  for label in bench.LABELS}}
                 provenance[mismatch]['artifact_sha256'] = '0' * 64
                 metadata.write_text(json.dumps(provenance), encoding='utf-8')
@@ -768,7 +1037,7 @@ class FixtureTests(unittest.TestCase):
             source.chmod(0o700)
             metadata = work / 'metadata.json'
             metadata.write_text(json.dumps({'runner_label': 'test', 'toolchain': 'exact',
-                               **{label: {'revision': 'a' * 40, 'build_command': 'test',
+                               **{label: {'revision': 'a' * 40, 'build_command': 'test', 'expected_version': '0.5.0',
                                           'artifact_sha256': bench.executable_sha256(source)} for label in bench.LABELS}}), encoding='utf-8')
             output = work / 'report.json'
             argv = ['--baseline', str(source), '--candidate', str(source), '--metadata', str(metadata),
@@ -780,7 +1049,8 @@ class FixtureTests(unittest.TestCase):
             def initialize(_runner, fixture, case, initializing=False):
                 self.assertTrue(initializing)
                 events.append((case, 'initialize', fixture['label']))
-                result = {'command_id': 0, 'seconds': 100, 'parent_timing': [0, 1, 100], 'output_validation': {'verified': True}}
+                result = {'command_id': 0, 'seconds': 100, 'parent_timing': [0, 1, 100],
+                          'command_timing': [0] * 12, 'output_validation': {'verified': True}}
                 if case == 'warm-build-cache':
                     result['reported_build_timing'] = bench.reported_build_timing({'elapsed_ms': 125}, 100)
                 return result
@@ -789,7 +1059,9 @@ class FixtureTests(unittest.TestCase):
                 events.append((case, 'batch', fixture['label'], iterations))
                 rate = warm_seconds if iterations == 1 else pilot_seconds
                 elapsed = rate if fixture['label'] == 'baseline' else rate * 0.8
-                return dict(seconds=elapsed * iterations, iterations=iterations, commands=[], output_validation={'verified': True})
+                return dict(seconds=elapsed * iterations, iterations=iterations,
+                            commands=[{'command_id': index + 1, 'seconds': elapsed} for index in range(iterations)],
+                            output_validation={'verified': True})
 
             for mutate, warm_seconds, pilot_seconds, expected in ((False, 0.01, 0.01, 0), (True, 0.01, 0.01, 1),
                                                                   (False, 0.014, 0.0065, 0), (False, 0.001, 0.0001, 2)):
@@ -814,7 +1086,7 @@ class FixtureTests(unittest.TestCase):
                         patch.object(bench, 'persist', side_effect=checkpoint), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(bench.main(argv), expected)
                 report = json.loads(output.read_text())
-                self.assertEqual(report['schema_version'], 5)
+                self.assertEqual(report['schema_version'], 6)
                 self.assertEqual(report['policy']['calibration_pairs'], 2)
                 self.assertEqual(report['policy']['calibration_iterations'], 32)
                 self.assertEqual(report['policy']['calibration_method'], 'balanced-batched-slot-pilot-v1')
@@ -881,7 +1153,7 @@ class FixtureTests(unittest.TestCase):
                 else:
                     self.assertEqual(report['status'], 'inconclusive' if expected == 2 else 'pass')
                     self.assertEqual(report['errors'], [])
-                    self.assertEqual(len(report['results']), 3)
+                    self.assertEqual(len(report['results']), 4)
 
     def test_later_side_failures_preserve_partial_initialization_warmups_pilots_and_samples(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-partial-calibration-') as temporary:
@@ -891,19 +1163,21 @@ class FixtureTests(unittest.TestCase):
             source.chmod(0o700)
             metadata = work / 'metadata.json'
             metadata.write_text(json.dumps({'runner_label': 'test', 'toolchain': 'exact',
-                               **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}), encoding='utf-8')
+                               **{label: {'revision': 'a' * 40, 'build_command': 'test', 'expected_version': '0.5.0'} for label in bench.LABELS}}), encoding='utf-8')
             output = work / 'report.json'
 
             for phase, failure_iterations in (('initialization', None), ('warmups', 1), ('calibration_pilots', 32), ('samples', 200)):
                 def initialize(_runner, fixture, _case, initializing=False):
                     if phase == 'initialization' and fixture['label'] == 'candidate':
                         raise bench.BenchmarkError('controlled later-side ' + phase + ' failure')
-                    return {'command_id': 0, 'seconds': 1, 'parent_timing': [0, 0.1, 1], 'output_validation': {'verified': True}}
+                    return {'command_id': 0, 'seconds': 1, 'parent_timing': [0, 0.1, 1],
+                            'command_timing': [0] * 12, 'output_validation': {'verified': True}}
 
                 def measured(_runner, fixture, _case, iterations):
                     if iterations == failure_iterations and fixture['label'] == 'candidate':
                         raise bench.BenchmarkError('controlled later-side ' + phase + ' failure')
-                    return {'seconds': iterations * 0.01, 'iterations': iterations, 'commands': [],
+                    return {'seconds': iterations * 0.01, 'iterations': iterations,
+                            'commands': [{'command_id': index + 1, 'seconds': 0.01} for index in range(iterations)],
                             'output_validation': {'verified': True}}
 
                 with self.subTest(phase=phase), patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
@@ -911,7 +1185,8 @@ class FixtureTests(unittest.TestCase):
                         patch.object(bench, 'execute_fixture', side_effect=initialize), \
                         patch.object(bench, 'batch', side_effect=measured), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(bench.main(['--baseline', str(source), '--candidate', str(source),
-                                                '--metadata', str(metadata), '--output', str(output), '--gate']), 1)
+                                                '--metadata', str(metadata), '--output', str(output),
+                                                '--cli-startup-min-sample-seconds', '1', '--gate']), 1)
                 report = json.loads(output.read_text())
                 row = report['results'][0]
                 self.assertEqual(report['status'], 'error')

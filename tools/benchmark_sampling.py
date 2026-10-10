@@ -8,9 +8,10 @@ import math
 
 DEFAULT_PAIRS = 128
 MAX_PAIRS = 128
-DEFAULT_BUDGET = 2700.0
-MAX_BUDGET = 2700.0
-SCHEMA_VERSION = 5
+DEFAULT_BUDGET = 3600.0
+MAX_BUDGET = 3600.0
+SCHEMA_VERSION = 6
+PREDECLARED_CASES = 4
 MAX_REPORT_BYTES = 128 * 1024 * 1024
 
 
@@ -36,7 +37,7 @@ def prospective_power_study():
     """Exact binomial decision probabilities under declared hypothetical models."""
     plans = []
     for n in (10, DEFAULT_PAIRS // 4):
-        plan = sign_interval_plan(n, 0.05 / 3)
+        plan = sign_interval_plan(n, 0.05 / PREDECLARED_CASES)
         k = plan['order_statistic']
         rows = []
         for q in (Fraction(1, 2), Fraction(3, 5), Fraction(7, 10), Fraction(4, 5),
@@ -57,7 +58,7 @@ def prospective_power_study():
                 'continuous distribution. q is a specified probability that a unit ratio is at or below '
                 'the fixed practical boundary, not an estimate from this or any historical run. '
                 'Serial dependence, drift and noise/order/duration guards can reduce actual decision probability.',
-            'familywise_confidence': 0.95, 'predeclared_cases': 3, 'plans': plans}
+            'familywise_confidence': 0.95, 'predeclared_cases': PREDECLARED_CASES, 'plans': plans}
 
 
 if __name__ == '__main__':

@@ -39,6 +39,7 @@ class AttributionTests(unittest.TestCase):
             'release_settings': {'codegen_units': 1, 'lto': 'fat', 'panic': 'abort'},
             'optional': {'preserve': ['whole', 'objects']},
             **{label: {'revision': self.revisions[label], 'build_command': attribution.BUILD_COMMAND,
+                       'expected_version': '0.5.0',
                        'artifact_sha256': benchmark.executable_sha256(self.sources[label]),
                        'optional_side': {'role': label, 'flags': ['locked', 'release']}}
                for label in benchmark.LABELS},
@@ -71,6 +72,9 @@ class AttributionTests(unittest.TestCase):
 
     @staticmethod
     def output_validation(case, command_id):
+        if case == 'cli-startup':
+            return {'expected_stdout': 'tekai 0.5.0\n', 'stdout_verified': True,
+                    'stderr_empty': True, 'expected_version': '0.5.0'}
         if case == 'image-compile':
             return {
                 'pages': 8, 'image_objects': 16, 'dimensions': [1024, 1024],
@@ -90,6 +94,10 @@ class AttributionTests(unittest.TestCase):
         command_id = 0
         clock = 10.0
         hosts = []
+        cache_state = {'sha256': 'e' * 64, 'bytes': 1024, 'mtime_ns': 1, 'ctime_ns': 1,
+                       'device': 1, 'inode': 1, 'recorded_input_count': 1025,
+                       'referenced_dependency_count': 1024, 'input_paths_sha256': 'f' * 64,
+                       'all_referenced_inputs_verified': True, 'used_for_gate': False}
 
         def batch(case, seconds, iterations=1):
             nonlocal command_id, clock
@@ -97,16 +105,23 @@ class AttributionTests(unittest.TestCase):
             for _ in range(iterations):
                 command_id += 4
                 commands.append({'command_id': command_id, 'seconds': seconds,
-                                 'parent_timing': [clock, clock + seconds / 10, clock + seconds]})
+                                 'parent_timing': [clock, clock + seconds / 10, clock + seconds],
+                                 'command_timing': [clock] * 6 + [clock + seconds / 10] * 3
+                                     + [clock + seconds] * 3})
                 clock += seconds + 0.1
-            return {
+            result = {
                 'seconds': sum(command['seconds'] for command in commands), 'iterations': iterations,
                 'commands': commands,
                 'output_validation': self.output_validation(case, command_id),
             }
+            if case == 'warm-build-cache':
+                result.update(cache_state_before=copy.deepcopy(cache_state),
+                              cache_state_after=copy.deepcopy(cache_state), cache_state_unchanged=True)
+            return result
 
         rows = []
         for case_index, case in enumerate(benchmark.CASES):
+            minimum = 0.25 if case == 'cli-startup' else 1.0
             fixture_hash = hashlib.sha256(('stable generated fixture ' + case).encode('ascii')).hexdigest()
             row = {
                 'case': case,
@@ -118,7 +133,7 @@ class AttributionTests(unittest.TestCase):
                 'fixture_inventory': [],
                 'slot_schedule': [attribution.json_schedule(benchmark.crossover_pair(index, case_index)) for index in range(pairs)],
                 'initialization_order': benchmark.cell_order(case_index),
-                'min_sample_seconds': 1.0,
+                'min_sample_seconds': minimum,
                 'initialization': {slot: {} for slot in benchmark.SLOTS},
                 'warmups': [], 'calibration_pilots': [], 'samples': [], 'unit_timing': [],
             }
@@ -127,14 +142,27 @@ class AttributionTests(unittest.TestCase):
                 root = prefix / slot / replica / case
                 row['fixture_inventory'].append({**cell, 'root': str(root), 'project': str(root / 'project'),
                     'out': str(root / 'out'), 'home': str(root / 'home'), 'input_sha256': fixture_hash,
+                    'config_path': str(root / 'project' / 'tekai.toml'),
+                    'config_sha256': benchmark.EMPTY_CONFIG_SHA256,
+                    'referenced_dependency_count': 1024 if case == 'warm-build-cache' else 0,
+                    'isolated_environment': {'HOME': str(root / 'home'), 'USERPROFILE': str(root / 'home'),
+                        'TMPDIR': str(root / 'tmp'), 'TMP': str(root / 'tmp'), 'TEMP': str(root / 'tmp'),
+                        'XDG_CACHE_HOME': str(root / 'xdg-cache'), 'XDG_CONFIG_HOME': str(root / 'xdg-config'),
+                        'XDG_DATA_HOME': str(root / 'xdg-data'), 'APPDATA': str(root / 'xdg-data'),
+                        'LOCALAPPDATA': str(root / 'xdg-cache'), 'PATH': '', 'LC_ALL': 'C', 'LANG': 'C',
+                        'TZ': 'UTC', 'TEKAI_TEXMF_MODE': 'bundled',
+                        'TEXINPUTS': str(root / 'project') + '//:' + str(root / 'out') + '//:'},
                     'cache_paths': {kind: str(root / ('cache-' + kind.lower()))
                                     for kind in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX')}})
                 observed = batch(case, 1.0)
                 row['initialization'][slot][label] = {
                     'command_id': observed['commands'][0]['command_id'],
                     'parent_timing': observed['commands'][0]['parent_timing'],
+                    'command_timing': observed['commands'][0]['command_timing'],
                     'seconds': observed['seconds'], 'output_validation': observed['output_validation'],
                 }
+                if case == 'warm-build-cache':
+                    row['initialization'][slot][label]['cache_state'] = copy.deepcopy(cache_state)
             for index in range(2):
                 for slot in benchmark.SLOTS:
                     warmup = {'warmup_index': index,
@@ -149,8 +177,8 @@ class AttributionTests(unittest.TestCase):
                     for label in pilot['order']:
                         pilot[label] = batch(case, 1.0, 32)
                     row['calibration_pilots'].append(pilot)
-            row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], 1.0, 512)
-            iterations = benchmark.calibrated_iterations(row['calibration_pilots'], 1.0, 512)
+            row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], minimum, 512)
+            iterations = benchmark.calibrated_iterations(row['calibration_pilots'], minimum, 512)
             row['iterations_per_batch'] = iterations
             for index, ratio in enumerate(ratios):
                 if index % 4 == 0:
@@ -169,10 +197,10 @@ class AttributionTests(unittest.TestCase):
                                   'used_for_gate': False, 'load_average': None, 'load_average_status': 'unavailable',
                                   'memory_status': 'unavailable', 'swap_status': 'unavailable',
                                   'cpu_utilization_status': 'unavailable'})
-            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0, case_index=case_index)
+            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, minimum, case_index=case_index)
             rows.append(row)
         report = {
-            'schema_version': 5, 'gate': gate, 'status': status,
+            'schema_version': 6, 'gate': gate, 'status': status,
             'prospective_sampling_study': benchmark.prospective_power_study(),
             'timing_metadata': copy.deepcopy(benchmark.TIMING_METADATA), 'host_observations': hosts,
             'monotonic_start_seconds': 10.0, 'monotonic_end_seconds': clock,
@@ -200,7 +228,42 @@ class AttributionTests(unittest.TestCase):
                 'path': str(path), 'sha256_start': content_hash,
                 'sha256_end': content_hash, 'unchanged': True,
             }
+        journal_stem = prefix.name.removesuffix('-fixtures') if fixture_prefix is not None else 'primary'
+        prefix.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=prefix.parent, prefix=journal_stem + '.raw.', suffix='.jsonl', delete=False) as handle:
+            journal_path = Path(handle.name)
+        self.journal_report(report, journal_path)
+        self.retime_report(report)
         return report
+
+    @staticmethod
+    def journal_report(report, path=None):
+        if path is None:
+            original = Path(report['raw_command_journal']['path'])
+            with tempfile.NamedTemporaryFile(dir=original.parent, prefix=original.name.split('.raw.', 1)[0] + '.raw.',
+                                             suffix='.jsonl', delete=False) as handle:
+                path = Path(handle.name)
+        data, sequence = bytearray(), 0
+        for case_index, row in enumerate(report['results']):
+            for phase in ('warmups', 'calibration_pilots', 'samples'):
+                width = 4 if phase != 'calibration_pilots' else 1
+                for first in range(0, len(row[phase]), width):
+                    batches = []
+                    for row_index in range(first, min(first + width, len(row[phase]))):
+                        item = row[phase][row_index]
+                        for label in item['order']:
+                            batch = item[label]
+                            batch['command_journal'] = {'record': sequence, 'batch': len(batches)}
+                            batches.append({'case_index': case_index, 'phase': phase,
+                                            'row_index': row_index, 'label': label, 'commands': batch['commands']})
+                    data.extend((json.dumps({'sequence': sequence, 'batches': batches}, separators=(',', ':')) + '\n').encode())
+                    sequence += 1
+        path.write_bytes(data)
+        report.update(report_kind='complete-report', raw_command_journal={
+            'path': str(path), 'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data), 'records': sequence,
+            'format': 'tekai-command-journal-v1', 'maximum_bytes': attribution.MAX_REPORT_BYTES,
+            'maximum_record_bytes': benchmark.MAX_JOURNAL_RECORD_BYTES,
+            'scope': 'All completed warmup, pilot and formal batch command records. Initialization remains in report.'})
 
     def save_inputs(self, primary=None, metadata=None):
         self.primary_path.write_text(json.dumps(self.primary if primary is None else primary), encoding='utf-8')
@@ -211,37 +274,67 @@ class AttributionTests(unittest.TestCase):
         """Build a fresh literal diagnostic clock after deliberate workload-model changes."""
         clock, command_id = 10.0, 0
         report['host_observations'] = []
+        report['checkpoint_observations'] = []
+
+        def checkpoint(phase, case=None, unit_index=None):
+            nonlocal clock
+            report['checkpoint_observations'].append({'phase': phase, 'case': case, 'unit_index': unit_index,
+                'monotonic_start_seconds': clock, 'monotonic_end_seconds': clock + 0.001,
+                'seconds': 0.001, 'complete': True, 'used_for_gate': False, 'json_bytes': 1024})
+            clock += 0.002
+
+        def parent_snapshot():
+            return {'monotonic_seconds': clock, 'used_for_gate': False,
+                'source': 'resource.getrusage(RUSAGE_SELF), gc and threading',
+                'scope': 'Benchmark parent only. CPU and peak RSS are cumulative, not child costs.',
+                'cpu_status': 'unavailable', 'peak_rss_status': 'unavailable', 'current_rss_status': 'unavailable',
+                'current_rss_unavailable_reason': 'Synthetic resource observation is unavailable',
+                'gc_enabled': True, 'gc_counts': [0, 0, 0], 'gc_thresholds': [700, 10, 10],
+                'gc_generations': [{'collections': 0, 'collected': 0, 'uncollectable': 0} for _ in range(3)],
+                'active_thread_count': 2}
 
         def command(value):
             nonlocal clock, command_id
             command_id += 4
             seconds = value['seconds']
-            value.update(command_id=command_id, parent_timing=[clock, clock + seconds / 10, clock + seconds])
+            value.update(command_id=command_id, parent_timing=[clock, clock + seconds / 10, clock + seconds],
+                         command_timing=[clock] * 6 + [clock + seconds / 10] * 3 + [clock + seconds] * 3)
             clock += seconds + 0.1
 
+        checkpoint('isolated-binaries')
         for row in report['results']:
             for cell in row['initialization_order']:
                 command(row['initialization'][cell['slot']][cell['label']])
-            for item in row['warmups'] + row['calibration_pilots']:
+            for item in row['warmups']:
                 for label in item['order']:
                     for value in item[label]['commands']:
                         command(value)
+            for item in row['calibration_pilots']:
+                for label in item['order']:
+                    for value in item[label]['commands']:
+                        command(value)
+                checkpoint('calibration', row['case'])
+            if 'calibration_infeasible' not in row:
+                checkpoint('calibrated', row['case'])
             row['unit_timing'] = []
             for index, sample in enumerate(row['samples']):
                 if index % 4 == 0:
                     unit = {'unit_index': index // 4, 'first_pair_index': index, 'pair_count': 4,
-                            'monotonic_start_seconds': clock, 'complete': False}
+                            'monotonic_start_seconds': clock, 'complete': False, 'parent_before': parent_snapshot()}
                     row['unit_timing'].append(unit)
                 for label in sample['order']:
                     for value in sample[label]['commands']:
                         command(value)
                 if (index + 1) % 4 == 0:
-                    unit.update(monotonic_end_seconds=clock, complete=True)
+                    unit.update(monotonic_end_seconds=clock, complete=True, parent_after=parent_snapshot())
                     report['host_observations'].append({'case': row['case'], 'unit_index': index // 4,
                         'monotonic_seconds': clock, 'used_for_gate': False, 'load_average': None,
                         'load_average_status': 'unavailable', 'memory_status': 'unavailable',
                         'swap_status': 'unavailable', 'cpu_utilization_status': 'unavailable'})
+                    checkpoint('complete-inference-unit', row['case'], unit['unit_index'])
+            checkpoint('case-complete', row['case'])
         report.update(monotonic_end_seconds=clock, elapsed_seconds=clock - 10.0)
+        AttributionTests.journal_report(report)
 
     def make_runner(self, mutations=None, statuses=None):
         mutations, statuses = mutations or {}, statuses or {}
@@ -339,8 +432,8 @@ class AttributionTests(unittest.TestCase):
 
     def test_synthetic_batches_match_calibrated_iterations_and_command_totals(self):
         for row in self.primary['results']:
-            iterations = benchmark.calibrated_iterations(row['calibration_pilots'], 1.0, 512)
-            self.assertEqual(iterations, 2)
+            iterations = benchmark.calibrated_iterations(row['calibration_pilots'], row['min_sample_seconds'], 512)
+            self.assertEqual(iterations, 1 if row['case'] == 'cli-startup' else 2)
             self.assertEqual(row['iterations_per_batch'], iterations)
             for sample in row['samples']:
                 self.assertEqual(sample['iterations'], iterations)
@@ -363,7 +456,7 @@ class AttributionTests(unittest.TestCase):
                         command['seconds'] = 0.5 if index % 2 else 1.5
             # Both 32-command totals stay at 32 seconds. Their normalized
             # rate is one second, so two seconds of headroom selects two.
-            self.assertEqual(row['iterations_per_batch'], 2)
+            self.assertEqual(row['iterations_per_batch'], 1 if row['case'] == 'cli-startup' else 2)
         self.retime_report(primary)
         result, summary, runner, _ = self.invoke(primary=primary)
         self.assertEqual(result, 0)
@@ -372,7 +465,7 @@ class AttributionTests(unittest.TestCase):
 
     def test_recomputed_pilot_size_disagreement_rejects_primary_and_control(self):
         def change(report, _args=None):
-            row = report['results'][0]
+            row = report['results'][1]
             for pilot in row['calibration_pilots']:
                 if pilot['slot'] == 's1':
                     for command in pilot['candidate']['commands']:
@@ -473,7 +566,7 @@ class AttributionTests(unittest.TestCase):
                                 for item in row[field] for label in benchmark.LABELS
                                 for command in item[label]['commands'])
             next_id = max(used_ids)
-            row = report['results'][0]
+            row = report['results'][1]
             for pilot in row['calibration_pilots']:
                 for label in benchmark.LABELS:
                     for command in pilot[label]['commands']:
@@ -493,7 +586,8 @@ class AttributionTests(unittest.TestCase):
                         batch['commands'].append({'command_id': next_id, 'seconds': seconds})
                     batch.update(iterations=32, seconds=sum(command['seconds'] for command in batch['commands']))
                 sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
-            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0)
+            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, row['min_sample_seconds'],
+                                                      case_index=benchmark.CASES.index(row['case']))
             self.retime_report(report)
             return row
 
@@ -508,13 +602,14 @@ class AttributionTests(unittest.TestCase):
             sample = row['samples'][0]
             sample['baseline'] = copy.deepcopy(row['calibration_pilots'][0]['baseline'])
             sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
-            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0)
+            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, row['min_sample_seconds'],
+                                                      case_index=benchmark.CASES.index(row['case']))
         contaminate(primary)
         self.assert_skipped(primary=primary)
         self.assert_stopped(self.make_runner(mutations={'reversed': contaminate}))
 
     def test_previous_report_schema_has_no_silent_calibration_fallback(self):
-        for schema in (2, 3, 4):
+        for schema in (2, 3, 4, 5):
             with self.subTest(schema=schema):
                 def change(report, _args=None):
                     report['schema_version'] = schema
@@ -525,14 +620,15 @@ class AttributionTests(unittest.TestCase):
 
     @staticmethod
     def make_infeasible_case(row):
+        minimum = row['min_sample_seconds']
         for pilot in row['calibration_pilots']:
             for label in benchmark.LABELS:
                 for command in pilot[label]['commands']:
-                    command['seconds'] = 1 / 1024
-                pilot[label]['seconds'] = 32 / 1024
-        row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], 1.0, 512)
+                    command['seconds'] = minimum / 1024
+                pilot[label]['seconds'] = 32 * minimum / 1024
+        row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], minimum, 512)
         try:
-            benchmark.calibrated_iterations(row['calibration_pilots'], 1.0, 512)
+            benchmark.calibrated_iterations(row['calibration_pilots'], minimum, 512)
         except benchmark.CalibrationInfeasible as error:
             row['calibration_infeasible'] = copy.deepcopy(error.details)
             row['analysis'] = {'status': 'inconclusive', 'reasons': [str(error)]}
@@ -593,7 +689,7 @@ class AttributionTests(unittest.TestCase):
                         elif mode == 'partial-side':
                             row['samples'][0].pop('candidate')
                         elif mode == 'calibration':
-                            row['iterations_per_batch'] = 1
+                            row['iterations_per_batch'] += 1
                         elif mode == 'oracle':
                             row['samples'][0]['candidate']['output_validation'] = {}
                         elif mode == 'commands':
@@ -753,7 +849,7 @@ class AttributionTests(unittest.TestCase):
         for command_seconds in (10 ** 308, 1e308):
             with self.subTest(command_seconds=type(command_seconds).__name__):
                 def overflow(report):
-                    batch = report['results'][0]['samples'][0]['candidate']
+                    batch = report['results'][1]['samples'][0]['candidate']
                     self.assertEqual(len(batch['commands']), 2)
                     for command in batch['commands']:
                         command['seconds'] = command_seconds
@@ -790,8 +886,195 @@ class AttributionTests(unittest.TestCase):
             args = benchmark.parser().parse_args(argv)
             self.assertFalse(args.gate)
             self.assertEqual((args.pairs, args.warmups, args.max_iterations), (128, 2, 512))
-            self.assertEqual((args.timeout, args.budget, args.threshold), (30.0, 2700.0, 0.10))
+            self.assertEqual((args.timeout, args.budget, args.threshold), (30.0, 3600.0, 0.10))
             self.assertEqual((args.min_sample_seconds, args.warm_cache_min_sample_seconds), (1.0, 1.0))
+            self.assertEqual(args.cli_startup_min_sample_seconds, 0.25)
+
+    def test_schema_six_launch_boundaries_are_required_and_bound_to_scored_timing(self):
+        for mode in ('missing', 'short', 'nonfinite', 'boolean', 'out-of-order', 'launch-mismatch', 'cleanup-overlap'):
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    sample = report['results'][0]['samples'][0]
+                    command = sample[sample['order'][0]]['commands'][0]
+                    if mode == 'missing':
+                        command.pop('command_timing')
+                    elif mode == 'short':
+                        command['command_timing'].pop()
+                    elif mode in ('nonfinite', 'boolean'):
+                        command['command_timing'][2] = float('inf') if mode == 'nonfinite' else True
+                    elif mode == 'out-of-order':
+                        command['command_timing'][3] = command['command_timing'][2] - 1
+                    elif mode == 'launch-mismatch':
+                        command['command_timing'][6] += 0.01
+                    else:
+                        command['command_timing'][-1] = sample[sample['order'][1]]['commands'][0]['parent_timing'][0] + 1
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_schema_six_journal_is_bound_complete_ordered_and_report_owned(self):
+        for mode in ('compact', 'hash', 'size', 'missing', 'outside', 'sequence', 'descriptor', 'duplicate', 'fragment'):
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    binding = report['raw_command_journal']
+                    if mode == 'compact':
+                        report['report_kind'] = 'compact-checkpoint'
+                    elif mode == 'hash':
+                        binding['sha256'] = 'c' * 64
+                    elif mode == 'size':
+                        binding['bytes'] += 1
+                    elif mode == 'missing':
+                        binding['path'] += '.missing'
+                    elif mode == 'outside':
+                        binding['path'] = str(self.primary_path)
+                    else:
+                        original = Path(binding['path'])
+                        lines = original.read_bytes().splitlines(keepends=True)
+                        record = json.loads(lines[0])
+                        if mode == 'sequence':
+                            record['sequence'] = True
+                        elif mode == 'descriptor':
+                            record['batches'][0]['case_index'] = 1
+                        elif mode == 'duplicate':
+                            record['batches'][1] = copy.deepcopy(record['batches'][0])
+                        lines[0] = (json.dumps(record, separators=(',', ':')) + '\n').encode()
+                        data = b''.join(lines)
+                        if mode == 'fragment':
+                            data = data[:-1]
+                        with tempfile.NamedTemporaryFile(dir=original.parent,
+                            prefix=original.name.split('.raw.', 1)[0] + '.raw.', suffix='.jsonl', delete=False) as handle:
+                            handle.write(data)
+                            binding.update(path=handle.name, bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_parent_resources_and_checkpoint_observations_cannot_be_missing_or_gating(self):
+        for mode in ('parent-missing', 'parent-gating', 'parent-clock', 'parent-gc', 'parent-cpu',
+                     'checkpoint-missing', 'checkpoint-gating', 'checkpoint-clock', 'checkpoint-order'):
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    unit = report['results'][0]['unit_timing'][0]
+                    if mode == 'parent-missing':
+                        unit.pop('parent_before')
+                    elif mode == 'parent-gating':
+                        unit['parent_after']['used_for_gate'] = True
+                    elif mode == 'parent-clock':
+                        unit['parent_before']['monotonic_seconds'] = unit['monotonic_start_seconds'] + 1
+                    elif mode == 'parent-gc':
+                        unit['parent_before']['gc_counts'][0] = True
+                    elif mode == 'parent-cpu':
+                        unit['parent_before'].update(cpu_status='reported', user_cpu_seconds=float('inf'), system_cpu_seconds=0)
+                    elif mode == 'checkpoint-missing':
+                        report['checkpoint_observations'].pop()
+                    elif mode == 'checkpoint-gating':
+                        report['checkpoint_observations'][0]['used_for_gate'] = True
+                    elif mode == 'checkpoint-clock':
+                        report['checkpoint_observations'][0]['seconds'] += 1
+                    else:
+                        report['checkpoint_observations'].reverse()
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_parent_current_rss_accepts_exact_linux_and_native_darwin_contracts(self):
+        base = copy.deepcopy(self.primary['results'][0]['unit_timing'][0]['parent_before'])
+        base.pop('current_rss_unavailable_reason')
+        base.update(current_rss_status='reported', current_rss_bytes=1048576,
+                    current_rss_source='/proc/self/statm resident pages times SC_PAGE_SIZE')
+        self.assertTrue(attribution.valid_parent_snapshot(base))
+        native = dict(base, current_rss_source='macOS proc_pid_rusage RUSAGE_INFO_V0.ri_resident_size',
+            physical_footprint_source='macOS proc_pid_rusage RUSAGE_INFO_V0.ri_phys_footprint',
+            physical_footprint_bytes=1048576, parent_pageins=1, parent_interrupt_wakeups=2,
+            parent_package_idle_wakeups=3)
+        self.assertTrue(attribution.valid_parent_snapshot(native))
+        primary = copy.deepcopy(self.primary)
+        fields = {key: native[key] for key in ('current_rss_status', 'current_rss_bytes', 'current_rss_source',
+            'physical_footprint_source', 'physical_footprint_bytes', 'parent_pageins',
+            'parent_interrupt_wakeups', 'parent_package_idle_wakeups')}
+        for row in primary['results']:
+            for unit in row['unit_timing']:
+                for side in ('parent_before', 'parent_after'):
+                    unit[side].pop('current_rss_unavailable_reason')
+                    unit[side].update(fields)
+        result, summary, _, _ = self.invoke(primary=primary)
+        self.assertEqual((result, summary['status']), (0, 'complete'))
+        for field in ('current_rss_bytes', 'physical_footprint_bytes', 'parent_pageins',
+                      'parent_interrupt_wakeups', 'parent_package_idle_wakeups'):
+            for invalid in (True, -1, 2 ** 64, 1.0, None):
+                with self.subTest(field=field, invalid=invalid):
+                    self.assertFalse(attribution.valid_parent_snapshot(dict(native, **{field: invalid})))
+        for field in ('physical_footprint_bytes', 'physical_footprint_source', 'parent_pageins',
+                      'parent_interrupt_wakeups', 'parent_package_idle_wakeups'):
+            incomplete = native.copy()
+            incomplete.pop(field)
+            self.assertFalse(attribution.valid_parent_snapshot(incomplete))
+        self.assertFalse(attribution.valid_parent_snapshot(dict(native, current_rss_source='unknown native source')))
+        self.assertFalse(attribution.valid_parent_snapshot(dict(base, parent_pageins=1)))
+        self.assertFalse(attribution.valid_parent_snapshot(dict(native, current_rss_unavailable_reason='contradictory')))
+
+    def test_schema_six_fixture_isolation_and_cache_workload_cannot_fall_back_to_padding(self):
+        for mode in ('config-path', 'config-hash', 'environment-home', 'environment-path', 'dependency-count', 'state-missing', 'state-count',
+                     'state-boolean', 'state-identity', 'state-paths', 'state-mutation', 'state-gating'):
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    row = report['results'][-1]
+                    batch = row['samples'][0]['candidate']
+                    if mode == 'config-path':
+                        row['fixture_inventory'][0]['config_path'] = '/inherited/tekai.toml'
+                    elif mode == 'config-hash':
+                        row['fixture_inventory'][0]['config_sha256'] = 'c' * 64
+                    elif mode == 'environment-home':
+                        row['fixture_inventory'][0]['isolated_environment']['HOME'] = '/inherited/home'
+                    elif mode == 'environment-path':
+                        row['fixture_inventory'][0]['isolated_environment']['PATH'] = '/usr/bin'
+                    elif mode == 'dependency-count':
+                        row['fixture_inventory'][0]['referenced_dependency_count'] = 0
+                    elif mode == 'state-missing':
+                        batch.pop('cache_state_before')
+                    elif mode == 'state-count':
+                        batch['cache_state_before']['recorded_input_count'] = 1
+                    elif mode == 'state-boolean':
+                        batch['cache_state_before']['referenced_dependency_count'] = True
+                    elif mode == 'state-identity':
+                        batch['cache_state_after']['inode'] += 1
+                    elif mode == 'state-paths':
+                        batch['cache_state_after']['input_paths_sha256'] = 'c' * 64
+                    elif mode == 'state-mutation':
+                        batch['cache_state_unchanged'] = False
+                    else:
+                        batch['cache_state_before']['used_for_gate'] = True
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_startup_oracle_binds_exact_output_to_each_revision_version(self):
+        for version in ('0.5.0', '0.6.0-rc.1+test', '1.0.0+build.99'):
+            self.assertTrue(attribution.verified_output('cli-startup', {
+                'expected_version': version, 'expected_stdout': 'tekai ' + version + '\n',
+                'stdout_verified': True, 'stderr_empty': True}, version))
+        for mode in ('version', 'stdout', 'stderr', 'verification', 'extra'):
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    value = report['results'][0]['samples'][0]['candidate']['output_validation']
+                    if mode == 'version':
+                        value.update(expected_version='0.6.0', expected_stdout='tekai 0.6.0\n')
+                    elif mode == 'stdout':
+                        value['expected_stdout'] += '\n'
+                    elif mode == 'stderr':
+                        value['stderr_empty'] = False
+                    elif mode == 'verification':
+                        value['stdout_verified'] = 1
+                    else:
+                        value['ignored'] = 'unsupported evidence'
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
 
     def test_parent_clock_unit_boundaries_and_host_records_are_bound_diagnostics(self):
         for mode in ('missing-timing', 'clock-total', 'launch-before-start', 'wrong-duration', 'wrong-launch-order',

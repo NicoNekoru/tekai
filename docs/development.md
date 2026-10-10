@@ -253,21 +253,31 @@ binaries or establish the cause of a measured slowdown.
 ```sh
 python3 -B tools/benchmark_runtime.py --candidate target/release/tekai \
   --baseline /path/to/previous/tekai \
-  --metadata /path/to/comparison-metadata.json --pairs 128 --budget 2700 --gate
+  --metadata /path/to/comparison-metadata.json --pairs 128 --budget 3600 --gate
 python3 tools/verify_bundled_papers.py --engine target/release/tekai --images
 ```
 
-The metadata JSON requires `runner_label`, `toolchain`, and a `revision` and
-`build_command` for each of `baseline` and `candidate`. CI creates it from the
+The metadata JSON requires `runner_label`, `toolchain`, and a `revision`,
+`build_command` and `expected_version` for each of `baseline` and `candidate`. CI creates it from the
 actual checkouts and compiler. Local comparisons must record their actual build
-conditions rather than borrowing metadata from a different runner. Poppler's
+conditions rather than borrowing metadata from a different runner. CI binds
+each expected version to the unchanged package manifest from its recorded
+checkout and verifies the exact `tekai --version` output. Poppler's
 `pdftotext`, `pdfinfo` and `pdfimages` are required to check fixture output,
 including every decoded color and alpha pixel in the image case.
 CI also records each built artifact's SHA-256. The benchmark and attribution
 controls bind any supplied build hash to the measured executable's bytes.
 
-The benchmark covers nested lookup with 1000 unused folders, eight transparent
-images and warmed build-cache hits. Each artifact runs in both neutral slots,
+Schema 6 declares four cases, CLI startup through `--version`, nested lookup
+with 1000 unused folders, eight transparent images and warmed build-cache hits
+with 1024 genuinely referenced `.tex` dependencies. The cache document includes
+every dependency by its relative path across 32 directories. Unused padding
+would test launch cost rather than state loading and freshness work.
+Every generated project has a pinned `tekai.toml` covered by its input hash.
+Builds select it explicitly, so ancestor configuration discovery cannot alter
+the workload. Homes, temporary directories and XDG paths belong to the fixture.
+The environment clears inherited TeX search options and selects bundled data.
+Each artifact runs in both neutral slots,
 with four independent binary copies, homes, outputs and caches. Equal-length
 replica names reverse the artifact assignment between slots. Every cell has
 equal input content. Cold initialization precedes two single-command warmups
@@ -280,7 +290,9 @@ of 512 iterations. Reports retain pilot commands, normalized rates, required
 and selected counts, and any clipped headroom. An unreachable minimum is
 inconclusive before inferential sampling. Iterations remain fixed afterward,
 and unexpectedly short measured batches remain inconclusive. There are no
-adaptive retries or replacement samples. The whole-run deadline is 2700 seconds.
+adaptive retries or replacement samples. CLI startup has its own predeclared
+0.25-second minimum. All other cases retain the one-second minimum.
+The whole-run deadline is 3600 seconds, with a 62-minute CI step limit.
 The prospective policy uses 128 baseline/candidate pairs and retains every
 raw command sample. Four pairs form
 one eight-batch comparison unit. For baseline A and candidate B, the slot
@@ -291,7 +303,7 @@ of its four candidate times divided by the product of its four baseline times.
 For multiplicative timing effects, combining both quads before inference
 cancels fixed slot effects and a repeatable slot-position profile. The default
 produces 32 complete inference units. Exact median intervals use a familywise confidence
-level of at least 95 percent across the three declared cases. At this sample
+level of at least 95 percent across the four declared cases. At this sample
 count the interval uses the ninth and twenty-fourth sorted unit ratios.
 The previous ten-unit policy used the minimum and maximum. Historical reports
 keep their original policy and outcome.
@@ -309,13 +321,31 @@ It does not estimate `q` on a hosted runner or guarantee CI success.
 | 0.90 | 34.87% | 99.67% |
 | 0.95 | 59.87% | 99.998% |
 
-Each command retains monotonic start, launch and completion timing so unusually
-slow commands can be located rather than hidden in an aggregate. Diagnostic
-host observations at unit boundaries stay outside measured command durations.
+Each command retains 12 monotonic boundaries, command start, capture setup,
+capture files opened, `Popen` entry and return, capture files closed, launch end,
+waiter dispatch and acceptance, completion, and cleanup start and end. These
+separate observer work from process wait and cleanup. One owned worker handles
+blocking waits across commands instead of creating a thread for every launch.
+The scored duration remains command start through parent-observed completion.
+It includes process launch and scheduling, and is not a pure loader or cache
+algorithm measurement. Startup and dependency-heavy cache timings are separate
+cases. Their difference is not an estimate of isolated cache work.
+Diagnostic host observations at unit boundaries stay outside measured command durations.
 These records cannot establish independence or remove shared-runner drift.
-Compact atomic report checkpoints are written after complete units, outside
-command timers. A 128-MiB report limit retains the previous checkpoint and a
-separate error manifest on overflow rather than dropping samples.
+Raw command evidence is appended after complete units, outside command timers.
+Small atomic checkpoints describe progress without rewriting the growing raw
+sample array. The final `complete-report` restores every sample and binds it
+to its `.raw.*.jsonl` sibling by hash and exact batch descriptors. Preserve
+both files for diagnosis. A `compact-checkpoint` cannot stand in for completed
+evidence. A 128-MiB report limit preserves completed evidence and reports overflow instead of dropping
+samples. Journal or checkpoint errors fail the run.
+
+The cache oracle verifies that the initialized state records every referenced
+dependency and the main input. At batch boundaries it records the state's
+bounded content hash, size, file identity, timestamps, recorded input count and
+input-path hash. Cache-hit batches must retain that same state. This catches
+unexpected rewrites or missing dependency work without putting oracle reads
+inside scored command durations.
 
 The declared slowdown boundary is 10 percent. A statistically demonstrated
 regression returns exit 1. Insufficient precision, excessive variability or
@@ -328,20 +358,23 @@ changing position profiles or serial dependence. A passing hosted-runner
 comparison cannot prove universal performance.
 Binary/input hashes, output controls and owned-process deadlines are checked
 separately. Reports are saved in `target/runtime-performance/report.json` and
-its Markdown companion by default. They make no peak-memory claim.
+its Markdown companion by default. Unit-boundary parent CPU, GC and resident
+memory observations are diagnostic. Primary command samples do not measure
+child peak memory.
 
 Cache-hit command records also retain the binary's optional `elapsed_ms` as
 untrusted diagnostic data. Missing or invalid values cannot change calibration
 or gate outcomes. The parent measures the command's elapsed time independently.
 Their difference includes parent capture setup and completion scheduling,
-launch, CLI setup, serialization and exit overhead. It does not isolate loader
+launch, CLI setup, the compiler prelude before its timer, destruction after its
+final timestamp, serialization and exit overhead. It does not isolate loader
 time.
 
 ### Separate diagnostic profiling
 
 Full CI profiles both original executables after uploading the primary gate
-evidence. This is a small, fixed profiling pass with two repetitions per
-artifact, slot and workload, a 30-second command limit and a 300-second total
+evidence. This is a fixed profiling pass with eight chronological repetitions per
+artifact, slot and workload, a 30-second command limit and a 600-second total
 budget. It uses separate fixtures, binary copies, homes and caches. Instrumented
 timings cannot enter calibration, statistical samples or the primary decision.
 The profile records completion or errors and per-metric availability, not
@@ -350,21 +383,34 @@ reported as zero.
 
 The report retains externally observed launch/finish timing and available
 process CPU time, peak resident memory, page faults, context switches and I/O
-counters. Host observations record available load, memory and swap information
-outside profiled commands. Resource measurements describe the system timer's
+counters. Per-command parent observations include CPU time, high-water RSS,
+allocated Python blocks and GC inventory outside the command clock. High-water
+RSS can rise because of intentionally retained evidence and does not establish
+a leak. Host observations record available load, memory and swap information
+before and after chronological units, outside profiled commands.
+Each repeated cache measurement has an adjacent same-artifact `--version` control.
+The two cache cells per artifact expose replica-specific effects across slots.
+Resource measurements describe the system timer's
 scope, not the whole CI job or proof of leak-free behavior.
 Timer text shares the child's stderr channel and remains untrusted. Truncated
 or duplicate resource and phase records cannot establish valid measurements.
 
 Candidate processes can opt into a bounded `TEKAI_PROFILE ` JSON stderr record
-with `TEKAI_DIAGNOSTIC_PROFILE=1`. Phase durations are diagnostic and untrusted,
+with `TEKAI_DIAGNOSTIC_PROFILE=1`. Protocol 2 has 18 timed phases, two explicitly
+unmeasured native phases and 12 fixed route counters, within a 16-KiB line
+bound. The profiler accepts legacy protocol 1 and marks its finer phases and
+counters unavailable. Phase durations are diagnostic and untrusted,
 just like optional build timing. Older baseline binaries may not support the
 record and must report phases as unavailable. The normal benchmark clears the
 profiling opt-in from its environment. Unmeasured phases are not inferred from
 the residual between external and internal timers.
 
-Phase records aggregate a fixed inventory of completed calls. Their scopes
-overlap, so their durations must not be summed into a total. The exact native
+Phase records aggregate a fixed inventory of completed calls and bounded work
+counters for state input counts, freshness checks and TeX execution routes.
+The finer routes separate state reading from TOML parsing, metadata checks
+from content/effective-source hashing, memo work, lookup-session resets,
+mode-key generation and report serialization. Their scopes overlap, so their
+durations must not be summed into a total. The exact native
 engine exits without returning to the Rust CLI, so direct engine commands do
 not currently emit the phase record. Parent cache/build commands can report
 argument/configuration setup, state loading, freshness checks and TeX subprocess
@@ -376,19 +422,19 @@ python3 -B tools/profile_runtime.py --candidate target/release/tekai \
   --metadata /path/to/comparison-metadata.json \
   --primary-report /path/to/comparison.json \
   --output target/runtime-performance/profiling/profile.json \
-  --repeats 2 --timeout 30 --budget 300
+  --repeats 8 --timeout 30 --budget 600
 ```
 
-Profiling and failure-only attribution are separate artifacts. Neither can
+Profiling and manual attribution are separate artifacts. Neither can
 replace a failed or inconclusive primary result. They can perturb later runner
 conditions, so later observations cannot retrospectively explain a scheduling
 event without supporting time-aligned evidence.
 
-Full CI adds advisory attribution controls only after a completed non-green
-timing comparison. It saves the primary evidence first, then swaps the same
+CI no longer automatically repeats the whole timing suite twice after a
+failure. The bounded profiler supplies chronological same-artifact controls.
+For an explicit manual investigation, `benchmark_attribution.py` validates a
+completed non-green schema 6 timing comparison, then swaps the same
 executable artifacts' roles and compares the candidate artifact with itself.
-Controls require the separate profiler to finish without errors, so failed
-diagnostic cleanup cannot be followed by more measured commands.
 Current binary and verifier hashes must still match the primary report.
 Each control keeps separate provenance, logs and reports. The primary gate
 keeps its original result. These later measurements help investigate

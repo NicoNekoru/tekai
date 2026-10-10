@@ -6,14 +6,17 @@ Their observations cannot be used as replacement samples or speedup evidence.
 """
 
 import argparse
+import gc
 import json
 import math
 import os
 from pathlib import Path
 import platform
 import re
+import resource
 import shutil
 import signal
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -22,15 +25,16 @@ import time
 import benchmark_runtime as benchmark
 
 MAX_REPORT_BYTES = 128 * 1024 * 1024
-MAX_PROFILE_BYTES = 4 * 1024 * 1024
-MAX_TEXT_BYTES = 16384
+MAX_PROFILE_BYTES = 16 * 1024 * 1024
+MAX_TEXT_BYTES = 32768
+MAX_PHASE_BYTES = 16384
 MAX_COUNTER = (1 << 63) - 1
 RESOURCE_MARKER = '__TEKAI_PROFILE_RESOURCE__'
 RESOURCE_FIELDS = ('user_cpu_seconds', 'system_cpu_seconds', 'peak_rss_bytes', 'major_faults',
                    'minor_faults', 'voluntary_context_switches', 'involuntary_context_switches',
                    'filesystem_inputs', 'filesystem_outputs', 'swaps')
 HASH = re.compile(r'[0-9a-f]{64}\Z')
-PHASE_SOURCES = {
+PHASE_SOURCES_V1 = {
     'cli_parse': 'main::run_cli argument parsing',
     'cli_config_setup': 'main CLI configuration and option setup',
     'build_total': 'compiler::build',
@@ -43,6 +47,22 @@ PHASE_SOURCES = {
     'embedded_engine_entry': 'native exact engine, outside parent process instrumentation',
     'format_initialization': 'native exact engine, outside parent process instrumentation',
 }
+PHASE_SOURCES = {**PHASE_SOURCES_V1,
+    'build_state_read': 'compiler build-state file read',
+    'build_state_parse': 'compiler build-state TOML parse',
+    'input_metadata': 'compiler::file_metadata_fingerprint',
+    'input_content_hash': 'compiler::file_content_hash_hex read and hash',
+    'input_effective_hash': 'compiler freshness fallback effective-source read and hash',
+    'input_freshness_memo': 'compiler ordered freshness memo lookup and update',
+    'lookup_session_reset': 'compiler::clear_kpathsea_resolution_cache',
+    'cli_report_serialization': 'main build-report JSON conversion and serialization',
+    'build_mode_key': 'compiler::direct_mode_key',
+}
+COUNTER_UNITS = {'state_bytes_read': 'bytes', 'state_dependencies': 'recorded_inputs',
+    'freshness_requests': 'requests', 'freshness_memo_hits': 'requests', 'freshness_memo_misses': 'requests',
+    'metadata_checks': 'calls', 'metadata_matches': 'freshness_routes',
+    'content_hash_fallbacks': 'freshness_routes', 'effective_hash_fallbacks': 'freshness_routes',
+    'virtual_freshness_checks': 'freshness_routes', 'stale_inputs': 'observed_stale_inputs', 'warm_cache_hits': 'builds'}
 NATIVE_REASONS = {
     'embedded_engine_entry': 'native_engine_exits_without_returning_to_Rust',
     'format_initialization': 'not_separately_instrumented_inside_native_engine',
@@ -138,7 +158,7 @@ def parse_phases(stderr, truncated=False):
     if not lines:
         result['reason'] = 'Selected binary emitted no opt-in phase record'
         return result
-    if len(lines) != 1 or len(lines[0].encode('utf-8')) + len('TEKAI_PROFILE ') + 1 > 8192:
+    if len(lines) != 1 or len(lines[0].encode('utf-8')) + len('TEKAI_PROFILE ') + 1 > MAX_PHASE_BYTES:
         result.update(status='invalid', reason='Phase record is duplicated, truncated or exceeds its finite limit')
         return result
     try:
@@ -147,7 +167,7 @@ def parse_phases(stderr, truncated=False):
 
         def bounded(value, depth=0):
             nodes[0] += 1
-            if depth > 4 or nodes[0] > 256:
+            if depth > 4 or nodes[0] > 512:
                 return False
             if isinstance(value, dict):
                 return len(value) <= 64 and all(type(key) is str and len(key) <= 128
@@ -160,17 +180,24 @@ def parse_phases(stderr, truncated=False):
 
         if not isinstance(data, dict) or not bounded(data):
             raise ValueError('Phase JSON exceeds its finite structural or value limits')
-        if set(data) != {'schema_version', 'producer', 'scope', 'source', 'untrusted', 'status', 'elapsed_ms',
-                         'completed_spans_only', 'phases_overlap', 'phases'} \
-                or data.get('schema_version') != 1 or type(data.get('schema_version')) is not int \
+        version = data.get('schema_version')
+        expected_keys = {'schema_version', 'producer', 'scope', 'source', 'untrusted', 'status', 'elapsed_ms',
+                         'completed_spans_only', 'phases_overlap', 'phases'}
+        if version == 2:
+            expected_keys.add('counters')
+        if set(data) != expected_keys \
+                or type(version) is not int or version not in (1, 2) \
                 or data.get('producer') != 'tekai-rust' or data.get('scope') != 'cli_process' \
                 or data.get('source') != 'opt_in_rust_instrumentation' or data.get('untrusted') is not True \
                 or data.get('completed_spans_only') is not True or data.get('phases_overlap') is not True \
                 or data.get('status') not in ('success', 'error', 'exit_failure') \
                 or not finite_number(data.get('elapsed_ms')):
             raise ValueError('Unsupported opt-in phase protocol')
+        if version == 1 and len(lines[0].encode('utf-8')) + len('TEKAI_PROFILE ') + 1 > 8192:
+            raise ValueError('Legacy phase record exceeds its 8-KiB bound')
         phases = data.get('phases')
-        names = tuple(PHASE_SOURCES)
+        sources = PHASE_SOURCES if version == 2 else PHASE_SOURCES_V1
+        names = tuple(sources)
         if not isinstance(phases, list) or len(phases) != len(names) \
                 or any(not isinstance(phase, dict) for phase in phases) \
                 or any(type(phase.get('name')) is not str for phase in phases) \
@@ -184,7 +211,7 @@ def parse_phases(stderr, truncated=False):
                     or phase.get('status') not in ('available', 'unavailable') \
                     or not finite_number(phase.get('calls'), integer=True) \
                     or not finite_number(phase.get('active_calls'), integer=True) \
-                    or phase.get('source') != PHASE_SOURCES[name] or phase.get('scope') != scope:
+                    or phase.get('source') != sources[name] or phase.get('scope') != scope:
                 raise ValueError('Invalid phase scope, source or call count')
             if phase['status'] == 'available':
                 if name in NATIVE_REASONS or phase['calls'] == 0 or not finite_number(phase.get('elapsed_ms')) \
@@ -193,7 +220,23 @@ def parse_phases(stderr, truncated=False):
             elif phase['calls'] != 0 or phase.get('elapsed_ms') is not None \
                     or phase.get('reason') != NATIVE_REASONS.get(name, 'no_completed_call_in_this_process'):
                 raise ValueError('Unavailable phase requires null duration and a reason')
-        result.update(status='reported', data=data)
+        if version == 2:
+            counters = data.get('counters')
+            if not isinstance(counters, list) or len(counters) != len(COUNTER_UNITS) \
+                    or any(not isinstance(counter, dict) or type(counter.get('name')) is not str for counter in counters) \
+                    or {counter['name'] for counter in counters} != set(COUNTER_UNITS):
+                raise ValueError('Missing or duplicated fixed counter inventory')
+            for counter in counters:
+                if set(counter) != {'name', 'value', 'unit', 'scope'} \
+                        or not finite_number(counter.get('value'), integer=True) \
+                        or counter.get('unit') != COUNTER_UNITS[counter['name']] \
+                        or counter.get('scope') != 'aggregate_observations_current_process':
+                    raise ValueError('Invalid counter unit, scope or count')
+        result.update(status='reported', data=data,
+                      compatibility={'schema_version': version, 'granular_observations': 'available' if version == 2
+                                     else 'unavailable_legacy_schema', 'missing_phase_names': [] if version == 2
+                                     else sorted(set(PHASE_SOURCES) - set(PHASE_SOURCES_V1)),
+                                     'counters_available': version == 2})
     except (ValueError, RecursionError, OverflowError) as error:
         result.update(status='invalid', reason=str(error))
     return result
@@ -323,6 +366,7 @@ class ProfileSupervisor(benchmark.Supervisor):
         if self.active is None or list(map(str, command)) != self.active['command']:
             return super().execute(command, cwd, env)
         row = self.active
+        row['parent_before'] = parent_snapshot()
         row.update(status='running', launch_unix_ns=time.time_ns(), launch_monotonic_ns=time.monotonic_ns(),
                    popen_latency_seconds=None,
                    popen_latency_unavailable_reason='Pure Popen call latency is not separately timed',
@@ -334,12 +378,30 @@ class ProfileSupervisor(benchmark.Supervisor):
             stderr = result['stderr_tail']
             timing = result.get('parent_timing')
             row.update(status='command_completed', parent_seconds=result['seconds'], parent_timing=timing,
+                       command_timing=result.get('command_timing'),
+                       command_timing_boundaries=benchmark.TIMING_METADATA['command_timing_fields'],
                        parent_timing_scope='Start before capture setup; launch end after Popen returns; blocking-wait completion. '
                                            'All monotonic seconds. Includes the resource wrapper.',
                        launch_setup_scope='Capture-file setup plus Popen, not pure Popen or loader time')
             if isinstance(timing, list) and len(timing) == 3 and all(finite_number(value) for value in timing) \
                     and timing[0] <= timing[1] <= timing[2]:
                 row['launch_setup_seconds'] = timing[1] - timing[0]
+            command_timing = result.get('command_timing')
+            boundaries = benchmark.TIMING_METADATA['command_timing_fields']
+            if isinstance(command_timing, list) and len(command_timing) == len(boundaries) \
+                    and all(finite_number(value) for value in command_timing) \
+                    and all(left <= right for left, right in zip(command_timing, command_timing[1:])):
+                by_name = dict(zip(boundaries, command_timing))
+                if all(name in by_name for name in ('capture_start', 'capture_files_open', 'popen_start',
+                                                   'popen_return', 'waiter_dispatch', 'waiter_accepted',
+                                                   'cleanup_start', 'cleanup_end')):
+                    row.update(popen_latency_seconds=by_name['popen_return'] - by_name['popen_start'],
+                        popen_latency_unavailable_reason=None,
+                        capture_setup_seconds=by_name['capture_files_open'] - by_name['capture_start'],
+                        waiter_dispatch_seconds=by_name['waiter_accepted'] - by_name['waiter_dispatch'],
+                        cleanup_seconds=by_name['cleanup_end'] - by_name['cleanup_start'])
+            else:
+                row['command_timing_unavailable_reason'] = 'Fine command timing is absent or violates its fixed monotonic inventory'
             return result
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
             row.update(status='error', error=f'{type(error).__name__}: {error}'[-8192:])
@@ -352,10 +414,62 @@ class ProfileSupervisor(benchmark.Supervisor):
             raise
         finally:
             row.update(finish_unix_ns=time.time_ns(), finish_monotonic_ns=time.monotonic_ns(),
+                       parent_after=parent_snapshot(),
                        resources=parse_resources(stderr, self.kind, truncated),
                        phases=parse_phases(stderr, truncated), stderr_tail=stderr)
+            before, after = row['parent_before'], row['parent_after']
+            row['parent_resource_delta'] = {name: after[name] - before[name] for name in
+                ('user_cpu_seconds', 'system_cpu_seconds', 'minor_faults', 'major_faults',
+                 'voluntary_context_switches', 'involuntary_context_switches') if name in before and name in after}
+            row['parent_resource_delta_scope'] = 'Observer work plus command supervision between parent snapshots; not child CPU accounting.'
             if self.kind is None:
                 row['resources']['reason'] = self.timer_reason
+
+
+def parent_snapshot():
+    """Current observer evidence outside every fixture-command clock."""
+    row = {'unix_ns': time.time_ns(), 'monotonic_ns': time.monotonic_ns(),
+           'scope': 'Diagnostic Python parent only, sampled outside the fixture command clock.',
+           'rss_scope': 'Process-lifetime high-water RSS, not current RSS or proof of a memory leak.',
+           'gc_counts': list(gc.get_count()), 'gc_stats': gc.get_stats(),
+           'allocated_blocks': sys.getallocatedblocks() if hasattr(sys, 'getallocatedblocks') else None,
+           'unavailable': {}}
+    try:
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        row.update(user_cpu_seconds=usage.ru_utime, system_cpu_seconds=usage.ru_stime,
+                   peak_rss_bytes=int(usage.ru_maxrss * (1 if platform.system() == 'Darwin' else 1024)),
+                   minor_faults=usage.ru_minflt, major_faults=usage.ru_majflt,
+                   voluntary_context_switches=usage.ru_nvcsw, involuntary_context_switches=usage.ru_nivcsw)
+    except (OSError, ValueError) as error:
+        row['unavailable']['resources'] = str(error)[-1024:]
+    try:
+        if platform.system() == 'Darwin':
+            row.update(benchmark.darwin_parent_memory())
+        elif platform.system() == 'Linux':
+            fields = bounded_text(Path('/proc/self/statm')).split()
+            row.update(current_rss_bytes=int(fields[1]) * os.sysconf('SC_PAGE_SIZE'),
+                       current_rss_source='/proc/self/statm resident pages times SC_PAGE_SIZE')
+        else:
+            row['unavailable']['current_rss'] = 'Current RSS is unavailable on this platform'
+    except (AttributeError, OSError, ValueError, IndexError) as error:
+        row['unavailable']['current_rss'] = str(error)[-1024:]
+    return row
+
+
+def execute_profile_fixture(supervisor, fixture, case, initializing=False):
+    if case != 'cli-startup':
+        return benchmark.execute_fixture(supervisor, fixture, case, initializing=initializing)
+    result = supervisor.execute(fixture['command'], fixture['project'], fixture['env'])
+    version = fixture.get('expected_version')
+    if not isinstance(version, str) or re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?', version) is None:
+        raise benchmark.BenchmarkError('Diagnostic startup lacks the independently recorded package version')
+    expected = f'tekai {version}\n'
+    if result['stdout'] != expected or supervisor.kind is None and result['stderr_tail']:
+        raise benchmark.BenchmarkError('Diagnostic startup output differs from the selected package version')
+    result['output_validation'] = {'expected_stdout': expected, 'stdout_verified': True,
+        'expected_version': version, 'used_for_gate': False,
+        'stderr_verification': 'unavailable_shared_wrapper_channel' if supervisor.kind else 'empty_verified'}
+    return result
 
 
 def bounded_text(path):
@@ -418,9 +532,13 @@ def host_snapshot(supervisor, env):
 
 
 def bind_primary(primary, metadata, sources):
-    if type(primary.get('schema_version')) is not int or primary['schema_version'] not in (4, 5) or primary.get('gate') is not True \
+    if type(primary.get('schema_version')) is not int or primary['schema_version'] not in (4, 5, 6) or primary.get('gate') is not True \
             or primary.get('metadata') != metadata:
         raise ValueError('Requires primary gate provenance matching the supplied metadata')
+    if primary['schema_version'] == 6 and primary.get('report_kind') != 'complete-report':
+        raise ValueError('Schema 6 requires the final complete report, not a compact checkpoint')
+    if primary['schema_version'] == 6 and not isinstance(primary.get('raw_command_journal'), dict):
+        raise ValueError('Schema 6 requires its final raw command journal binding')
     if primary.get('status') not in ('pass', 'fail', 'inconclusive', 'error', 'incomplete'):
         raise ValueError('Primary status is missing or unknown')
     hashes = {}
@@ -448,11 +566,102 @@ def bind_primary(primary, metadata, sources):
     return hashes
 
 
+def primary_journal_path(primary, primary_path):
+    journal = primary.get('raw_command_journal')
+    if journal is None:
+        if primary.get('schema_version') == 6:
+            raise ValueError('Schema 6 requires its final raw command journal binding')
+        return None
+    if not isinstance(journal, dict) or type(journal.get('path')) is not str \
+            or not Path(journal['path']).is_absolute() or journal.get('format') != 'tekai-command-journal-v1' \
+            or not finite_number(journal.get('bytes'), integer=True) or journal['bytes'] > MAX_REPORT_BYTES \
+            or type(journal.get('sha256')) is not str or HASH.fullmatch(journal['sha256']) is None:
+        raise ValueError('Primary raw command journal binding is malformed')
+    path = Path(journal['path']).resolve()
+    if path.parent != primary_path.parent or not path.name.startswith(primary_path.stem + '.raw.') \
+            or path.suffix != '.jsonl' or not path.is_file() or path.stat().st_size != journal['bytes']:
+        raise ValueError('Primary raw command journal path, file kind or byte count is invalid')
+    return path
+
+
+def describe(values, unit):
+    values = [value for value in values if finite_number(value)]
+    if not values:
+        return {'status': 'unavailable', 'samples': 0, 'unit': unit, 'reason': 'No finite observations'}
+    center = statistics.median(values)
+    mad = statistics.median(abs(value - center) for value in values)
+    return {'status': 'observed', 'samples': len(values), 'unit': unit, 'median': center,
+            'minimum': min(values), 'maximum': max(values), 'median_absolute_deviation': mad,
+            'relative_median_absolute_deviation': mad / center if center else None}
+
+
+def volatility_summary(commands):
+    """Within-cell descriptive evidence, with no cross-artifact comparisons."""
+    groups = {}
+    for row in commands:
+        key = tuple(row.get(field) for field in ('case', 'phase', 'slot', 'label'))
+        groups.setdefault(key, []).append(row)
+    summary = []
+    for key, rows in groups.items():
+        result = dict(zip(('case', 'phase', 'slot', 'label'), key))
+        result.update(diagnostic_only=True, used_for_gate=False,
+                      commands=len(rows), verified_commands=sum(row.get('status') == 'verified' for row in rows),
+                      command_ids=[row.get('command_id') for row in rows],
+                      repetitions=[row.get('repetition') for row in rows],
+                      parent_stages={field: describe([row.get(field) for row in rows], 'seconds') for field in
+                          ('parent_seconds', 'capture_setup_seconds', 'popen_latency_seconds', 'launch_setup_seconds',
+                           'waiter_dispatch_seconds', 'cleanup_seconds')},
+                      child_peak_rss=describe([row.get('resources', {}).get('values', {}).get('peak_rss_bytes')
+                                               for row in rows], 'bytes'),
+                      reported_build_elapsed=describe([row.get('reported_build_timing', {}).get('reported_elapsed_ms')
+                                                        for row in rows], 'milliseconds'),
+                      phase_protocol_statuses={status: sum(row.get('phases', {}).get('status') == status for row in rows)
+                                               for status in ('reported', 'unavailable', 'invalid')},
+                      phase_observations={}, counter_observations={})
+        for name in PHASE_SOURCES:
+            observed = [phase for row in rows if isinstance(row.get('phases', {}).get('data'), dict)
+                        for phase in row['phases']['data'].get('phases', []) if phase.get('name') == name]
+            if observed:
+                result['phase_observations'][name] = {
+                    'elapsed': describe([phase.get('elapsed_ms') for phase in observed
+                                         if phase.get('status') == 'available'], 'milliseconds'),
+                    'calls_observed': sorted({phase['calls'] for phase in observed}),
+                    'active_calls_observed': sorted({phase['active_calls'] for phase in observed}),
+                    'unavailable_samples': sum(phase['status'] == 'unavailable' for phase in observed)}
+        for name, unit in COUNTER_UNITS.items():
+            values = [counter['value'] for row in rows if isinstance(row.get('phases', {}).get('data'), dict)
+                      for counter in row['phases']['data'].get('counters', []) if counter['name'] == name]
+            result['counter_observations'][name] = {'status': 'observed' if values else 'unavailable',
+                'samples': len(values), 'unit': unit, 'distinct_values': sorted(set(values)),
+                'constant_observed': len(set(values)) == 1 if values else None}
+        result['parent_resource_chronology'] = [
+            {'command_id': row.get('command_id'), 'repetition': row.get('repetition'),
+             'before_unix_ns': row.get('parent_before', {}).get('unix_ns'),
+             'after_unix_ns': row.get('parent_after', {}).get('unix_ns'),
+             'before_peak_rss_bytes': row.get('parent_before', {}).get('peak_rss_bytes'),
+             'after_peak_rss_bytes': row.get('parent_after', {}).get('peak_rss_bytes'),
+             'before_current_rss_bytes': row.get('parent_before', {}).get('current_rss_bytes'),
+             'after_current_rss_bytes': row.get('parent_after', {}).get('current_rss_bytes'),
+             'before_physical_footprint_bytes': row.get('parent_before', {}).get('physical_footprint_bytes'),
+             'after_physical_footprint_bytes': row.get('parent_after', {}).get('physical_footprint_bytes'),
+             'before_allocated_blocks': row.get('parent_before', {}).get('allocated_blocks'),
+             'after_allocated_blocks': row.get('parent_after', {}).get('allocated_blocks'),
+             'gc_before': row.get('parent_before', {}).get('gc_counts'),
+             'gc_after': row.get('parent_after', {}).get('gc_counts')} for row in rows]
+        summary.append(result)
+    return {'scope': 'Descriptive within-artifact, within-slot fixed chronology. No cross-artifact ratios or performance verdicts.',
+            'phase_scope': 'Opt-in inclusive phases overlap. State/host/parent snapshots and output verification are outside fixture clocks.',
+            'memory_scope': 'Fresh CLI process per command. Child timer peak RSS and Python-parent lifetime peak RSS cannot establish a leak. '
+                            'The diagnostic parent intentionally retains this bounded report; its allocation/RSS growth includes observer records.',
+            'cohorts': summary}
+
+
 def persist(report, output):
     output.parent.mkdir(parents=True, exist_ok=True)
+    report['volatility'] = volatility_summary(report['commands'])
     payload = json.dumps(report, indent=2, allow_nan=False) + '\n'
     if len(payload.encode('utf-8')) > MAX_PROFILE_BYTES:
-        raise ValueError('Diagnostic report exceeds the finite 4-MiB output limit')
+        raise ValueError('Diagnostic report exceeds the finite 16-MiB output limit')
     benchmark.atomic_text(output, payload)
     lines = ['# Separate runtime diagnostics', '', 'Diagnostic status `' + report['status'] + '`.', '',
              'Primary outcome `' + str(report.get('primary', {}).get('status', 'unavailable')) + '` remains unchanged.', '',
@@ -467,6 +676,63 @@ def persist(report, output):
     lines.extend(['', 'System timer accounting is platform-specific and is not a whole-job memory claim.',
                   'Host snapshots occur outside commands. Phase JSON is optional and untrusted.',
                   'Phases overlap and are inclusive completed spans, not a partition to sum.', ''])
+    lines.extend(['## Within-cell volatility', '', report['volatility']['scope'], '',
+                  '| Case | Phase | Slot | Artifact | Samples | Parent median ms | Parent min/max ms | Parent MAD % | Child RSS min/max MiB |',
+                  '| --- | --- | --- | --- | ---: | ---: | --- | ---: | --- |'])
+    for row in report['volatility']['cohorts']:
+        timing, rss = row['parent_stages']['parent_seconds'], row['child_peak_rss']
+        center = f"{timing['median'] * 1000:.3f}" if timing['status'] == 'observed' else 'unavailable'
+        bounds = f"{timing['minimum'] * 1000:.3f}/{timing['maximum'] * 1000:.3f}" if timing['status'] == 'observed' else 'unavailable'
+        mad = timing.get('relative_median_absolute_deviation')
+        noise = f'{mad * 100:.2f}' if mad is not None else 'unavailable'
+        memory = f"{rss['minimum'] / 1024 ** 2:.3f}/{rss['maximum'] / 1024 ** 2:.3f}" if rss['status'] == 'observed' else 'unavailable'
+        lines.append(f"| {row['case']} | {row['phase']} | {row['slot']} | {row['label']} | {timing['samples']} | {center} | {bounds} | {noise} | {memory} |")
+    lines.extend(['', '## Cache instruction routes', '',
+                  'Fixed aggregate counters show observed route variants. Missing counters remain unavailable for legacy or absent protocols.', '',
+                  '| Phase | Slot | Artifact | Dependencies | Metadata checks | Metadata matches | Content/effective fallbacks | Memo hits/misses |',
+                  '| --- | --- | --- | --- | --- | --- | --- | --- |'])
+    for row in report['volatility']['cohorts']:
+        if row['case'] != 'warm-build-cache' or row['phase'] == 'launch_only_control':
+            continue
+        def observed(name):
+            values = row['counter_observations'][name]['distinct_values']
+            return ','.join(map(str, values)) if values else 'unavailable'
+        lines.append(f"| {row['phase']} | {row['slot']} | {row['label']} | {observed('state_dependencies')} | {observed('metadata_checks')} | "
+                     f"{observed('metadata_matches')} | {observed('content_hash_fallbacks')}/{observed('effective_hash_fallbacks')} | "
+                     f"{observed('freshness_memo_hits')}/{observed('freshness_memo_misses')} |")
+    lines.extend(['', '## Cache and aligned startup stages', '',
+                  'Each row describes one artifact and slot. Resource wrappers change these commands. No subtraction or comparison verdict is computed.', '',
+                  '| Phase | Slot | Artifact | Stage | Samples | Median ms | Min/max ms | MAD % |',
+                  '| --- | --- | --- | --- | ---: | ---: | --- | ---: |'])
+    for row in report['volatility']['cohorts']:
+        if row['case'] != 'warm-build-cache' or row['phase'] == 'initialization':
+            continue
+        stages = dict(row['parent_stages'])
+        if row['phase'] == 'measurement':
+            stages.update({name: observed['elapsed'] for name, observed in row['phase_observations'].items() if name in
+                ('build_state_read', 'build_state_parse', 'input_metadata', 'input_content_hash', 'input_effective_hash',
+                 'input_freshness_memo', 'lookup_session_reset', 'cli_report_serialization', 'build_mode_key',
+                 'cli_parse', 'cli_config_setup')})
+        for name, value in stages.items():
+            factor = 1000 if value['unit'] == 'seconds' else 1
+            center = f"{value['median'] * factor:.4f}" if value['status'] == 'observed' else 'unavailable'
+            bounds = f"{value['minimum'] * factor:.4f}/{value['maximum'] * factor:.4f}" if value['status'] == 'observed' else 'unavailable'
+            mad = value.get('relative_median_absolute_deviation')
+            noise = f'{mad * 100:.2f}' if mad is not None else 'unavailable'
+            lines.append(f"| {row['phase']} | {row['slot']} | {row['label']} | {name} | {value['samples']} | {center} | {bounds} | {noise} |")
+    lines.extend(['', '## Parent resource chronology', '',
+                  '| Case | Phase | Slot | Artifact | First/last peak RSS MiB | First/last current RSS MiB | First/last allocated blocks |',
+                  '| --- | --- | --- | --- | --- | --- | --- |'])
+    for row in report['volatility']['cohorts']:
+        chronology = row['parent_resource_chronology']
+        first, last = chronology[0], chronology[-1]
+        rss = [item['after_peak_rss_bytes'] for item in (first, last)]
+        memory = '/'.join(f'{value / 1024 ** 2:.3f}' for value in rss) if all(finite_number(value) for value in rss) else 'unavailable'
+        current_rss = [item['after_current_rss_bytes'] for item in (first, last)]
+        current = '/'.join(f'{value / 1024 ** 2:.3f}' for value in current_rss) if all(finite_number(value) for value in current_rss) else 'unavailable'
+        blocks = '/'.join(str(item['after_allocated_blocks']) for item in (first, last))
+        lines.append(f"| {row['case']} | {row['phase']} | {row['slot']} | {row['label']} | {memory} | {current} | {blocks} |")
+    lines.extend(['', report['volatility']['phase_scope'], '', report['volatility']['memory_scope'], ''])
     lines.extend('- ' + error.replace('\n', ' ') for error in report['errors'])
     benchmark.atomic_text(output.with_suffix('.md'), '\n'.join(lines) + '\n')
 
@@ -475,9 +741,9 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__)
     for name in ('baseline', 'candidate', 'metadata', 'primary-report', 'output'):
         result.add_argument('--' + name, type=Path, required=True)
-    result.add_argument('--repeats', type=int, default=2, help='Fixed diagnostic repetitions, 1 to 3')
+    result.add_argument('--repeats', type=int, default=8, help='Fixed chronological diagnostic repetitions, 1 to 16')
     result.add_argument('--timeout', type=float, default=30, help='Per-command bound, (0, 30] seconds')
-    result.add_argument('--budget', type=float, default=300, help='Whole diagnostic bound, (0, 300] seconds')
+    result.add_argument('--budget', type=float, default=600, help='Whole diagnostic bound, (0, 600] seconds')
     return result
 
 
@@ -486,9 +752,9 @@ def main(argv=None):
     args = argument_parser.parse_args(argv)
     if os.name != 'posix' or platform.system() not in ('Darwin', 'Linux'):
         argument_parser.error('Requires owned POSIX process groups on macOS or Linux')
-    if not 1 <= args.repeats <= 3 or any(not math.isfinite(getattr(args, name))
-            or not 0 < getattr(args, name) <= limit for name, limit in (('timeout', 30), ('budget', 300))):
-        argument_parser.error('Requires repeats 1..3 and finite positive bounded timeout/budget')
+    if not 1 <= args.repeats <= 16 or any(not math.isfinite(getattr(args, name))
+            or not 0 < getattr(args, name) <= limit for name, limit in (('timeout', 30), ('budget', 600))):
+        argument_parser.error('Requires repeats 1..16 and finite positive bounded timeout/budget')
     sources = {label: getattr(args, label).resolve() for label in benchmark.LABELS}
     args.metadata, args.primary_report, args.output = args.metadata.resolve(), args.primary_report.resolve(), args.output.resolve()
     verifiers = {name: shutil.which(name) for name in ('pdftotext', 'pdfinfo', 'pdfimages')}
@@ -497,6 +763,17 @@ def main(argv=None):
     primary_paths = [args.primary_report]
     if args.primary_report.with_suffix('.md').exists():
         primary_paths.append(args.primary_report.with_suffix('.md').resolve())
+    try:
+        primary_hint = read_json(args.primary_report)
+    except (OSError, ValueError, RecursionError):
+        primary_hint = {}
+    journal_hint_error = None
+    try:
+        journal_hint_path = primary_journal_path(primary_hint, args.primary_report)
+        if journal_hint_path is not None:
+            primary_paths.append(journal_hint_path)
+    except (OSError, ValueError) as error:
+        journal_hint_error = str(error)
     protected_paths = [*sources.values(), args.metadata, *primary_paths, *observation_tools,
                        *(Path(value).resolve() for value in verifiers.values() if value)]
     if args.output.suffix.lower() != '.json':
@@ -506,10 +783,13 @@ def main(argv=None):
             if output == path or output.exists() and path.exists() and output.samefile(path):
                 argument_parser.error('Diagnostic output cannot overwrite a source, primary or metadata alias')
     started = time.monotonic()
-    report = {'schema_version': 1, 'status': 'incomplete', 'diagnostic_only': True, 'used_for_gate': False,
+    report = {'schema_version': 2, 'status': 'incomplete', 'diagnostic_only': True, 'used_for_gate': False,
               'primary': {'path': str(args.primary_report), 'status': 'unavailable'}, 'executables': [],
               'policy': {'repeats': args.repeats, 'timeout_seconds': args.timeout, 'budget_seconds': args.budget,
                          'phase_opt_in': 'TEKAI_DIAGNOSTIC_PROFILE=1',
+                         'sampling': 'Fixed chronological repetitions. No adaptive retries, outlier removal or result selection.',
+                         'launch_only_control': 'Same copied artifact --version immediately before each measured warm-cache command.',
+                         'same_artifact_cache_control': 'Each artifact has two content-equivalent independently initialized fixture replicas, one per slot.',
                          'comparison': 'None. Instrumented commands cannot rescore the primary gate.'},
               'machine': {'system': platform.system(), 'architecture': platform.machine(),
                           'logical_cpu_count': os.cpu_count(), 'python': platform.python_version()},
@@ -531,6 +811,14 @@ def main(argv=None):
                                  exit_code=primary.get('exit_code') if type(primary.get('exit_code')) is int
                                  and 0 <= primary['exit_code'] <= 130 else None,
                                  sha256_start=protected[args.primary_report])
+        if journal_hint_error is not None:
+            raise ValueError(journal_hint_error)
+        journal = primary.get('raw_command_journal')
+        if journal is not None:
+            journal_path = primary_journal_path(primary, args.primary_report)
+            if protected.get(journal_path) != journal['sha256'] or journal_path.stat().st_size != journal['bytes']:
+                raise ValueError('Primary raw command journal differs from its exact byte/hash binding')
+            report['primary']['raw_command_journal'] = dict(journal)
         # The primary loader validates required build fields; also reject
         # nonfinite optional metadata before it can poison the diagnostic JSON.
         read_json(args.metadata)
@@ -580,6 +868,7 @@ def main(argv=None):
                         label, slot, replica = cell['label'], cell['slot'], cell['replica']
                         fixture = benchmark.make_fixture(work / slot / replica / case, binaries[slot][label], case)
                         fixture.update(verifiers, **cell)
+                        fixture['expected_version'] = metadata[label]['expected_version']
                         fixtures[(slot, label)] = fixture
                     hashes = {fixture['input_sha256'] for fixture in fixtures.values()}
                     if len(hashes) != 1:
@@ -587,24 +876,59 @@ def main(argv=None):
                     for repetition in range(-1, args.repeats):
                         unit = {'case': case, 'repetition': repetition,
                                 'phase': 'initialization' if repetition < 0 else 'measurement',
+                                'unit_id': len(report['units']) + 1,
                                 'before': host_snapshot(supervisor, host_env), 'command_indexes': []}
+                        unit['before'].update(unit_id=unit['unit_id'], position='before')
                         report['units'].append(unit)
                         completed_unit = False
                         try:
                             for cell in benchmark.cell_order((case_index + repetition + 1) % 2):
                                 fixture = fixtures[(cell['slot'], cell['label'])]
+                                if case == 'warm-build-cache' and repetition >= 0:
+                                    control = {**fixture, 'command': [binaries[cell['slot']][cell['label']], '--version']}
+                                    control_row = {**cell, 'case': case, 'phase': 'launch_only_control',
+                                        'repetition': repetition, 'unit_id': unit['unit_id'],
+                                        'sequence_index': len(report['commands']),
+                                        'same_artifact_sha256': source_hashes[cell['label']],
+                                        'phase_opt_in_note': 'Clap --version exits before Rust diagnostic emission; absent phases are expected.',
+                                        'command': list(map(str, control['command'])),
+                                        'input_sha256': fixture['input_sha256'], 'status': 'not_started',
+                                        'output_validation': None}
+                                    report['commands'].append(control_row)
+                                    unit['command_indexes'].append(len(report['commands']) - 1)
+                                    supervisor.active = control_row
+                                    try:
+                                        control_result = execute_profile_fixture(supervisor, control, 'cli-startup')
+                                        control_row.update(status='verified', output_validation=control_result['output_validation'])
+                                    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+                                        control_row.update(status='error', error=f'{type(error).__name__}: {error}'[-8192:])
+                                        raise
+                                    finally:
+                                        supervisor.active = None
+                                        persist(report, args.output)
                                 row = {**cell, 'case': case, 'phase': unit['phase'], 'repetition': repetition,
+                                       'unit_id': unit['unit_id'], 'sequence_index': len(report['commands']),
                                        'command': list(map(str, fixture['command'])), 'input_sha256': fixture['input_sha256'],
                                        'status': 'not_started', 'output_validation': None}
+                                row['phase_opt_in_note'] = 'Clap --version exits before Rust diagnostic emission; absent phases are expected.' \
+                                    if case == 'cli-startup' else 'Native engine entry bypasses Rust CLI instrumentation; absent phases are expected.' \
+                                    if case in ('nested-lookup', 'image-compile') else \
+                                    'Warm-build instrumentation is opt-in; selected baseline may have an older or absent protocol.'
+                                if case == 'warm-build-cache' and repetition >= 0:
+                                    row['cache_state_before'] = benchmark.cache_state_snapshot(fixture)
                                 report['commands'].append(row)
                                 unit['command_indexes'].append(len(report['commands']) - 1)
                                 supervisor.active = row
                                 try:
-                                    result = benchmark.execute_fixture(supervisor, fixture, case, initializing=repetition < 0)
+                                    result = execute_profile_fixture(supervisor, fixture, case, initializing=repetition < 0)
                                     row['output_validation'] = result['output_validation']
                                     row['status'] = 'verified'
                                     if 'reported_build_timing' in result:
                                         row['reported_build_timing'] = result['reported_build_timing']
+                                    if case == 'warm-build-cache':
+                                        row['cache_state_after'] = benchmark.cache_state_snapshot(fixture)
+                                        row['cache_state_unchanged'] = None if repetition < 0 else row['cache_state_before'] == row['cache_state_after']
+                                        row['cache_state_scope'] = 'Bounded state bytes/hash/input inventory and file identity, outside fixture command clocks.'
                                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
                                     row.update(status='error', error=f'{type(error).__name__}: {error}'[-8192:])
                                     raise
@@ -616,6 +940,7 @@ def main(argv=None):
                             unit['after'] = host_snapshot(supervisor, host_env) if completed_unit else {
                                 'unix_ns': time.time_ns(), 'monotonic_ns': time.monotonic_ns(),
                                 'unavailable': {'host': 'Unit incomplete; no further observer commands launched'}}
+                            unit['after'].update(unit_id=unit['unit_id'], position='after')
                             persist(report, args.output)
                     for fixture in fixtures.values():
                         if benchmark.fixture_sha256(fixture['project']) != fixture['input_sha256']:

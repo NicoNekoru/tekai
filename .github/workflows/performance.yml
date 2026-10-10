@@ -185,7 +185,9 @@ jobs:
     name: Runtime diagnostics (${{ matrix.os }})
     needs: [runner-tests, revisions]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 270
+    # Includes both fresh builds, the strict 60-minute comparison budget and
+    # separately bounded correctness/profiling steps. No automatic suite reruns.
+    timeout-minutes: 195
     strategy:
       fail-fast: false
       matrix:
@@ -386,7 +388,7 @@ jobs:
       - name: Gate paired same-runner baseline and candidate performance
         id: comparison
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
-        timeout-minutes: 47
+        timeout-minutes: 62
         # Equal-content per-side fixtures and caches belong to the supervisor.
         # --gate rejects demonstrated regressions and inconclusive measurements.
         # It never compares timings recorded by different hosted runners.
@@ -396,8 +398,9 @@ jobs:
             --candidate "$CARGO_TARGET_DIR/release/tekai" \
             --metadata "$PERFORMANCE_REPORT_DIR/comparison-metadata.json" \
             --output "$PERFORMANCE_REPORT_DIR/comparison.json" \
-            --pairs 128 --warmups 2 --timeout 30 --budget 2700 --threshold 0.10 \
-            --min-sample-seconds 1.0 --warm-cache-min-sample-seconds 1.0 --max-iterations 512 --gate \
+            --pairs 128 --warmups 2 --timeout 30 --budget 3600 --threshold 0.10 \
+            --min-sample-seconds 1.0 --cli-startup-min-sample-seconds 0.25 \
+            --warm-cache-min-sample-seconds 1.0 --max-iterations 512 --gate \
             2>&1 | tee "$PERFORMANCE_REPORT_DIR/comparison.log"
 
       - name: Build the bounded experimental expansion fixture
@@ -485,7 +488,7 @@ jobs:
       - name: Profile phases and process resources separately from the timing gate
         id: profiling
         if: ${{ !cancelled() && env.PERFORMANCE_PROFILE == 'full' && (steps.comparison.outcome == 'success' || steps.comparison.outcome == 'failure') && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
-        timeout-minutes: 7
+        timeout-minutes: 12
         continue-on-error: true
         # Instrumented commands have different costs. Their phase/resource
         # observations cannot enter calibration, sampling or gate decisions.
@@ -497,7 +500,7 @@ jobs:
             --metadata "$PERFORMANCE_REPORT_DIR/comparison-metadata.json" \
             --primary-report "$PERFORMANCE_REPORT_DIR/comparison.json" \
             --output "$PERFORMANCE_REPORT_DIR/profiling/profile.json" \
-            --repeats 2 --timeout 30 --budget 300 \
+            --repeats 8 --timeout 30 --budget 600 \
             2>&1 | tee "$PERFORMANCE_REPORT_DIR/profiling.log"
 
       - name: Publish separate diagnostic profiling evidence
@@ -523,48 +526,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Attribute a completed full-profile primary failure without replacing its gate
-        id: attribution
-        if: ${{ !cancelled() && env.PERFORMANCE_PROFILE == 'full' && steps.comparison.outcome == 'failure' && steps.profiling.outcome == 'success' && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
-        timeout-minutes: 94
-        continue-on-error: true
-        env:
-          BASELINE_SHA: ${{ needs.revisions.outputs.baseline_sha }}
-          CANDIDATE_SHA: ${{ needs.revisions.outputs.candidate_sha }}
-        # Primary evidence is uploaded above before these optional controls.
-        # Do not launch later controls after a diagnostic cleanup/error failure.
-        # The helper rejects incomplete/error reports and changed original
-        # artifacts, then uses the benchmark's existing owned-process cleanup.
-        run: |
-          python3 -B tools/benchmark_attribution.py \
-            --profile "$PERFORMANCE_PROFILE" \
-            --primary-report "$PERFORMANCE_REPORT_DIR/comparison.json" \
-            --primary-metadata "$PERFORMANCE_REPORT_DIR/comparison-metadata.json" \
-            --baseline "$BASELINE_TARGET_DIR/release/tekai" \
-            --candidate "$CARGO_TARGET_DIR/release/tekai" \
-            --baseline-revision "$BASELINE_SHA" --candidate-revision "$CANDIDATE_SHA" \
-            --output-dir "$PERFORMANCE_REPORT_DIR/attribution"
-
-      - name: Publish separate non-gating attribution outcomes
-        if: ${{ always() && steps.attribution.outcome != 'skipped' }}
-        run: |
-          if [[ -f "$PERFORMANCE_REPORT_DIR/attribution/attribution.md" ]]; then
-            cat "$PERFORMANCE_REPORT_DIR/attribution/attribution.md" >> "$GITHUB_STEP_SUMMARY"
-            for report in reversed candidate-self; do
-              if [[ -f "$PERFORMANCE_REPORT_DIR/attribution/$report.md" ]]; then
-                printf '\n## %s advisory control\n\n' "$report" >> "$GITHUB_STEP_SUMMARY"
-                cat "$PERFORMANCE_REPORT_DIR/attribution/$report.md" >> "$GITHUB_STEP_SUMMARY"
-              fi
-            done
-          else
-            printf '\n%s\n' 'Attribution did not complete. It supplies no passing evidence and cannot replace the failed primary gate.' >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload failure-only attribution separately
-        if: ${{ always() && steps.attribution.outcome != 'skipped' }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: performance-attribution-${{ matrix.os }}-${{ runner.arch }}
-          path: ${{ runner.temp }}/tekai-performance-reports/attribution/
-          if-no-files-found: warn
-          retention-days: 14
+      # Same-artifact cross-slot launch controls now belong to the bounded
+      # profiler above. Do not repeat the full primary suite on failure.
+      # benchmark_attribution.py remains an explicit manual diagnostic tool.

@@ -23,3 +23,18 @@ def pad(project, count):
         path = project / f'unused-tree/bucket{n // 100}/group{n // 10}/leaf{n}'
         path.mkdir(parents=True, exist_ok=True)
         (path / 'unused.dat').touch()
+
+
+def dependency_document(project, count=1024):
+    """Fixed ordinary referenced inputs, rather than unused traversal padding."""
+    document(project)
+    inputs = []
+    for number in range(count):
+        relative = f'dependencies/bucket{number // 32:03d}/input{number:04d}.tex'
+        path = project / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'% Ordinary referenced dependency {number}.\n', encoding='utf-8')
+        inputs.append(path)
+    body = '\n'.join('\\input{' + path.relative_to(project).as_posix() + '}' for path in inputs)
+    document(project, '\\documentclass{article}\n\\begin{document}\n' + body + '\nProbe.\\end{document}\n')
+    return inputs

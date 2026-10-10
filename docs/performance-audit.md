@@ -787,9 +787,13 @@ findings remain.
 
 CI has separate timing and correctness gates. `tools/benchmark_runtime.py`
 compares immutable baseline and candidate releases on the same runner using
-40 alternating pairs, isolated equivalent fixtures and exact median-ratio
+128 paired batches per case, 32 complete complementary crossover units,
+isolated equivalent fixtures and exact median-ratio
 intervals. A declared 10 percent regression fails the gate. An inconclusive
 comparison also fails rather than being reported as performance success.
+The four predeclared cases separate CLI startup, nested lookup, image
+compilation and dependency-heavy cache hits. The 10 percent variability and
+5 percent order-bias limits remain unchanged.
 See [development instructions](development.md#paired-performance-gate)
 for its statistical assumptions, metadata and replay command.
 
@@ -901,3 +905,42 @@ watch edits. Downloaded artifacts identify that exact commit and unchanged
 isolated executable copies. Linux runner tests passed on Python 3.10 and 3.13.
 These remote results predate the allocation changes and their nine new tests.
 The newer checkpoint's CI must be checked separately from this successful run.
+
+## Granular volatility measurements
+
+The subsequent schema 5 run at `89e4f1c` completed its primary comparisons on
+both hosted Macs, then returned exit 2 for excessive variability. ARM warm-cache
+relative MAD was 14.02 percent for baseline and 15.36 percent for candidate.
+Intel nested lookup reached 10.31 percent for candidate, and Intel warm-cache
+MAD was 11.88 and 11.03 percent. These are inconclusive results under the
+unchanged 10 percent guard, not passing comparisons or timeout failures.
+All four ARM cache cells sped up roughly 25 percent during sampling. Intel's
+candidate latency offset concentrated in one cell. Raw launch observations
+support a shared timing disturbance and a copy-associated difference, but do
+not identify their causes. The later profiler cannot retrospectively establish
+the earlier host's scheduling or memory state.
+
+Schema 6 pins each fixture's configuration and environment, then replaces
+unused cache padding with 1024 referenced inputs. It adds an independently
+verified `--version` case. Scored durations still include parent capture and
+launch work through observed process completion. Twelve diagnostic boundaries
+separate capture-file setup, process creation, waiter dispatch and acceptance,
+completion and cleanup. A persistent owned waiter removes one thread creation
+per command. Appended raw-unit records and small checkpoints avoid repeatedly
+serializing all earlier command evidence. Every final sample remains retained.
+
+The separate profiler now records eight fixed chronological repetitions per
+cell, adjacent same-artifact startup controls, cache-state content and identity,
+parent resource observations and host snapshots outside profiled commands.
+Opt-in phase records add work counts and finer state/freshness routes. Stable
+state identity with changing launch time points to a different question from
+growing state, repeated dependency work or a new TeX run. Internal diagnostic
+timers and their external residuals cannot isolate loader time.
+
+The primary gate remains blocking across all four cases and has a fixed
+3600-second budget. CI retains the free ARM64 and Intel GitHub runners and
+uploads primary evidence before the bounded profiler. The two automatic
+full-suite attribution reruns were removed. The manually requested helper
+still validates schema 6 policy, timing, isolation and oracle contracts before
+using the unchanged executable artifacts. No diagnostic can replace a failed
+primary decision, discard slow samples or certify a leak-free implementation.

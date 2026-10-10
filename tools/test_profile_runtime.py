@@ -43,9 +43,10 @@ MEM = 'MemTotal: 1000 kB\nMemAvailable: 500 kB\nMemFree: 100 kB\nSwapTotal: 200 
 TOP = 'CPU usage: 1.00% user, 2.00% sys, 97.00% idle\nCPU usage: 3.00% user, 4.00% sys, 93.00% idle\n'
 
 
-def phase_record():
+def phase_record(version=2):
     phases = []
-    for name, source in profile.PHASE_SOURCES.items():
+    sources = profile.PHASE_SOURCES if version == 2 else profile.PHASE_SOURCES_V1
+    for name, source in sources.items():
         native = name in profile.NATIVE_REASONS
         phases.append({'name': name, 'status': 'unavailable' if native else 'available',
                        'elapsed_ms': None if native else 4.0, 'calls': 0 if native else 1,
@@ -53,9 +54,14 @@ def phase_record():
                        'scope': 'native_engine_internal' if native else 'subprocess_launch_and_wait'
                                 if name == 'tex_subprocess' else 'inclusive_wall_time_current_process',
                        'reason': profile.NATIVE_REASONS[name] if native else None})
-    return {'schema_version': 1, 'producer': 'tekai-rust', 'scope': 'cli_process',
+    record = {'schema_version': version, 'producer': 'tekai-rust', 'scope': 'cli_process',
             'source': 'opt_in_rust_instrumentation', 'untrusted': True, 'status': 'success',
             'elapsed_ms': 10.0, 'completed_spans_only': True, 'phases_overlap': True, 'phases': phases}
+    if version == 2:
+        record['counters'] = [{'name': name, 'value': 1, 'unit': unit,
+                              'scope': 'aggregate_observations_current_process'}
+                             for name, unit in profile.COUNTER_UNITS.items()]
+    return record
 
 
 def phase_line(data=None):
@@ -111,6 +117,69 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(profile.timer_command(None), [])
 
 
+class ParentAndStartupTests(unittest.TestCase):
+    def test_parent_inventory_has_gc_and_lifetime_rss_scope(self):
+        row = profile.parent_snapshot()
+        self.assertEqual(len(row['gc_counts']), 3)
+        self.assertEqual(len(row['gc_stats']), 3)
+        self.assertGreaterEqual(row['peak_rss_bytes'], 0)
+        self.assertIn('not current RSS', row['rss_scope'])
+        self.assertIn('outside', row['scope'])
+
+    def test_startup_wrapper_does_not_claim_binary_stderr_is_empty(self):
+        supervisor = mock.Mock(kind='gnu')
+        supervisor.execute.return_value = {'stdout': 'tekai 0.5.0\n', 'stderr_tail': GNU, 'seconds': .1}
+        fixture = {'command': ['tekai', '--version'], 'project': Path('/fixture'),
+                   'env': {}, 'expected_version': '0.5.0'}
+        result = profile.execute_profile_fixture(supervisor, fixture, 'cli-startup')
+        self.assertEqual(result['output_validation']['stderr_verification'], 'unavailable_shared_wrapper_channel')
+        self.assertFalse(result['output_validation']['used_for_gate'])
+        supervisor.kind = None
+        with self.assertRaises(benchmark.BenchmarkError):
+            profile.execute_profile_fixture(supervisor, fixture, 'cli-startup')
+        supervisor.execute.return_value['stderr_tail'] = ''
+        self.assertEqual(profile.execute_profile_fixture(supervisor, fixture, 'cli-startup')
+                         ['output_validation']['stderr_verification'], 'empty_verified')
+        supervisor.execute.return_value['stdout'] = 'tekai 0.0.0\n'
+        with self.assertRaises(benchmark.BenchmarkError):
+            profile.execute_profile_fixture(supervisor, fixture, 'cli-startup')
+
+
+class VolatilitySummaryTests(unittest.TestCase):
+    def row(self, seconds, count, label='candidate'):
+        data = phase_record()
+        data['counters'][0]['value'] = count
+        return {'case': 'warm-build-cache', 'phase': 'measurement', 'slot': 's0', 'label': label,
+                'status': 'verified', 'command_id': count, 'repetition': count,
+                'parent_seconds': seconds, 'phases': profile.parse_phases(phase_line(data)),
+                'parent_before': {'peak_rss_bytes': 100, 'allocated_blocks': 50, 'gc_counts': [1, 2, 3]},
+                'parent_after': {'peak_rss_bytes': 120, 'allocated_blocks': 55, 'gc_counts': [2, 2, 3]}}
+
+    def test_descriptive_within_cell_stages_and_route_variants(self):
+        summary = profile.volatility_summary([self.row(.002, 1), self.row(.004, 2)])
+        cohort = summary['cohorts'][0]
+        elapsed = cohort['parent_stages']['parent_seconds']
+        self.assertAlmostEqual(elapsed['median'], .003)
+        self.assertAlmostEqual(elapsed['median_absolute_deviation'], .001)
+        self.assertAlmostEqual(elapsed['relative_median_absolute_deviation'], 1 / 3)
+        self.assertEqual(elapsed['samples'], 2)
+        self.assertEqual(cohort['counter_observations']['state_bytes_read']['distinct_values'], [1, 2])
+        self.assertFalse(cohort['counter_observations']['state_bytes_read']['constant_observed'])
+        self.assertEqual(cohort['child_peak_rss']['status'], 'unavailable')
+        self.assertEqual(cohort['parent_resource_chronology'][1]['after_allocated_blocks'], 55)
+        self.assertFalse(cohort['used_for_gate'])
+        self.assertIn('No cross-artifact ratios', summary['scope'])
+
+    def test_legacy_counters_remain_unavailable_and_cells_do_not_pool(self):
+        row = self.row(.1, 1)
+        row['phases'] = profile.parse_phases(phase_line(phase_record(1)))
+        summary = profile.volatility_summary([row, self.row(.01, 1, label='baseline')])
+        self.assertEqual(len(summary['cohorts']), 2)
+        self.assertEqual(summary['cohorts'][0]['counter_observations']['metadata_checks']['status'], 'unavailable')
+        self.assertIsNone(summary['cohorts'][0]['counter_observations']['metadata_checks']['constant_observed'])
+        self.assertEqual(profile.describe([None, float('nan')], 'seconds')['status'], 'unavailable')
+
+
 class PhaseTests(unittest.TestCase):
     def test_valid_overlap_is_not_a_partition(self):
         result = profile.parse_phases(phase_line())
@@ -121,6 +190,13 @@ class PhaseTests(unittest.TestCase):
 
     def test_absent_baseline_and_native_protocol_unavailable(self):
         self.assertEqual(profile.parse_phases('other stderr\n')['status'], 'unavailable')
+
+    def test_legacy_protocol_explicitly_lacks_granular_inventory(self):
+        result = profile.parse_phases(phase_line(phase_record(1)))
+        self.assertEqual(result['status'], 'reported')
+        self.assertEqual(result['compatibility']['granular_observations'], 'unavailable_legacy_schema')
+        self.assertFalse(result['compatibility']['counters_available'])
+        self.assertIn('input_metadata', result['compatibility']['missing_phase_names'])
 
     def test_unfinished_calls_are_not_invented(self):
         data = phase_record()
@@ -133,7 +209,7 @@ class PhaseTests(unittest.TestCase):
         mutations = ({}, [], {'bad': 1})
         for data in mutations:
             self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
-        for key, value in (('schema_version', True), ('schema_version', 2), ('producer', 'other'),
+        for key, value in (('schema_version', True), ('schema_version', 3), ('producer', 'other'),
                            ('scope', 'tree'), ('source', 'guessed'), ('untrusted', False),
                            ('completed_spans_only', False), ('phases_overlap', False),
                            ('status', 'pass'), ('status', []), ('elapsed_ms', -1), ('elapsed_ms', True),
@@ -170,17 +246,26 @@ class PhaseTests(unittest.TestCase):
         for update in ({'status': 'available', 'elapsed_ms': 1, 'calls': 1, 'reason': None},
                        {'reason': 'other'}, {'calls': 1}, {'elapsed_ms': 0}):
             data = phase_record()
-            data['phases'][-1].update(update)
+            data['phases'][list(profile.PHASE_SOURCES).index('format_initialization')].update(update)
             self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
 
     def test_finite_capture_and_json_limits(self):
         for text, truncated in ((phase_line() + phase_line(), False), (phase_line(), True),
-                                ('TEKAI_PROFILE {\n', False), ('TEKAI_PROFILE ' + 'x' * 8192, False),
+                                ('TEKAI_PROFILE {\n', False), ('TEKAI_PROFILE ' + 'x' * profile.MAX_PHASE_BYTES, False),
                                 ('TEKAI_PROFILE ' + '[' * 1100 + '0' + ']' * 1100, False)):
             self.assertEqual(profile.parse_phases(text, truncated)['status'], 'invalid')
         data = phase_record()
         data['phases'][0]['source'] = 'x' * 257
         self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
+
+    def test_fixed_counter_contract_rejects_wrong_routes_and_types(self):
+        for edit in (lambda d: d['counters'].pop(), lambda d: d['counters'].__setitem__(0, d['counters'][1]),
+                     lambda d: d['counters'][0].update(value=-1), lambda d: d['counters'][0].update(value=True),
+                     lambda d: d['counters'][0].update(value=1.5), lambda d: d['counters'][0].update(unit='seconds'),
+                     lambda d: d['counters'][0].update(scope='whole_job'), lambda d: d['counters'][0].update(extra=1)):
+            data = phase_record()
+            edit(data)
+            self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
 
 
 class HostParserTests(unittest.TestCase):
@@ -271,6 +356,7 @@ class FixtureFiles(unittest.TestCase):
             self.sources[label] = path
         self.metadata = {'runner_label': 'fixture', 'toolchain': 'fixture',
                          **{label: {'revision': 'fixture-' + label, 'build_command': 'fixture-only',
+                                    'expected_version': '0.5.0' if label == 'baseline' else '0.6.0-rc.1+test',
                                     'artifact_sha256': benchmark.executable_sha256(path)}
                             for label, path in self.sources.items()}}
         self.primary = {'schema_version': 5, 'gate': True, 'status': 'inconclusive', 'exit_code': 1,
@@ -300,12 +386,33 @@ class FixtureFiles(unittest.TestCase):
 
 class BindingTests(FixtureFiles):
     def test_primary_status_is_preserved_not_rescored(self):
-        for schema in (4, 5):
+        for schema in (4, 5, 6):
             for status in ('pass', 'fail', 'inconclusive', 'error', 'incomplete'):
                 data = copy.deepcopy(self.primary)
                 data.update(schema_version=schema, status=status)
+                if schema == 6:
+                    data['report_kind'] = 'complete-report'
+                    data['raw_command_journal'] = {'path': str(self.root / 'primary.raw.fixture.jsonl'),
+                                                  'format': 'tekai-command-journal-v1'}
                 self.assertEqual(profile.bind_primary(data, self.metadata, self.sources),
                                  {label: self.metadata[label]['artifact_sha256'] for label in benchmark.LABELS})
+
+    def test_compact_schema_6_checkpoint_cannot_bind_as_final_primary(self):
+        data = {**self.primary, 'schema_version': 6, 'report_kind': 'compact-checkpoint'}
+        with self.assertRaisesRegex(ValueError, 'final complete report'):
+            profile.bind_primary(data, self.metadata, self.sources)
+
+    def test_schema_6_requires_journal_but_legacy_reports_do_not(self):
+        data = {**self.primary, 'schema_version': 6, 'report_kind': 'complete-report'}
+        with self.assertRaisesRegex(ValueError, 'raw command journal binding'):
+            profile.bind_primary(data, self.metadata, self.sources)
+        with self.assertRaisesRegex(ValueError, 'raw command journal binding'):
+            profile.primary_journal_path(data, self.primary_path)
+        for schema in (4, 5):
+            legacy = {**self.primary, 'schema_version': schema}
+            self.assertEqual(profile.bind_primary(legacy, self.metadata, self.sources),
+                             {label: self.metadata[label]['artifact_sha256'] for label in benchmark.LABELS})
+            self.assertIsNone(profile.primary_journal_path(legacy, self.primary_path))
 
     def test_rejects_unbound_primary(self):
         for edit in (lambda d: d.update(gate=False), lambda d: d.update(schema_version=True),
@@ -338,12 +445,33 @@ class BindingTests(FixtureFiles):
             profile.read_json(self.primary_path)
 
     def test_finite_cli_bounds(self):
-        for arguments in (('--repeats', '0'), ('--repeats', '4'), ('--timeout', 'nan'),
-                          ('--timeout', '31'), ('--budget', 'inf'), ('--budget', '0')):
+        for arguments in (('--repeats', '0'), ('--repeats', '17'), ('--timeout', 'nan'),
+                          ('--timeout', '31'), ('--budget', 'inf'), ('--budget', '0'), ('--budget', '601')):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
                 profile.main(self.argv(*arguments))
             self.assertEqual(error.exception.code, 2)
             self.assertFalse(self.output.exists())
+
+    def test_primary_journal_is_bound_and_cannot_be_overwritten(self):
+        journal = self.root / 'primary.raw.fixture.jsonl'
+        journal.write_bytes(b'{"sequence":0}\n')
+        self.primary['raw_command_journal'] = {'path': str(journal), 'bytes': journal.stat().st_size,
+            'sha256': benchmark.executable_sha256(journal), 'format': 'tekai-command-journal-v1'}
+        self.primary_path.write_text(json.dumps(self.primary))
+        self.assertEqual(profile.primary_journal_path(self.primary, self.primary_path), journal)
+        os.link(journal, self.output)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            profile.main(self.argv())
+        self.assertEqual(journal.read_bytes(), b'{"sequence":0}\n')
+
+    def test_unbounded_or_external_journal_rejected_before_reading(self):
+        for journal in ({'path': '/dev/zero', 'bytes': 0, 'sha256': '0' * 64,
+                         'format': 'tekai-command-journal-v1'},
+                        {'path': str(self.primary_path), 'bytes': profile.MAX_REPORT_BYTES + 1,
+                         'sha256': '0' * 64, 'format': 'tekai-command-journal-v1'}):
+            data = {**self.primary, 'raw_command_journal': journal}
+            with self.assertRaises(ValueError):
+                profile.primary_journal_path(data, self.primary_path)
 
     def test_outputs_cannot_alias_protected_inputs(self):
         original = self.primary_path.read_bytes()
@@ -428,11 +556,16 @@ class DriverTests(FixtureFiles):
             commands.append((list(map(str, command)), dict(env)))
             active = supervisor.active is not None and str(command[0]) != self.verifiers['pdftotext']
             return {'command_id': supervisor.counter, 'seconds': .01, 'parent_timing': [10, 10.001, 10.01],
+                    'command_timing': [10, 10, 10.0001, 10.0002, 10.0008, 10.0009,
+                                       10.001, 10.0011, 10.0012, 10.01, 10.0101, 10.0102],
                     'stderr_tail': (GNU if timer_available and active else '') +
                                    (phase_line() if active and supervisor.active['label'] == 'candidate'
-                                    and supervisor.active['case'] == 'warm-build-cache' else ''), 'stdout': '{}'}
+                                    and supervisor.active['case'] == 'warm-build-cache'
+                                    and supervisor.active['phase'] != 'launch_only_control' else ''), 'stdout': '{}'}
 
         def fixture_run(supervisor, fixture, case, initializing=False):
+            if case == 'cli-startup':
+                self.assertEqual(fixture['expected_version'], self.metadata[fixture['label']]['expected_version'])
             result = supervisor.execute(fixture['command'], fixture['project'], fixture['env'])
             if mutation:
                 mutation(supervisor, fixture)
@@ -440,6 +573,8 @@ class DriverTests(FixtureFiles):
                 raise KeyboardInterrupt if interrupt else benchmark.BenchmarkError('fixture oracle failed')
             oracle = supervisor.execute([fixture['pdftotext'], 'oracle'], fixture['project'], fixture['env'])
             result['output_validation'] = {'text_verified': True, 'verifier_command_id': oracle['command_id']}
+            if case == 'cli-startup':
+                result['output_validation']['expected_version'] = fixture['expected_version']
             if case == 'warm-build-cache':
                 result['reported_build_timing'] = {'untrusted': True, 'status': 'reported', 'reported_elapsed_ms': 1}
             return result
@@ -462,7 +597,10 @@ class DriverTests(FixtureFiles):
                 mock.patch.object(profile.ProfileSupervisor, 'probe_timer', timer), \
                 mock.patch.object(benchmark.Supervisor, 'execute', execute), \
                 mock.patch.object(benchmark, 'make_fixture', side_effect=make_fixture), \
+                mock.patch.object(benchmark, 'cache_state_snapshot', return_value={'sha256': 'a' * 64,
+                                       'recorded_input_count': 1025, 'used_for_gate': False}), \
                 mock.patch.object(benchmark, 'execute_fixture', side_effect=fixture_run), \
+                mock.patch.object(profile, 'execute_profile_fixture', side_effect=fixture_run), \
                 mock.patch.object(profile, 'host_snapshot', side_effect=host):
             code = profile.main(self.argv())
         self.assertEqual(self.primary_path.read_bytes(), original_primary)
@@ -477,9 +615,9 @@ class DriverTests(FixtureFiles):
         self.assertEqual(report['primary']['exit_code'], 1)
         self.assertTrue(report['diagnostic_only'])
         self.assertFalse(report['used_for_gate'])
-        self.assertEqual(len(report['commands']), 36)
-        self.assertEqual(len(report['units']), 9)
-        self.assertEqual(len(hosts), 18)
+        self.assertEqual(len(report['commands']), 176)
+        self.assertEqual(len(report['units']), 36)
+        self.assertEqual(len(hosts), 72)
         self.assertTrue(all(row['status'] == 'verified' and row['output_validation']['text_verified'] for row in report['commands']))
         self.assertTrue(all(row['unchanged'] for row in report['executables'] + report['protected_inputs']))
         self.assertTrue(report['primary']['unchanged'])
@@ -487,12 +625,18 @@ class DriverTests(FixtureFiles):
         for row in report['commands']:
             self.assertEqual(row['parent_timing'], [10, 10.001, 10.01])
             self.assertAlmostEqual(row['launch_setup_seconds'], .001)
-            self.assertIsNone(row['popen_latency_seconds'])
+            self.assertAlmostEqual(row['popen_latency_seconds'], .0006)
+            self.assertAlmostEqual(row['capture_setup_seconds'], .0001)
+            self.assertAlmostEqual(row['waiter_dispatch_seconds'], .0001)
+            self.assertAlmostEqual(row['cleanup_seconds'], .0001)
+            self.assertIn('gc_counts', row['parent_before'])
+            self.assertIn('peak_rss_bytes', row['parent_after'])
             self.assertNotIn('speedup', row)
             self.assertEqual(Path(row['command'][0]).name, 'tekai')
             self.assertTrue(row['finish_unix_ns'] >= row['launch_unix_ns'])
             self.assertEqual(row['resources']['status'], 'reported')
-            expected = 'reported' if row['label'] == 'candidate' and row['case'] == 'warm-build-cache' else 'unavailable'
+            expected = 'reported' if row['label'] == 'candidate' and row['case'] == 'warm-build-cache' \
+                                    and row['phase'] != 'launch_only_control' else 'unavailable'
             self.assertEqual(row['phases']['status'], expected)
         for command, env in commands:
             if command[0] == self.verifiers['pdftotext']:
@@ -504,6 +648,18 @@ class DriverTests(FixtureFiles):
         self.assertEqual(self.primary_path.with_suffix('.md').read_text(), 'Original primary summary')
         self.assertTrue(any(row['path'] == str(self.primary_path.with_suffix('.md')) and row['unchanged']
                             for row in report['protected_inputs']))
+        controls = [row for row in report['commands'] if row['phase'] == 'launch_only_control']
+        self.assertEqual(len(controls), 32)
+        self.assertEqual({row['repetition'] for row in controls}, set(range(8)))
+        self.assertTrue(all(row['same_artifact_sha256'] == self.metadata[row['label']]['artifact_sha256']
+                            for row in controls))
+        for row in controls:
+            self.assertEqual(row['output_validation']['expected_version'], self.metadata[row['label']]['expected_version'])
+        self.assertNotEqual(self.metadata['baseline']['expected_version'], self.metadata['candidate']['expected_version'])
+        cache_rows = [row for row in report['commands'] if row['case'] == 'warm-build-cache'
+                      and row['phase'] == 'measurement']
+        self.assertTrue(all(row['cache_state_unchanged'] for row in cache_rows))
+        self.assertTrue(all(row['unit_id'] in {unit['unit_id'] for unit in report['units']} for row in report['commands']))
 
     def test_partial_oracle_failure_preserves_command_evidence_and_stops(self):
         code, report, commands, hosts = self.run_model(fail_at=1)
@@ -638,7 +794,7 @@ class SupervisorTests(unittest.TestCase):
     def test_oversized_stderr_fails_and_marks_parsers_incomplete(self):
         with tempfile.TemporaryDirectory() as temporary:
             supervisor = profile.ProfileSupervisor(Path(temporary), 2, time.monotonic() + 5)
-            command = [sys.executable, '-B', '-c', 'import sys; sys.stderr.write("x" * 17000)']
+            command = [sys.executable, '-B', '-c', 'import sys; sys.stderr.write("x" * ' + str(profile.MAX_TEXT_BYTES + 100) + ')']
             supervisor.active = {'command': command}
             try:
                 with self.assertRaises(benchmark.BenchmarkError):
@@ -661,7 +817,11 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(result['stdout'], 'fixture\n')
             self.assertEqual(len(row['parent_timing']), 3)
             self.assertGreaterEqual(row['launch_setup_seconds'], 0)
-            self.assertIsNone(row['popen_latency_seconds'])
+            self.assertGreaterEqual(row['popen_latency_seconds'], 0)
+            self.assertGreaterEqual(row['capture_setup_seconds'], 0)
+            self.assertGreaterEqual(row['waiter_dispatch_seconds'], 0)
+            self.assertEqual(len(row['command_timing']), 12)
+            self.assertIn('allocated_blocks', row['parent_after'])
             self.assertEqual(row['resources']['status'], 'unavailable')
             self.assertEqual(row['phases']['status'], 'unavailable')
             self.assertEqual(supervisor.owned, {})

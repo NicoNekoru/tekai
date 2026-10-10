@@ -6,6 +6,8 @@ Timings are advisory unless --gate is selected. A gate can be inconclusive.
 """
 
 import argparse
+import ctypes
+import gc
 from fractions import Fraction
 import hashlib
 import json
@@ -13,7 +15,9 @@ import math
 import os
 from pathlib import Path
 import platform
+import queue
 import re
+import resource
 import shutil
 import signal
 import statistics
@@ -24,17 +28,23 @@ import threading
 import time
 
 from performance_ci import PerformanceCI
+from performance_build import VERSION
 from benchmark_sampling import (DEFAULT_PAIRS, MAX_PAIRS, DEFAULT_BUDGET, MAX_BUDGET,
                                 SCHEMA_VERSION, MAX_REPORT_BYTES, sign_interval_plan, prospective_power_study)
-from runtime_fixtures import document, pad, png  # Keep the existing helper imports usable.
+from runtime_fixtures import dependency_document, document, pad, png  # Keep existing helper imports usable.
 
 REPO = Path(__file__).resolve().parent.parent
-CASES = ('nested-lookup', 'image-compile', 'warm-build-cache')
+CASES = ('cli-startup', 'nested-lookup', 'image-compile', 'warm-build-cache')
 LABELS = ('baseline', 'candidate')
 SLOTS = ('s0', 's1')
 REPLICAS = ('r0', 'r1')
 PAIRS_PER_UNIT = 4
 MAX_CAPTURE_BYTES = 1024 * 1024
+MAX_STATE_BYTES = 8 * 1024 * 1024
+MAX_JOURNAL_RECORD_BYTES = 8 * 1024 * 1024
+CACHE_DEPENDENCY_COUNT = 1024
+EMPTY_CONFIG_BYTES = b'# Isolated benchmark configuration. No inherited options.\n'
+EMPTY_CONFIG_SHA256 = hashlib.sha256(EMPTY_CONFIG_BYTES).hexdigest()
 CALIBRATION_HEADROOM = 2.0
 CALIBRATION_PAIRS = 2
 CALIBRATION_ITERATIONS = 32
@@ -45,15 +55,23 @@ FAMILY_ALPHA = 0.05
 TIMING_METADATA = {
     'clock': 'time.monotonic', 'unit': 'seconds',
     'parent_timing_fields': ['start', 'launch_end', 'completion'],
+    'command_timing_fields': ['start', 'capture_start', 'capture_files_open', 'popen_start', 'popen_return',
+                             'capture_files_closed', 'launch_end', 'waiter_dispatch', 'waiter_accepted',
+                             'completion', 'cleanup_start', 'cleanup_end'],
     'command_scope': 'Parent capture setup through blocking-wait completion, including launch and completion scheduling.',
     'launch_scope': 'Parent capture setup and Popen return, not isolated loader time.',
+    'cleanup_scope': 'Owned-group kill/reap, completed-wait confirmation, bounded capture reads and capture-file removal.',
     'unit_scope': 'Unit boundaries also include between-command cleanup and output verification, outside scored command sums.',
     'checkpoint_scope': 'Atomic checkpoint writes occur between units, outside command and unit timestamps.',
+    'waiter_scope': 'One owned persistent worker blocks in process.wait. Acceptance and completion include worker scheduling.',
     'used_for_gate': False,
 }
 SEARCH_ENV_VARS = frozenset(('WEB2C', 'INDEXSTYLE', 'BSTINPUTS', 'TFMFONTS', 'AFMFONTS',
                             'ENCFONTS', 'SFDFONTS', 'PKFONTS', 'GFFONTS', 'VFFONTS',
                             'T1FONTS', 'TTFONTS', 'OPENTYPEFONTS'))
+ISOLATED_ENVIRONMENT_KEYS = ('HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'XDG_CACHE_HOME',
+                             'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'APPDATA', 'LOCALAPPDATA', 'PATH',
+                             'LC_ALL', 'LANG', 'TZ', 'TEKAI_TEXMF_MODE', 'TEXINPUTS')
 
 
 def executable_sha256(path):
@@ -332,6 +350,52 @@ class Supervisor(PerformanceCI):
         self.owned, self.counter = {}, 0
         self.report = {'observations': []}
         self.timer_reason = 'RSS is not measured by the paired benchmark'
+        self._wait_jobs = queue.Queue(maxsize=1)
+        self._waiter = None
+        self._execute_lock = threading.Lock()
+        self._closed = False
+
+    def _wait(self):
+        while True:
+            job = self._wait_jobs.get()
+            if job is None:
+                return
+            process, completed, observation = job
+            try:
+                observation['accepted'] = time.monotonic()
+                observation['code'] = process.wait()
+                observation['completion'] = time.monotonic()
+                observation['seconds'] = observation['completion'] - process.started_at
+            except Exception as error:
+                observation['error'] = f'{type(error).__name__}: {error}'[:1024]
+            finally:
+                # Do not retain the previous child or captures while idle.
+                del job, process, observation
+                completed.set()
+                del completed
+
+    def _ensure_waiter(self):
+        if self._closed:
+            raise BenchmarkError('Supervisor is closed')
+        if self._waiter is None:
+            self._waiter = threading.Thread(target=self._wait, name='tekai-benchmark-waiter', daemon=True)
+            self._waiter.start()
+        elif not self._waiter.is_alive():
+            raise BenchmarkError('Persistent process waiter stopped unexpectedly')
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            self._closed = True
+            if self._waiter is not None and self._waiter.is_alive():
+                try:
+                    self._wait_jobs.put(None, timeout=5)
+                except queue.Full as error:
+                    raise BenchmarkError('Persistent process waiter did not accept shutdown') from error
+                self._waiter.join(timeout=5)
+                if self._waiter.is_alive():
+                    raise BenchmarkError('Persistent process waiter did not finish during cleanup')
 
     def persist(self):
         # Inherited stop normally sees observe=False. A signal between launch
@@ -345,6 +409,15 @@ class Supervisor(PerformanceCI):
         return remaining
 
     def execute(self, command, cwd, env):
+        if not self._execute_lock.acquire(blocking=False):
+            raise BenchmarkError('Supervisor accepts only one command at a time')
+        try:
+            return self._execute(command, cwd, env)
+        finally:
+            self._execute_lock.release()
+
+    def _execute(self, command, cwd, env):
+        self._ensure_waiter()
         allowance = min(self.timeout, self.remaining())
         started = time.monotonic()
         process = self.start(command, cwd, env)
@@ -353,16 +426,8 @@ class Supervisor(PerformanceCI):
         process.started_at = started
         completed, observation = threading.Event(), {}
 
-        def wait():
-            try:
-                observation['code'] = process.wait()
-                observation['completion'] = time.monotonic()
-                observation['seconds'] = observation['completion'] - process.started_at
-            finally:
-                completed.set()
-
-        waiter = threading.Thread(target=wait, daemon=True)
-        waiter.start()
+        dispatch = time.monotonic()
+        self._wait_jobs.put_nowait((process, completed, observation))
         failure = None
         try:
             while not completed.wait(min(0.05, max(0.001, process.started_at + allowance - time.monotonic()))):
@@ -375,10 +440,16 @@ class Supervisor(PerformanceCI):
         finally:
             # The inherited method kills the exact owned group even after a
             # successful parent exit, then reaps and unregisters the process.
-            self.stop(process)
-            waiter.join(timeout=5)
-        if waiter.is_alive():
+            cleanup_start = time.monotonic()
+            try:
+                self.stop(process)
+            finally:
+                finished = completed.wait(timeout=5)
+                cleanup_end = time.monotonic()
+        if not finished:
             raise BenchmarkError('Process waiter did not finish after owned-group cleanup')
+        if 'error' in observation:
+            raise BenchmarkError('Process waiter failed: ' + observation['error'])
         stdout, stderr, truncated = self.captured(process)
         if observation.get('seconds', 0) > allowance:
             failure = failure or 'Command deadline exceeded'
@@ -389,8 +460,11 @@ class Supervisor(PerformanceCI):
                                  + stdout[-8192:] + '\n' + stderr)
         for path in process.capture_paths:
             path.unlink()
+        cleanup_end = time.monotonic()
         return {'command_id': process.command_id, 'seconds': observation['seconds'],
                 'parent_timing': [started, launch_end, observation['completion']],
+                'command_timing': [started, *process.launch_timing, launch_end, dispatch,
+                                   observation['accepted'], observation['completion'], cleanup_start, cleanup_end],
                 'stdout': stdout, 'stderr_tail': stderr}
 
 
@@ -406,6 +480,7 @@ def isolated_environment(root):
                XDG_CACHE_HOME=str(locations['xdg-cache']), XDG_CONFIG_HOME=str(locations['xdg-config']),
                XDG_DATA_HOME=str(locations['xdg-data']), APPDATA=str(locations['xdg-data']),
                LOCALAPPDATA=str(locations['xdg-cache']), PATH='', TEKAI_TEXMF_MODE='bundled')
+    env.update(LC_ALL='C', LANG='C', TZ='UTC')
     for kind in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX'):
         path = root / ('cache-' + kind.lower())
         path.mkdir()
@@ -416,9 +491,14 @@ def isolated_environment(root):
 def make_fixture(root, binary, case):
     project, out = root / 'project', root / 'out'
     document(project)
+    config = project / 'tekai.toml'
+    config.write_bytes(EMPTY_CONFIG_BYTES)
     out.mkdir()
     env = isolated_environment(root)
-    if case in ('nested-lookup', 'warm-build-cache'):
+    dependencies = []
+    if case == 'warm-build-cache':
+        dependencies = dependency_document(project, CACHE_DEPENDENCY_COUNT)
+    if case == 'nested-lookup':
         pad(project, 1000)
     if case == 'nested-lookup':
         nested = project / 'content/ordinary'
@@ -431,11 +511,61 @@ def make_fixture(root, binary, case):
         body = '\n'.join(f'\\includegraphics[width=1cm]{{i{index}.png}}\\newpage' for index in range(8))
         document(project, '\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n' + body + '\n\\end{document}\n')
     env['TEXINPUTS'] = f'{project}//:{out}//:'
-    command = [binary, 'build', project / 'main.tex', '--out-dir', out, '--once', '--quiet', '--report-json'] \
-        if case == 'warm-build-cache' else [binary, '__tekai-engine', '-interaction=nonstopmode',
-          '-halt-on-error', '-no-shell-escape', f'-output-directory={out}', 'main.tex']
+    command = [binary, 'build', project / 'main.tex', '--config', config,
+               '--out-dir', out, '--once', '--quiet', '--report-json'] if case == 'warm-build-cache' else \
+        ([binary, '--version'] if case == 'cli-startup' else
+         [binary, '__tekai-engine', '-interaction=nonstopmode', '-halt-on-error', '-no-shell-escape',
+          f'-output-directory={out}', 'main.tex'])
     return {'root': root, 'project': project, 'out': out, 'env': env,
-            'command': command, 'input_sha256': fixture_sha256(project)}
+            'command': command, 'config': config, 'dependencies': dependencies,
+            'expected_dependency_paths': frozenset(str(path.resolve()) for path in dependencies),
+            'expected_main_path': str((project / 'main.tex').resolve()),
+            'input_sha256': fixture_sha256(project)}
+
+
+def cache_state_snapshot(fixture, establish=False):
+    """Bounded state oracle at batch boundaries, outside every command timer."""
+    path = fixture['out'] / '.tekai-main.state.toml'
+    metadata = path.stat()
+    if not 0 < metadata.st_size <= MAX_STATE_BYTES:
+        raise BenchmarkError('Build-cache state exceeds its finite size limit or is empty')
+    with path.open('rb') as handle:
+        data = handle.read(MAX_STATE_BYTES + 1)
+    if len(data) != metadata.st_size or len(data) > MAX_STATE_BYTES:
+        raise BenchmarkError('Build-cache state changed while the bounded oracle read it')
+    try:
+        source = data.decode('utf-8')
+        blocks = re.findall(r'(?ms)^\[\[inputs\]\]\n(.*?)(?=^\[|\Z)', source)
+        paths = []
+        for block in blocks:
+            fields = re.findall(r'(?m)^path = (.+)$', block)
+            if len(fields) != 1:
+                raise ValueError('Input table lacks one serialized path')
+            value = json.loads(fields[0])
+            if not isinstance(value, str):
+                raise ValueError('Input path is not a string')
+            paths.append(value)
+    except (UnicodeError, ValueError) as error:
+        raise BenchmarkError('Build-cache state has unsupported recorded-input serialization') from error
+    if len(blocks) != len(re.findall(r'(?m)^\[\[inputs\]\]$', source)) or len(paths) != len(set(paths)):
+        raise BenchmarkError('Build-cache state has malformed or duplicate recorded inputs')
+    expected = fixture.get('expected_dependency_paths')
+    if expected is None:
+        expected = frozenset(str(path.resolve()) for path in fixture.get('dependencies', []))
+    main_path = fixture.get('expected_main_path') or str((fixture['project'] / 'main.tex').resolve())
+    if not expected <= set(paths) or main_path not in paths:
+        raise BenchmarkError('Build-cache state omits genuinely referenced fixture inputs')
+    row = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data),
+           'mtime_ns': metadata.st_mtime_ns, 'ctime_ns': metadata.st_ctime_ns,
+           'device': metadata.st_dev, 'inode': metadata.st_ino,
+           'recorded_input_count': len(paths), 'referenced_dependency_count': len(expected),
+           'input_paths_sha256': hashlib.sha256(json.dumps(sorted(paths), ensure_ascii=False).encode('utf-8')).hexdigest(),
+           'all_referenced_inputs_verified': True, 'used_for_gate': False}
+    if establish:
+        fixture['expected_cache_state'] = row
+    elif row != fixture.get('expected_cache_state'):
+        raise BenchmarkError('Build-cache state mutated during the verified cache-hit workload')
+    return row
 
 
 def check_pdf(path):
@@ -547,6 +677,17 @@ def reported_build_timing(report, parent_seconds):
 
 
 def execute_fixture(supervisor, fixture, case, initializing=False, validate_output=True):
+    if case == 'cli-startup':
+        result = supervisor.execute(fixture['command'], fixture['project'], fixture['env'])
+        version = fixture.get('expected_version')
+        if not isinstance(version, str) or len(version) > 128 or VERSION.fullmatch(version) is None:
+            raise BenchmarkError('CLI startup needs an independently recorded package version')
+        expected = f'tekai {version}\n'
+        if result['stdout'] != expected or result['stderr_tail']:
+            raise BenchmarkError('CLI startup output differs from the selected revision package version')
+        result['output_validation'] = {'expected_stdout': expected, 'stdout_verified': True,
+                                       'stderr_empty': True, 'expected_version': version}
+        return result
     pdf = fixture['out'] / 'main.pdf'
     if case != 'warm-build-cache':
         pdf.unlink(missing_ok=True)
@@ -561,6 +702,8 @@ def execute_fixture(supervisor, fixture, case, initializing=False, validate_outp
                 or type(report.get('tex_runs')) is not int or report['tex_runs'] != expected_runs:
             raise BenchmarkError('Build-cache fixture did not take the expected compile/cache-hit path')
         result['reported_build_timing'] = reported_build_timing(report, result['seconds'])
+        if initializing:
+            result['cache_state'] = cache_state_snapshot(fixture, establish=True)
     check_pdf(pdf)
     if validate_output:
         result['output_validation'] = check_fixture_output(supervisor, fixture, case)
@@ -569,16 +712,21 @@ def execute_fixture(supervisor, fixture, case, initializing=False, validate_outp
 
 def batch(supervisor, fixture, case, iterations):
     observations = []
+    cache_before = cache_state_snapshot(fixture) if case == 'warm-build-cache' else None
     for index in range(iterations):
         result = execute_fixture(supervisor, fixture, case, validate_output=index == iterations - 1)
         observation = {'command_id': result['command_id'], 'seconds': result['seconds'],
-                       'parent_timing': result['parent_timing']}
+                       'parent_timing': result['parent_timing'], 'command_timing': result['command_timing']}
         if 'reported_build_timing' in result:
             observation['reported_build_timing'] = result['reported_build_timing']
         observations.append(observation)
-    return {'seconds': sum(item['seconds'] for item in observations),
+    row = {'seconds': sum(item['seconds'] for item in observations),
             'iterations': iterations, 'commands': observations,
             'output_validation': result['output_validation']}
+    if cache_before is not None:
+        row.update(cache_state_before=cache_before, cache_state_after=cache_state_snapshot(fixture),
+                   cache_state_unchanged=True)
+    return row
 
 
 def load_metadata(path):
@@ -598,11 +746,94 @@ def load_metadata(path):
         if 'artifact_sha256' in side and (not isinstance(side['artifact_sha256'], str)
                                           or re.fullmatch(r'[0-9a-f]{64}', side['artifact_sha256']) is None):
             raise ValueError('Metadata requires ' + label + ' artifact_sha256 to be an exact lowercase SHA-256')
+        if not isinstance(side.get('expected_version'), str) or len(side['expected_version']) > 128 \
+                or VERSION.fullmatch(side['expected_version']) is None:
+            raise ValueError('Metadata requires ' + label + ' expected_version from the selected revision package manifest')
     return metadata
 
 
 class ReportTooLarge(BenchmarkError):
     pass
+
+
+class CommandJournal:
+    """Owned append-only raw evidence. Only one active unit remains in memory."""
+    def __init__(self, output):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = tempfile.NamedTemporaryFile(mode='w+b', dir=output.parent,
+                                                  prefix=output.stem + '.raw.', suffix='.jsonl', delete=False)
+        self.path = Path(self.handle.name)
+        self.digest = hashlib.sha256()
+        self.bytes = 0
+        self.records = 0
+        self.batches = []
+        self.observations = []
+
+    def binding(self):
+        return {'path': str(self.path), 'sha256': self.digest.hexdigest(), 'bytes': self.bytes,
+                'records': self.records, 'format': 'tekai-command-journal-v1',
+                'maximum_bytes': MAX_REPORT_BYTES, 'maximum_record_bytes': MAX_JOURNAL_RECORD_BYTES,
+                'scope': 'All completed warmup, pilot and formal batch command records. Initialization remains in report.'}
+
+    def append(self, case_index, phase, rows):
+        started = time.monotonic()
+        entries = [{'case_index': case_index, 'phase': phase, 'row_index': index, 'label': label,
+                    'commands': batch['commands']} for index, label, batch in rows]
+        data = (json.dumps({'sequence': self.records, 'batches': entries}, separators=(',', ':'),
+                           allow_nan=False) + '\n').encode('utf-8')
+        if len(data) > MAX_JOURNAL_RECORD_BYTES or self.bytes + len(data) > MAX_REPORT_BYTES:
+            raise ReportTooLarge('Raw command journal exceeds its finite output limit; no samples dropped')
+        # Keep active commands attached until the complete append has flushed.
+        written = self.handle.write(data)
+        self.handle.flush()
+        ended = time.monotonic()
+        if written != len(data):
+            raise BenchmarkError('Raw command journal append was incomplete')
+        self.digest.update(data)
+        self.bytes += len(data)
+        for batch_index, (_index, _label, batch) in enumerate(rows):
+            batch['command_journal'] = {'record': self.records, 'batch': batch_index}
+            batch['commands'] = []
+            self.batches.append(batch)
+        self.records += 1
+        self.observations.append({'sequence': self.records - 1, 'case_index': case_index, 'phase': phase,
+                                  'monotonic_start_seconds': started, 'monotonic_end_seconds': ended,
+                                  'seconds': ended - started, 'record_bytes': len(data), 'used_for_gate': False,
+                                  'scope': 'Command journal serialization, append and flush outside scored command/unit clocks.'})
+
+    def restore(self):
+        """Restore once after scored work. Do not trust a modified journal."""
+        self.handle.flush()
+        selected, opened = self.path.stat(), os.fstat(self.handle.fileno())
+        if self.path.is_symlink() or (selected.st_dev, selected.st_ino) != (opened.st_dev, opened.st_ino):
+            raise BenchmarkError('Raw command journal path changed or became an alias')
+        self.handle.seek(0)
+        digest, size, restored = hashlib.sha256(), 0, 0
+        for sequence in range(self.records):
+            line = self.handle.readline(MAX_JOURNAL_RECORD_BYTES + 1)
+            if not line.endswith(b'\n') or len(line) > MAX_JOURNAL_RECORD_BYTES:
+                raise BenchmarkError('Raw command journal contains an incomplete or oversized record')
+            digest.update(line)
+            size += len(line)
+            record = json.loads(line)
+            if record.get('sequence') != sequence or not isinstance(record.get('batches'), list):
+                raise BenchmarkError('Raw command journal sequence changed')
+            for batch_index, entry in enumerate(record['batches']):
+                if restored >= len(self.batches):
+                    raise BenchmarkError('Raw command journal gained unexpected batches')
+                batch = self.batches[restored]
+                if batch['command_journal'] != {'record': sequence, 'batch': batch_index} \
+                        or not isinstance(entry.get('commands'), list) \
+                        or len(entry['commands']) != batch['iterations']:
+                    raise BenchmarkError('Raw command journal batch binding changed')
+                batch['commands'] = entry['commands']
+                restored += 1
+        if self.handle.read(1) or size != self.bytes or digest.hexdigest() != self.digest.hexdigest() \
+                or restored != len(self.batches):
+            raise BenchmarkError('Raw command journal bytes or hash changed')
+
+    def close(self):
+        self.handle.close()
 
 
 def atomic_text(path, value):
@@ -672,6 +903,100 @@ def host_snapshot(case, unit_index):
     return row
 
 
+def parent_snapshot():
+    """Cumulative parent resources, sampled outside command and unit clocks."""
+    row = {'monotonic_seconds': time.monotonic(), 'used_for_gate': False,
+           'source': 'resource.getrusage(RUSAGE_SELF), gc and threading',
+           'scope': 'Benchmark parent only. CPU and peak RSS are cumulative, not child costs.',
+           'cpu_status': 'unavailable', 'peak_rss_status': 'unavailable',
+           'current_rss_status': 'unavailable',
+           'current_rss_unavailable_reason': 'No current-RSS observation implemented on this platform',
+           'gc_enabled': gc.isenabled(), 'gc_counts': list(gc.get_count()),
+           'gc_thresholds': list(gc.get_threshold()), 'gc_generations': gc.get_stats(),
+           'active_thread_count': threading.active_count()}
+    try:
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        if all(math.isfinite(value) and value >= 0 for value in (usage.ru_utime, usage.ru_stime)):
+            row.update(cpu_status='reported', user_cpu_seconds=usage.ru_utime, system_cpu_seconds=usage.ru_stime)
+        unit = 'bytes' if platform.system() == 'Darwin' else 'KiB'
+        divisor = 1048576 if unit == 'bytes' else 1024
+        if math.isfinite(usage.ru_maxrss) and usage.ru_maxrss >= 0:
+            row.update(peak_rss_status='reported', peak_rss_raw=usage.ru_maxrss,
+                       peak_rss_raw_unit=unit, peak_rss_mib=usage.ru_maxrss / divisor)
+    except (AttributeError, OSError, ValueError, OverflowError) as error:
+        row['resource_unavailable_reason'] = f'{type(error).__name__}: {error}'[:1024]
+    if platform.system() == 'Linux':
+        try:
+            with Path('/proc/self/statm').open('r', encoding='ascii') as handle:
+                fields = handle.read(256).split()
+            resident = int(fields[1]) * os.sysconf('SC_PAGE_SIZE')
+            if resident >= 0:
+                row.update(current_rss_status='reported', current_rss_bytes=resident,
+                           current_rss_source='/proc/self/statm resident pages times SC_PAGE_SIZE')
+                row.pop('current_rss_unavailable_reason')
+        except (OSError, ValueError, IndexError, KeyError) as error:
+            row['current_rss_unavailable_reason'] = f'{type(error).__name__}: {error}'[:1024]
+    elif platform.system() == 'Darwin':
+        try:
+            observed = darwin_parent_memory()
+            row.update(current_rss_status='reported', **observed)
+            row.pop('current_rss_unavailable_reason')
+        except (AttributeError, OSError, ValueError) as error:
+            row['current_rss_unavailable_reason'] = f'{type(error).__name__}: {error}'[:1024]
+    return row
+
+
+class DarwinUsageV0(ctypes.Structure):
+    # macOS sys/resource.h, rusage_info_v0. The V0 ABI is available since 10.9.
+    _fields_ = [('ri_uuid', ctypes.c_uint8 * 16),
+                *[(name, ctypes.c_uint64) for name in
+                  ('ri_user_time', 'ri_system_time', 'ri_pkg_idle_wkups', 'ri_interrupt_wkups',
+                   'ri_pageins', 'ri_wired_size', 'ri_resident_size', 'ri_phys_footprint',
+                   'ri_proc_start_abstime', 'ri_proc_exit_abstime')]]
+
+
+_darwin_rusage = None
+
+
+def darwin_parent_memory():
+    """Read the current parent without launching a profiling subprocess."""
+    global _darwin_rusage
+    if _darwin_rusage is None:
+        library = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+        function = library.proc_pid_rusage
+        function.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+        function.restype = ctypes.c_int
+        _darwin_rusage = function
+    usage = DarwinUsageV0()
+    if _darwin_rusage(os.getpid(), 0, ctypes.byref(usage)) != 0:
+        raise OSError(ctypes.get_errno(), 'proc_pid_rusage RUSAGE_INFO_V0 failed')
+    return {'current_rss_bytes': usage.ri_resident_size,
+            'current_rss_source': 'macOS proc_pid_rusage RUSAGE_INFO_V0.ri_resident_size',
+            'physical_footprint_bytes': usage.ri_phys_footprint,
+            'physical_footprint_source': 'macOS proc_pid_rusage RUSAGE_INFO_V0.ri_phys_footprint',
+            'parent_pageins': usage.ri_pageins,
+            'parent_interrupt_wakeups': usage.ri_interrupt_wkups,
+            'parent_package_idle_wakeups': usage.ri_pkg_idle_wkups}
+
+
+def checkpoint(report, path, phase='progress', case=None, unit_index=None):
+    """Keep checkpoint observer cost without putting it in scored durations.
+
+    A completed observation is included in the next checkpoint or final report.
+    The active write is explicitly incomplete in its own checkpoint.
+    """
+    row = {'phase': phase, 'case': case, 'unit_index': unit_index,
+           'monotonic_start_seconds': time.monotonic(), 'complete': False, 'used_for_gate': False}
+    report.setdefault('checkpoint_observations', []).append(row)
+    report['report_kind'] = 'compact-checkpoint'
+    try:
+        persist(report, path)
+    finally:
+        row.update(monotonic_end_seconds=time.monotonic(), complete=True)
+        row['seconds'] = row['monotonic_end_seconds'] - row['monotonic_start_seconds']
+        row['json_bytes'] = path.stat().st_size if path.exists() else None
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument('--baseline', type=Path, required=True)
@@ -689,6 +1014,8 @@ def parser():
     result.add_argument('--min-sample-seconds', type=float, default=1.0, help='Minimum aggregate batch duration, [0.05, 2] seconds')
     result.add_argument('--warm-cache-min-sample-seconds', type=float, default=1.0,
                         help='Longer minimum for startup-sensitive cache-hit batches, [0.25, 4] seconds')
+    result.add_argument('--cli-startup-min-sample-seconds', type=float, default=0.25,
+                        help='Predeclared CLI-startup batch minimum, [0.25, 4] seconds')
     result.add_argument('--max-iterations', type=int, default=MAX_ITERATIONS,
                         help=f'Matched batch iteration ceiling, 1 to {MAX_ITERATIONS}')
     result.add_argument('--gate', action='store_true', help='Exit 0 pass, 1 demonstrated regression/error, 2 inconclusive')
@@ -708,6 +1035,8 @@ def main(argv=None):
         argument_parser.error('--min-sample-seconds must be finite and in [0.05, 2]')
     if not math.isfinite(args.warm_cache_min_sample_seconds) or not 0.25 <= args.warm_cache_min_sample_seconds <= 4:
         argument_parser.error('--warm-cache-min-sample-seconds must be finite and in [0.25, 4]')
+    if not math.isfinite(args.cli_startup_min_sample_seconds) or not 0.25 <= args.cli_startup_min_sample_seconds <= 4:
+        argument_parser.error('--cli-startup-min-sample-seconds must be finite and in [0.25, 4]')
     if not 16 <= args.pairs <= MAX_PAIRS or args.pairs % PAIRS_PER_UNIT or not 2 <= args.warmups <= 10 \
             or not 1 <= args.max_iterations <= MAX_ITERATIONS:
         argument_parser.error(f'Requires --pairs 16..{MAX_PAIRS} divisible by four, --warmups 2..10 and --max-iterations 1..{MAX_ITERATIONS}')
@@ -733,11 +1062,21 @@ def main(argv=None):
                           'logical_cpu_count': os.cpu_count(), 'python': platform.python_version()},
               'diagnostic_telemetry': {'reported_build_timing': {
                   'source': 'Optional build-report JSON elapsed_ms', 'untrusted': True, 'used_for_gate': False,
-                  'reported_elapsed_ms_scope': 'Timer inside the build function; excludes process launch and CLI/configuration setup.',
+                  'reported_elapsed_ms_scope': 'Timer inside the build function. Excludes launch, CLI/configuration setup, '
+                      'compiler prelude before the timer and local destruction after its final timestamp.',
                   'parent_minus_reported_seconds_scope': 'Diagnostic residual includes parent capture setup, launch, '
-                      'CLI/configuration setup, serialization, exit and completion scheduling; it does not isolate loader time.'}},
+                      'CLI/configuration setup, untimed compiler prelude and destruction, serialization, exit and '
+                      'completion scheduling. It does not isolate loader time.'}},
               'policy': {'relative_threshold': args.threshold, 'familywise_confidence': 1 - FAMILY_ALPHA,
                          'checkpoint_unit': 'complete-inference-unit', 'maximum_report_bytes': MAX_REPORT_BYTES,
+                         'checkpoint_storage': 'compact-checkpoints-with-append-only-command-journal-v1',
+                         'raw_command_memory_scope': 'Completed batches leave memory after journal append. '
+                             'At most one complete inference unit plus an active batch is retained during measurement. '
+                             'Final full-report reconstruction occurs once, after scored work.',
+                         'environment_isolation': {'removed_prefixes': ['TEKAI_', 'TEX', 'BIB', 'KPATHSEA'],
+                                                   'removed_search_variables': sorted(SEARCH_ENV_VARS),
+                                                   'recorded_keys': ISOLATED_ENVIRONMENT_KEYS,
+                                                   'locale': 'C', 'timezone': 'UTC'},
                          'pairs_per_case': args.pairs, 'warmups_per_side': args.warmups,
                          'warmup_unit': 'artifact-slot-cell',
                          'crossover_design': 'fixed-slot-complementary-quads-v1',
@@ -747,6 +1086,7 @@ def main(argv=None):
                          'replica_assignment': {slot: {label: replica_for(label, slot) for label in LABELS} for slot in SLOTS},
                          'min_sample_seconds': args.min_sample_seconds, 'max_iterations': args.max_iterations,
                          'warm_cache_min_sample_seconds': args.warm_cache_min_sample_seconds,
+                         'cli_startup_min_sample_seconds': args.cli_startup_min_sample_seconds,
                          'calibration_headroom': CALIBRATION_HEADROOM,
                          'calibration_pairs': CALIBRATION_PAIRS,
                          'calibration_pair_unit': 'per-slot',
@@ -758,7 +1098,7 @@ def main(argv=None):
                          'Its artifact ratio is the fourth root of the product of four candidate times divided by '
                          'the product of four baseline times. Exact binomial sign/order-statistic intervals bound '
                          'the population median of complete unit ratios, '
-                         'with Bonferroni correction across the three predeclared cases. '
+                         'with Bonferroni correction across the four predeclared cases. '
                          'Fail requires the entire interval above the practical boundary and no noise flags. '
                          'Pass requires the entire interval at or below it and no noise flags. '
                          'Otherwise the comparison is inconclusive.',
@@ -783,6 +1123,7 @@ def main(argv=None):
         with tempfile.TemporaryDirectory(prefix='tekai-paired-benchmark-') as temporary:
             work = Path(temporary).resolve()
             supervisor = Supervisor(work, args.timeout, started + args.budget)
+            journal = None
             binaries = {slot: {} for slot in SLOTS}
             try:
                 verifiers = {name: shutil.which(name) for name in ('pdftotext', 'pdfinfo', 'pdfimages')}
@@ -809,7 +1150,10 @@ def main(argv=None):
                     if expected is not None and expected != row['source_sha256_start']:
                         raise BenchmarkError('Selected ' + label + ' binary differs from its recorded build artifact SHA-256')
                     binaries[slot][label] = dest
-                persist(report, args.output)
+                journal = CommandJournal(args.output)
+                report['raw_command_journal'] = journal.binding()
+                report['journal_observations'] = journal.observations
+                checkpoint(report, args.output, 'isolated-binaries')
                 for case_index, case in enumerate(CASES):
                     supervisor.remaining()
                     fixtures = {slot: {} for slot in SLOTS}
@@ -818,19 +1162,23 @@ def main(argv=None):
                            'fixture_sha256': {slot: {} for slot in SLOTS},
                            'fixture_roots': {slot: {} for slot in SLOTS},
                            'slot_schedule': [crossover_pair(index, case_index) for index in range(args.pairs)],
-                           'min_sample_seconds': args.warm_cache_min_sample_seconds if case == 'warm-build-cache'
-                           else args.min_sample_seconds,
+                           'min_sample_seconds': {'warm-build-cache': args.warm_cache_min_sample_seconds,
+                                                  'cli-startup': args.cli_startup_min_sample_seconds}.get(case, args.min_sample_seconds),
                            'warmups': [], 'calibration_pilots': [], 'samples': [], 'unit_timing': []}
                     report['results'].append(row)
                     for cell in cell_order(case_index):
                         slot, label, replica = cell['slot'], cell['label'], cell['replica']
                         fixture = make_fixture(work / slot / replica / case, binaries[slot][label], case)
                         fixture.update(verifiers, **cell)
+                        fixture['expected_version'] = metadata[label]['expected_version']
                         fixtures[slot][label] = fixture
                         row['fixture_sha256'][slot][label] = fixture['input_sha256']
                         row['fixture_roots'][slot][label] = str(fixture['root'])
                         inventory.append({**cell, 'root': str(fixture['root']), 'project': str(fixture['project']),
                                           'out': str(fixture['out']), 'home': fixture['env']['HOME'],
+                                          'config_path': str(fixture['config']), 'config_sha256': executable_sha256(fixture['config']),
+                                          'referenced_dependency_count': len(fixture['dependencies']),
+                                          'isolated_environment': {key: fixture['env'][key] for key in ISOLATED_ENVIRONMENT_KEYS},
                                           'cache_paths': {kind: fixture['env']['TEKAI_' + kind + '_CACHE']
                                                           for kind in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX')},
                                           'input_sha256': fixture['input_sha256']})
@@ -843,15 +1191,21 @@ def main(argv=None):
                         initial = execute_fixture(supervisor, fixtures[slot][label], case, initializing=True)
                         row['initialization'][slot][label] = {'command_id': initial['command_id'], 'seconds': initial['seconds'],
                                                              'parent_timing': initial['parent_timing'],
+                                                             'command_timing': initial['command_timing'],
                                                              'output_validation': initial['output_validation']}
                         if 'reported_build_timing' in initial:
                             row['initialization'][slot][label]['reported_build_timing'] = initial['reported_build_timing']
+                        if 'cache_state' in initial:
+                            row['initialization'][slot][label]['cache_state'] = initial['cache_state']
                     for warmup_index in range(args.warmups):
                         for slot in SLOTS:
                             warmup = {'warmup_index': warmup_index, **slot_pair(slot, warmup_index, case_index)}
                             row['warmups'].append(warmup)
                             for label in warmup['order']:
                                 warmup[label] = batch(supervisor, fixtures[slot][label], case, 1)
+                    journal.append(case_index, 'warmups', [(index, label, warmup[label])
+                                   for index, warmup in enumerate(row['warmups']) for label in warmup['order']])
+                    report['raw_command_journal'] = journal.binding()
                     for pilot_index in range(CALIBRATION_PAIRS):
                         for slot in SLOTS:
                             pilot = {'pair_index': pilot_index, **slot_pair(slot, pilot_index, case_index),
@@ -861,7 +1215,10 @@ def main(argv=None):
                             row['calibration_pilots'].append(pilot)
                             for label in pilot['order']:
                                 pilot[label] = batch(supervisor, fixtures[slot][label], case, CALIBRATION_ITERATIONS)
-                            persist(report, args.output)
+                            journal.append(case_index, 'calibration_pilots',
+                                           [(len(row['calibration_pilots']) - 1, label, pilot[label]) for label in pilot['order']])
+                            report['raw_command_journal'] = journal.binding()
+                            checkpoint(report, args.output, 'calibration', case)
                     row['calibration'] = calibration_details(row['calibration_pilots'], row['min_sample_seconds'], args.max_iterations)
                     try:
                         iterations = calibrated_iterations(row['calibration_pilots'], row['min_sample_seconds'], args.max_iterations)
@@ -870,11 +1227,13 @@ def main(argv=None):
                         row['analysis'] = {'status': 'inconclusive', 'reasons': [str(error)]}
                     else:
                         row['iterations_per_batch'] = iterations
-                        persist(report, args.output)
+                        checkpoint(report, args.output, 'calibrated', case)
                         for pair_index in range(args.pairs):
                             if pair_index % PAIRS_PER_UNIT == 0:
+                                parent_before = parent_snapshot()
                                 unit = {'unit_index': pair_index // PAIRS_PER_UNIT,
                                         'first_pair_index': pair_index, 'pair_count': PAIRS_PER_UNIT,
+                                        'parent_before': parent_before,
                                         'monotonic_start_seconds': time.monotonic(), 'complete': False}
                                 row['unit_timing'].append(unit)
                             sample = {**crossover_pair(pair_index, case_index), 'iterations': iterations}
@@ -889,17 +1248,32 @@ def main(argv=None):
                             sample['ratio'] = ratio
                             if (pair_index + 1) % PAIRS_PER_UNIT == 0:
                                 unit.update(monotonic_end_seconds=time.monotonic(), complete=True)
+                                unit['parent_after'] = parent_snapshot()
                                 report['host_observations'].append(host_snapshot(case, unit['unit_index']))
-                                persist(report, args.output)
+                                journal.append(case_index, 'samples', [(index, label, row['samples'][index][label])
+                                               for index in range(pair_index + 1 - PAIRS_PER_UNIT, pair_index + 1)
+                                               for label in row['samples'][index]['order']])
+                                report['raw_command_journal'] = journal.binding()
+                                checkpoint(report, args.output, 'complete-inference-unit', case, unit['unit_index'])
                         row['analysis'] = analyze_pairs(row['samples'], args.threshold, row['min_sample_seconds'], case_index=case_index)
                     row['fixture_sha256_end'] = {slot: {label: fixture_sha256(fixtures[slot][label]['project']) for label in LABELS} for slot in SLOTS}
                     row['fixture_unchanged'] = row['fixture_sha256'] == row['fixture_sha256_end']
                     if not row['fixture_unchanged']:
                         raise BenchmarkError('Compiler changed or removed benchmark fixture inputs')
                     print(case + ' ' + row['analysis']['status'], flush=True)
-                    persist(report, args.output)
+                    checkpoint(report, args.output, 'case-complete', case)
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 report['errors'].append(f'{type(error).__name__}: {error}')
+                if isinstance(error, ReportTooLarge) and journal is not None:
+                    # Raw commands for the unappended unit are still attached.
+                    # Preserve those beside all earlier journal descriptors
+                    # before the one-time full restoration can exceed its cap.
+                    report['raw_command_journal'] = journal.binding()
+                    report['status'], report['exit_code'] = 'error', 1
+                    try:
+                        checkpoint(report, args.output, 'bounded-evidence-error')
+                    except (OSError, ValueError, RuntimeError) as checkpoint_error:
+                        report['errors'].append('Compact error checkpoint failed: ' + str(checkpoint_error))
             except KeyboardInterrupt:
                 report['errors'].append('Run interrupted; terminating owned process groups')
             finally:
@@ -907,6 +1281,14 @@ def main(argv=None):
                     supervisor.close()
                 except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                     report['errors'].append('Cleanup failed: ' + str(error))
+                if journal is not None:
+                    try:
+                        journal.restore()
+                        report['raw_command_journal'] = journal.binding()
+                    except (OSError, ValueError, RuntimeError) as error:
+                        report['errors'].append('Raw command journal restore failed: ' + str(error))
+                    finally:
+                        journal.close()
                 for row in report['executables']:
                     for path_key, hash_key in (('source_path', 'source_sha256_end'), ('isolated_path', 'sha256_end')):
                         try:
@@ -935,6 +1317,7 @@ def main(argv=None):
     report['monotonic_end_seconds'] = time.monotonic()
     report['elapsed_seconds'] = report['monotonic_end_seconds'] - started
     report['exit_code'] = comparison_exit(report['status'], args.gate)
+    report['report_kind'] = 'complete-report'
     try:
         persist(report, args.output)
     except ReportTooLarge as error:

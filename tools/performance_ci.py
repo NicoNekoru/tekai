@@ -637,12 +637,21 @@ class PerformanceCI(Audit):
         self.counter += 1
         prefix = self.work / f'command-{self.counter:04d}'
         stdout_path, stderr_path = prefix.with_suffix('.stdout'), prefix.with_suffix('.stderr')
+        invocation = list(map(str, command))
+        capture_start = time.monotonic()
         with stdout_path.open('wb') as stdout, stderr_path.open('wb') as stderr:
-            process = subprocess.Popen(list(map(str, command)), cwd=project, env=env,
+            capture_files_open = time.monotonic()
+            popen_start = time.monotonic()
+            process = subprocess.Popen(invocation, cwd=project, env=env,
                                        stdout=stdout, stderr=stderr, start_new_session=True)
+            popen_return = time.monotonic()
+        capture_files_closed = time.monotonic()
+        # Diagnostic parent boundaries, never substituted for scored timings.
+        process.launch_timing = [capture_start, capture_files_open, popen_start,
+                                 popen_return, capture_files_closed]
         process.capture_paths = (stdout_path, stderr_path)
         process.command_id = self.counter
-        process.invocation = list(map(str, command))
+        process.invocation = invocation
         process.started_at = time.monotonic()
         process.observe = True
         process.timed_out = False
