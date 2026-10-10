@@ -16,6 +16,8 @@ BUILD_ENV = ('RUSTUP_TOOLCHAIN', 'CARGO_INCREMENTAL', 'CARGO_BUILD_JOBS',
              'CARGO_PROFILE_RELEASE_PANIC', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS')
 REVISION = re.compile(r'[0-9a-f]{40}\Z')
 HASH = re.compile(r'[0-9a-f]{64}\Z')
+VERSION = re.compile(r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
+                     r'(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\Z')
 
 
 def require(condition, message):
@@ -46,6 +48,33 @@ def sha256(path):
 
 def absent(path):
     return not path.exists() and not path.is_symlink()
+
+
+def package_identity(workspace):
+    """Read the clean, revision-checked checkout's bounded package identity.
+
+    Cargo's version must be a literal in this repository's package table.
+    Unsupported manifest forms fail closed instead of guessing a CLI oracle.
+    The hash binds the exact bytes parsed before and after the build.
+    """
+    path = workspace / 'Cargo.toml'
+    require(path.resolve() == path and path.is_file(), 'Package manifest is missing or aliased')
+    with path.open('rb') as handle:
+        raw = handle.read(1024 * 1024 + 1)
+    require(len(raw) <= 1024 * 1024, 'Package manifest exceeds its finite input limit')
+    source = raw.decode('utf-8')
+    in_package, packages, versions = False, 0, []
+    for line in source.splitlines():
+        if line.lstrip().startswith('['):
+            in_package = re.fullmatch(r'\s*\[package\]\s*(?:#.*)?', line) is not None
+            packages += int(in_package)
+        elif in_package and re.match(r'\s*version\s*=', line):
+            match = re.fullmatch(r'\s*version\s*=\s*([\"\x27])([^\"\x27\r\n]+)\1\s*(?:#.*)?', line)
+            require(match is not None, 'Package version must be an unescaped literal')
+            versions.append(match[2])
+    require(packages == 1 and len(versions) == 1 and len(versions[0]) <= 128
+            and VERSION.fullmatch(versions[0]) is not None, 'Package requires one bounded literal version')
+    return {'expected_version': versions[0], 'package_manifest_sha256': hashlib.sha256(raw).hexdigest()}
 
 
 class Session:
@@ -118,6 +147,7 @@ class Session:
                       build_target_dir=str(self.target), toolchain=toolchain.strip(), release_settings=SETTINGS,
                       source_clean_before_build=True,
                       build_environment={key: environment.get(key, '') for key in BUILD_ENV})
+        record.update(package_identity(self.workspace))
         write(self.record(role, 'start'), record)
         return record
 
@@ -131,6 +161,9 @@ class Session:
                       checkout_revision_after_build=revision, source_clean_after_build=source_clean, successful=False)
         if cargo_exit == log_exit == 0 and revision == record['revision'] == self.config[role] and source_clean is True:
             try:
+                identity = package_identity(self.workspace)
+                require(all(identity[key] == record.get(key) for key in identity),
+                        'Package identity changed during build')
                 record['artifact_sha256'] = self.executable_hash(self.target)
                 record['successful'] = True
             except (OSError, ValueError) as error:
@@ -197,6 +230,11 @@ class Session:
                     and record.get('build_command') == COMMAND and record.get('release_settings') == SETTINGS
                     and record.get('build_workspace') == str(self.workspace)
                     and record.get('build_target_dir') == str(self.target)
+                    and isinstance(record.get('expected_version'), str)
+                    and len(record['expected_version']) <= 128
+                    and VERSION.fullmatch(record['expected_version']) is not None
+                    and isinstance(record.get('package_manifest_sha256'), str)
+                    and HASH.fullmatch(record['package_manifest_sha256']) is not None
                     and self.executable_hash(target) == record.get('artifact_sha256'),
                     'Current ' + role + ' artifact/provenance differs')
             record['build_artifact_path'] = str(self.target / 'release' / 'tekai')

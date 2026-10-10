@@ -16,6 +16,7 @@ class BuildTests(unittest.TestCase):
         self.root = Path(self.temporary.name).resolve()
         self.workspace = self.root / 'workspace'
         self.workspace.mkdir()
+        (self.workspace / 'Cargo.toml').write_text('[package]\nname = "tekai"\nversion = "0.5.0"\n', encoding='utf-8')
         self.report = self.root / 'tekai-performance-reports'
         self.report.mkdir()
         self.target = self.root / 'tekai-performance-target'
@@ -95,9 +96,60 @@ class BuildTests(unittest.TestCase):
             self.assertEqual(metadata[role]['build_target_dir'], str(self.target))
             self.assertEqual(metadata[role]['build_artifact_path'], str(self.target / 'release' / 'tekai'))
             self.assertEqual(metadata[role]['build_command'], build.COMMAND)
+            self.assertEqual(metadata[role]['expected_version'], '0.5.0')
+            self.assertEqual(metadata[role]['package_manifest_sha256'], build.sha256(self.workspace / 'Cargo.toml'))
         self.assertEqual(metadata['baseline']['artifact_path'], str(self.frozen / 'release' / 'tekai'))
         self.assertEqual(metadata['candidate']['artifact_path'], str(self.target / 'release' / 'tekai'))
         self.assertNotEqual(metadata['baseline']['artifact_sha256'], metadata['candidate']['artifact_sha256'])
+
+    def test_manifest_identity_changes_cannot_finish_a_successful_build(self):
+        self.start()
+        self.artifact()
+        (self.workspace / 'Cargo.toml').write_text('[package]\nversion = "0.5.1"\n', encoding='utf-8')
+        record = self.finish()
+        self.assertFalse(record['successful'])
+        self.assertEqual(record['error'], 'Package identity changed during build')
+
+    def test_versions_are_bound_independently_for_both_revisions(self):
+        self.baseline_ready()
+        (self.workspace / 'Cargo.toml').write_text('[package]\nversion = "0.6.0-rc.1+test"\n', encoding='utf-8')
+        self.start('candidate')
+        self.artifact(b'candidate bytes')
+        self.finish('candidate')
+        metadata = self.session.metadata()
+        self.assertEqual(metadata['baseline']['expected_version'], '0.5.0')
+        self.assertEqual(metadata['candidate']['expected_version'], '0.6.0-rc.1+test')
+
+    def test_manifest_oracle_rejects_missing_duplicate_inherited_and_malformed_versions(self):
+        manifest = self.workspace / 'Cargo.toml'
+        invalid = ('[package]\nname="tekai"\n', '[package]\nversion.workspace=true\n',
+                   '[package]\nversion="0.5.0"\nversion="0.6.0"\n',
+                   '[package]\nversion="0.5.0"\n[package]\nversion="0.5.0"\n',
+                   '[workspace.package]\nversion="0.5.0"\n', '[package]\nversion="05.0.0"\n',
+                   '[package]\nversion="0.5.0\\nextra"\n', '[package]\nversion=true\n')
+        for source in invalid:
+            with self.subTest(source=source):
+                manifest.write_text(source, encoding='utf-8')
+                with self.assertRaises(ValueError):
+                    build.package_identity(self.workspace)
+
+    def test_manifest_oracle_handles_comments_and_ignores_dependency_versions(self):
+        (self.workspace / 'Cargo.toml').write_text(
+            '[package] # exact checkout\nversion = \'0.5.0\' # literal\n[dependencies]\nversion="9.9.9"\n',
+            encoding='utf-8')
+        self.assertEqual(build.package_identity(self.workspace)['expected_version'], '0.5.0')
+
+    def test_manifest_oracle_rejects_aliases_and_oversized_input(self):
+        manifest = self.workspace / 'Cargo.toml'
+        saved = self.workspace / 'saved-manifest'
+        manifest.rename(saved)
+        manifest.symlink_to(saved)
+        with self.assertRaises(ValueError):
+            build.package_identity(self.workspace)
+        manifest.unlink()
+        manifest.write_bytes(b'#' * (1024 * 1024 + 1))
+        with self.assertRaises(ValueError):
+            build.package_identity(self.workspace)
 
     def test_failed_partial_build_is_quarantined_before_candidate_build(self):
         self.start()
