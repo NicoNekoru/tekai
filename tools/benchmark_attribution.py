@@ -17,7 +17,9 @@ import benchmark_runtime as benchmark
 
 POLICY = {
     'pairs_per_case': 40, 'warmups_per_side': 2, 'min_sample_seconds': 1.0,
-    'warm_cache_min_sample_seconds': 1.0, 'max_iterations': 256,
+    'warm_cache_min_sample_seconds': 1.0, 'max_iterations': 512,
+    'calibration_pairs': 2, 'calibration_iterations': 32,
+    'calibration_method': 'balanced-batched-pilot-v1',
     'per_command_deadline_seconds': 30.0, 'whole_run_deadline_seconds': 900.0,
     'relative_threshold': 0.10, 'familywise_confidence': 0.95,
     'calibration_headroom': 2.0, 'noise_relative_mad_limit': 0.10,
@@ -40,6 +42,11 @@ def read_json(path):
 
 def digest(value):
     return isinstance(value, str) and SHA256.fullmatch(value) is not None
+
+
+def matching_build_hash(side, measured):
+    return isinstance(side, dict) and ('artifact_sha256' not in side
+        or (digest(side['artifact_sha256']) and side['artifact_sha256'] == measured))
 
 
 def positive(value):
@@ -82,9 +89,26 @@ def require(condition, reason):
 
 
 def validate_policy(report):
-    require(isinstance(report.get('policy'), dict) and all(type(report['policy'].get(key)) in (int, float)
+    require(isinstance(report.get('policy'), dict) and all(
+                (type(report['policy'].get(key)) is str if isinstance(value, str)
+                 else type(report['policy'].get(key)) in (int, float))
                 and report['policy'][key] == value for key, value in POLICY.items()),
             'Reported policy differs from the fixed control policy')
+
+
+def matching_calibration_details(recorded, expected):
+    """Compare recomputed details without accepting booleans as numeric fields."""
+    if type(recorded) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return recorded.keys() == expected.keys() and all(
+            matching_calibration_details(recorded[key], value) for key, value in expected.items())
+    if isinstance(expected, list):
+        return len(recorded) == len(expected) and all(
+            matching_calibration_details(value, reference) for value, reference in zip(recorded, expected))
+    if isinstance(expected, float) and not math.isfinite(recorded):
+        return False
+    return recorded == expected
 
 
 def validate_cases(report, allow_infeasible=False):
@@ -92,6 +116,13 @@ def validate_cases(report, allow_infeasible=False):
     require(records(rows) and [row.get('case') for row in rows] == list(benchmark.CASES),
             'Completed case inventory is incomplete')
     outcomes = []
+    observed_commands = set()
+
+    def claim_commands(command_ids):
+        require(len(set(command_ids)) == len(command_ids) and observed_commands.isdisjoint(command_ids),
+                'Completed measurement phases reuse command evidence')
+        observed_commands.update(command_ids)
+
     for case_index, row in enumerate(rows):
         start, end = row.get('fixture_sha256'), row.get('fixture_sha256_end')
         require(isinstance(start, dict) and row.get('fixture_unchanged') is True
@@ -112,11 +143,25 @@ def validate_cases(report, allow_infeasible=False):
             require(warmup.get('order') == list(benchmark.paired_order(index, case_index))
                     and all(valid_batch(warmup.get(label), 1, row['case']) for label in benchmark.LABELS),
                     'Completed warmups are incomplete')
+        pilots = row.get('calibration_pilots')
+        require(records(pilots) and len(pilots) == 2, 'Completed calibration pilots are incomplete')
+        for index, pilot in enumerate(pilots):
+            require(type(pilot.get('pair_index')) is int and pilot['pair_index'] == index
+                    and type(pilot.get('iterations')) is int and pilot['iterations'] == 32
+                    and pilot.get('order') == list(benchmark.paired_order(index, case_index))
+                    and all(valid_batch(pilot.get(label), 32, row['case']) for label in benchmark.LABELS),
+                    'Completed calibration pilot batches are incomplete')
+        claim_commands([value['command_id'] for value in initial.values()] + [
+            command['command_id'] for item in warmups + pilots for label in benchmark.LABELS
+            for command in item[label]['commands']])
+        details = benchmark.calibration_details(pilots, 1.0, 512)
+        require(matching_calibration_details(row.get('calibration'), details),
+                'Completed calibration details differ from raw pilots')
         try:
-            calibrated = benchmark.calibrated_iterations(warmups, 1.0, 256)
+            calibrated = benchmark.calibrated_iterations(pilots, 1.0, 512)
         except benchmark.CalibrationInfeasible as error:
             require(allow_infeasible and samples == [] and iterations is None
-                    and row.get('calibration_infeasible') == error.details
+                    and matching_calibration_details(row.get('calibration_infeasible'), error.details)
                     and isinstance(row.get('analysis'), dict) and row['analysis'].get('status') == 'inconclusive',
                     'Completed calibration is infeasible or inconsistent')
             outcomes.append('inconclusive')
@@ -130,6 +175,8 @@ def validate_cases(report, allow_infeasible=False):
                     'Completed sample inventory is incomplete')
             require(all(valid_batch(sample.get(label), iterations, row['case']) for label in benchmark.LABELS),
                     'Completed paired batches are incomplete')
+            claim_commands([command['command_id'] for label in benchmark.LABELS
+                            for command in sample[label]['commands']])
         analysis = benchmark.analyze_pairs(samples, 0.10, 1.0)
         require(isinstance(row.get('analysis'), dict) and row['analysis'].get('status') == analysis['status'],
                 'Completed sample analysis differs')
@@ -142,7 +189,8 @@ def eligible(primary, metadata, sources, revisions, profile):
     """Validate completed evidence, without changing its verdict or statistics."""
     require(isinstance(primary, dict), 'Report must be a JSON object')
     require(profile == 'full', 'Attribution is limited to the full profile')
-    require(primary.get('schema_version') == 2 and primary.get('gate') is True,
+    require(type(primary.get('schema_version')) is int and primary['schema_version'] == 3
+            and primary.get('gate') is True,
             'Requires a primary statistical gate report')
     status = primary.get('status')
     require(status in ('fail', 'inconclusive') and type(primary.get('exit_code')) is int
@@ -171,6 +219,8 @@ def eligible(primary, metadata, sources, revisions, profile):
         hashes = [row.get(key) for key in ('source_sha256_start', 'source_sha256_end', 'sha256_start', 'sha256_end')]
         require(row.get('unchanged') is True and all(digest(value) for value in hashes) and len(set(hashes)) == 1,
                 'Primary executable integrity is invalid')
+        require(matching_build_hash(metadata[label], hashes[0]),
+                'Primary build artifact hash differs from measured executable')
         require(Path(row.get('source_path', '')).resolve() == sources[label]
                 and sources[label].is_file() and os.access(sources[label], os.X_OK),
                 'Primary executable source path differs')
@@ -234,6 +284,9 @@ def stop_reason(report, selected, expected):
                 or len(set(hashes)) != 1 or hashes[0] != expected[selected[label]] \
                 or Path(row.get('source_path', '')).resolve() != selected[label]:
             return 'Control executable integrity failed'
+        metadata = report.get('metadata')
+        if not matching_build_hash(metadata.get(label) if isinstance(metadata, dict) else None, hashes[0]):
+            return 'Control build artifact hash differs from measured executable'
     for name, row in verifiers.items():
         path = Path(row.get('path', '')).resolve()
         if name not in ('pdftotext', 'pdfinfo', 'pdfimages') or row.get('unchanged') is not True \
@@ -317,7 +370,7 @@ def run_attribution(primary_path, metadata_path, sources, revisions, directory, 
                 argv = ['--baseline', str(selected['baseline']), '--candidate', str(selected['candidate']),
                         '--metadata', str(metadata_file), '--output', str(output), '--pairs', '40', '--warmups', '2',
                         '--timeout', '30', '--budget', '900', '--threshold', '0.10', '--min-sample-seconds', '1.0',
-                        '--warm-cache-min-sample-seconds', '1.0', '--max-iterations', '256']
+                        '--warm-cache-min-sample-seconds', '1.0', '--max-iterations', '512']
                 row = {'kind': kind, 'status': 'error', 'exit_code': None}
                 summary['controls'].append(row)
                 with log_file.open('x', encoding='utf-8') as log, \
@@ -347,7 +400,8 @@ def run_attribution(primary_path, metadata_path, sources, revisions, directory, 
                 persist(summary, directory)
                 verify_current(protected, primary['output_verifiers'])
                 if output.exists():
-                    require(control.get('schema_version') == 2 and control.get('gate') is False
+                    require(type(control.get('schema_version')) is int and control['schema_version'] == 3
+                            and control.get('gate') is False
                             and control.get('metadata') == provenance, 'Control report provenance/gate differs')
                     validate_policy(control)
                     require(positive(control.get('elapsed_seconds'))

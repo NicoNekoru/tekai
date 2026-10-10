@@ -160,16 +160,17 @@ jobs:
           PERFORMANCE_REPORT_DIR: ${{ runner.temp }}/tekai-performance-tests
         run: |
           mkdir -p "$PERFORMANCE_REPORT_DIR"
-          test -f tools/test_audit_runtime.py
-          test -f tools/test_performance_ci.py
-          test -f tools/test_verify_bundled_papers.py
-          test -f tools/test_benchmark_runtime.py
-          test -f tools/test_benchmark_attribution.py
-          python3 -B -m unittest discover -s tools -p test_audit_runtime.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/audit-runner-tests.log"
-          python3 -B -m unittest discover -s tools -p test_performance_ci.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/performance-runner-tests.log"
-          python3 -B -m unittest discover -s tools -p test_verify_bundled_papers.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/parity-runner-tests.log"
-          python3 -B -m unittest discover -s tools -p test_benchmark_runtime.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/paired-benchmark-tests.log"
-          python3 -B -m unittest discover -s tools -p test_benchmark_attribution.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/benchmark-attribution-tests.log"
+          python3 -B - <<'PY' 2>&1 | tee "$PERFORMANCE_REPORT_DIR/runner-tests.log"
+          import sys
+          import unittest
+          suite = unittest.defaultTestLoader.discover("tools", pattern="test_*.py")
+          count = suite.countTestCases()
+          if count == 0:
+              raise SystemExit("No diagnostic runner tests were discovered")
+          print(f"Discovered {count} diagnostic runner tests", flush=True)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          sys.exit(0 if result.wasSuccessful() else 1)
+          PY
 
       - name: Upload runner test logs
         if: always()
@@ -221,6 +222,9 @@ jobs:
           PROPERTY_SEED_MATERIAL: ${{ needs.revisions.outputs.candidate_sha }}-${{ runner.arch }}-release
         run: |
           mkdir -p "$PERFORMANCE_REPORT_DIR"
+          test ! -e "$PERFORMANCE_REPORT_DIR/performance_build.py"
+          test ! -L "$PERFORMANCE_REPORT_DIR/performance_build.py"
+          cp tools/performance_build.py "$PERFORMANCE_REPORT_DIR/performance_build.py"
           property_seed="$(python3 -c 'import hashlib, os; print(int.from_bytes(hashlib.sha256(os.environ["PROPERTY_SEED_MATERIAL"].encode()).digest()[:8], "big"))')"
           printf '%s\n' \
             "PERFORMANCE_REPORT_DIR=$PERFORMANCE_REPORT_DIR" \
@@ -230,6 +234,7 @@ jobs:
             "TEKAI_AUX_CACHE=$TEKAI_AUX_CACHE" \
             "TEKAI_BIBTEX_CACHE=$TEKAI_BIBTEX_CACHE" \
             "BASELINE_TARGET_DIR=$BASELINE_TARGET_DIR" \
+            "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" \
             "PROPTEST_RNG_SEED=$property_seed" >> "$GITHUB_ENV"
           git rev-parse HEAD | tee "$PERFORMANCE_REPORT_DIR/commit.txt"
           uname -a | tee "$PERFORMANCE_REPORT_DIR/runner.txt"
@@ -276,57 +281,98 @@ jobs:
           pdfinfo -v 2>&1 | tee -a "$PERFORMANCE_REPORT_DIR/poppler.txt"
           pdfimages -v 2>&1 | tee -a "$PERFORMANCE_REPORT_DIR/poppler.txt"
 
-      - name: Build the candidate release in a fresh target directory
-        id: build
-        timeout-minutes: 20
-        run: cargo build --release --locked --bin tekai --no-default-features 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-build.log"
-
-      - name: Check out the immutable baseline without persisted credentials
-        id: baseline_checkout
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-          ref: ${{ needs.revisions.outputs.baseline_sha }}
-          path: .performance-baseline
-
-      - name: Build the baseline with the same release settings and a fresh target
-        id: baseline
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.baseline_checkout.outcome == 'success' }}
-        working-directory: .performance-baseline
-        timeout-minutes: 20
-        env:
-          CARGO_TARGET_DIR: ${{ env.BASELINE_TARGET_DIR }}
-        run: cargo build --release --locked --bin tekai --no-default-features 2>&1 | tee "$PERFORMANCE_REPORT_DIR/baseline-release-build.log"
-
-      - name: Record reproducible comparison metadata
-        id: metadata
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' }}
+      - name: Claim fresh canonical build paths after candidate preflight
+        id: build_paths
         env:
           BASELINE_SHA: ${{ needs.revisions.outputs.baseline_sha }}
           CANDIDATE_SHA: ${{ needs.revisions.outputs.candidate_sha }}
           BASELINE_POLICY: ${{ needs.revisions.outputs.baseline_policy }}
           RUNNER_LABEL: ${{ matrix.os }}-${{ runner.arch }}
         run: |
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(git -C .performance-baseline rev-parse HEAD)" = "$BASELINE_SHA"
-          python3 - <<'PY'
-          import json
-          import os
-          import subprocess
-          from pathlib import Path
-          command = "cargo build --release --locked --bin tekai --no-default-features"
-          metadata = {
-              "runner_label": os.environ["RUNNER_LABEL"],
-              "toolchain": subprocess.check_output(["rustc", "-Vv"], text=True).strip(),
-              "baseline": {"revision": os.environ["BASELINE_SHA"], "build_command": command},
-              "candidate": {"revision": os.environ["CANDIDATE_SHA"], "build_command": command},
-              "baseline_policy": os.environ["BASELINE_POLICY"],
-              "release_settings": {"codegen_units": 1, "lto": "fat", "panic": "abort"},
-          }
-          report = Path(os.environ["PERFORMANCE_REPORT_DIR"]) / "comparison-metadata.json"
-          report.write_text(json.dumps(metadata, indent=2) + "\n")
-          PY
+          python3 -B "$PERFORMANCE_REPORT_DIR/performance_build.py" \
+            --report-dir "$PERFORMANCE_REPORT_DIR" prepare --revision "$(git rev-parse HEAD)"
+
+      - name: Check out the immutable baseline without persisted credentials
+        id: baseline_checkout
+        if: ${{ !cancelled() && steps.build_paths.outcome == 'success' }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.revisions.outputs.baseline_sha }}
+          clean: false
+
+      - name: Build baseline at the canonical workspace and fresh canonical target
+        id: baseline
+        if: ${{ !cancelled() && steps.build_paths.outcome == 'success' && steps.baseline_checkout.outcome == 'success' }}
+        timeout-minutes: 20
+        run: |
+          rustc -Vv | tee "$PERFORMANCE_REPORT_DIR/baseline-rustc.txt"
+          source_status="$(git status --porcelain=v1 --untracked-files=all --ignored=matching)"
+          printf '%s\n' "$source_status" > "$PERFORMANCE_REPORT_DIR/baseline-source-before.txt"
+          source_clean=false
+          if [[ -z "$source_status" ]]; then source_clean=true; fi
+          python3 -B "$PERFORMANCE_REPORT_DIR/performance_build.py" --report-dir "$PERFORMANCE_REPORT_DIR" \
+            start --role baseline --revision "$(git rev-parse HEAD)" --source-clean "$source_clean" \
+            --toolchain-file "$PERFORMANCE_REPORT_DIR/baseline-rustc.txt"
+          # Record normal pipeline completion even on a normal Cargo failure.
+          # A timeout/signal without this record must not rotate an active target.
+          set +e
+          cargo build --release --locked --bin tekai --no-default-features 2>&1 | tee "$PERFORMANCE_REPORT_DIR/baseline-release-build.log"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          source_status="$(git status --porcelain=v1 --untracked-files=all --ignored=matching)"
+          printf '%s\n' "$source_status" > "$PERFORMANCE_REPORT_DIR/baseline-source-after.txt"
+          source_clean=false
+          if [[ -z "$source_status" ]]; then source_clean=true; fi
+          python3 -B "$PERFORMANCE_REPORT_DIR/performance_build.py" --report-dir "$PERFORMANCE_REPORT_DIR" \
+            finish --role baseline --revision "$(git rev-parse HEAD)" --source-clean "$source_clean" \
+            --cargo-exit "${pipeline_status[0]}" --log-exit "${pipeline_status[1]}"
+
+      - name: Freeze or quarantine the completed owned baseline target without cleanup
+        id: isolate_target
+        if: ${{ !cancelled() && steps.build_paths.outcome == 'success' }}
+        run: |
+          python3 -B "$PERFORMANCE_REPORT_DIR/performance_build.py" --report-dir "$PERFORMANCE_REPORT_DIR" isolate
+
+      - name: Restore the exact candidate even after baseline checkout or build failure
+        id: restore_candidate
+        if: ${{ !cancelled() && steps.build_paths.outcome == 'success' }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.revisions.outputs.candidate_sha }}
+          clean: false
+
+      - name: Build candidate fresh at the same canonical workspace and target
+        id: build
+        if: ${{ !cancelled() && steps.build_paths.outcome == 'success' && steps.restore_candidate.outcome == 'success' && steps.isolate_target.outcome == 'success' }}
+        timeout-minutes: 20
+        run: |
+          rustc -Vv | tee "$PERFORMANCE_REPORT_DIR/candidate-rustc.txt"
+          source_status="$(git status --porcelain=v1 --untracked-files=all --ignored=matching)"
+          printf '%s\n' "$source_status" > "$PERFORMANCE_REPORT_DIR/candidate-source-before.txt"
+          source_clean=false
+          if [[ -z "$source_status" ]]; then source_clean=true; fi
+          python3 -B "$PERFORMANCE_REPORT_DIR/performance_build.py" --report-dir "$PERFORMANCE_REPORT_DIR" \
+            start --role candidate --revision "$(git rev-parse HEAD)" --source-clean "$source_clean" \
+            --toolchain-file "$PERFORMANCE_REPORT_DIR/candidate-rustc.txt"
+          set +e
+          cargo build --release --locked --bin tekai --no-default-features 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-build.log"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          source_status="$(git status --porcelain=v1 --untracked-files=all --ignored=matching)"
+          printf '%s\n' "$source_status" > "$PERFORMANCE_REPORT_DIR/candidate-source-after.txt"
+          source_clean=false
+          if [[ -z "$source_status" ]]; then source_clean=true; fi
+          python3 -B "$PERFORMANCE_REPORT_DIR/performance_build.py" --report-dir "$PERFORMANCE_REPORT_DIR" \
+            finish --role candidate --revision "$(git rev-parse HEAD)" --source-clean "$source_clean" \
+            --cargo-exit "${pipeline_status[0]}" --log-exit "${pipeline_status[1]}"
+
+      - name: Record reproducible comparison metadata
+        id: metadata
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.isolate_target.outcome == 'success' }}
+        run: |
+          python3 -B "$PERFORMANCE_REPORT_DIR/performance_build.py" --report-dir "$PERFORMANCE_REPORT_DIR" metadata
 
       - name: Gate paired same-runner baseline and candidate performance
         id: comparison
@@ -342,7 +388,7 @@ jobs:
             --metadata "$PERFORMANCE_REPORT_DIR/comparison-metadata.json" \
             --output "$PERFORMANCE_REPORT_DIR/comparison.json" \
             --pairs 40 --warmups 2 --timeout 30 --budget 900 --threshold 0.10 \
-            --min-sample-seconds 1.0 --warm-cache-min-sample-seconds 1.0 --max-iterations 256 --gate \
+            --min-sample-seconds 1.0 --warm-cache-min-sample-seconds 1.0 --max-iterations 512 --gate \
             2>&1 | tee "$PERFORMANCE_REPORT_DIR/comparison.log"
 
       - name: Build the bounded experimental expansion fixture

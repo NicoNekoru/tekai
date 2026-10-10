@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import random
 import signal
 import sys
 import tempfile
@@ -20,6 +21,13 @@ def samples(ratios, seconds=1):
     return [{'order': bench.paired_order(index), 'iterations': 1,
              'baseline': {'seconds': seconds}, 'candidate': {'seconds': seconds * ratio}}
             for index, ratio in enumerate(ratios)]
+
+
+def calibration_pilots(baseline_rates, candidate_rates=None):
+    rates = {'baseline': baseline_rates, 'candidate': candidate_rates or baseline_rates}
+    return [{'pair_index': index, 'order': bench.paired_order(index), 'iterations': 32,
+             **{label: {'seconds': rates[label][index] * 32, 'iterations': 32} for label in bench.LABELS}}
+            for index in range(2)]
 
 
 class StatisticsTests(unittest.TestCase):
@@ -85,20 +93,92 @@ class StatisticsTests(unittest.TestCase):
                 bench.analyze_pairs(bad, 0.10, 0.25)
 
     def test_calibration_has_headroom_for_an_improving_candidate(self):
-        warmups = samples([0.8, 0.8], seconds=0.01)
-        iterations = bench.calibrated_iterations(warmups, 0.25, 128)
+        pilots = calibration_pilots([0.01, 0.01], [0.008, 0.008])
+        iterations = bench.calibrated_iterations(pilots, 0.25, 128)
         self.assertEqual(iterations, 63)
         # Even another 40% improvement after warmup retains meaningful batches.
         measured = samples([0.48] * 20, seconds=0.01 * iterations)
         analysis = bench.analyze_pairs(measured, 0.10, 0.25)
         self.assertEqual(analysis['status'], 'pass')
-        self.assertEqual(bench.calibrated_iterations(warmups, 0.8, 128), 128)
+        self.assertEqual(bench.calibrated_iterations(pilots, 0.8, 128), 128)
+
+    def test_batched_calibration_normalizes_parent_times_and_records_headroom(self):
+        pilots = calibration_pilots([0.00657, 0.00657])
+        details = bench.calibration_details(pilots, 1, 512)
+        self.assertEqual(details['normalized_rates_seconds_per_iteration'],
+                         {label: [0.00657, 0.00657] for label in bench.LABELS})
+        self.assertEqual(details['minimum_iterations'], 153)
+        self.assertEqual(details['requested_iterations'], 305)
+        self.assertEqual(details['selected_iterations'], 305)
+        self.assertFalse(details['headroom_clipped'])
+        self.assertTrue(details['minimum_feasible'])
+        self.assertAlmostEqual(details['predicted_selected_batch_seconds'], 305 * 0.00657)
+        self.assertEqual(bench.calibrated_iterations(pilots, 1, 512), 305)
+        # A further 40% speedup still leaves batches above the declared floor.
+        self.assertEqual(bench.analyze_pairs(samples([1] * 20, seconds=305 * 0.00657 * 0.6), 0.10, 1)['status'], 'pass')
 
     def test_infeasible_calibration_is_rejected_before_sampling(self):
-        with self.assertRaisesRegex(ValueError, 'ceiling cannot reach'):
-            bench.calibrated_iterations(samples([1, 1], seconds=0.003), 1, 256)
+        pilots = calibration_pilots([0.003, 0.003])
+        details = bench.calibration_details(pilots, 1, 256)
+        self.assertFalse(details['minimum_feasible'])
+        self.assertEqual(details['selected_iterations'], 256)
+        with self.assertRaisesRegex(bench.CalibrationInfeasible, 'ceiling cannot reach') as failure:
+            bench.calibrated_iterations(pilots, 1, 256)
+        self.assertEqual(failure.exception.details, details)
         # The ceiling may limit extra headroom, but not the minimum itself.
-        self.assertEqual(bench.calibrated_iterations(samples([1, 1], seconds=0.004), 1, 256), 256)
+        feasible = bench.calibration_details(calibration_pilots([0.004, 0.004]), 1, 256)
+        self.assertTrue(feasible['minimum_feasible'])
+        self.assertTrue(feasible['headroom_clipped'])
+        self.assertEqual(feasible['selected_iterations'], 256)
+        with self.assertRaises(bench.CalibrationInfeasible) as tiny:
+            bench.calibrated_iterations(calibration_pilots([1e-308, 1e-308]), 1, 512)
+        json.dumps(tiny.exception.details, allow_nan=False)
+
+    def test_calibration_rejects_invalid_durations_counts_and_unbalanced_pilots(self):
+        for value in (0, math.nan, True, '1'):
+            pilots = calibration_pilots([0.01, 0.01])
+            pilots[0]['baseline']['seconds'] = value
+            with self.subTest(seconds=value), self.assertRaises(ValueError):
+                bench.calibration_details(pilots, 1, 512)
+        for value in (0, True, 32.0, 31):
+            pilots = calibration_pilots([0.01, 0.01])
+            pilots[0]['baseline']['iterations'] = value
+            with self.subTest(iterations=value), self.assertRaises(ValueError):
+                bench.calibration_details(pilots, 1, 512)
+        pilots = calibration_pilots([0.01, 0.01])
+        pilots[1]['order'] = pilots[0]['order']
+        with self.assertRaises(ValueError):
+            bench.calibration_details(pilots, 1, 512)
+        del pilots[0]['candidate']
+        with self.assertRaises(ValueError):
+            bench.calibration_details(pilots, 1, 512)
+        with self.assertRaises(ValueError):
+            bench.calibration_details(calibration_pilots([0.01, 0.01]), 1, 513)
+
+    def test_generated_calibration_matches_exact_integer_rate_model(self):
+        # Power-of-two rates are exactly representable. This integer model
+        # independently checks normalization, fastest-role choice and clipping.
+        generated = random.Random(20261009)
+        for case_index in range(128):
+            numerators = [[generated.randint(1, 1024) for _ in range(2)] for _ in bench.LABELS]
+            quarters = generated.choice((1, 2, 4, 8))
+            ceiling = generated.choice((1, 8, 32, 64, 256, 512))
+            rates = [[value / 4096 for value in role] for role in numerators]
+            pilots = calibration_pilots(*rates)
+            fastest_numerator = min(sum(role) for role in numerators)
+            minimum = (quarters * 2048 + fastest_numerator - 1) // fastest_numerator
+            requested = (quarters * 4096 + fastest_numerator - 1) // fastest_numerator
+            with self.subTest(case=case_index, numerators=numerators, quarters=quarters, ceiling=ceiling):
+                details = bench.calibration_details(pilots, quarters / 4, ceiling)
+                self.assertEqual(details['minimum_iterations'], minimum)
+                self.assertEqual(details['requested_iterations'], requested)
+                self.assertEqual(details['selected_iterations'], min(requested, ceiling))
+                self.assertEqual(details['minimum_feasible'], minimum <= ceiling)
+                self.assertEqual(details['headroom_clipped'], requested > ceiling)
+                swapped = bench.calibration_details(calibration_pilots(*reversed(rates)), quarters / 4, ceiling)
+                self.assertEqual(swapped['selected_iterations'], details['selected_iterations'])
+                self.assertEqual(swapped['fastest_pilot_median_seconds_per_iteration'],
+                                 details['fastest_pilot_median_seconds_per_iteration'])
 
     def test_gate_and_advisory_exits_are_explicit(self):
         for status, exit_code in (('pass', 0), ('fail', 1), ('inconclusive', 2), ('error', 1)):
@@ -108,16 +188,20 @@ class StatisticsTests(unittest.TestCase):
     def test_diagnostic_telemetry_cannot_change_calibration_or_inference(self):
         for ratios in ([1] * 20, [1.2] * 20, [1.08, 1.08, 1.12, 1.12] * 5):
             measured = samples(ratios)
+            pilots = calibration_pilots([0.0065, 0.0065])
             analysis = bench.analyze_pairs(measured, 0.10, 0.25)
-            iterations = bench.calibrated_iterations(measured, 1, 256)
+            iterations = bench.calibrated_iterations(pilots, 1, 512)
             for index, sample in enumerate(measured):
                 for label in bench.LABELS:
                     diagnostic = {'untrusted': True, 'status': ('absent', 'invalid', 'reported')[index % 3]}
                     if diagnostic['status'] == 'reported':
                         diagnostic.update(reported_elapsed_ms=1e300, parent_minus_reported_seconds=-1e297)
                     sample[label]['commands'] = [{'reported_build_timing': diagnostic}]
+            for pilot in pilots:
+                for label in bench.LABELS:
+                    pilot[label]['commands'] = [{'reported_build_timing': diagnostic}] * 32
             self.assertEqual(bench.analyze_pairs(measured, 0.10, 0.25), analysis)
-            self.assertEqual(bench.calibrated_iterations(measured, 1, 256), iterations)
+            self.assertEqual(bench.calibrated_iterations(pilots, 1, 512), iterations)
 
 
 @unittest.skipUnless(os.name == 'posix', 'Owned process groups require POSIX')
@@ -335,6 +419,18 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(failure.exception.code, 2)
             start.assert_not_called()
 
+    def test_cli_iteration_ceiling_is_bounded_before_launch(self):
+        self.assertEqual(bench.parser().parse_args(['--baseline', '/binary', '--candidate', '/binary',
+                                                   '--metadata', '/metadata']).max_iterations, 512)
+        for ceiling in (0, 513):
+            with self.subTest(ceiling=ceiling), patch.object(bench.Supervisor, 'start') as start, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as failure:
+                    bench.main(['--baseline', '/binary', '--candidate', '/binary', '--metadata', '/metadata',
+                                '--max-iterations', str(ceiling)])
+            self.assertEqual(failure.exception.code, 2)
+            start.assert_not_called()
+
     def test_existing_output_alias_cannot_overwrite_a_selected_binary(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-alias-') as temporary:
             work = Path(temporary)
@@ -366,6 +462,24 @@ class FixtureTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bench.load_metadata(path)
 
+    def test_supplied_artifact_hashes_require_exact_lowercase_digests(self):
+        with tempfile.TemporaryDirectory(prefix='test-paired-metadata-hashes-') as temporary:
+            path = Path(temporary) / 'metadata.json'
+            metadata = {'runner_label': 'test', 'toolchain': 'exact',
+                        **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}
+            for label in bench.LABELS:
+                for value in ('0' * 64, '0123456789abcdef' * 4):
+                    metadata[label]['artifact_sha256'] = value
+                    path.write_text(json.dumps(metadata), encoding='utf-8')
+                    self.assertEqual(bench.load_metadata(path), metadata)
+                for value in (None, True, 0, [], {}, '', 'a' * 63, 'a' * 65, 'A' * 64, 'g' * 64,
+                              'a' * 64 + '\n', ' ' + 'a' * 64):
+                    metadata[label]['artifact_sha256'] = value
+                    path.write_text(json.dumps(metadata), encoding='utf-8')
+                    with self.subTest(label=label, value=value), self.assertRaisesRegex(ValueError, 'artifact_sha256'):
+                        bench.load_metadata(path)
+                del metadata[label]['artifact_sha256']
+
     def test_error_report_is_written_and_binary_hashes_are_rechecked(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-failure-') as temporary:
             work = Path(temporary)
@@ -373,21 +487,60 @@ class FixtureTests(unittest.TestCase):
             source.write_bytes(b'executable fixture')
             source.chmod(0o700)
             metadata = work / 'metadata.json'
-            metadata.write_text(json.dumps({'runner_label': 'test', 'toolchain': 'exact',
-                               **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}), encoding='utf-8')
             output = work / 'report.json'
             argv = ['--baseline', str(source), '--candidate', str(source), '--metadata', str(metadata),
                     '--output', str(output), '--gate']
-            with patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
-                    patch.object(bench, 'make_fixture', side_effect=bench.BenchmarkError('controlled fixture failure')), \
-                    contextlib.redirect_stdout(io.StringIO()):
-                result = bench.main(argv)
-            report = json.loads(output.read_text())
-            self.assertEqual((result, report['status'], report['exit_code']), (1, 'error', 1))
-            self.assertEqual(len(report['executables']), 2)
-            self.assertTrue(all(row['unchanged'] for row in report['executables']))
-            self.assertTrue(all(row['sha256_start'] == bench.executable_sha256(source) for row in report['executables']))
-            self.assertTrue(output.with_suffix('.md').is_file())
+            for supplied in (False, True):
+                provenance = {'runner_label': 'test', 'toolchain': 'exact',
+                              **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}
+                if supplied:
+                    for label in bench.LABELS:
+                        provenance[label]['artifact_sha256'] = bench.executable_sha256(source)
+                metadata.write_text(json.dumps(provenance), encoding='utf-8')
+                with self.subTest(supplied=supplied), patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
+                        patch.object(bench.Supervisor, 'start') as start, \
+                        patch.object(bench, 'make_fixture', side_effect=bench.BenchmarkError('controlled fixture failure')) as fixture, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    result = bench.main(argv)
+                fixture.assert_called_once()
+                start.assert_not_called()
+                report = json.loads(output.read_text())
+                self.assertEqual((result, report['status'], report['exit_code']), (1, 'error', 1))
+                self.assertIn('controlled fixture failure', report['errors'][0])
+                self.assertEqual(report['metadata'], provenance)
+                self.assertEqual(len(report['executables']), 2)
+                self.assertTrue(all(row['unchanged'] for row in report['executables']))
+                self.assertTrue(all(row['sha256_start'] == bench.executable_sha256(source) for row in report['executables']))
+                self.assertTrue(output.with_suffix('.md').is_file())
+
+    def test_artifact_hash_mismatch_stops_before_fixtures_and_native_commands(self):
+        with tempfile.TemporaryDirectory(prefix='test-paired-build-provenance-') as temporary:
+            work = Path(temporary)
+            source = work / 'binary'
+            source.write_bytes(b'executable fixture')
+            source.chmod(0o700)
+            metadata = work / 'metadata.json'
+            output = work / 'report.json'
+            actual = bench.executable_sha256(source)
+            for mismatch in bench.LABELS:
+                provenance = {'runner_label': 'test', 'toolchain': 'exact',
+                              **{label: {'revision': 'a' * 40, 'build_command': 'test', 'artifact_sha256': actual}
+                                 for label in bench.LABELS}}
+                provenance[mismatch]['artifact_sha256'] = '0' * 64
+                metadata.write_text(json.dumps(provenance), encoding='utf-8')
+                with self.subTest(mismatch=mismatch), patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
+                        patch.object(bench.Supervisor, 'start') as start, patch.object(bench, 'make_fixture') as fixture, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    result = bench.main(['--baseline', str(source), '--candidate', str(source),
+                                         '--metadata', str(metadata), '--output', str(output), '--gate'])
+                start.assert_not_called()
+                fixture.assert_not_called()
+                report = json.loads(output.read_text())
+                self.assertEqual((result, report['status'], report['exit_code']), (1, 'error', 1))
+                self.assertIn('Selected ' + mismatch + ' binary differs from its recorded build artifact SHA-256', report['errors'][0])
+                self.assertEqual(report['metadata'], provenance)
+                self.assertEqual(report['results'], [])
+                self.assertTrue(all(row['unchanged'] for row in report['executables']))
 
     def test_driver_initializes_before_warmups_and_checks_fixture_mutation(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-driver-') as temporary:
@@ -397,12 +550,14 @@ class FixtureTests(unittest.TestCase):
             source.chmod(0o700)
             metadata = work / 'metadata.json'
             metadata.write_text(json.dumps({'runner_label': 'test', 'toolchain': 'exact',
-                               **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}), encoding='utf-8')
+                               **{label: {'revision': 'a' * 40, 'build_command': 'test',
+                                          'artifact_sha256': bench.executable_sha256(source)} for label in bench.LABELS}}), encoding='utf-8')
             output = work / 'report.json'
             argv = ['--baseline', str(source), '--candidate', str(source), '--metadata', str(metadata),
                     '--output', str(output), '--pairs', '16', '--min-sample-seconds', '0.25', '--gate']
             events = []
             warm_seconds = 0.01
+            pilot_seconds = 0.01
 
             def fixture(root, binary, case):
                 project = root / 'project'
@@ -419,10 +574,12 @@ class FixtureTests(unittest.TestCase):
 
             def batch(_runner, fixture, case, iterations):
                 events.append((case, 'batch', fixture['label'], iterations))
-                elapsed = warm_seconds if fixture['label'] == 'baseline' else warm_seconds * 0.8
+                rate = warm_seconds if iterations == 1 else pilot_seconds
+                elapsed = rate if fixture['label'] == 'baseline' else rate * 0.8
                 return dict(seconds=elapsed * iterations, iterations=iterations, commands=[], output_validation={'verified': True})
 
-            for mutate, warm_seconds, expected in ((False, 0.01, 0), (True, 0.01, 1), (False, 0.001, 2)):
+            for mutate, warm_seconds, pilot_seconds, expected in ((False, 0.01, 0.01, 0), (True, 0.01, 0.01, 1),
+                                                                  (False, 0.014, 0.0065, 0), (False, 0.001, 0.0001, 2)):
                 events.clear()
 
                 def measured(*args):
@@ -437,13 +594,28 @@ class FixtureTests(unittest.TestCase):
                         patch.object(bench, 'batch', side_effect=measured), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(bench.main(argv), expected)
                 report = json.loads(output.read_text())
+                self.assertEqual(report['schema_version'], 3)
+                self.assertEqual(report['policy']['calibration_pairs'], 2)
+                self.assertEqual(report['policy']['calibration_iterations'], 32)
+                self.assertEqual(report['policy']['calibration_method'], 'balanced-batched-pilot-v1')
+                self.assertEqual(report['policy']['max_iterations'], 512)
                 self.assertFalse(report['diagnostic_telemetry']['reported_build_timing']['used_for_gate'])
                 for row in report['results']:
                     case_events = [event for event in events if event[0] == row['case']]
                     self.assertEqual([event[1] for event in case_events[:2]], ['initialize', 'initialize'])
                     self.assertEqual([event[3] for event in case_events[2:6]], [1] * 4)
+                    self.assertEqual([event[3] for event in case_events[6:10]], [32] * 4)
                     self.assertEqual(row['min_sample_seconds'], 1 if row['case'] == 'warm-build-cache' else 0.25)
                     self.assertEqual(row['fixture_unchanged'], not mutate)
+                    self.assertEqual(len(row['warmups']), 2)
+                    self.assertEqual(len(row['calibration_pilots']), 2)
+                    case_index = bench.CASES.index(row['case'])
+                    for index, pilot in enumerate(row['calibration_pilots']):
+                        self.assertEqual(pilot['pair_index'], index)
+                        self.assertEqual(pilot['order'], list(bench.paired_order(index, case_index)))
+                        self.assertEqual(pilot['iterations'], 32)
+                        self.assertEqual([pilot[label]['iterations'] for label in bench.LABELS], [32, 32])
+                    self.assertEqual(row['calibration'], bench.calibration_details(row['calibration_pilots'], row['min_sample_seconds'], 512))
                     for initialization in row['initialization'].values():
                         if row['case'] == 'warm-build-cache':
                             self.assertEqual(initialization['reported_build_timing'],
@@ -451,20 +623,64 @@ class FixtureTests(unittest.TestCase):
                         else:
                             self.assertNotIn('reported_build_timing', initialization)
                     if expected == 2:
-                        self.assertEqual(len(case_events), 6)
+                        self.assertEqual(len(case_events), 10)
                         self.assertEqual(row['samples'], [])
                         self.assertEqual(row['analysis']['status'], 'inconclusive')
-                        self.assertEqual(row['calibration_infeasible']['iteration_ceiling'], 256)
-                        self.assertGreater(row['calibration_infeasible']['minimum_iterations'], 256)
+                        self.assertEqual(row['calibration_infeasible'], row['calibration'])
+                        self.assertEqual(row['calibration_infeasible']['iteration_ceiling'], 512)
+                        self.assertGreater(row['calibration_infeasible']['minimum_iterations'], 512)
                         self.assertLess(row['calibration_infeasible']['predicted_ceiling_batch_seconds'], row['min_sample_seconds'])
                     else:
-                        self.assertEqual(row['iterations_per_batch'], 250 if row['case'] == 'warm-build-cache' else 63)
+                        expected_counts = (97, 385) if pilot_seconds == 0.0065 else (63, 250)
+                        self.assertEqual(row['iterations_per_batch'], expected_counts[row['case'] == 'warm-build-cache'])
+                        self.assertEqual(len(row['samples']), 16)
                 if mutate:
                     self.assertEqual(report['status'], 'error')
                 else:
                     self.assertEqual(report['status'], 'inconclusive' if expected == 2 else 'pass')
                     self.assertEqual(report['errors'], [])
                     self.assertEqual(len(report['results']), 3)
+
+    def test_later_side_failures_preserve_partial_warmups_and_pilots(self):
+        with tempfile.TemporaryDirectory(prefix='test-paired-partial-calibration-') as temporary:
+            work = Path(temporary)
+            source = work / 'binary'
+            source.write_bytes(b'executable fixture')
+            source.chmod(0o700)
+            metadata = work / 'metadata.json'
+            metadata.write_text(json.dumps({'runner_label': 'test', 'toolchain': 'exact',
+                               **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}), encoding='utf-8')
+            output = work / 'report.json'
+
+            def fixture(root, _binary, _case):
+                project = root / 'project'
+                bench.document(project)
+                return dict(root=root, project=project, label=root.parent.name, input_sha256=bench.fixture_sha256(project))
+
+            for phase, failure_iterations in (('warmups', 1), ('calibration_pilots', 32)):
+                def measured(_runner, fixture, _case, iterations):
+                    if iterations == failure_iterations and fixture['label'] == 'candidate':
+                        raise bench.BenchmarkError('controlled later-side ' + phase + ' failure')
+                    return {'seconds': iterations * 0.01, 'iterations': iterations, 'commands': [],
+                            'output_validation': {'verified': True}}
+
+                with self.subTest(phase=phase), patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
+                        patch.object(bench, 'make_fixture', side_effect=fixture), \
+                        patch.object(bench, 'execute_fixture', return_value={'command_id': 0, 'seconds': 1,
+                                     'output_validation': {'verified': True}}), \
+                        patch.object(bench, 'batch', side_effect=measured), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(bench.main(['--baseline', str(source), '--candidate', str(source),
+                                                '--metadata', str(metadata), '--output', str(output), '--gate']), 1)
+                report = json.loads(output.read_text())
+                row = report['results'][0]
+                self.assertEqual(report['status'], 'error')
+                self.assertIn('controlled later-side ' + phase + ' failure', report['errors'][0])
+                self.assertEqual(len(row[phase]), 1)
+                self.assertIn('baseline', row[phase][0])
+                self.assertNotIn('candidate', row[phase][0])
+                self.assertEqual(row[phase][0]['baseline']['seconds'], failure_iterations * 0.01)
+                self.assertEqual(row['samples'], [])
+                self.assertTrue(all(binary['unchanged'] for binary in report['executables']))
 
 
 if __name__ == '__main__':

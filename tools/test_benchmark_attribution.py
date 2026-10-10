@@ -39,6 +39,7 @@ class AttributionTests(unittest.TestCase):
             'release_settings': {'codegen_units': 1, 'lto': 'fat', 'panic': 'abort'},
             'optional': {'preserve': ['whole', 'objects']},
             **{label: {'revision': self.revisions[label], 'build_command': attribution.BUILD_COMMAND,
+                       'artifact_sha256': benchmark.executable_sha256(self.sources[label]),
                        'optional_side': {'role': label, 'flags': ['locked', 'release']}}
                for label in benchmark.LABELS},
         }
@@ -109,7 +110,7 @@ class AttributionTests(unittest.TestCase):
                 'fixture_unchanged': True,
                 'fixture_roots': {label: str(prefix / label / case) for label in benchmark.LABELS},
                 'min_sample_seconds': 1.0,
-                'initialization': {}, 'warmups': [], 'samples': [],
+                'initialization': {}, 'warmups': [], 'calibration_pilots': [], 'samples': [],
             }
             for label in benchmark.paired_order(0, case_index):
                 observed = batch(case, 1.0)
@@ -122,7 +123,14 @@ class AttributionTests(unittest.TestCase):
                 for label in warmup['order']:
                     warmup[label] = batch(case, 1.0)
                 row['warmups'].append(warmup)
-            iterations = benchmark.calibrated_iterations(row['warmups'], 1.0, 256)
+            for index in range(2):
+                pilot = {'pair_index': index, 'order': list(benchmark.paired_order(index, case_index)),
+                         'iterations': 32}
+                for label in pilot['order']:
+                    pilot[label] = batch(case, 1.0, 32)
+                row['calibration_pilots'].append(pilot)
+            row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], 1.0, 512)
+            iterations = benchmark.calibrated_iterations(row['calibration_pilots'], 1.0, 512)
             row['iterations_per_batch'] = iterations
             for index, ratio in enumerate(ratios):
                 sample = {'pair_index': index, 'order': list(benchmark.paired_order(index, case_index)),
@@ -134,7 +142,7 @@ class AttributionTests(unittest.TestCase):
             row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0)
             rows.append(row)
         report = {
-            'schema_version': 2, 'gate': gate, 'status': status,
+            'schema_version': 3, 'gate': gate, 'status': status,
             'metadata': copy.deepcopy(metadata), 'policy': copy.deepcopy(attribution.POLICY),
             'machine': {'system': 'Darwin', 'architecture': 'arm64'},
             'elapsed_seconds': 3.0, 'exit_code': benchmark.comparison_exit(status, gate),
@@ -253,16 +261,12 @@ class AttributionTests(unittest.TestCase):
 
     def test_calibration_infeasible_case_is_skipped(self):
         primary = self.make_report(self.metadata, self.sources, 'inconclusive', gate=True)
-        row = primary['results'][0]
-        row['samples'] = []
-        row.pop('iterations_per_batch')
-        row['calibration_infeasible'] = {'minimum_iterations': 1000, 'iteration_ceiling': 256}
-        row['analysis'] = {'status': 'inconclusive', 'reasons': ['Calibration ceiling cannot reach minimum']}
+        self.make_infeasible_case(primary['results'][0])
         self.assert_skipped(primary=primary)
 
     def test_synthetic_batches_match_calibrated_iterations_and_command_totals(self):
         for row in self.primary['results']:
-            iterations = benchmark.calibrated_iterations(row['warmups'], 1.0, 256)
+            iterations = benchmark.calibrated_iterations(row['calibration_pilots'], 1.0, 512)
             self.assertEqual(iterations, 2)
             self.assertEqual(row['iterations_per_batch'], iterations)
             for sample in row['samples']:
@@ -273,25 +277,178 @@ class AttributionTests(unittest.TestCase):
                     self.assertEqual(len(batch['commands']), iterations)
                     self.assertEqual(batch['seconds'], sum(command['seconds'] for command in batch['commands']))
 
-    def test_primary_calibration_disagreement_is_skipped(self):
+    def test_pilot_rate_model_ignores_single_launch_warmups_and_command_variation(self):
         primary = copy.deepcopy(self.primary)
-        row = primary['results'][0]
-        for warmup in row['warmups']:
-            for label in benchmark.LABELS:
-                warmup[label]['seconds'] = 2.0
-                warmup[label]['commands'][0]['seconds'] = 2.0
-        self.assertEqual(benchmark.calibrated_iterations(row['warmups'], 1.0, 256), 1)
-        self.assertEqual(row['iterations_per_batch'], 2)
+        for row in primary['results']:
+            for warmup in row['warmups']:
+                for label in benchmark.LABELS:
+                    warmup[label]['seconds'] = 1 / 1024
+                    warmup[label]['commands'][0]['seconds'] = 1 / 1024
+            for pilot in row['calibration_pilots']:
+                for label in benchmark.LABELS:
+                    for index, command in enumerate(pilot[label]['commands']):
+                        command['seconds'] = 0.5 if index % 2 else 1.5
+            # Both 32-command totals stay at 32 seconds. Their normalized
+            # rate is one second, so two seconds of headroom selects two.
+            self.assertEqual(row['iterations_per_batch'], 2)
+        result, summary, runner, _ = self.invoke(primary=primary)
+        self.assertEqual(result, 0)
+        self.assertEqual(summary['status'], 'complete')
+        self.assertEqual(runner.call_count, 2)
+
+    def test_recomputed_pilot_size_disagreement_rejects_primary_and_control(self):
+        def change(report, _args=None):
+            row = report['results'][0]
+            for pilot in row['calibration_pilots']:
+                for label in benchmark.LABELS:
+                    for command in pilot[label]['commands']:
+                        command['seconds'] = 2.0
+                    pilot[label]['seconds'] = 64.0
+            # The independently known rate of two seconds needs one
+            # iteration, but formal batches still claim the old count of two.
+            row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], 1.0, 512)
+            self.assertEqual(row['calibration']['selected_iterations'], 1)
+            self.assertEqual(row['iterations_per_batch'], 2)
+        primary = copy.deepcopy(self.primary)
+        change(primary)
         self.assert_skipped(primary=primary)
+        self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_full_raw_pilot_contract_rejects_primary_and_control_corruption(self):
+        modes = ('missing', 'partial', 'duplicate', 'order', 'pair-index', 'iterations',
+                 'side', 'batch-count', 'command-count', 'command-type', 'command-id',
+                 'command-time', 'batch-total', 'oracle', 'formal-contamination')
+        for mode in modes:
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    row = report['results'][0]
+                    pilot = row['calibration_pilots'][0]
+                    batch = pilot['baseline']
+                    if mode == 'missing':
+                        row.pop('calibration_pilots')
+                    elif mode == 'partial':
+                        row['calibration_pilots'].pop()
+                    elif mode == 'duplicate':
+                        row['calibration_pilots'][1] = copy.deepcopy(pilot)
+                    elif mode == 'order':
+                        pilot['order'].reverse()
+                    elif mode == 'pair-index':
+                        pilot['pair_index'] = False
+                    elif mode == 'iterations':
+                        pilot['iterations'] = 32.0
+                    elif mode == 'side':
+                        pilot.pop('candidate')
+                    elif mode == 'batch-count':
+                        batch['iterations'] = 1
+                    elif mode == 'command-count':
+                        batch['commands'].pop()
+                    elif mode == 'command-type':
+                        batch['commands'][0] = None
+                    elif mode == 'command-id':
+                        batch['commands'][0]['command_id'] = True
+                    elif mode == 'command-time':
+                        batch['commands'][0]['seconds'] = 0
+                    elif mode == 'batch-total':
+                        batch['seconds'] = 31.0
+                    elif mode == 'oracle':
+                        batch['output_validation'] = {}
+                    else:
+                        row['samples'][0] = copy.deepcopy(pilot)
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_recorded_calibration_details_must_match_recomputed_values_and_types(self):
+        modes = ('missing', 'extra', 'rate', 'nonfinite', 'boolean-count', 'float-count', 'numeric-flag')
+        for mode in modes:
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    row = report['results'][0]
+                    details = row['calibration']
+                    if mode == 'missing':
+                        row.pop('calibration')
+                    elif mode == 'extra':
+                        details['unverified'] = 'ignored field'
+                    elif mode == 'rate':
+                        details['normalized_rates_seconds_per_iteration']['baseline'][0] = 2.0
+                    elif mode == 'nonfinite':
+                        details['fastest_pilot_median_seconds_per_iteration'] = float('inf')
+                    elif mode == 'boolean-count':
+                        details['minimum_iterations'] = True
+                    elif mode == 'float-count':
+                        details['selected_iterations'] = 2.0
+                    else:
+                        details['minimum_feasible'] = 1
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_pilots_cannot_be_reused_as_samples_when_selected_count_is_32(self):
+        def select_32(report):
+            used_ids = []
+            for row in report['results']:
+                used_ids.extend(value['command_id'] for value in row['initialization'].values())
+                used_ids.extend(command['command_id'] for field in ('warmups', 'calibration_pilots', 'samples')
+                                for item in row[field] for label in benchmark.LABELS
+                                for command in item[label]['commands'])
+            next_id = max(used_ids)
+            row = report['results'][0]
+            for pilot in row['calibration_pilots']:
+                for label in benchmark.LABELS:
+                    for command in pilot[label]['commands']:
+                        command['seconds'] = 1 / 16
+                    pilot[label]['seconds'] = 2.0
+            row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], 1.0, 512)
+            self.assertEqual(row['calibration']['selected_iterations'], 32)
+            row['iterations_per_batch'] = 32
+            for sample in row['samples']:
+                sample['iterations'] = 32
+                for label in benchmark.LABELS:
+                    batch = sample[label]
+                    seconds = batch['commands'][0]['seconds']
+                    batch['commands'] = []
+                    for _ in range(32):
+                        next_id += 4
+                        batch['commands'].append({'command_id': next_id, 'seconds': seconds})
+                    batch.update(iterations=32, seconds=sum(command['seconds'] for command in batch['commands']))
+            return row
+
+        primary = copy.deepcopy(self.primary)
+        select_32(primary)
+        result, summary, _, _ = self.invoke(primary=primary)
+        self.assertEqual(result, 0)
+        self.assertEqual(summary['status'], 'complete')
+
+        def contaminate(report, _args=None):
+            row = select_32(report)
+            sample = row['samples'][0]
+            sample['baseline'] = copy.deepcopy(row['calibration_pilots'][0]['baseline'])
+            sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
+            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0)
+        contaminate(primary)
+        self.assert_skipped(primary=primary)
+        self.assert_stopped(self.make_runner(mutations={'reversed': contaminate}))
+
+    def test_previous_report_schema_has_no_silent_calibration_fallback(self):
+        def change(report, _args=None):
+            report['schema_version'] = 2
+        primary = copy.deepcopy(self.primary)
+        change(primary)
+        self.assert_skipped(primary=primary)
+        self.assert_stopped(self.make_runner(mutations={'reversed': change}))
 
     @staticmethod
     def make_infeasible_case(row):
-        for warmup in row['warmups']:
+        for pilot in row['calibration_pilots']:
             for label in benchmark.LABELS:
-                warmup[label]['seconds'] = 0.001
-                warmup[label]['commands'][0]['seconds'] = 0.001
+                for command in pilot[label]['commands']:
+                    command['seconds'] = 1 / 1024
+                pilot[label]['seconds'] = 32 / 1024
+        row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], 1.0, 512)
         try:
-            benchmark.calibrated_iterations(row['warmups'], 1.0, 256)
+            benchmark.calibrated_iterations(row['calibration_pilots'], 1.0, 512)
         except benchmark.CalibrationInfeasible as error:
             row['calibration_infeasible'] = copy.deepcopy(error.details)
             row['analysis'] = {'status': 'inconclusive', 'reasons': [str(error)]}
@@ -315,8 +472,8 @@ class AttributionTests(unittest.TestCase):
         row = reversed_report['results'][0]
         self.assertEqual(row['samples'], [])
         self.assertNotIn('iterations_per_batch', row)
-        self.assertEqual(row['calibration_infeasible']['minimum_iterations'], 1000)
-        self.assertEqual(row['calibration_infeasible']['iteration_ceiling'], 256)
+        self.assertEqual(row['calibration_infeasible']['minimum_iterations'], 1024)
+        self.assertEqual(row['calibration_infeasible']['iteration_ceiling'], 512)
 
     def test_inconsistent_calibration_infeasible_control_stops(self):
         for mode in ('details', 'sample', 'iterations'):
@@ -327,11 +484,11 @@ class AttributionTests(unittest.TestCase):
                     self.make_infeasible_case(row)
                     report['status'] = 'inconclusive'
                     if mode == 'details':
-                        row['calibration_infeasible']['minimum_iterations'] = 999
+                        row['calibration_infeasible']['minimum_iterations'] = 1023
                     elif mode == 'sample':
                         row['samples'] = [old_sample]
                     else:
-                        row['iterations_per_batch'] = 256
+                        row['iterations_per_batch'] = 512
                 self.assert_stopped(self.make_runner(mutations={'reversed': change}))
 
     def test_completed_non_error_control_requires_all_sampled_cases(self):
@@ -486,7 +643,7 @@ class AttributionTests(unittest.TestCase):
             self.assertNotIn('--gate', argv)
             args = benchmark.parser().parse_args(argv)
             self.assertFalse(args.gate)
-            self.assertEqual((args.pairs, args.warmups, args.max_iterations), (40, 2, 256))
+            self.assertEqual((args.pairs, args.warmups, args.max_iterations), (40, 2, 512))
             self.assertEqual((args.timeout, args.budget, args.threshold), (30.0, 900.0, 0.10))
             self.assertEqual((args.min_sample_seconds, args.warm_cache_min_sample_seconds), (1.0, 1.0))
 
@@ -602,6 +759,60 @@ class AttributionTests(unittest.TestCase):
         primary['executables'][0]['sha256_start'] = 'c' * 64
         primary['executables'][0]['sha256_end'] = 'c' * 64
         self.assert_skipped(primary=primary)
+
+    def test_stable_primary_replacement_cannot_retain_previous_build_hash(self):
+        for label in benchmark.LABELS:
+            source = self.sources[label]
+            original = source.read_bytes()
+            with self.subTest(label=label):
+                source.write_bytes(original + b' Stable replacement before primary launch.\n')
+                try:
+                    primary = self.make_report(self.metadata, self.sources, 'fail', gate=True)
+                    observed = next(row for row in primary['executables'] if row['label'] == label)
+                    self.assertTrue(observed['unchanged'])
+                    self.assertEqual(observed['source_sha256_start'], benchmark.executable_sha256(source))
+                    self.assertNotEqual(observed['source_sha256_start'], self.metadata[label]['artifact_sha256'])
+                    self.assert_skipped(primary=primary)
+                finally:
+                    source.write_bytes(original)
+
+    def test_control_build_hash_binds_stable_copies_to_transformed_role_provenance(self):
+        expected = {path: benchmark.executable_sha256(path)
+                    for path in (*self.sources.values(), *self.verifiers.values())}
+        for kind in ('reversed', 'candidate-self'):
+            selected = {'baseline': self.sources['candidate'],
+                        'candidate': self.sources['baseline'] if kind == 'reversed' else self.sources['candidate']}
+            metadata = attribution.control_metadata(self.metadata, kind, self.primary_path)
+            report = self.make_report(metadata, selected, 'pass')
+            self.assertIsNone(attribution.stop_reason(report, selected, expected))
+            for label in benchmark.LABELS:
+                with self.subTest(kind=kind, label=label):
+                    stale = copy.deepcopy(report)
+                    stale['metadata'][label]['artifact_sha256'] = 'c' * 64
+                    self.assertEqual(attribution.stop_reason(stale, selected, expected),
+                                     'Control build artifact hash differs from measured executable')
+
+    def test_supplied_build_hashes_must_be_valid_but_absent_legacy_hashes_are_allowed(self):
+        for value in (None, False, 123, 'c' * 63, 'g' * 64):
+            with self.subTest(value=value):
+                metadata = copy.deepcopy(self.metadata)
+                metadata['candidate']['artifact_sha256'] = value
+                primary = self.make_report(metadata, self.sources, 'fail', gate=True)
+                self.assert_skipped(primary=primary, metadata=metadata)
+                selected = dict(self.sources)
+                expected = {path: benchmark.executable_sha256(path)
+                            for path in (*selected.values(), *self.verifiers.values())}
+                control = self.make_report(metadata, selected, 'pass')
+                self.assertEqual(attribution.stop_reason(control, selected, expected),
+                                 'Control build artifact hash differs from measured executable')
+        metadata = copy.deepcopy(self.metadata)
+        for label in benchmark.LABELS:
+            metadata[label].pop('artifact_sha256')
+        primary = self.make_report(metadata, self.sources, 'fail', gate=True)
+        result, summary, runner, _ = self.invoke(primary=primary, metadata=metadata)
+        self.assertEqual(result, 0)
+        self.assertEqual(summary['status'], 'complete')
+        self.assertEqual(runner.call_count, 2)
 
     def test_control_source_copy_hash_disagreement_stops(self):
         def change(report, _args):

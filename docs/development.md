@@ -237,6 +237,19 @@ exact base commit. Manual runs accept `baseline_sha` or resolve the default
 branch once. A default-branch run comparing itself uses its exact first parent
 instead. Both commits and the selection policy are recorded.
 
+Both releases build at the same canonical workspace and Cargo target paths.
+CI builds the baseline first, records its actual revision, settings and hash,
+then renames its owned target tree out of the way. The candidate checkout is
+restored and builds into a fresh target at the original path. Failed partial
+baseline builds stay quarantined rather than becoming candidate build inputs.
+A missing normal-completion record, signal exit or failed target isolation
+blocks target reuse. Candidate restoration is still attempted after baseline
+failure, and candidate correctness checks can run when isolation succeeds.
+Source changes or untracked residue block a valid comparison. Reports
+distinguish original build paths from the frozen executable's storage path.
+Equal build paths reduce environment differences but do not require equal
+binaries or establish the cause of a measured slowdown.
+
 ```sh
 python3 -B tools/benchmark_runtime.py --candidate target/release/tekai \
   --baseline /path/to/previous/tekai \
@@ -250,16 +263,23 @@ actual checkouts and compiler. Local comparisons must record their actual build
 conditions rather than borrowing metadata from a different runner. Poppler's
 `pdftotext`, `pdfinfo` and `pdfimages` are required to check fixture output,
 including every decoded color and alpha pixel in the image case.
+CI also records each built artifact's SHA-256. The benchmark and attribution
+controls bind any supplied build hash to the measured executable's bytes.
 
 The benchmark covers nested lookup with 1000 unused folders, eight transparent
 images and warmed build-cache hits. Each side has equal input content and
 separate binaries, homes, outputs and caches. Cold initialization precedes two
-calibration warmups. Matched iteration counts target at least one second for
-every case. Calibration targets twice that duration with a ceiling of 256
-iterations. A ceiling that cannot reach the minimum according to the warmups
-is reported as inconclusive before inferential sampling, with the required
-iteration count recorded. Unexpectedly short measured batches remain
-inconclusive.
+single-command warmups and a fixed calibration block. Two opposite-order pilot
+pairs each run 32 commands per side. Calibration uses the fastest per-side
+median of parent-observed pilot batch time divided by its iteration count.
+Single-command warmups and pilots stay outside inferential samples.
+Matched iteration counts target twice the one-second minimum with a ceiling
+of 512 iterations. Reports retain pilot commands, normalized rates, required
+and selected counts, and any clipped headroom. An unreachable minimum is
+inconclusive before inferential sampling. Iterations remain fixed afterward,
+and unexpectedly short measured batches remain inconclusive. There are no
+adaptive retries or replacement samples. The whole-run deadline stays at
+900 seconds.
 Forty baseline/candidate pairs alternate execution order and retain all raw
 command samples. Adjacent opposite-order pairs form 20 geometric-mean ratio
 blocks. Exact median intervals use a familywise confidence level of at least
@@ -277,8 +297,9 @@ its Markdown companion by default. They make no peak-memory claim.
 Cache-hit command records also retain the binary's optional `elapsed_ms` as
 untrusted diagnostic data. Missing or invalid values cannot change calibration
 or gate outcomes. The parent measures the command's elapsed time independently.
-Their difference includes launch, CLI setup, serialization and exit overhead,
-so it does not isolate loader time.
+Their difference includes parent capture setup and completion scheduling,
+launch, CLI setup, serialization and exit overhead. It does not isolate loader
+time.
 
 Full CI adds advisory attribution controls only after a completed non-green
 timing comparison. It saves the primary evidence first, then swaps the same

@@ -6,6 +6,7 @@ Timings are advisory unless --gate is selected. A gate can be inconclusive.
 """
 
 import argparse
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -30,6 +31,9 @@ CASES = ('nested-lookup', 'image-compile', 'warm-build-cache')
 LABELS = ('baseline', 'candidate')
 MAX_CAPTURE_BYTES = 1024 * 1024
 CALIBRATION_HEADROOM = 2.0
+CALIBRATION_PAIRS = 2
+CALIBRATION_ITERATIONS = 32
+MAX_ITERATIONS = 512
 NOISE_LIMIT = 0.10
 ORDER_BIAS_LIMIT = 0.05
 FAMILY_ALPHA = 0.05
@@ -89,17 +93,73 @@ def relative_mad(values):
     return statistics.median(abs(value - center) for value in values) / center
 
 
-def calibrated_iterations(warmups, min_seconds, ceiling):
-    fastest = min(statistics.median(item[label]['seconds'] for item in warmups) for label in LABELS)
-    if not math.isfinite(fastest) or fastest <= 0:
-        raise ValueError('Calibration observations must be finite and positive')
-    required = math.ceil(min_seconds / fastest)
-    if required > ceiling:
-        raise CalibrationInfeasible({'minimum_iterations': required, 'iteration_ceiling': ceiling,
-                                    'fastest_warmup_median_seconds': fastest,
-                                    'predicted_ceiling_batch_seconds': fastest * ceiling,
-                                    'minimum_batch_seconds': min_seconds})
-    return min(ceiling, max(1, math.ceil(min_seconds * CALIBRATION_HEADROOM / fastest)))
+def calibration_details(pilots, min_seconds, ceiling):
+    """Normalize complete fixed pilots without consuming inference or telemetry."""
+    def positive_seconds(value):
+        if type(value) not in (int, float):
+            raise ValueError('Calibration durations must be finite positive numbers')
+        try:
+            value = float(value)
+        except OverflowError as error:
+            raise ValueError('Calibration durations must be finite positive numbers') from error
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError('Calibration durations must be finite positive numbers')
+        return value
+
+    min_seconds = positive_seconds(min_seconds)
+    if type(ceiling) is not int or not 1 <= ceiling <= MAX_ITERATIONS:
+        raise ValueError(f'Calibration ceiling must be an integer from 1 to {MAX_ITERATIONS}')
+    if not isinstance(pilots, (list, tuple)) or len(pilots) != CALIBRATION_PAIRS:
+        raise ValueError('Calibration requires exactly two complete balanced pilot pairs')
+    rates = {label: [] for label in LABELS}
+    for index, pilot in enumerate(pilots):
+        if not isinstance(pilot, dict) or not {'pair_index', 'order', 'iterations', *LABELS} <= pilot.keys() \
+                or not isinstance(pilot['order'], (list, tuple)) \
+                or any(type(label) is not str for label in pilot['order']):
+            raise ValueError('Calibration requires complete pilot rows and raw role batches')
+        order = tuple(pilot['order'])
+        if type(pilot['pair_index']) is not int or pilot['pair_index'] != index \
+                or len(order) != 2 or set(order) != set(LABELS) \
+                or (index and order != tuple(reversed(pilots[index - 1]['order']))):
+            raise ValueError('Calibration pilot indices and role orders must be balanced')
+        if type(pilot['iterations']) is not int or pilot['iterations'] != CALIBRATION_ITERATIONS:
+            raise ValueError('Calibration pilots require exactly 32 iterations per side')
+        for label in LABELS:
+            observed = pilot[label]
+            if not isinstance(observed, dict) or not {'iterations', 'seconds'} <= observed.keys():
+                raise ValueError('Calibration requires complete raw role batches')
+            iterations = observed['iterations']
+            if type(iterations) is not int or iterations != pilot['iterations']:
+                raise ValueError('Calibration batch iteration counts must match the declared pilot count')
+            rate = positive_seconds(positive_seconds(observed['seconds']) / iterations)
+            rates[label].append(rate)
+    medians = {label: statistics.median(rates[label]) for label in LABELS}
+    fastest = min(medians.values())
+    # Exact ratios of the finite observed floats avoid overflowing count
+    # arithmetic for an exceptionally small positive calibration duration.
+    relative_duration = Fraction(min_seconds) / Fraction(fastest)
+    minimum = math.ceil(relative_duration)
+    requested = math.ceil(relative_duration * Fraction(CALIBRATION_HEADROOM))
+    selected = min(ceiling, requested)
+    predictions = (fastest * selected, fastest * ceiling)
+    if any(not math.isfinite(value) for value in predictions):
+        raise ValueError('Calibration predicts nonfinite batch durations')
+    return {'normalized_rates_seconds_per_iteration': rates,
+            'pilot_medians_seconds_per_iteration': medians,
+            'fastest_pilot_median_seconds_per_iteration': fastest,
+            'minimum_batch_seconds': min_seconds, 'minimum_iterations': minimum,
+            'requested_iterations': requested, 'selected_iterations': selected,
+            'iteration_ceiling': ceiling, 'headroom_clipped': requested > ceiling,
+            'minimum_feasible': minimum <= ceiling, 'calibration_headroom': CALIBRATION_HEADROOM,
+            'predicted_selected_batch_seconds': predictions[0],
+            'predicted_ceiling_batch_seconds': predictions[1]}
+
+
+def calibrated_iterations(pilots, min_seconds, ceiling):
+    details = calibration_details(pilots, min_seconds, ceiling)
+    if not details['minimum_feasible']:
+        raise CalibrationInfeasible(details)
+    return details['selected_iterations']
 
 
 def analyze_pairs(samples, threshold, min_seconds, case_count=len(CASES)):
@@ -447,6 +507,9 @@ def load_metadata(path):
         if not isinstance(side, dict) or any(not isinstance(side.get(field), str) or not side[field].strip()
                                              for field in ('revision', 'build_command')):
             raise ValueError('Metadata requires ' + label + ' revision and build_command strings')
+        if 'artifact_sha256' in side and (not isinstance(side['artifact_sha256'], str)
+                                          or re.fullmatch(r'[0-9a-f]{64}', side['artifact_sha256']) is None):
+            raise ValueError('Metadata requires ' + label + ' artifact_sha256 to be an exact lowercase SHA-256')
     return metadata
 
 
@@ -485,14 +548,15 @@ def parser():
                         help='JSON with runner_label, toolchain and per-side revision/build_command')
     result.add_argument('--output', type=Path, default=REPO / 'target/runtime-performance/report.json')
     result.add_argument('--pairs', type=int, default=40, help='Even paired batch count, 16 to 60')
-    result.add_argument('--warmups', type=int, default=2, help='Per-side per-case calibration warmups, 2 to 10')
+    result.add_argument('--warmups', type=int, default=2, help='Per-side single-command warmups before separate calibration pilots, 2 to 10')
     result.add_argument('--timeout', type=float, default=30, help='Per-command deadline, (0, 60] seconds')
     result.add_argument('--budget', type=float, default=900, help='Whole-run deadline, (0, 1800] seconds')
     result.add_argument('--threshold', type=float, default=0.10, help='Predeclared relative practical slowdown, (0, 1]')
     result.add_argument('--min-sample-seconds', type=float, default=1.0, help='Minimum aggregate batch duration, [0.05, 2] seconds')
     result.add_argument('--warm-cache-min-sample-seconds', type=float, default=1.0,
                         help='Longer minimum for startup-sensitive cache-hit batches, [0.25, 4] seconds')
-    result.add_argument('--max-iterations', type=int, default=256, help='Matched batch iteration ceiling, 1 to 256')
+    result.add_argument('--max-iterations', type=int, default=MAX_ITERATIONS,
+                        help=f'Matched batch iteration ceiling, 1 to {MAX_ITERATIONS}')
     result.add_argument('--gate', action='store_true', help='Exit 0 pass, 1 demonstrated regression/error, 2 inconclusive')
     return result
 
@@ -511,8 +575,8 @@ def main(argv=None):
     if not math.isfinite(args.warm_cache_min_sample_seconds) or not 0.25 <= args.warm_cache_min_sample_seconds <= 4:
         argument_parser.error('--warm-cache-min-sample-seconds must be finite and in [0.25, 4]')
     if not 16 <= args.pairs <= 60 or args.pairs % 2 or not 2 <= args.warmups <= 10 \
-            or not 1 <= args.max_iterations <= 256:
-        argument_parser.error('Requires even --pairs 16..60, --warmups 2..10 and --max-iterations 1..256')
+            or not 1 <= args.max_iterations <= MAX_ITERATIONS:
+        argument_parser.error(f'Requires even --pairs 16..60, --warmups 2..10 and --max-iterations 1..{MAX_ITERATIONS}')
     args.output = args.output.resolve()
     if args.output.suffix.lower() != '.json':
         argument_parser.error('--output requires a .json extension to keep distinct JSON and Markdown reports')
@@ -527,20 +591,23 @@ def main(argv=None):
         for input_path in (*sources.values(), args.metadata.resolve()):
             if output_path == input_path or (output_path.exists() and output_path.samefile(input_path)):
                 argument_parser.error('Output paths must not overwrite selected inputs or aliases')
-    report = {'schema_version': 2, 'gate': args.gate, 'status': 'incomplete', 'metadata': metadata,
+    report = {'schema_version': 3, 'gate': args.gate, 'status': 'incomplete', 'metadata': metadata,
               'machine': {'system': platform.system(), 'release': platform.release(),
                           'architecture': platform.machine(), 'processor': platform.processor(),
                           'logical_cpu_count': os.cpu_count(), 'python': platform.python_version()},
               'diagnostic_telemetry': {'reported_build_timing': {
                   'source': 'Optional build-report JSON elapsed_ms', 'untrusted': True, 'used_for_gate': False,
                   'reported_elapsed_ms_scope': 'Timer inside the build function; excludes process launch and CLI/configuration setup.',
-                  'parent_minus_reported_seconds_scope': 'Diagnostic residual includes launch, CLI/configuration setup, '
-                      'serialization and exit; it does not isolate loader time.'}},
+                  'parent_minus_reported_seconds_scope': 'Diagnostic residual includes parent capture setup, launch, '
+                      'CLI/configuration setup, serialization, exit and completion scheduling; it does not isolate loader time.'}},
               'policy': {'relative_threshold': args.threshold, 'familywise_confidence': 1 - FAMILY_ALPHA,
                          'pairs_per_case': args.pairs, 'warmups_per_side': args.warmups,
                          'min_sample_seconds': args.min_sample_seconds, 'max_iterations': args.max_iterations,
                          'warm_cache_min_sample_seconds': args.warm_cache_min_sample_seconds,
                          'calibration_headroom': CALIBRATION_HEADROOM,
+                         'calibration_pairs': CALIBRATION_PAIRS,
+                         'calibration_iterations': CALIBRATION_ITERATIONS,
+                         'calibration_method': 'balanced-batched-pilot-v1',
                          'per_command_deadline_seconds': args.timeout, 'whole_run_deadline_seconds': args.budget,
                          'noise_relative_mad_limit': NOISE_LIMIT, 'order_bias_limit': ORDER_BIAS_LIMIT,
                          'method': 'Adjacent opposite-order pairs form geometric-mean ratio blocks. '
@@ -579,6 +646,11 @@ def main(argv=None):
                     row['sha256_start'] = executable_sha256(dest)
                     if row['sha256_start'] != row['source_sha256_start']:
                         raise BenchmarkError('Selected binary changed during its isolated copy')
+                    # Optional build provenance binds the measured bytes to the
+                    # recorded build. It never enters timing or calibration.
+                    expected = metadata[label].get('artifact_sha256')
+                    if expected is not None and expected != row['source_sha256_start']:
+                        raise BenchmarkError('Selected ' + label + ' binary differs from its recorded build artifact SHA-256')
                     binaries[label] = dest
                 persist(report, args.output)
                 for case_index, case in enumerate(CASES):
@@ -590,7 +662,7 @@ def main(argv=None):
                            'fixture_roots': {label: str(fixtures[label]['root']) for label in LABELS},
                            'min_sample_seconds': args.warm_cache_min_sample_seconds if case == 'warm-build-cache'
                            else args.min_sample_seconds,
-                           'warmups': [], 'samples': []}
+                           'warmups': [], 'calibration_pilots': [], 'samples': []}
                     report['results'].append(row)
                     if len(set(row['fixture_sha256'].values())) != 1:
                         raise BenchmarkError('Per-binary source fixtures do not have equal content')
@@ -603,11 +675,21 @@ def main(argv=None):
                             row['initialization'][label]['reported_build_timing'] = initial['reported_build_timing']
                     for warmup_index in range(args.warmups):
                         warmup = {'order': paired_order(warmup_index, case_index)}
+                        row['warmups'].append(warmup)
                         for label in warmup['order']:
                             warmup[label] = batch(supervisor, fixtures[label], case, 1)
-                        row['warmups'].append(warmup)
+                    for pilot_index in range(CALIBRATION_PAIRS):
+                        pilot = {'pair_index': pilot_index, 'order': paired_order(pilot_index, case_index),
+                                 'iterations': CALIBRATION_ITERATIONS}
+                        # Retain a completed side if its partner fails, exactly
+                        # as for formal samples. Pilots never enter inference.
+                        row['calibration_pilots'].append(pilot)
+                        for label in pilot['order']:
+                            pilot[label] = batch(supervisor, fixtures[label], case, CALIBRATION_ITERATIONS)
+                        persist(report, args.output)
+                    row['calibration'] = calibration_details(row['calibration_pilots'], row['min_sample_seconds'], args.max_iterations)
                     try:
-                        iterations = calibrated_iterations(row['warmups'], row['min_sample_seconds'], args.max_iterations)
+                        iterations = calibrated_iterations(row['calibration_pilots'], row['min_sample_seconds'], args.max_iterations)
                     except CalibrationInfeasible as error:
                         row['calibration_infeasible'] = error.details
                         row['analysis'] = {'status': 'inconclusive', 'reasons': [str(error)]}
