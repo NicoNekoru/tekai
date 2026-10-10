@@ -26,6 +26,10 @@ impl Project {
     }
 
     fn run(&self, args: &[&str]) -> Output {
+        self.run_with_env(args, &[])
+    }
+
+    fn run_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_tekai"))
             .current_dir(&self.0)
             .env_clear()
@@ -40,6 +44,7 @@ impl Project {
             .env("TEXMFVAR", self.0.join("missing-texlive"))
             .env("TEXMFCONFIG", self.0.join("missing-texlive"))
             .env("shell_escape", "t")
+            .envs(extra.iter().copied())
             .args(args)
             .output()
             .unwrap()
@@ -62,6 +67,127 @@ impl Drop for Project {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn diagnostic_cache_routes_are_stable_and_profiling_preserves_outputs() {
+    fn counter(profile: &Value, name: &str) -> u64 {
+        profile["counters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == name)
+            .unwrap()["value"]
+            .as_u64()
+            .unwrap()
+    }
+
+    fn profiled(project: &Project) -> (Value, Value) {
+        let output = project.run_with_env(
+            &[
+                "build",
+                "main.tex",
+                "--config",
+                "tekai.toml",
+                "--once",
+                "--report-json",
+            ],
+            &[("TEKAI_DIAGNOSTIC_PROFILE", "1")],
+        );
+        assert!(output.status.success(), "{output:?}");
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let stderr = std::str::from_utf8(&output.stderr).unwrap();
+        assert_eq!(stderr.lines().count(), 1, "{stderr}");
+        assert!(stderr.len() <= 16 * 1024);
+        let profile: Value =
+            serde_json::from_str(stderr.strip_prefix("TEKAI_PROFILE ").unwrap()).unwrap();
+        assert_eq!(profile["schema_version"], 2);
+        assert_eq!(profile["untrusted"], true);
+        assert_eq!(profile["status"], "success");
+        assert!(profile["phases"].as_array().unwrap().iter().all(|phase| {
+            phase["active_calls"] == 0
+                && phase["elapsed_ms"]
+                    .as_f64()
+                    .is_none_or(|value| value.is_finite() && value >= 0.0)
+        }));
+        (report, profile)
+    }
+
+    let project = Project::new();
+    project.write("tekai.toml", "# Explicit empty fixture configuration.\n");
+    let mut main = String::from("\\documentclass{article}\n\\begin{document}\nProbe.\n");
+    for index in 0..16 {
+        let name = format!("deps/part-{index:02}.tex");
+        project.write(&name, "% A recorded dependency.\n");
+        main.push_str(&format!("\\input{{{name}}}\n"));
+    }
+    main.push_str("\\end{document}\n");
+    project.write("main.tex", &main);
+    let args = &[
+        "build",
+        "main.tex",
+        "--config",
+        "tekai.toml",
+        "--once",
+        "--report-json",
+    ];
+    let initial = project.success(args);
+    assert_eq!(initial["tex_runs"], 1);
+    let state_path = project.0.join("build/.tekai-main.state.toml");
+    let state = fs::read(&state_path).unwrap();
+    let pdf = fs::read(project.0.join("build/main.pdf")).unwrap();
+    let mut prior_counters = None;
+    for _ in 0..4 {
+        let (report, profile) = profiled(&project);
+        assert_eq!(report["skipped"], true);
+        assert_eq!(report["tex_runs"], 0);
+        assert_eq!(counter(&profile, "warm_cache_hits"), 1);
+        assert!(counter(&profile, "state_dependencies") >= 17);
+        assert_eq!(counter(&profile, "state_bytes_read"), state.len() as u64);
+        assert_eq!(
+            counter(&profile, "freshness_requests"),
+            counter(&profile, "state_dependencies")
+        );
+        for name in [
+            "freshness_memo_hits",
+            "stale_inputs",
+            "content_hash_fallbacks",
+            "effective_hash_fallbacks",
+        ] {
+            assert_eq!(counter(&profile, name), 0, "{name}: {profile}");
+        }
+        if let Some(prior) = &prior_counters {
+            assert_eq!(&profile["counters"], prior);
+        }
+        prior_counters = Some(profile["counters"].clone());
+        assert_eq!(fs::read(&state_path).unwrap(), state);
+        assert_eq!(fs::read(project.0.join("build/main.pdf")).unwrap(), pdf);
+    }
+    let plain = project.run(args);
+    assert!(plain.status.success(), "{plain:?}");
+    assert!(plain.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&plain.stdout).unwrap()["skipped"],
+        true
+    );
+
+    project.write(
+        "deps/part-00.tex",
+        "% A changed comment takes the effective-hash route.\n",
+    );
+    let (report, profile) = profiled(&project);
+    assert_eq!(report["skipped"], true);
+    assert_eq!(counter(&profile, "effective_hash_fallbacks"), 1);
+    assert_eq!(counter(&profile, "stale_inputs"), 0);
+    assert_eq!(fs::read(&state_path).unwrap(), state);
+
+    project.write("deps/part-00.tex", "Changed dependency.\n");
+    let (report, profile) = profiled(&project);
+    assert_eq!(report["skipped"], false);
+    assert_eq!(report["tex_runs"], 1);
+    assert_eq!(counter(&profile, "warm_cache_hits"), 0);
+    assert!(counter(&profile, "stale_inputs") > 0);
+    assert_ne!(fs::read(project.0.join("build/main.pdf")).unwrap(), pdf);
 }
 
 #[test]

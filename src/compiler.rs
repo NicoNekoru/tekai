@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use crate::diagnostic_profile::{self, Phase};
+use crate::diagnostic_profile::{self, Counter, Phase};
 use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
@@ -90,6 +90,7 @@ static KPATHSEA_RESOLUTION_CACHE: OnceLock<Mutex<HashMap<KpathseaResolutionKey, 
     OnceLock::new();
 
 fn clear_kpathsea_resolution_cache() {
+    let _profile = diagnostic_profile::span(Phase::LookupSessionReset);
     tekai_engine::lookup::reset();
     if let Some(cache) = KPATHSEA_RESOLUTION_CACHE.get()
         && let Ok(mut cache) = cache.lock()
@@ -833,12 +834,13 @@ fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let compatible_previous_build_state = previous_build_state
         .as_ref()
         .filter(|state| build_state_is_compatible(state, &mode_key, &pdf_path));
-    let mut build_state_input_freshness = HashMap::new();
+    let mut build_state_input_freshness = InputFreshnessCache::default();
     if !options.force
         && direct_artifacts_exist(options, &out_dir, &job_name, &pdf_path)
         && let Some(state) = compatible_previous_build_state
         && build_state_inputs_are_fresh(state, &mut build_state_input_freshness)?
     {
+        diagnostic_profile::count(Counter::WarmCacheHits, 1);
         return Ok(BuildReport {
             elapsed: started.elapsed(),
             pdf_path: Some(pdf_path),
@@ -1052,12 +1054,13 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let compatible_previous_build_state = previous_build_state
         .as_ref()
         .filter(|state| build_state_is_compatible(state, &mode_key, &pdf_path));
-    let mut build_state_input_freshness = HashMap::new();
+    let mut build_state_input_freshness = InputFreshnessCache::default();
     if !options.force
         && direct_artifacts_exist(options, &out_dir, &job_name, &pdf_path)
         && let Some(state) = compatible_previous_build_state
         && build_state_inputs_are_fresh(state, &mut build_state_input_freshness)?
     {
+        diagnostic_profile::count(Counter::WarmCacheHits, 1);
         return Ok(BuildReport {
             elapsed: started.elapsed(),
             pdf_path: Some(pdf_path),
@@ -2159,7 +2162,7 @@ fn restore_settled_aux_cache_if_fresh(
         pdf_path: pdf_path.display().to_string(),
         inputs: cache_state.inputs,
     };
-    let mut freshness = HashMap::new();
+    let mut freshness = InputFreshnessCache::default();
     if !build_state_inputs_are_fresh(&restored_state, &mut freshness)? {
         return Ok(None);
     }
@@ -2564,9 +2567,9 @@ fn read_preamble_format_state_if_exists(path: &Path) -> Result<Option<PreambleFo
 }
 
 fn preamble_format_inputs_are_fresh(inputs: &[FileFingerprint]) -> Result<bool> {
-    let mut freshness = HashMap::new();
-    for input in inputs {
-        if !input_fingerprint_is_fresh_cached(input, &mut freshness)? {
+    let mut freshness = InputFreshnessCache::default();
+    for (index, input) in inputs.iter().enumerate() {
+        if !input_fingerprint_is_fresh_cached(index, input, &mut freshness)? {
             return Ok(false);
         }
     }
@@ -10991,6 +10994,7 @@ fn external_tool_command(program: impl AsRef<OsStr>, options: &BuildOptions) -> 
 }
 
 fn direct_mode_key(options: &BuildOptions, main: &Path) -> String {
+    let _profile = diagnostic_profile::span(Phase::BuildModeKey);
     format!(
         "v{};main={};job={};engine={:?};bib={:?};fast={};once={};precompile_preamble={};synctex={};shell_escape={};external_tools={};env={};bundle={};format={}",
         BUILD_STATE_VERSION,
@@ -11041,11 +11045,17 @@ fn environment_signature(vars: &[&str], doc_dir: &Path) -> String {
 
 fn read_build_state_if_exists(state_path: &Path) -> Result<Option<BuildState>> {
     let _profile = diagnostic_profile::span(Phase::BuildStateLoad);
-    let Some(source) = read_optional_text_file(state_path, "build state")? else {
+    let Some(source) = diagnostic_profile::measure(Phase::BuildStateRead, || {
+        read_optional_text_file(state_path, "build state")
+    })?
+    else {
         return Ok(None);
     };
-    let state: BuildState = toml::from_str(&source)
-        .with_context(|| format!("failed to parse build state {}", state_path.display()))?;
+    diagnostic_profile::count(Counter::StateBytesRead, source.len() as u64);
+    let state: BuildState =
+        diagnostic_profile::measure(Phase::BuildStateParse, || toml::from_str(&source))
+            .with_context(|| format!("failed to parse build state {}", state_path.display()))?;
+    diagnostic_profile::count(Counter::StateDependencies, state.inputs.len() as u64);
     Ok(Some(state))
 }
 
@@ -11077,11 +11087,11 @@ fn direct_artifacts_exist(
 
 fn build_state_inputs_are_fresh(
     state: &BuildState,
-    build_state_input_freshness: &mut HashMap<FileFingerprint, bool>,
+    build_state_input_freshness: &mut InputFreshnessCache,
 ) -> Result<bool> {
     let _profile = diagnostic_profile::span(Phase::InputFreshness);
-    for input in &state.inputs {
-        if !input_fingerprint_is_fresh_cached(input, build_state_input_freshness)? {
+    for (index, input) in state.inputs.iter().enumerate() {
+        if !input_fingerprint_is_fresh_cached(index, input, build_state_input_freshness)? {
             return Ok(false);
         }
     }
@@ -11091,7 +11101,7 @@ fn build_state_inputs_are_fresh(
 fn can_preflight_aux_tools(
     previous_build_state: Option<&BuildState>,
     direct: DirectContext<'_>,
-    build_state_input_freshness: &mut HashMap<FileFingerprint, bool>,
+    build_state_input_freshness: &mut InputFreshnessCache,
 ) -> Result<bool> {
     let Some(state) = previous_build_state else {
         return Ok(false);
@@ -11110,8 +11120,8 @@ fn can_preflight_aux_tools(
     }
 
     let mut saw_stale_aux_tool_input = false;
-    for input in &state.inputs {
-        let fresh = input_fingerprint_is_fresh_cached(input, build_state_input_freshness)?;
+    for (index, input) in state.inputs.iter().enumerate() {
+        let fresh = input_fingerprint_is_fresh_cached(index, input, build_state_input_freshness)?;
         if aux_tool_inputs.contains(&input.path) {
             if !fresh {
                 saw_stale_aux_tool_input = true;
@@ -12068,6 +12078,7 @@ fn fingerprint_effective_tex_path_reusing(
 
 fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
     if let Some(expected_hash) = input.hash.strip_prefix(BIBER_GLOB_MATCHES_HASH_PREFIX) {
+        diagnostic_profile::count(Counter::VirtualFreshnessChecks, 1);
         let Some((doc_dir, pattern)) = decode_biber_glob_fingerprint_path(&input.path) else {
             return Ok(false);
         };
@@ -12079,6 +12090,7 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
         return Ok(current.len == input.len && current_hash == expected_hash);
     }
     if let Some(expected_hash) = input.hash.strip_prefix(BIBER_CONFIG_CHOICE_HASH_PREFIX) {
+        diagnostic_profile::count(Counter::VirtualFreshnessChecks, 1);
         let Some(doc_dir) = decode_biber_config_fingerprint_path(&input.path) else {
             return Ok(false);
         };
@@ -12112,8 +12124,11 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
             return Ok(false);
         };
         if metadata.matches(input) {
+            diagnostic_profile::count(Counter::MetadataMatches, 1);
             return Ok(true);
         }
+        diagnostic_profile::count(Counter::EffectiveHashFallbacks, 1);
+        let _profile = diagnostic_profile::span(Phase::InputEffectiveHash);
         let bytes =
             fs::read(path).with_context(|| format!("failed to read input {}", path.display()))?;
         let effective = effective_tex_bytes(&bytes, mode);
@@ -12133,8 +12148,11 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
             return Ok(false);
         };
         if metadata.matches(input) {
+            diagnostic_profile::count(Counter::MetadataMatches, 1);
             return Ok(true);
         }
+        diagnostic_profile::count(Counter::EffectiveHashFallbacks, 1);
+        let _profile = diagnostic_profile::span(Phase::InputEffectiveHash);
         let bytes =
             fs::read(path).with_context(|| format!("failed to read input {}", path.display()))?;
         let Some(effective) = cited_bibtex_bytes(&bytes, &citation_keys) else {
@@ -12153,8 +12171,10 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
         return Ok(false);
     }
     if metadata.matches(input) {
+        diagnostic_profile::count(Counter::MetadataMatches, 1);
         return Ok(true);
     }
+    diagnostic_profile::count(Counter::ContentHashFallbacks, 1);
     Ok(file_content_hash_hex(path)? == input.hash)
 }
 
@@ -12163,16 +12183,61 @@ fn is_virtual_fingerprint_path(path: &str) -> bool {
         || path.starts_with(BIBER_CONFIG_FINGERPRINT_PATH_PREFIX)
 }
 
-fn input_fingerprint_is_fresh_cached(
-    input: &FileFingerprint,
-    build_state_input_freshness: &mut HashMap<FileFingerprint, bool>,
-) -> Result<bool> {
-    if let Some(fresh) = build_state_input_freshness.get(input) {
-        return Ok(*fresh);
+/// One immutable input sequence is checked in index order. A checked-fresh
+/// prefix needs no allocation. After the first stale input, preserve each
+/// observation so auxiliary preflight sees the same filesystem snapshot.
+#[derive(Default)]
+struct InputFreshnessCache {
+    fresh_prefix: usize,
+    tail: Vec<bool>,
+}
+
+impl InputFreshnessCache {
+    fn observed(&self, index: usize) -> Option<bool> {
+        if index < self.fresh_prefix {
+            Some(true)
+        } else {
+            self.tail.get(index - self.fresh_prefix).copied()
+        }
     }
-    let fresh = input_fingerprint_is_fresh(input)?;
-    build_state_input_freshness.insert(input.clone(), fresh);
-    Ok(fresh)
+
+    fn remember(&mut self, index: usize, fresh: bool) {
+        assert_eq!(
+            index,
+            self.fresh_prefix + self.tail.len(),
+            "freshness observations must extend the ordered input prefix"
+        );
+        if fresh && self.tail.is_empty() {
+            self.fresh_prefix += 1;
+        } else {
+            self.tail.push(fresh);
+        }
+    }
+
+    fn check_with(&mut self, index: usize, check: impl FnOnce() -> Result<bool>) -> Result<bool> {
+        diagnostic_profile::count(Counter::FreshnessRequests, 1);
+        let observed =
+            diagnostic_profile::measure(Phase::InputFreshnessMemo, || self.observed(index));
+        if let Some(fresh) = observed {
+            diagnostic_profile::count(Counter::FreshnessMemoHits, 1);
+            return Ok(fresh);
+        }
+        diagnostic_profile::count(Counter::FreshnessMemoMisses, 1);
+        let fresh = check()?;
+        if !fresh {
+            diagnostic_profile::count(Counter::StaleInputs, 1);
+        }
+        diagnostic_profile::measure(Phase::InputFreshnessMemo, || self.remember(index, fresh));
+        Ok(fresh)
+    }
+}
+
+fn input_fingerprint_is_fresh_cached(
+    index: usize,
+    input: &FileFingerprint,
+    build_state_input_freshness: &mut InputFreshnessCache,
+) -> Result<bool> {
+    build_state_input_freshness.check_with(index, || input_fingerprint_is_fresh(input))
 }
 
 fn effective_tex_bytes(bytes: &[u8], mode: EffectiveTexMode) -> Vec<u8> {
@@ -12544,6 +12609,8 @@ fn is_tex_like_source_input(path: &Path) -> bool {
 }
 
 fn file_metadata_fingerprint(path: &Path) -> Result<Option<FileMetadataFingerprint>> {
+    let _profile = diagnostic_profile::span(Phase::InputMetadata);
+    diagnostic_profile::count(Counter::MetadataChecks, 1);
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -12568,6 +12635,7 @@ fn file_metadata_fingerprint(path: &Path) -> Result<Option<FileMetadataFingerpri
 }
 
 fn file_content_hash_hex(path: &Path) -> Result<String> {
+    let _profile = diagnostic_profile::span(Phase::InputContentHash);
     let bytes =
         fs::read(path).with_context(|| format!("failed to read input {}", path.display()))?;
     Ok(format!("{:016x}", content_hash(&bytes)))
@@ -15009,15 +15077,15 @@ mod tests {
         let fingerprint = fingerprint_path_reusing(&input, None)
             .expect("fingerprint failed")
             .expect("missing fingerprint");
-        let mut freshness = HashMap::new();
+        let mut freshness = InputFreshnessCache::default();
         assert!(
-            input_fingerprint_is_fresh_cached(&fingerprint, &mut freshness)
+            input_fingerprint_is_fresh_cached(0, &fingerprint, &mut freshness)
                 .expect("cached freshness check failed")
         );
         fs::remove_file(&input).expect("failed to remove input");
 
         assert!(
-            input_fingerprint_is_fresh_cached(&fingerprint, &mut freshness)
+            input_fingerprint_is_fresh_cached(0, &fingerprint, &mut freshness)
                 .expect("cached freshness check should not touch disk")
         );
         assert!(
@@ -15026,6 +15094,73 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ordered_freshness_prefix_requires_no_allocation() {
+        let mut freshness = InputFreshnessCache::default();
+        for index in 0..4096 {
+            assert!(freshness.check_with(index, || Ok(true)).unwrap());
+        }
+        assert_eq!(freshness.fresh_prefix, 4096);
+        assert_eq!(freshness.tail.capacity(), 0);
+        for index in 0..4096 {
+            assert!(
+                freshness
+                    .check_with(index, || panic!(
+                        "checked prefix must not repeat filesystem work"
+                    ))
+                    .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_freshness_errors_do_not_create_observations() {
+        let mut freshness = InputFreshnessCache::default();
+        assert!(
+            freshness
+                .check_with(0, || bail!("original I/O error"))
+                .unwrap_err()
+                .to_string()
+                .contains("original I/O error")
+        );
+        assert_eq!(freshness.observed(0), None);
+        assert!(!freshness.check_with(0, || Ok(false)).unwrap());
+        assert_eq!(freshness.observed(0), Some(false));
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::default())]
+        #[test]
+        fn ordered_freshness_reuses_snapshot_for_any_input_permutation(
+            mut keyed in proptest::collection::vec((proptest::prelude::any::<u16>(), proptest::prelude::any::<bool>()), 0..256)
+        ) {
+            // Random sort keys permute the immutable input sequence. Neither
+            // path hashes nor order-dependent map iteration choose a route.
+            keyed.sort_by_key(|entry| entry.0);
+            let observations: Vec<bool> = keyed.into_iter().map(|entry| entry.1).collect();
+            let mut freshness = InputFreshnessCache::default();
+            let mut checks = vec![0usize; observations.len()];
+            for (index, fresh) in observations.iter().copied().enumerate() {
+                let actual = freshness.check_with(index, || { checks[index] += 1; Ok(fresh) }).unwrap();
+                proptest::prop_assert_eq!(actual, fresh);
+                if !actual { break; }
+            }
+            // Aux preflight starts at zero and extends the same snapshot.
+            for (index, fresh) in observations.iter().copied().enumerate() {
+                let actual = freshness.check_with(index, || { checks[index] += 1; Ok(fresh) }).unwrap();
+                proptest::prop_assert_eq!(actual, fresh);
+            }
+            for (index, fresh) in observations.iter().copied().enumerate() {
+                let actual = freshness.check_with(index, || Ok(!fresh)).unwrap();
+                proptest::prop_assert_eq!(actual, fresh);
+                proptest::prop_assert_eq!(checks[index], 1);
+            }
+            if observations.iter().all(|fresh| *fresh) {
+                proptest::prop_assert_eq!(freshness.tail.capacity(), 0);
+            }
+        }
     }
 
     #[test]

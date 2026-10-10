@@ -10,7 +10,7 @@ use serde::Serialize;
 
 pub const ENV: &str = "TEKAI_DIAGNOSTIC_PROFILE";
 const PREFIX: &str = "TEKAI_PROFILE ";
-const MAX_RECORD_BYTES: usize = 8192;
+const MAX_RECORD_BYTES: usize = 16384;
 static SESSION: OnceLock<Option<Session>> = OnceLock::new();
 
 #[derive(Copy, Clone)]
@@ -24,9 +24,18 @@ pub enum Phase {
     InputFreshness,
     SettledCacheRestore,
     TexSubprocess,
+    BuildStateRead,
+    BuildStateParse,
+    InputMetadata,
+    InputContentHash,
+    InputEffectiveHash,
+    InputFreshnessMemo,
+    LookupSessionReset,
+    CliReportSerialization,
+    BuildModeKey,
 }
 
-const PHASES: [(Phase, &str, &str); 9] = [
+const PHASES: [(Phase, &str, &str); 18] = [
     (
         Phase::CliParse,
         "cli_parse",
@@ -68,6 +77,114 @@ const PHASES: [(Phase, &str, &str); 9] = [
         "tex_subprocess",
         "compiler TeX command.status calls, including preamble compilation",
     ),
+    (
+        Phase::BuildStateRead,
+        "build_state_read",
+        "compiler build-state file read",
+    ),
+    (
+        Phase::BuildStateParse,
+        "build_state_parse",
+        "compiler build-state TOML parse",
+    ),
+    (
+        Phase::InputMetadata,
+        "input_metadata",
+        "compiler::file_metadata_fingerprint",
+    ),
+    (
+        Phase::InputContentHash,
+        "input_content_hash",
+        "compiler::file_content_hash_hex read and hash",
+    ),
+    (
+        Phase::InputEffectiveHash,
+        "input_effective_hash",
+        "compiler freshness fallback effective-source read and hash",
+    ),
+    (
+        Phase::InputFreshnessMemo,
+        "input_freshness_memo",
+        "compiler ordered freshness memo lookup and update",
+    ),
+    (
+        Phase::LookupSessionReset,
+        "lookup_session_reset",
+        "compiler::clear_kpathsea_resolution_cache",
+    ),
+    (
+        Phase::CliReportSerialization,
+        "cli_report_serialization",
+        "main build-report JSON conversion and serialization",
+    ),
+    (
+        Phase::BuildModeKey,
+        "build_mode_key",
+        "compiler::direct_mode_key",
+    ),
+];
+
+#[derive(Copy, Clone)]
+pub enum Counter {
+    StateBytesRead,
+    StateDependencies,
+    FreshnessRequests,
+    FreshnessMemoHits,
+    FreshnessMemoMisses,
+    MetadataChecks,
+    MetadataMatches,
+    ContentHashFallbacks,
+    EffectiveHashFallbacks,
+    VirtualFreshnessChecks,
+    StaleInputs,
+    WarmCacheHits,
+}
+
+const COUNTERS: [(Counter, &str, &str); 12] = [
+    (Counter::StateBytesRead, "state_bytes_read", "bytes"),
+    (
+        Counter::StateDependencies,
+        "state_dependencies",
+        "recorded_inputs",
+    ),
+    (Counter::FreshnessRequests, "freshness_requests", "requests"),
+    (
+        Counter::FreshnessMemoHits,
+        "freshness_memo_hits",
+        "requests",
+    ),
+    (
+        Counter::FreshnessMemoMisses,
+        "freshness_memo_misses",
+        "requests",
+    ),
+    (Counter::MetadataChecks, "metadata_checks", "calls"),
+    (
+        Counter::MetadataMatches,
+        "metadata_matches",
+        "freshness_routes",
+    ),
+    (
+        Counter::ContentHashFallbacks,
+        "content_hash_fallbacks",
+        "freshness_routes",
+    ),
+    (
+        Counter::EffectiveHashFallbacks,
+        "effective_hash_fallbacks",
+        "freshness_routes",
+    ),
+    (
+        Counter::VirtualFreshnessChecks,
+        "virtual_freshness_checks",
+        "freshness_routes",
+    ),
+    (
+        Counter::StaleInputs,
+        "stale_inputs",
+        "observed_stale_inputs",
+    ),
+    (Counter::WarmCacheHits, "warm_cache_hits", "builds"),
 ];
 
 #[derive(Copy, Clone, Default)]
@@ -80,6 +197,7 @@ struct Totals {
 struct Session {
     started: Instant,
     totals: Mutex<[Totals; PHASES.len()]>,
+    counters: Mutex<[u64; COUNTERS.len()]>,
     emitted: AtomicBool,
 }
 
@@ -111,6 +229,14 @@ pub fn measure<T>(phase: Phase, work: impl FnOnce() -> T) -> T {
     work()
 }
 
+/// Disabled counters use no clock, allocation or lock. Enabled state has a
+/// fixed inventory, regardless of project size or the number of dependencies.
+pub fn count(counter: Counter, amount: u64) {
+    if let Some(session) = SESSION.get().and_then(Option::as_ref) {
+        session.count(counter, amount);
+    }
+}
+
 /// Best-effort stderr only. A broken diagnostic sink must not change exit codes.
 pub fn emit(status: &'static str) {
     if let Some(session) = SESSION.get().and_then(Option::as_ref) {
@@ -123,6 +249,7 @@ impl Session {
         Self {
             started: Instant::now(),
             totals: Mutex::new([Totals::default(); PHASES.len()]),
+            counters: Mutex::new([0; COUNTERS.len()]),
             emitted: AtomicBool::new(false),
         }
     }
@@ -145,6 +272,12 @@ impl Session {
             total.active_calls = total.active_calls.saturating_sub(1);
             total.calls = total.calls.saturating_add(1);
             total.elapsed = total.elapsed.saturating_add(elapsed);
+        }
+    }
+
+    fn count(&self, counter: Counter, amount: u64) {
+        if let Ok(mut counters) = self.counters.lock() {
+            counters[counter as usize] = counters[counter as usize].saturating_add(amount);
         }
     }
 
@@ -199,8 +332,12 @@ impl Session {
                 reason: Some(reason),
             });
         }
+        let counters = *self
+            .counters
+            .lock()
+            .map_err(|_| io::Error::other("profile counters poisoned"))?;
         let record = Record {
-            schema_version: 1,
+            schema_version: 2,
             producer: "tekai-rust",
             scope: "cli_process",
             source: "opt_in_rust_instrumentation",
@@ -210,6 +347,15 @@ impl Session {
             completed_spans_only: true,
             phases_overlap: true,
             phases,
+            counters: COUNTERS
+                .into_iter()
+                .map(|(counter, name, unit)| CounterRecord {
+                    name,
+                    value: counters[counter as usize],
+                    unit,
+                    scope: "aggregate_observations_current_process",
+                })
+                .collect(),
         };
         let json = serde_json::to_vec(&record).map_err(io::Error::other)?;
         if PREFIX.len() + json.len() + 1 > MAX_RECORD_BYTES {
@@ -243,6 +389,15 @@ struct Record {
     completed_spans_only: bool,
     phases_overlap: bool,
     phases: Vec<PhaseRecord>,
+    counters: Vec<CounterRecord>,
+}
+
+#[derive(Serialize)]
+struct CounterRecord {
+    name: &'static str,
+    value: u64,
+    unit: &'static str,
+    scope: &'static str,
 }
 
 #[derive(Serialize)]
@@ -289,11 +444,11 @@ mod tests {
     #[test]
     fn inventory_is_bounded_and_unobserved_phases_are_unavailable() {
         let record = record(&Session::new());
-        assert_eq!(record["schema_version"], 1);
+        assert_eq!(record["schema_version"], 2);
         assert_eq!(record["untrusted"], true);
         assert_eq!(record["phases_overlap"], true);
         let phases = record["phases"].as_array().unwrap();
-        assert_eq!(phases.len(), 11);
+        assert_eq!(phases.len(), PHASES.len() + 2);
         for phase in phases {
             assert_eq!(phase["status"], "unavailable");
             assert!(phase["elapsed_ms"].is_null());
@@ -301,6 +456,7 @@ mod tests {
             assert!(!phase["reason"].as_str().unwrap().is_empty());
         }
         assert!(record["elapsed_ms"].as_f64().unwrap().is_finite());
+        assert_eq!(record["counters"].as_array().unwrap().len(), COUNTERS.len());
     }
 
     #[test]
@@ -389,5 +545,20 @@ mod tests {
                 .unwrap()
                 .is_finite()
         );
+    }
+
+    #[test]
+    fn counters_have_fixed_inventory_and_saturate() {
+        let session = Session::new();
+        session.count(Counter::MetadataChecks, u64::MAX);
+        session.count(Counter::MetadataChecks, 1);
+        let record = record(&session);
+        let counters = record["counters"].as_array().unwrap();
+        assert_eq!(counters.len(), COUNTERS.len());
+        assert_eq!(
+            counters[Counter::MetadataChecks as usize]["value"].as_u64(),
+            Some(u64::MAX)
+        );
+        assert_eq!(counters[Counter::WarmCacheHits as usize]["value"], 0);
     }
 }

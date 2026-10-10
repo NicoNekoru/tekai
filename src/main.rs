@@ -778,10 +778,10 @@ impl From<&tekai::compiler::BuildReport> for JsonBuildReport {
 }
 
 fn print_build_report_json(report: &tekai::compiler::BuildReport) -> Result<()> {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&JsonBuildReport::from(report))?
-    );
+    let json = diagnostic_profile::measure(Phase::CliReportSerialization, || {
+        serde_json::to_string_pretty(&JsonBuildReport::from(report))
+    })?;
+    println!("{json}");
     Ok(())
 }
 

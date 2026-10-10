@@ -489,24 +489,35 @@ impl DirectoryPattern {
     }
 }
 
-thread_local! { static SESSION: RefCell<LookupSession> = RefCell::new(LookupSession::new()); }
+thread_local! {
+    static SESSION: RefCell<Option<LookupSession>> = const { RefCell::new(None) };
+}
 
 /// Begin a build/pass's view of mutable search trees. Call again after external
 /// filesystem edits. This drops both successful and unsuccessful old lookups.
 pub fn reset() {
-    SESSION.with(|session| *session.borrow_mut() = LookupSession::new());
+    // A cache-hit build never performs a lookup. Drop prior indices without
+    // constructing an empty session that would immediately remain unused.
+    SESSION.with(|session| *session.borrow_mut() = None);
 }
 
 pub(crate) fn find(base: &Path, candidate: &str, entry: &Path) -> Option<PathBuf> {
     SESSION.with(|session| {
         session
             .borrow_mut()
+            .get_or_insert_with(LookupSession::new)
             .find(base, candidate, &entry.to_string_lossy())
     })
 }
 
 pub(crate) fn record_output(path: &Path) {
-    SESSION.with(|session| session.borrow_mut().record_output(path));
+    SESSION.with(|session| {
+        // Before the first lookup there is no cached inventory to update.
+        // The first scan observes every output already written on disk.
+        if let Some(session) = session.borrow_mut().as_mut() {
+            session.record_output(path);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -522,6 +533,43 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn unused_sessions_stay_lazy_and_reset_drops_retained_indices() {
+        let root = fixture();
+        let entry = PathBuf::from(format!("{}//", root.display()));
+        let nested = root.join("nested");
+        fs::create_dir(&nested).unwrap();
+        reset();
+        SESSION.with(|session| assert!(session.borrow().is_none()));
+        fs::write(nested.join("first.tex"), "first").unwrap();
+        record_output(&nested.join("first.tex"));
+        SESSION.with(|session| assert!(session.borrow().is_none()));
+        assert_eq!(
+            find(&root, "first.tex", &entry),
+            Some(nested.join("first.tex"))
+        );
+        SESSION.with(|session| {
+            assert!(session.borrow().as_ref().unwrap().indices.retained_bytes() > 0);
+        });
+        assert!(find(&root, "second.tex", &entry).is_none());
+        fs::write(nested.join("second.tex"), "second").unwrap();
+        record_output(&nested.join("second.tex"));
+        assert_eq!(
+            find(&root, "second.tex", &entry),
+            Some(nested.join("second.tex"))
+        );
+        fs::remove_file(nested.join("first.tex")).unwrap();
+        reset();
+        SESSION.with(|session| assert!(session.borrow().is_none()));
+        assert!(find(&root, "first.tex", &entry).is_none());
+        assert_eq!(
+            find(&root, "second.tex", &entry),
+            Some(nested.join("second.tex"))
+        );
+        reset();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
