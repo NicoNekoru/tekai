@@ -280,6 +280,15 @@ or gate outcomes. The parent measures the command's elapsed time independently.
 Their difference includes launch, CLI setup, serialization and exit overhead,
 so it does not isolate loader time.
 
+Full CI adds advisory attribution controls only after a completed non-green
+timing comparison. It saves the primary evidence first, then swaps the same
+executable artifacts' roles and compares the candidate artifact with itself.
+Current binary and verifier hashes must still match the primary report.
+Each control keeps separate provenance, logs and reports. The primary gate
+keeps its original result. These later measurements help investigate
+artifact-associated or role-associated effects under changing runner conditions.
+Incomplete comparisons and execution or integrity errors skip attribution.
+
 The old optional watch benchmark was removed. Watch retention now has one
 bounded diagnostic route in `performance_ci.py`; fixed queue and snapshot
 budgets remain library gates. Full CI separately compares every paper page

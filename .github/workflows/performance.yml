@@ -164,10 +164,12 @@ jobs:
           test -f tools/test_performance_ci.py
           test -f tools/test_verify_bundled_papers.py
           test -f tools/test_benchmark_runtime.py
+          test -f tools/test_benchmark_attribution.py
           python3 -B -m unittest discover -s tools -p test_audit_runtime.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/audit-runner-tests.log"
           python3 -B -m unittest discover -s tools -p test_performance_ci.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/performance-runner-tests.log"
           python3 -B -m unittest discover -s tools -p test_verify_bundled_papers.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/parity-runner-tests.log"
           python3 -B -m unittest discover -s tools -p test_benchmark_runtime.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/paired-benchmark-tests.log"
+          python3 -B -m unittest discover -s tools -p test_benchmark_attribution.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/benchmark-attribution-tests.log"
 
       - name: Upload runner test logs
         if: always()
@@ -182,7 +184,7 @@ jobs:
     name: Runtime diagnostics (${{ matrix.os }})
     needs: [runner-tests, revisions]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 130
+    timeout-minutes: 165
     strategy:
       fail-fast: false
       matrix:
@@ -422,5 +424,50 @@ jobs:
             ${{ runner.temp }}/tekai-performance-reports/
             target/runtime-parity/report.json
             **/proptest-regressions/**/*.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Attribute a completed full-profile primary failure without replacing its gate
+        id: attribution
+        if: ${{ !cancelled() && env.PERFORMANCE_PROFILE == 'full' && steps.comparison.outcome == 'failure' && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
+        timeout-minutes: 34
+        continue-on-error: true
+        env:
+          BASELINE_SHA: ${{ needs.revisions.outputs.baseline_sha }}
+          CANDIDATE_SHA: ${{ needs.revisions.outputs.candidate_sha }}
+        # Primary evidence is uploaded above before these optional controls.
+        # The helper rejects incomplete/error reports and changed original
+        # artifacts, then uses the benchmark's existing owned-process cleanup.
+        run: |
+          python3 -B tools/benchmark_attribution.py \
+            --profile "$PERFORMANCE_PROFILE" \
+            --primary-report "$PERFORMANCE_REPORT_DIR/comparison.json" \
+            --primary-metadata "$PERFORMANCE_REPORT_DIR/comparison-metadata.json" \
+            --baseline "$BASELINE_TARGET_DIR/release/tekai" \
+            --candidate "$CARGO_TARGET_DIR/release/tekai" \
+            --baseline-revision "$BASELINE_SHA" --candidate-revision "$CANDIDATE_SHA" \
+            --output-dir "$PERFORMANCE_REPORT_DIR/attribution"
+
+      - name: Publish separate non-gating attribution outcomes
+        if: ${{ always() && steps.attribution.outcome != 'skipped' }}
+        run: |
+          if [[ -f "$PERFORMANCE_REPORT_DIR/attribution/attribution.md" ]]; then
+            cat "$PERFORMANCE_REPORT_DIR/attribution/attribution.md" >> "$GITHUB_STEP_SUMMARY"
+            for report in reversed candidate-self; do
+              if [[ -f "$PERFORMANCE_REPORT_DIR/attribution/$report.md" ]]; then
+                printf '\n## %s advisory control\n\n' "$report" >> "$GITHUB_STEP_SUMMARY"
+                cat "$PERFORMANCE_REPORT_DIR/attribution/$report.md" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          else
+            printf '\n%s\n' 'Attribution did not complete. It supplies no passing evidence and cannot replace the failed primary gate.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload failure-only attribution separately
+        if: ${{ always() && steps.attribution.outcome != 'skipped' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: performance-attribution-${{ matrix.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/tekai-performance-reports/attribution/
           if-no-files-found: warn
           retention-days: 14
