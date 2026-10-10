@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
+use crate::diagnostic_profile::{self, Phase};
 use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
@@ -648,6 +649,7 @@ impl IndexCommandProgram {
 }
 
 pub fn build(options: &BuildOptions) -> Result<BuildReport> {
+    let _profile = diagnostic_profile::span(Phase::BuildTotal);
     clear_kpathsea_resolution_cache();
     match options.runner {
         Runner::Direct if is_certified_tekai_pdftex_engine(options.engine) => {
@@ -759,7 +761,8 @@ fn latexmk_or_tectonic_build(options: &BuildOptions) -> Result<BuildReport> {
     configure_output(&mut command, options);
 
     let started = Instant::now();
-    let status = command.status().context("failed to launch TeX compiler")?;
+    let status = diagnostic_profile::measure(Phase::TexSubprocess, || command.status())
+        .context("failed to launch TeX compiler")?;
     let elapsed = started.elapsed();
     if !status.success() {
         bail!("TeX build failed with status {status}");
@@ -786,6 +789,7 @@ fn latexmk_or_tectonic_build(options: &BuildOptions) -> Result<BuildReport> {
 }
 
 fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
+    let setup = diagnostic_profile::span(Phase::BuildSetup);
     let started = Instant::now();
     if options.max_runs == 0 {
         bail!("--max-runs must be at least 1");
@@ -806,8 +810,10 @@ fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let pdf_path = job_output_path(&out_dir, &job_name, "pdf");
     let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
     let mode_key = direct_mode_key(options, &main);
+    drop(setup);
 
     let mut previous_build_state = read_build_state_if_exists(&state_path)?;
+    let cache_checks = diagnostic_profile::span(Phase::BuildCacheChecks);
     if !options.force
         && !pdf_path.exists()
         && let Some(restored) =
@@ -852,6 +858,7 @@ fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
         });
     }
 
+    drop(cache_checks);
     if is_certified_tekai_pdftex_engine(options.engine) {
         return tekai_pdftex_certified_direct_build(options, started, &job_name, &out_dir, &main);
     }
@@ -995,6 +1002,7 @@ fn append_tekai_pdftex_certification_trace(
 }
 
 fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
+    let setup = diagnostic_profile::span(Phase::BuildSetup);
     let started = Instant::now();
     if options.max_runs == 0 {
         bail!("--max-runs must be at least 1");
@@ -1019,8 +1027,10 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     let pdf_path = job_output_path(&out_dir, &job_name, "pdf");
     let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
     let mode_key = direct_mode_key(options, &main);
+    drop(setup);
 
     let mut previous_build_state = read_build_state_if_exists(&state_path)?;
+    let cache_checks = diagnostic_profile::span(Phase::BuildCacheChecks);
     let mut restored_aux_cache_accepts_stale_final_pdf = false;
     if !options.force
         && !pdf_path.exists()
@@ -1067,6 +1077,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         });
     }
 
+    drop(cache_checks);
     let mut tex_runs = 0;
     let mut draft_tex_runs = 0;
     let mut final_tex_runs = 0;
@@ -1619,7 +1630,7 @@ fn run_tex_direct(
             eprintln!("{}", display_command(&command));
         }
         configure_output(&mut command, options);
-        match command.status() {
+        match diagnostic_profile::measure(Phase::TexSubprocess, || command.status()) {
             Ok(status) if status.success() => {
                 return Ok(TexInvocationReport {
                     preamble_format_used: true,
@@ -1656,7 +1667,8 @@ fn run_tex_direct(
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch TeX engine")?;
+    let status = diagnostic_profile::measure(Phase::TexSubprocess, || command.status())
+        .context("failed to launch TeX engine")?;
     if !status.success() {
         let log_path = out_dir.join(format!("{job_name}.log"));
         let detail = fs::read(&log_path)
@@ -1999,7 +2011,7 @@ fn prepare_preamble_format_for_kind_with_policy(
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = match command.status() {
+    let status = match diagnostic_profile::measure(Phase::TexSubprocess, || command.status()) {
         Ok(status) => status,
         Err(error) => {
             if !options.quiet {
@@ -2126,6 +2138,7 @@ fn restore_settled_aux_cache_if_fresh(
     mode_key: &str,
     pdf_path: &Path,
 ) -> Result<Option<RestoredSettledAuxCache>> {
+    let _profile = diagnostic_profile::span(Phase::SettledCacheRestore);
     let cache_dir = settled_aux_cache_dir(doc_dir, main, mode_key);
     let state_path = cache_dir.join("state.toml");
     let Some(source) = read_optional_text_file(&state_path, "settled aux cache state")? else {
@@ -11027,6 +11040,7 @@ fn environment_signature(vars: &[&str], doc_dir: &Path) -> String {
 }
 
 fn read_build_state_if_exists(state_path: &Path) -> Result<Option<BuildState>> {
+    let _profile = diagnostic_profile::span(Phase::BuildStateLoad);
     let Some(source) = read_optional_text_file(state_path, "build state")? else {
         return Ok(None);
     };
@@ -11065,6 +11079,7 @@ fn build_state_inputs_are_fresh(
     state: &BuildState,
     build_state_input_freshness: &mut HashMap<FileFingerprint, bool>,
 ) -> Result<bool> {
+    let _profile = diagnostic_profile::span(Phase::InputFreshness);
     for input in &state.inputs {
         if !input_fingerprint_is_fresh_cached(input, build_state_input_freshness)? {
             return Ok(false);

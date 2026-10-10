@@ -19,6 +19,7 @@ use tekai::config::{
     BuildConfig, find_project_config, load_build_config, load_lint_config, load_project_config,
     write_default_config,
 };
+use tekai::diagnostic_profile::{self, Phase};
 use tekai::lint::{
     Diagnostic, FixReport, Severity, fix_paths, format_diagnostic, has_errors, lint_paths,
     preview_fixes,
@@ -29,11 +30,20 @@ fn main() -> Result<()> {
     if std::env::args_os().nth(1).as_deref() == Some(OsStr::new(EMBEDDED_ENGINE_SUBCOMMAND)) {
         return run_embedded_engine();
     }
+    diagnostic_profile::initialize();
+    let result = run_cli();
+    diagnostic_profile::emit(if result.is_ok() { "success" } else { "error" });
+    result
+}
+
+fn run_cli() -> Result<()> {
     enable_embedded_engine_runner()?;
 
+    let parsing = diagnostic_profile::span(Phase::CliParse);
     let matches = Cli::command().get_matches();
     let build_flag_sources = BuildFlagSources::from_root_matches(&matches);
     let cli = Cli::from_arg_matches(&matches)?;
+    drop(parsing);
     match cli.command {
         Command::Build(args) => run_build(args, build_flag_sources),
         Command::Clean(args) => run_clean(args),
@@ -47,6 +57,7 @@ fn main() -> Result<()> {
 }
 
 fn run_locate(args: LocateArgs) -> Result<()> {
+    let setup = diagnostic_profile::span(Phase::CliConfigSetup);
     let directory = args
         .directory
         .canonicalize()
@@ -54,6 +65,7 @@ fn run_locate(args: LocateArgs) -> Result<()> {
     let config_path = root_document_config_path(args.config.as_deref(), &directory);
     let config = load_build_config(config_path.as_deref())?;
     apply_build_env(&config);
+    drop(setup);
     let extension = Path::new(&args.name)
         .extension()
         .and_then(OsStr::to_str)
@@ -142,7 +154,9 @@ fn os_arg_bytes(arg: &OsStr) -> Vec<u8> {
 }
 
 fn run_clean(args: CleanArgs) -> Result<()> {
-    let build_config = load_build_config(args.config.as_deref())?;
+    let build_config = diagnostic_profile::measure(Phase::CliConfigSetup, || {
+        load_build_config(args.config.as_deref())
+    })?;
     let out_dir = args
         .out_dir
         .or(build_config.out_dir)
@@ -300,6 +314,7 @@ fn is_command_line_arg(matches: &ArgMatches, id: &str) -> bool {
 }
 
 fn run_build(args: BuildArgs, flag_sources: BuildFlagSources) -> Result<()> {
+    let setup = diagnostic_profile::span(Phase::CliConfigSetup);
     let report_json = args.report_json;
     let config_path = root_document_config_path(args.config.as_deref(), &args.main);
     let build_config = load_build_config(config_path.as_deref())?;
@@ -309,6 +324,7 @@ fn run_build(args: BuildArgs, flag_sources: BuildFlagSources) -> Result<()> {
         options.quiet = true;
         options.print_command = false;
     }
+    drop(setup);
     let report = build(&options)?;
     if report_json {
         print_build_report_json(&report)?;
@@ -321,7 +337,9 @@ fn run_build(args: BuildArgs, flag_sources: BuildFlagSources) -> Result<()> {
 }
 
 fn run_lint(args: LintArgs) -> Result<()> {
-    let config = load_lint_config(args.config.as_deref())?;
+    let config = diagnostic_profile::measure(Phase::CliConfigSetup, || {
+        load_lint_config(args.config.as_deref())
+    })?;
     let diagnostics = lint_paths(&args.paths, &config)?;
     if args.report_json {
         print_lint_report_json(&diagnostics)?;
@@ -330,13 +348,15 @@ fn run_lint(args: LintArgs) -> Result<()> {
     }
     if has_errors(&diagnostics) || (args.flags.should_fail_on_warnings() && !diagnostics.is_empty())
     {
-        std::process::exit(1);
+        exit_with_profile(1);
     }
     Ok(())
 }
 
 fn run_format(args: FormatArgs) -> Result<()> {
-    let config = load_lint_config(args.config.as_deref())?;
+    let config = diagnostic_profile::measure(Phase::CliConfigSetup, || {
+        load_lint_config(args.config.as_deref())
+    })?;
     let (applied, available) = if args.check {
         (FixReport::default(), preview_fixes(&args.paths, &config)?)
     } else {
@@ -376,16 +396,18 @@ fn run_format(args: FormatArgs) -> Result<()> {
         || has_errors(&diagnostics)
         || (args.flags.should_fail_on_warnings() && !diagnostics.is_empty())
     {
-        std::process::exit(1);
+        exit_with_profile(1);
     }
     Ok(())
 }
 
 fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
+    let setup = diagnostic_profile::span(Phase::CliConfigSetup);
     let report_json = args.report_json;
     let config_path = root_document_config_path(args.config.as_deref(), &args.main);
     let config = load_project_config(config_path.as_deref())?;
     apply_build_env(&config.build);
+    drop(setup);
     let lint_target = tex_source_dependency_paths(&args.main)?;
     if args.fix {
         let fix_report = fix_paths(&lint_target, &config.lint)?;
@@ -402,13 +424,13 @@ fn run_check(args: CheckArgs, flag_sources: BuildFlagSources) -> Result<()> {
         || (args.lint_flags.should_fail_on_warnings() && !diagnostics.is_empty());
     if report_json && lint_failed {
         print_check_report_json(&diagnostics, None)?;
-        std::process::exit(1);
+        exit_with_profile(1);
     }
     if !report_json {
         print_lint_diagnostics(&diagnostics, false);
     }
     if lint_failed {
-        std::process::exit(1);
+        exit_with_profile(1);
     }
     let mut options = build_options(args.main, args.flags, &config.build, flag_sources);
     if report_json {
@@ -439,6 +461,7 @@ fn print_lint_diagnostics(diagnostics: &[tekai::lint::Diagnostic], stderr: bool)
 }
 
 fn run_watch(args: WatchArgs, flag_sources: BuildFlagSources) -> Result<()> {
+    let setup = diagnostic_profile::span(Phase::CliConfigSetup);
     let config_path = root_document_config_path(args.config.as_deref(), &args.main);
     let config = load_project_config(config_path.as_deref())?;
     apply_build_env(&config.build);
@@ -454,6 +477,7 @@ fn run_watch(args: WatchArgs, flag_sources: BuildFlagSources) -> Result<()> {
         build_options.fast = true;
         build_options.precompile_preamble = true;
     }
+    drop(setup);
     watch(WatchOptions {
         main: args.main,
         root,
@@ -464,6 +488,11 @@ fn run_watch(args: WatchArgs, flag_sources: BuildFlagSources) -> Result<()> {
         lint: !args.no_lint,
         fail_on_warnings: args.lint_flags.should_fail_on_warnings(),
     })
+}
+
+fn exit_with_profile(code: i32) -> ! {
+    diagnostic_profile::emit(if code == 0 { "success" } else { "exit_failure" });
+    std::process::exit(code)
 }
 
 fn root_document_config_path(explicit: Option<&Path>, main: &Path) -> Option<PathBuf> {
