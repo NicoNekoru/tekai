@@ -8,6 +8,11 @@ on:
         description: 'Diagnostic profile, quick or full'
         required: true
         type: string
+      baseline_sha:
+        description: Exact baseline commit, empty resolves the default branch
+        required: false
+        default: ''
+        type: string
   workflow_dispatch:
     inputs:
       profile:
@@ -18,6 +23,11 @@ on:
         options:
           - quick
           - full
+      baseline_sha:
+        description: Exact 40-character baseline commit, empty resolves the default branch
+        required: false
+        default: ''
+        type: string
   schedule:
     # Tuesday at 07:17 UTC, away from the busy start of the hour.
     - cron: '17 7 * * 2'
@@ -33,7 +43,82 @@ defaults:
   run:
     shell: bash
 
+env:
+  RUST_TOOLCHAIN: '1.99.0'
+
 jobs:
+  revisions:
+    name: Resolve immutable comparison revisions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      baseline_sha: ${{ steps.resolve.outputs.baseline_sha }}
+      candidate_sha: ${{ steps.resolve.outputs.candidate_sha }}
+      baseline_policy: ${{ steps.resolve.outputs.baseline_policy }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Freeze the exact baseline and candidate commits
+        id: resolve
+        env:
+          REQUESTED_BASELINE: ${{ inputs.baseline_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}.git
+          PERFORMANCE_TRIGGER: ${{ github.event_name }}
+          REVISION_REPORT_DIR: ${{ runner.temp }}/tekai-performance-revisions
+        run: |
+          mkdir -p "$REVISION_REPORT_DIR"
+          candidate_sha="$(git rev-parse HEAD)"
+          if [[ "$PERFORMANCE_TRIGGER" == pull_request ]]; then
+            baseline_sha="$PR_BASE_SHA"
+            baseline_policy=pr-base-sha
+          elif [[ -n "$REQUESTED_BASELINE" ]]; then
+            baseline_sha="$REQUESTED_BASELINE"
+            baseline_policy=explicit-sha
+          else
+            git check-ref-format "refs/heads/$DEFAULT_BRANCH"
+            remote_record="$(git ls-remote --exit-code "$REPOSITORY_URL" "refs/heads/$DEFAULT_BRANCH")"
+            baseline_sha="${remote_record%%$'\t'*}"
+            baseline_policy=resolved-default-branch
+            # A scheduled/default-branch run must not benchmark a commit against
+            # itself. Only this equality case uses the exact first parent.
+            if [[ "$baseline_sha" == "$candidate_sha" ]]; then
+              baseline_sha="$(git rev-parse HEAD^1)"
+              baseline_policy=default-branch-equal-candidate-first-parent
+            fi
+          fi
+          if [[ ! "$baseline_sha" =~ ^[0-9a-fA-F]{40}$ || ! "$candidate_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            printf '%s\n' 'Both comparison revisions must be exact 40-character commit SHAs.' >&2
+            exit 2
+          fi
+          baseline_sha="$(printf '%s' "$baseline_sha" | tr 'A-F' 'a-f')"
+          if [[ "$baseline_sha" == "$candidate_sha" ]]; then
+            printf '%s\n' 'The explicit baseline must differ from the candidate commit.' >&2
+            exit 2
+          fi
+          printf '%s\n' "baseline_sha=$baseline_sha" "candidate_sha=$candidate_sha" "baseline_policy=$baseline_policy" >> "$GITHUB_OUTPUT"
+          export baseline_sha candidate_sha baseline_policy
+          python3 - <<'PY' | tee "$REVISION_REPORT_DIR/revisions.json"
+          import json
+          import os
+          print(json.dumps({name: os.environ[name] for name in (
+              "baseline_sha", "candidate_sha", "baseline_policy"
+          )}, indent=2))
+          PY
+
+      - name: Upload revision policy
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: performance-comparison-revisions
+          path: ${{ runner.temp }}/tekai-performance-revisions/
+          if-no-files-found: warn
+          retention-days: 14
+
   runner-tests:
     name: Diagnostic runner tests (Linux, Python ${{ matrix.python }})
     runs-on: ubuntu-24.04
@@ -75,11 +160,14 @@ jobs:
           PERFORMANCE_REPORT_DIR: ${{ runner.temp }}/tekai-performance-tests
         run: |
           mkdir -p "$PERFORMANCE_REPORT_DIR"
+          test -f tools/test_audit_runtime.py
           test -f tools/test_performance_ci.py
           test -f tools/test_verify_bundled_papers.py
+          test -f tools/test_benchmark_runtime.py
           python3 -B -m unittest discover -s tools -p test_audit_runtime.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/audit-runner-tests.log"
           python3 -B -m unittest discover -s tools -p test_performance_ci.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/performance-runner-tests.log"
           python3 -B -m unittest discover -s tools -p test_verify_bundled_papers.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/parity-runner-tests.log"
+          python3 -B -m unittest discover -s tools -p test_benchmark_runtime.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/paired-benchmark-tests.log"
 
       - name: Upload runner test logs
         if: always()
@@ -92,9 +180,9 @@ jobs:
 
   runtime:
     name: Runtime diagnostics (${{ matrix.os }})
-    needs: runner-tests
+    needs: [runner-tests, revisions]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 130
     strategy:
       fail-fast: false
       matrix:
@@ -109,10 +197,15 @@ jobs:
       RUST_BACKTRACE: '1'
       TEKAI_TEXMF_MODE: bundled
       HOMEBREW_NO_AUTO_UPDATE: '1'
+      PROPTEST_CASES: ${{ (inputs.profile == 'full' || (inputs.profile == '' && github.event_name == 'schedule')) && '512' || '128' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
+      CARGO_PROFILE_RELEASE_LTO: fat
+      CARGO_PROFILE_RELEASE_PANIC: abort
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          ref: ${{ needs.revisions.outputs.candidate_sha }}
 
       - name: Prepare isolated reports
         env:
@@ -122,34 +215,45 @@ jobs:
           TEKAI_FORMAT_CACHE: ${{ runner.temp }}/tekai-performance-cache/formats
           TEKAI_AUX_CACHE: ${{ runner.temp }}/tekai-performance-cache/aux
           TEKAI_BIBTEX_CACHE: ${{ runner.temp }}/tekai-performance-cache/bibtex
+          BASELINE_TARGET_DIR: ${{ runner.temp }}/tekai-performance-baseline-target
+          PROPERTY_SEED_MATERIAL: ${{ needs.revisions.outputs.candidate_sha }}-${{ runner.arch }}-release
         run: |
           mkdir -p "$PERFORMANCE_REPORT_DIR"
+          property_seed="$(python3 -c 'import hashlib, os; print(int.from_bytes(hashlib.sha256(os.environ["PROPERTY_SEED_MATERIAL"].encode()).digest()[:8], "big"))')"
           printf '%s\n' \
             "PERFORMANCE_REPORT_DIR=$PERFORMANCE_REPORT_DIR" \
             "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" \
             "TEKAI_ENGINE_CACHE=$TEKAI_ENGINE_CACHE" \
             "TEKAI_FORMAT_CACHE=$TEKAI_FORMAT_CACHE" \
             "TEKAI_AUX_CACHE=$TEKAI_AUX_CACHE" \
-            "TEKAI_BIBTEX_CACHE=$TEKAI_BIBTEX_CACHE" >> "$GITHUB_ENV"
+            "TEKAI_BIBTEX_CACHE=$TEKAI_BIBTEX_CACHE" \
+            "BASELINE_TARGET_DIR=$BASELINE_TARGET_DIR" \
+            "PROPTEST_RNG_SEED=$property_seed" >> "$GITHUB_ENV"
           git rev-parse HEAD | tee "$PERFORMANCE_REPORT_DIR/commit.txt"
           uname -a | tee "$PERFORMANCE_REPORT_DIR/runner.txt"
+          printf 'PROPTEST_RNG_SEED=%s\nPROPTEST_CASES=%s\nRUST_TOOLCHAIN=%s\n' "$property_seed" "$PROPTEST_CASES" "$RUST_TOOLCHAIN" | tee "$PERFORMANCE_REPORT_DIR/property-config.txt"
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
 
       - name: Test native process supervision before compiling TeX
+        # Python portability is checked on Linux. One native macOS pass is enough
+        # for these Python suites; both architectures still run engine gates.
+        if: matrix.os == 'macos-15'
         run: |
           test -f tools/test_performance_ci.py
           test -f tools/test_verify_bundled_papers.py
+          test -f tools/test_benchmark_runtime.py
           python3 -B -m unittest discover -s tools -p test_performance_ci.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/performance-runner-tests.log"
           python3 -B -m unittest discover -s tools -p test_verify_bundled_papers.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/parity-runner-tests.log"
+          python3 -B -m unittest discover -s tools -p test_benchmark_runtime.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/paired-benchmark-tests.log"
 
       - name: Install Rust
         timeout-minutes: 5
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
           rustc -Vv | tee "$PERFORMANCE_REPORT_DIR/rustc.txt"
 
       - name: Cache downloaded Rust dependencies only
@@ -167,20 +271,87 @@ jobs:
         run: |
           brew list poppler >/dev/null 2>&1 || brew install poppler
           pdftotext -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/poppler.txt"
+          pdfinfo -v 2>&1 | tee -a "$PERFORMANCE_REPORT_DIR/poppler.txt"
+          pdfimages -v 2>&1 | tee -a "$PERFORMANCE_REPORT_DIR/poppler.txt"
 
       - name: Build the candidate release in a fresh target directory
         id: build
         timeout-minutes: 20
-        run: cargo build --release --locked --bin tekai 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-build.log"
+        run: cargo build --release --locked --bin tekai --no-default-features 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-build.log"
+
+      - name: Check out the immutable baseline without persisted credentials
+        id: baseline_checkout
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.revisions.outputs.baseline_sha }}
+          path: .performance-baseline
+
+      - name: Build the baseline with the same release settings and a fresh target
+        id: baseline
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.baseline_checkout.outcome == 'success' }}
+        working-directory: .performance-baseline
+        timeout-minutes: 20
+        env:
+          CARGO_TARGET_DIR: ${{ env.BASELINE_TARGET_DIR }}
+        run: cargo build --release --locked --bin tekai --no-default-features 2>&1 | tee "$PERFORMANCE_REPORT_DIR/baseline-release-build.log"
+
+      - name: Record reproducible comparison metadata
+        id: metadata
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' }}
+        env:
+          BASELINE_SHA: ${{ needs.revisions.outputs.baseline_sha }}
+          CANDIDATE_SHA: ${{ needs.revisions.outputs.candidate_sha }}
+          BASELINE_POLICY: ${{ needs.revisions.outputs.baseline_policy }}
+          RUNNER_LABEL: ${{ matrix.os }}-${{ runner.arch }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git -C .performance-baseline rev-parse HEAD)" = "$BASELINE_SHA"
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          command = "cargo build --release --locked --bin tekai --no-default-features"
+          metadata = {
+              "runner_label": os.environ["RUNNER_LABEL"],
+              "toolchain": subprocess.check_output(["rustc", "-Vv"], text=True).strip(),
+              "baseline": {"revision": os.environ["BASELINE_SHA"], "build_command": command},
+              "candidate": {"revision": os.environ["CANDIDATE_SHA"], "build_command": command},
+              "baseline_policy": os.environ["BASELINE_POLICY"],
+              "release_settings": {"codegen_units": 1, "lto": "fat", "panic": "abort"},
+          }
+          report = Path(os.environ["PERFORMANCE_REPORT_DIR"]) / "comparison-metadata.json"
+          report.write_text(json.dumps(metadata, indent=2) + "\n")
+          PY
+
+      - name: Gate paired same-runner baseline and candidate performance
+        id: comparison
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
+        timeout-minutes: 17
+        # Equal-content per-side fixtures and caches belong to the supervisor.
+        # --gate rejects demonstrated regressions and inconclusive measurements.
+        # It never compares timings recorded by different hosted runners.
+        run: |
+          python3 -B tools/benchmark_runtime.py \
+            --baseline "$BASELINE_TARGET_DIR/release/tekai" \
+            --candidate "$CARGO_TARGET_DIR/release/tekai" \
+            --metadata "$PERFORMANCE_REPORT_DIR/comparison-metadata.json" \
+            --output "$PERFORMANCE_REPORT_DIR/comparison.json" \
+            --pairs 40 --warmups 2 --timeout 30 --budget 900 --threshold 0.10 \
+            --min-sample-seconds 0.25 --warm-cache-min-sample-seconds 1.0 --max-iterations 256 --gate \
+            2>&1 | tee "$PERFORMANCE_REPORT_DIR/comparison.log"
 
       - name: Build the bounded experimental expansion fixture
         id: expansion
-        if: env.PERFORMANCE_PROFILE == 'full'
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && env.PERFORMANCE_PROFILE == 'full' }}
         timeout-minutes: 10
         run: cargo build --release --locked -p tekai-pdftex --example audit_expansion 2>&1 | tee "$PERFORMANCE_REPORT_DIR/expansion-build.log"
 
       - name: Enforce deterministic scan, cache, parser and retention regressions
         id: regressions
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 15
         env:
           TEKAI_EMBEDDED_ENGINE_RUNNER: ${{ env.CARGO_TARGET_DIR }}/release/tekai
@@ -221,14 +392,21 @@ jobs:
           PERFORMANCE_REPORT_DIR: ${{ runner.temp }}/tekai-performance-reports
           RELEASE_REGRESSION_OUTCOME: ${{ steps.regressions.outcome }}
           PDF_PARITY_OUTCOME: ${{ steps.parity.outcome }}
+          COMPARISON_OUTCOME: ${{ steps.comparison.outcome }}
         run: |
           if [[ -f "$PERFORMANCE_REPORT_DIR/performance.md" ]]; then
             cat "$PERFORMANCE_REPORT_DIR/performance.md" >> "$GITHUB_STEP_SUMMARY"
           else
             printf '%s\n' 'The performance report was not completed. Check the build and runner logs in the artifact. This is not a passing diagnostic result.' >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [[ -f "$PERFORMANCE_REPORT_DIR/comparison.md" ]]; then
+            cat "$PERFORMANCE_REPORT_DIR/comparison.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\n%s\n' 'The paired comparison was not completed. Its missing report is not a passing performance gate.' >> "$GITHUB_STEP_SUMMARY"
+          fi
           printf '\n%s\n\n' '## Separate correctness gates' >> "$GITHUB_STEP_SUMMARY"
           printf 'Release library regressions returned `%s`.\n' "$RELEASE_REGRESSION_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Paired performance comparison returned `%s`. Exit 2 means inconclusive, not a pass.\n' "$COMPARISON_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$PERFORMANCE_PROFILE" == full ]]; then
             printf 'All-page paper and transparent-image parity returned `%s`. Its separate report and log are in the artifact.\n' "$PDF_PARITY_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
           else
@@ -243,5 +421,6 @@ jobs:
           path: |
             ${{ runner.temp }}/tekai-performance-reports/
             target/runtime-parity/report.json
+            **/proptest-regressions/**/*.txt
           if-no-files-found: warn
           retention-days: 14

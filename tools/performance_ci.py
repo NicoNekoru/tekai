@@ -27,7 +27,7 @@ import time
 import zlib
 
 from audit_runtime import Audit, CASES as AUDIT_CASES, png_chunk
-from benchmark_runtime import document, pad, png
+from runtime_fixtures import document, pad, png
 
 REPO = Path(__file__).resolve().parent.parent
 QUICK_CASES = ('lookup', 'lint', 'input-identity', 'png', 'jpeg', 'preview', 'runtime', 'images')

@@ -785,6 +785,14 @@ findings remain.
 
 ## Continuous performance checks
 
+CI has separate timing and correctness gates. `tools/benchmark_runtime.py`
+compares immutable baseline and candidate releases on the same runner using
+40 alternating pairs, isolated equivalent fixtures and exact median-ratio
+intervals. A declared 10 percent regression fails the gate. An inconclusive
+comparison also fails rather than being reported as performance success.
+See [development instructions](development.md#paired-performance-gate)
+for its statistical assumptions, metadata and replay command.
+
 `tools/performance_ci.py` separates fixed correctness gates from timings and
 open failures. The quick profile covers lookup, linter checks, source identity,
 PNG bounds, JPEG metadata, Unicode preview, cache hits, and decoded images. The full profile

@@ -15,9 +15,21 @@ on:
         options:
           - quick
           - full
+      baseline_sha:
+        description: Exact 40-character benchmark baseline commit, empty resolves the default branch
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUST_TOOLCHAIN: '1.99.0'
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -27,39 +39,58 @@ jobs:
   verify-light:
     name: Rust and TeX lookup (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15, macos-15-intel]
+    env:
+      PROPTEST_CASES: '128'
+      CARGO_INCREMENTAL: '0'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Isolate build caches and record the property-test seed
+        env:
+          CI_REPORT_DIR: ${{ runner.temp }}/tekai-ci-reports
+          CI_CACHE_ROOT: ${{ runner.temp }}/tekai-ci-cache
+          CARGO_TARGET_DIR: ${{ runner.temp }}/tekai-ci-target
+          PROPERTY_SEED_MATERIAL: ${{ github.sha }}-${{ runner.arch }}-debug
+        run: |
+          mkdir -p "$CI_REPORT_DIR"
+          property_seed="$(python3 -c 'import hashlib, os; print(int.from_bytes(hashlib.sha256(os.environ["PROPERTY_SEED_MATERIAL"].encode()).digest()[:8], "big"))')"
+          printf '%s\n' \
+            "CI_REPORT_DIR=$CI_REPORT_DIR" \
+            "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" \
+            "TEKAI_FORMAT_CACHE=$CI_CACHE_ROOT/formats" \
+            "TEKAI_AUX_CACHE=$CI_CACHE_ROOT/aux" \
+            "TEKAI_BIBTEX_CACHE=$CI_CACHE_ROOT/bibtex" \
+            "TEKAI_ENGINE_CACHE=$CI_CACHE_ROOT/engine" \
+            "PROPTEST_RNG_SEED=$property_seed" >> "$GITHUB_ENV"
+          printf 'PROPTEST_RNG_SEED=%s\nPROPTEST_CASES=%s\nRUST_TOOLCHAIN=%s\n' "$property_seed" "$PROPTEST_CASES" "$RUST_TOOLCHAIN" | tee "$CI_REPORT_DIR/property-config.txt"
 
       - name: Test diagnostic runner permissions and cleanup without compiling TeX
+        # The performance workflow owns the other Python suites. Linux there
+        # checks portability, while its ARM runtime checks native supervision.
+        if: matrix.os == 'macos-15'
         run: |
-          test -f tools/test_performance_ci.py
-          test -f tools/test_verify_bundled_papers.py
-          python3 -B -m unittest discover -s tools -p test_audit_runtime.py
-          python3 -B -m unittest discover -s tools -p test_performance_ci.py
-          python3 -B -m unittest discover -s tools -p test_verify_bundled_papers.py
+          test -f tools/test_audit_runtime.py
+          python3 -B -m unittest discover -s tools -p test_audit_runtime.py -v 2>&1 | tee "$CI_REPORT_DIR/audit-runner-tests.log"
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_TOOLCHAIN"
+          rustc -Vv | tee "$CI_REPORT_DIR/rustc.txt"
 
       - name: Verify self-contained checks before installing TeX
-        run: cargo test --locked --test cli_self_contained -- --include-ignored --test-threads=1
+        run: cargo test --locked --test cli_self_contained -- --include-ignored --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/self-contained-tests.log"
 
       - name: Verify native shared-tree lookup without installed TeX
-        run: cargo test --locked --test cli_texmf -- --test-threads=1
-
-      - name: Verify lookup scaling and retention budgets without installed TeX
-        run: |
-          cargo test -p tekai-engine --lib --locked -- --test-threads=1
-          cargo test --lib --locked watch::events:: -- --test-threads=1
-          cargo test --lib --locked snapshots_follow_active_dependencies -- --test-threads=1
-          cargo test --lib --locked a_rescan_event_forces_structural_fallback -- --test-threads=1
+        run: cargo test --locked --test cli_texmf -- --test-threads=1 --skip real_tex_installation_agrees_on_shared_paths_and_compiles_ctan_package 2>&1 | tee "$CI_REPORT_DIR/bundled-lookup-tests.log"
 
       - name: Install TeX
         run: |
@@ -75,20 +106,59 @@ jobs:
           pdflatex --version
           mktexlsr --version
           test -n "$(kpsewhich --progname=pdflatex xspace.sty)"
-          cargo test --locked --test cli_texmf real_tex_installation -- --nocapture --test-threads=1
+          cargo test --locked --test cli_texmf real_tex_installation_agrees_on_shared_paths_and_compiles_ctan_package -- --exact --nocapture --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/system-tex-tests.log"
+          # A renamed/missing reference test must not silently become a green
+          # zero-test invocation. The required gate executes exactly one test.
+          python3 -B -c 'from pathlib import Path; import sys; sys.exit(0 if "test result: ok. 1 passed;" in Path(sys.argv[1]).read_text() else "Required system TeX test did not execute exactly once")' "$CI_REPORT_DIR/system-tex-tests.log"
 
       - name: Run Rust checks
         run: |
-          ci_cache_root="$RUNNER_TEMP/tekai-cache"
-          export TEKAI_FORMAT_CACHE="$ci_cache_root/formats"
-          export TEKAI_AUX_CACHE="$ci_cache_root/aux"
-          export TEKAI_BIBTEX_CACHE="$ci_cache_root/bibtex"
-          export TEKAI_ENGINE_CACHE="$ci_cache_root/engine"
           cargo fmt --all --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo clippy -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked -- -D warnings
-          cargo build -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked
-          cargo test --workspace --locked -- --test-threads=1
+          cargo build -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked 2>&1 | tee "$CI_REPORT_DIR/standalone-build.log"
+          cargo test --workspace --locked --lib --bins -- --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/debug-unit-tests.log"
+          cargo test --workspace --locked --doc -- --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/doc-tests.log"
+          # Cargo has no test-target exclusion switch. Discover integration
+          # targets instead of maintaining an allowlist that could omit new tests.
+          # These two targets already ran completely before TeX installation,
+          # and cli_texmf's real-system test ran separately after installation.
+          python3 - <<'PY' 2>&1 | tee "$CI_REPORT_DIR/integration-tests.log"
+          import json
+          import subprocess
+          metadata = json.loads(subprocess.check_output([
+              "cargo", "metadata", "--locked", "--no-deps", "--format-version=1"
+          ], text=True))
+          members = set(metadata["workspace_members"])
+          excluded = {"cli_self_contained", "cli_texmf"}
+          for package in sorted(metadata["packages"], key=lambda package: package["name"]):
+              if package["id"] not in members:
+                  continue
+              targets = sorted(
+                  target["name"] for target in package["targets"]
+                  if "test" in target["kind"] and target["test"]
+                  and not (package["name"] == "tekai" and target["name"] in excluded)
+              )
+              if not targets:
+                  continue
+              command = ["cargo", "test", "--locked", "-p", package["name"]]
+              for target in targets:
+                  command.extend(["--test", target])
+              command.extend(["--", "--test-threads=1"])
+              print("Running", " ".join(command), flush=True)
+              subprocess.run(command, check=True)
+          PY
+
+      - name: Upload test logs and reproducible property configuration
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: core-tests-${{ matrix.os }}-${{ runner.arch }}
+          path: |
+            ${{ runner.temp }}/tekai-ci-reports/
+            **/proptest-regressions/**/*.txt
+          if-no-files-found: warn
+          retention-days: 14
 
   performance-diagnostics:
     name: Release diagnostics (${{ inputs.performance_profile || 'quick' }})
@@ -100,3 +170,4 @@ jobs:
       contents: read
     with:
       profile: ${{ inputs.performance_profile || 'quick' }}
+      baseline_sha: ${{ inputs.baseline_sha || '' }}

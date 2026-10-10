@@ -228,25 +228,58 @@ global font/image tables cannot accumulate across watcher rebuilds. Investigate
 heap-tool warnings by ownership and repeated live measurements rather than
 treating every at-exit allocation as a growing leak.
 
-CI asserts scan counts and retention costs without installed TeX on both macOS
-architectures. It does not use hardware-sensitive benchmark thresholds. For
-matched release measurements on macOS, run the maintainer benchmark against an
-older binary if available.
+### Paired performance gate
+
+CI keeps deterministic scan counts and retention budgets separate from timing.
+The paired timing gate builds an immutable baseline and candidate with the same
+pinned compiler and release settings on one runner. Pull requests use their
+exact base commit. Manual runs accept `baseline_sha` or resolve the default
+branch once. A default-branch run comparing itself uses its exact first parent
+instead. Both commits and the selection policy are recorded.
 
 ```sh
-python3 tools/benchmark_runtime.py --engine target/release/tekai \
-  --baseline /path/to/previous/tekai --watch --repeats 3
+python3 -B tools/benchmark_runtime.py --candidate target/release/tekai \
+  --baseline /path/to/previous/tekai \
+  --metadata /path/to/comparison-metadata.json --pairs 40 --gate
 python3 tools/verify_bundled_papers.py --engine target/release/tekai --images
 ```
 
-The benchmark creates temporary nested projects, transparent PNGs, shared trees
-and paper copies. It records warm medians and peak RSS in
-`target/runtime-performance/report.json`. The optional watch case rotates 25
-one-MiB includes with one active include at a time. Caches are isolated by binary,
-and benchmark subprocess groups are stopped on timeout. The parity gate's image
-case covers 32 distinct transparent PNGs and repeated images after eviction.
+The metadata JSON requires `runner_label`, `toolchain`, and a `revision` and
+`build_command` for each of `baseline` and `candidate`. CI creates it from the
+actual checkouts and compiler. Local comparisons must record their actual build
+conditions rather than borrowing metadata from a different runner. Poppler's
+`pdftotext`, `pdfinfo` and `pdfimages` are required to check fixture output,
+including every decoded color and alpha pixel in the image case.
 
-On 2026-10-09, matched warm trials on an Apple M4 Pro compared the installed
+The benchmark covers nested lookup with 1000 unused folders, eight transparent
+images and warmed build-cache hits. Each side has equal input content and
+separate binaries, homes, outputs and caches. Cold initialization precedes two
+calibration warmups. Matched iteration counts target at least one second for
+cache-hit batches and 0.25 seconds for lookup and image batches. Calibration
+targets twice those durations with a ceiling of 256 iterations.
+Forty baseline/candidate pairs alternate execution order and retain all raw
+command samples. Adjacent opposite-order pairs form 20 geometric-mean ratio
+blocks. Exact median intervals use a familywise confidence level of at least
+95 percent across the three declared cases.
+
+The declared slowdown boundary is 10 percent. A statistically demonstrated
+regression returns exit 1. Insufficient precision, excessive variability or
+order bias returns exit 2, not success. CI rejects both. Exit 0 requires all
+cases to pass. The intervals assume independent blocks and stable conditions,
+so even a passing hosted-runner comparison cannot prove universal performance.
+Binary/input hashes, output controls and owned-process deadlines are checked
+separately. Reports are saved in `target/runtime-performance/report.json` and
+its Markdown companion by default. They make no peak-memory claim.
+
+The old optional watch benchmark was removed. Watch retention now has one
+bounded diagnostic route in `performance_ci.py`; fixed queue and snapshot
+budgets remain library gates. Full CI separately compares every paper page
+and the transparent-image case with pinned upstream pdfTeX.
+
+### Previous maintainer measurements
+
+Before the paired CI gate, matched warm trials on 2026-10-09 on an Apple M4 Pro
+compared the installed
 0.5.0 release with the optimized refactor. Each timing is the median of three
 runs after warming the same case. Paper copies, output directories and caches
 were separate for each binary. The added folders contained unused data files.
@@ -265,7 +298,7 @@ The 25-include preview rotation was one continuous run per binary. Release
 0.5.0 grew from 29.3 to 55.3 MiB as inactive sources accumulated. The refactor
 started at 28.9 MiB and reached a roughly 35.1 MiB plateau after three edits.
 It remained there through edit 23, with lower RSS at the last sample.
-The complete sample series is in the benchmark JSON. Simple unpadded startup
+The complete sample series is in the historical benchmark JSON. Simple unpadded startup
 timings differ by a few milliseconds, so this table is evidence about scaling
 and retention rather than a promise that every small build is faster.
 
