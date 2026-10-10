@@ -377,6 +377,28 @@ def check_fixture_output(supervisor, fixture, case):
     return {'expected_text': expected, 'text_verified': True, 'verifier_command_id': result['command_id']}
 
 
+def reported_build_timing(report, parent_seconds):
+    """Keep optional binary-reported timing separate from measured evidence."""
+    diagnostic = {'untrusted': True, 'status': 'absent'}
+    if 'elapsed_ms' not in report:
+        return diagnostic
+    value = report['elapsed_ms']
+    if type(value) not in (int, float):
+        diagnostic['status'] = 'invalid'
+        return diagnostic
+    try:
+        milliseconds = float(value)
+    except OverflowError:
+        diagnostic['status'] = 'invalid'
+        return diagnostic
+    if not math.isfinite(milliseconds) or milliseconds < 0:
+        diagnostic['status'] = 'invalid'
+        return diagnostic
+    diagnostic.update(status='reported', reported_elapsed_ms=milliseconds,
+                      parent_minus_reported_seconds=parent_seconds - milliseconds / 1000)
+    return diagnostic
+
+
 def execute_fixture(supervisor, fixture, case, initializing=False, validate_output=True):
     pdf = fixture['out'] / 'main.pdf'
     if case != 'warm-build-cache':
@@ -391,6 +413,7 @@ def execute_fixture(supervisor, fixture, case, initializing=False, validate_outp
         if not isinstance(report, dict) or report.get('skipped') is not (not initializing) \
                 or type(report.get('tex_runs')) is not int or report['tex_runs'] != expected_runs:
             raise BenchmarkError('Build-cache fixture did not take the expected compile/cache-hit path')
+        result['reported_build_timing'] = reported_build_timing(report, result['seconds'])
     check_pdf(pdf)
     if validate_output:
         result['output_validation'] = check_fixture_output(supervisor, fixture, case)
@@ -401,7 +424,10 @@ def batch(supervisor, fixture, case, iterations):
     observations = []
     for index in range(iterations):
         result = execute_fixture(supervisor, fixture, case, validate_output=index == iterations - 1)
-        observations.append({'command_id': result['command_id'], 'seconds': result['seconds']})
+        observation = {'command_id': result['command_id'], 'seconds': result['seconds']}
+        if 'reported_build_timing' in result:
+            observation['reported_build_timing'] = result['reported_build_timing']
+        observations.append(observation)
     return {'seconds': sum(item['seconds'] for item in observations),
             'iterations': iterations, 'commands': observations,
             'output_validation': result['output_validation']}
@@ -505,6 +531,11 @@ def main(argv=None):
               'machine': {'system': platform.system(), 'release': platform.release(),
                           'architecture': platform.machine(), 'processor': platform.processor(),
                           'logical_cpu_count': os.cpu_count(), 'python': platform.python_version()},
+              'diagnostic_telemetry': {'reported_build_timing': {
+                  'source': 'Optional build-report JSON elapsed_ms', 'untrusted': True, 'used_for_gate': False,
+                  'reported_elapsed_ms_scope': 'Timer inside the build function; excludes process launch and CLI/configuration setup.',
+                  'parent_minus_reported_seconds_scope': 'Diagnostic residual includes launch, CLI/configuration setup, '
+                      'serialization and exit; it does not isolate loader time.'}},
               'policy': {'relative_threshold': args.threshold, 'familywise_confidence': 1 - FAMILY_ALPHA,
                          'pairs_per_case': args.pairs, 'warmups_per_side': args.warmups,
                          'min_sample_seconds': args.min_sample_seconds, 'max_iterations': args.max_iterations,
@@ -568,6 +599,8 @@ def main(argv=None):
                         initial = execute_fixture(supervisor, fixtures[label], case, initializing=True)
                         row['initialization'][label] = {'command_id': initial['command_id'], 'seconds': initial['seconds'],
                                                        'output_validation': initial['output_validation']}
+                        if 'reported_build_timing' in initial:
+                            row['initialization'][label]['reported_build_timing'] = initial['reported_build_timing']
                     for warmup_index in range(args.warmups):
                         warmup = {'order': paired_order(warmup_index, case_index)}
                         for label in warmup['order']:

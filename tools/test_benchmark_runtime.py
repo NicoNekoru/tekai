@@ -105,6 +105,20 @@ class StatisticsTests(unittest.TestCase):
             self.assertEqual(bench.comparison_exit(status, True), exit_code)
             self.assertEqual(bench.comparison_exit(status, False), 1 if status == 'error' else 0)
 
+    def test_diagnostic_telemetry_cannot_change_calibration_or_inference(self):
+        for ratios in ([1] * 20, [1.2] * 20, [1.08, 1.08, 1.12, 1.12] * 5):
+            measured = samples(ratios)
+            analysis = bench.analyze_pairs(measured, 0.10, 0.25)
+            iterations = bench.calibrated_iterations(measured, 1, 256)
+            for index, sample in enumerate(measured):
+                for label in bench.LABELS:
+                    diagnostic = {'untrusted': True, 'status': ('absent', 'invalid', 'reported')[index % 3]}
+                    if diagnostic['status'] == 'reported':
+                        diagnostic.update(reported_elapsed_ms=1e300, parent_minus_reported_seconds=-1e297)
+                    sample[label]['commands'] = [{'reported_build_timing': diagnostic}]
+            self.assertEqual(bench.analyze_pairs(measured, 0.10, 0.25), analysis)
+            self.assertEqual(bench.calibrated_iterations(measured, 1, 256), iterations)
+
 
 @unittest.skipUnless(os.name == 'posix', 'Owned process groups require POSIX')
 class SupervisionTests(unittest.TestCase):
@@ -198,9 +212,56 @@ class FixtureTests(unittest.TestCase):
             fixture = dict(out=out, project=out, command=[], env={})
             for report in ({'skipped': False, 'tex_runs': 1}, {'skipped': True, 'tex_runs': 1},
                            {'skipped': True, 'tex_runs': False}):
-                with self.subTest(report=report), patch.object(bench.Supervisor, 'execute', return_value={'stdout': json.dumps(report)}):
+                with self.subTest(report=report), patch.object(bench.Supervisor, 'execute',
+                        return_value={'stdout': json.dumps({**report, 'elapsed_ms': 5})}):
                     with self.assertRaises(bench.BenchmarkError):
                         bench.execute_fixture(bench.Supervisor(out, 1, time.monotonic() + 1), fixture, 'warm-build-cache')
+
+    def test_optional_cache_timing_is_untrusted_finite_and_does_not_replace_parent_time(self):
+        telemetry = [({}, 'absent'), ({'elapsed_ms': 0}, 'reported'), ({'elapsed_ms': 30.5}, 'reported')]
+        telemetry.extend(({'elapsed_ms': value}, 'invalid') for value in
+                         (None, True, '3', [], {}, -1, math.nan, math.inf, 10 ** 400))
+        with tempfile.TemporaryDirectory(prefix='test-paired-telemetry-') as temporary:
+            out = Path(temporary)
+            (out / 'main.pdf').write_bytes(b'%PDF-1.4\n%%EOF\n')
+            fixture = dict(out=out, project=out, command=[], env={})
+            runner = bench.Supervisor(out, 1, time.monotonic() + 1)
+            for initializing in (False, True):
+                for optional, status in telemetry:
+                    report = {'skipped': not initializing, 'tex_runs': 1 if initializing else 0, **optional}
+                    response = {'stdout': json.dumps(report), 'command_id': 1, 'seconds': 0.02}
+                    with self.subTest(initializing=initializing, optional=optional), \
+                            patch.object(runner, 'execute', return_value=response), \
+                            patch.object(bench, 'check_fixture_output', return_value={'verified': True}):
+                        result = bench.execute_fixture(runner, fixture, 'warm-build-cache', initializing=initializing)
+                    diagnostic = result['reported_build_timing']
+                    self.assertEqual(result['seconds'], 0.02)
+                    self.assertTrue(result['output_validation']['verified'])
+                    self.assertEqual(diagnostic['status'], status)
+                    self.assertTrue(diagnostic['untrusted'])
+                    if status == 'reported':
+                        self.assertEqual(diagnostic['reported_elapsed_ms'], optional['elapsed_ms'])
+                        self.assertAlmostEqual(diagnostic['parent_minus_reported_seconds'], 0.02 - optional['elapsed_ms'] / 1000)
+                    else:
+                        self.assertNotIn('reported_elapsed_ms', diagnostic)
+                        self.assertNotIn('parent_minus_reported_seconds', diagnostic)
+                    # NaN, infinity and huge integers cannot leak into persisted
+                    # diagnostics and turn an optional value into a run error.
+                    json.dumps(diagnostic, allow_nan=False)
+
+    def test_batch_retains_per_invocation_diagnostics_and_measured_seconds(self):
+        diagnostics = [bench.reported_build_timing({'elapsed_ms': 30}, 0.01),
+                       bench.reported_build_timing({'elapsed_ms': None}, 0.02)]
+        responses = [{'command_id': index + 1, 'seconds': seconds,
+                      'reported_build_timing': diagnostic, 'output_validation': {'verified': True}}
+                     for index, (seconds, diagnostic) in enumerate(zip((0.01, 0.02), diagnostics))]
+        with patch.object(bench, 'execute_fixture', side_effect=responses):
+            result = bench.batch(None, {}, 'warm-build-cache', 2)
+        self.assertEqual(result['seconds'], 0.03)
+        self.assertEqual(result['iterations'], 2)
+        self.assertEqual([command['reported_build_timing'] for command in result['commands']], diagnostics)
+        self.assertEqual([command['seconds'] for command in result['commands']], [0.01, 0.02])
+        self.assertLess(result['commands'][0]['reported_build_timing']['parent_minus_reported_seconds'], 0)
 
     def test_expected_text_rejects_an_empty_successful_pdf(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-output-') as temporary:
@@ -351,7 +412,10 @@ class FixtureTests(unittest.TestCase):
             def initialize(_runner, fixture, case, initializing=False):
                 self.assertTrue(initializing)
                 events.append((case, 'initialize', fixture['label']))
-                return {'command_id': 0, 'seconds': 100, 'output_validation': {'verified': True}}
+                result = {'command_id': 0, 'seconds': 100, 'output_validation': {'verified': True}}
+                if case == 'warm-build-cache':
+                    result['reported_build_timing'] = bench.reported_build_timing({'elapsed_ms': 125}, 100)
+                return result
 
             def batch(_runner, fixture, case, iterations):
                 events.append((case, 'batch', fixture['label'], iterations))
@@ -373,12 +437,19 @@ class FixtureTests(unittest.TestCase):
                         patch.object(bench, 'batch', side_effect=measured), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(bench.main(argv), expected)
                 report = json.loads(output.read_text())
+                self.assertFalse(report['diagnostic_telemetry']['reported_build_timing']['used_for_gate'])
                 for row in report['results']:
                     case_events = [event for event in events if event[0] == row['case']]
                     self.assertEqual([event[1] for event in case_events[:2]], ['initialize', 'initialize'])
                     self.assertEqual([event[3] for event in case_events[2:6]], [1] * 4)
                     self.assertEqual(row['min_sample_seconds'], 1 if row['case'] == 'warm-build-cache' else 0.25)
                     self.assertEqual(row['fixture_unchanged'], not mutate)
+                    for initialization in row['initialization'].values():
+                        if row['case'] == 'warm-build-cache':
+                            self.assertEqual(initialization['reported_build_timing'],
+                                             bench.reported_build_timing({'elapsed_ms': 125}, 100))
+                        else:
+                            self.assertNotIn('reported_build_timing', initialization)
                     if expected == 2:
                         self.assertEqual(len(case_events), 6)
                         self.assertEqual(row['samples'], [])

@@ -274,6 +274,12 @@ Binary/input hashes, output controls and owned-process deadlines are checked
 separately. Reports are saved in `target/runtime-performance/report.json` and
 its Markdown companion by default. They make no peak-memory claim.
 
+Cache-hit command records also retain the binary's optional `elapsed_ms` as
+untrusted diagnostic data. Missing or invalid values cannot change calibration
+or gate outcomes. The parent measures the command's elapsed time independently.
+Their difference includes launch, CLI setup, serialization and exit overhead,
+so it does not isolate loader time.
+
 The old optional watch benchmark was removed. Watch retention now has one
 bounded diagnostic route in `performance_ci.py`; fixed queue and snapshot
 budgets remain library gates. Full CI separately compares every paper page
