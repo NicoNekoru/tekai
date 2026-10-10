@@ -944,3 +944,45 @@ full-suite attribution reruns were removed. The manually requested helper
 still validates schema 6 policy, timing, isolation and oracle contracts before
 using the unchanged executable artifacts. No diagnostic can replace a failed
 primary decision, discard slow samples or certify a leak-free implementation.
+
+## Startup copy controls
+
+Full CI also runs `tools/startup_control.py` after uploading the primary gate
+and separate profiling evidence. It uses the exact baseline and candidate
+artifacts from that gate. Its report is diagnostic-only and cannot change the
+primary verdict. The comparison still rejects inconclusive results under the
+same 10 percent variability guard and 10 percent practical slowdown boundary.
+
+The startup experiment uses four independent executable copies at fixed,
+equal-length paths in two isolated slots. Each block runs a baseline-only
+same-binary control, a candidate-only same-binary control and all six ways to
+place two baseline and two candidate copies across the four paths. Eight
+blocks balance assignment positions and every ordered predecessor pair within
+a block. Cross-block boundaries remain separate carryover observations. Eight
+repeated launch rounds balance command positions. Every path therefore receives
+both artifacts, while the same-binary controls measure differences without
+changing executable bytes.
+
+Each assignment replaces all four copies outside the command clocks and
+records the selected artifact, content hash, file identity and replacement
+generation. The first launch after copy and hash verification is separate
+from repeated launches. It is not a cold-start measurement. Copying and hashing
+already condition file caches, and the experiment does not flush operating
+system caches or reset code-signing state. Both copies within one slot share
+the same working directory and environment. Cross-slot differences can still
+include those slot effects as well as executable-copy effects.
+
+Commands use the primary benchmark's persistent owned-process supervisor,
+without system-time wrappers or opt-in binary instrumentation. Every successful
+`--version` command must match the selected artifact's exact version oracle.
+The report retains all command boundaries and labels observations by block,
+assignment, slot, copy path and launch phase. Descriptive timing summaries do
+not estimate isolated loader time or establish a compiler-code regression.
+The default experiment has 2,304 launches and a separate 600-second budget.
+Interrupted work keeps an incomplete report and cannot become passing evidence.
+
+Manual core CI dispatch accepts `runner_arch` values `all`, `arm64` and `intel`.
+The default preserves both core architectures and the performance profile's
+existing runner selection. An Intel-only full dispatch still runs portable
+runner tests and every Intel correctness and strict performance gate. It uses
+the free `macos-15-intel` GitHub runner and creates no release.

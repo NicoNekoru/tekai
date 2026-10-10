@@ -20,6 +20,15 @@ on:
         required: false
         default: ''
         type: string
+      runner_arch:
+        description: Hosted macOS architectures to test
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - arm64
+          - intel
 
 permissions:
   contents: read
@@ -43,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-15-intel]
+        os: ${{ fromJSON(inputs.runner_arch == 'intel' && '["macos-15-intel"]' || inputs.runner_arch == 'arm64' && '["macos-15"]' || '["macos-15", "macos-15-intel"]') }}
     env:
       PROPTEST_CASES: '128'
       CARGO_INCREMENTAL: '0'
@@ -172,3 +181,4 @@ jobs:
     with:
       profile: ${{ inputs.performance_profile || 'quick' }}
       baseline_sha: ${{ inputs.baseline_sha || '' }}
+      runner_arch: ${{ inputs.runner_arch || 'all' }}

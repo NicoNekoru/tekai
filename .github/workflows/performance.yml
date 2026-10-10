@@ -13,6 +13,11 @@ on:
         required: false
         default: ''
         type: string
+      runner_arch:
+        description: Hosted macOS architectures, all, arm64 or intel
+        required: false
+        default: all
+        type: string
   workflow_dispatch:
     inputs:
       profile:
@@ -28,6 +33,15 @@ on:
         required: false
         default: ''
         type: string
+      runner_arch:
+        description: Hosted macOS architectures to test
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - arm64
+          - intel
   schedule:
     # Tuesday at 07:17 UTC, away from the busy start of the hour.
     - cron: '17 7 * * 2'
@@ -131,6 +145,7 @@ jobs:
       - name: Validate the requested profile
         env:
           REQUESTED_PROFILE: ${{ inputs.profile }}
+          REQUESTED_RUNNER_ARCH: ${{ inputs.runner_arch || 'all' }}
           PERFORMANCE_TRIGGER: ${{ github.event_name }}
         run: |
           case "$REQUESTED_PROFILE" in
@@ -143,6 +158,13 @@ jobs:
               ;;
             *)
               printf '%s\n' 'The performance profile must be quick or full.' >&2
+              exit 2
+              ;;
+          esac
+          case "$REQUESTED_RUNNER_ARCH" in
+            all|arm64|intel) ;;
+            *)
+              printf '%s\n' 'The hosted runner architecture must be all, arm64 or intel.' >&2
               exit 2
               ;;
           esac
@@ -186,14 +208,15 @@ jobs:
     needs: [runner-tests, revisions]
     runs-on: ${{ matrix.os }}
     # Includes both fresh builds, the strict 60-minute comparison budget and
-    # separately bounded correctness/profiling steps. No automatic suite reruns.
+    # separately bounded correctness, profiling and startup-control steps.
+    # No automatic suite reruns.
     timeout-minutes: 195
     strategy:
       fail-fast: false
       matrix:
         # Tekai's documented runtime support is macOS. Linux above tests the
         # portable supervisor, not an unsupported Linux release engine.
-        os: ${{ fromJSON((inputs.profile == 'quick' || (inputs.profile == '' && github.event_name == 'pull_request')) && '["macos-15"]' || '["macos-15", "macos-15-intel"]') }}
+        os: ${{ fromJSON(inputs.runner_arch == 'intel' && '["macos-15-intel"]' || inputs.runner_arch == 'arm64' && '["macos-15"]' || (inputs.profile == 'quick' || (inputs.profile == '' && github.event_name == 'pull_request')) && '["macos-15"]' || '["macos-15", "macos-15-intel"]') }}
     env:
       PERFORMANCE_PROFILE: ${{ inputs.profile || (github.event_name == 'pull_request' && 'quick' || 'full') }}
       PERFORMANCE_TIMEOUT: ${{ (inputs.profile == 'quick' || (inputs.profile == '' && github.event_name == 'pull_request')) && '30' || '60' }}
@@ -523,6 +546,46 @@ jobs:
           path: |
             ${{ runner.temp }}/tekai-performance-reports/profiling/
             ${{ runner.temp }}/tekai-performance-reports/profiling.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Isolate startup with same-binary controls and rotated copy paths
+        id: startup_control
+        if: ${{ !cancelled() && env.PERFORMANCE_PROFILE == 'full' && (steps.comparison.outcome == 'success' || steps.comparison.outcome == 'failure') && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
+        timeout-minutes: 12
+        continue-on-error: true
+        # This experiment runs after the immutable primary evidence is uploaded.
+        # Its new executable copies, rotations and timings cannot rescore a gate.
+        run: |
+          python3 -B tools/startup_control.py \
+            --baseline "$BASELINE_TARGET_DIR/release/tekai" \
+            --candidate "$CARGO_TARGET_DIR/release/tekai" \
+            --metadata "$PERFORMANCE_REPORT_DIR/comparison-metadata.json" \
+            --primary-report "$PERFORMANCE_REPORT_DIR/comparison.json" \
+            --output "$PERFORMANCE_REPORT_DIR/startup-control/startup.json" \
+            --blocks 8 --repeats 8 --timeout 30 --budget 600 \
+            2>&1 | tee "$PERFORMANCE_REPORT_DIR/startup-control.log"
+
+      - name: Publish separate startup-control evidence
+        if: ${{ always() && steps.startup_control.outcome != 'skipped' }}
+        env:
+          STARTUP_CONTROL_OUTCOME: ${{ steps.startup_control.outcome }}
+        run: |
+          if [[ -f "$PERFORMANCE_REPORT_DIR/startup-control/startup.md" ]]; then
+            cat "$PERFORMANCE_REPORT_DIR/startup-control/startup.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\n%s\n' 'The separate startup control did not complete. Missing evidence cannot identify a startup cause.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf '\nStartup control returned `%s`. This cannot change the strict primary gate.\n' "$STARTUP_CONTROL_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload startup controls separately
+        if: ${{ always() && steps.startup_control.outcome != 'skipped' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: performance-startup-control-${{ matrix.os }}-${{ runner.arch }}
+          path: |
+            ${{ runner.temp }}/tekai-performance-reports/startup-control/
+            ${{ runner.temp }}/tekai-performance-reports/startup-control.log
           if-no-files-found: warn
           retention-days: 14
 
