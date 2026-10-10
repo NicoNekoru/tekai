@@ -93,6 +93,12 @@ def calibrated_iterations(warmups, min_seconds, ceiling):
     fastest = min(statistics.median(item[label]['seconds'] for item in warmups) for label in LABELS)
     if not math.isfinite(fastest) or fastest <= 0:
         raise ValueError('Calibration observations must be finite and positive')
+    required = math.ceil(min_seconds / fastest)
+    if required > ceiling:
+        raise CalibrationInfeasible({'minimum_iterations': required, 'iteration_ceiling': ceiling,
+                                    'fastest_warmup_median_seconds': fastest,
+                                    'predicted_ceiling_batch_seconds': fastest * ceiling,
+                                    'minimum_batch_seconds': min_seconds})
     return min(ceiling, max(1, math.ceil(min_seconds * CALIBRATION_HEADROOM / fastest)))
 
 
@@ -162,6 +168,12 @@ def comparison_exit(status, gate):
 
 class BenchmarkError(RuntimeError):
     pass
+
+
+class CalibrationInfeasible(ValueError):
+    def __init__(self, details):
+        super().__init__('Calibration iteration ceiling cannot reach the minimum batch duration')
+        self.details = details
 
 
 class Supervisor(PerformanceCI):
@@ -451,7 +463,7 @@ def parser():
     result.add_argument('--timeout', type=float, default=30, help='Per-command deadline, (0, 60] seconds')
     result.add_argument('--budget', type=float, default=900, help='Whole-run deadline, (0, 1800] seconds')
     result.add_argument('--threshold', type=float, default=0.10, help='Predeclared relative practical slowdown, (0, 1]')
-    result.add_argument('--min-sample-seconds', type=float, default=0.25, help='Minimum aggregate batch duration, [0.05, 2] seconds')
+    result.add_argument('--min-sample-seconds', type=float, default=1.0, help='Minimum aggregate batch duration, [0.05, 2] seconds')
     result.add_argument('--warm-cache-min-sample-seconds', type=float, default=1.0,
                         help='Longer minimum for startup-sensitive cache-hit batches, [0.25, 4] seconds')
     result.add_argument('--max-iterations', type=int, default=256, help='Matched batch iteration ceiling, 1 to 256')
@@ -561,20 +573,25 @@ def main(argv=None):
                         for label in warmup['order']:
                             warmup[label] = batch(supervisor, fixtures[label], case, 1)
                         row['warmups'].append(warmup)
-                    iterations = calibrated_iterations(row['warmups'], row['min_sample_seconds'], args.max_iterations)
-                    row['iterations_per_batch'] = iterations
-                    persist(report, args.output)
-                    for pair_index in range(args.pairs):
-                        sample = {'pair_index': pair_index, 'order': paired_order(pair_index, case_index),
-                                  'iterations': iterations}
-                        # Keep partial pairs so a later failure cannot erase the
-                        # successful side's observation from the final artifact.
-                        row['samples'].append(sample)
-                        for label in sample['order']:
-                            sample[label] = batch(supervisor, fixtures[label], case, iterations)
-                        sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
+                    try:
+                        iterations = calibrated_iterations(row['warmups'], row['min_sample_seconds'], args.max_iterations)
+                    except CalibrationInfeasible as error:
+                        row['calibration_infeasible'] = error.details
+                        row['analysis'] = {'status': 'inconclusive', 'reasons': [str(error)]}
+                    else:
+                        row['iterations_per_batch'] = iterations
                         persist(report, args.output)
-                    row['analysis'] = analyze_pairs(row['samples'], args.threshold, row['min_sample_seconds'])
+                        for pair_index in range(args.pairs):
+                            sample = {'pair_index': pair_index, 'order': paired_order(pair_index, case_index),
+                                      'iterations': iterations}
+                            # Keep partial pairs so a later failure cannot erase the
+                            # successful side's observation from the final artifact.
+                            row['samples'].append(sample)
+                            for label in sample['order']:
+                                sample[label] = batch(supervisor, fixtures[label], case, iterations)
+                            sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
+                            persist(report, args.output)
+                        row['analysis'] = analyze_pairs(row['samples'], args.threshold, row['min_sample_seconds'])
                     row['fixture_sha256_end'] = {label: fixture_sha256(fixtures[label]['project']) for label in LABELS}
                     row['fixture_unchanged'] = row['fixture_sha256'] == row['fixture_sha256_end']
                     if not row['fixture_unchanged']:

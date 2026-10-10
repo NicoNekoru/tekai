@@ -92,7 +92,13 @@ class StatisticsTests(unittest.TestCase):
         measured = samples([0.48] * 20, seconds=0.01 * iterations)
         analysis = bench.analyze_pairs(measured, 0.10, 0.25)
         self.assertEqual(analysis['status'], 'pass')
-        self.assertEqual(bench.calibrated_iterations(warmups, 2, 128), 128)
+        self.assertEqual(bench.calibrated_iterations(warmups, 0.8, 128), 128)
+
+    def test_infeasible_calibration_is_rejected_before_sampling(self):
+        with self.assertRaisesRegex(ValueError, 'ceiling cannot reach'):
+            bench.calibrated_iterations(samples([1, 1], seconds=0.003), 1, 256)
+        # The ceiling may limit extra headroom, but not the minimum itself.
+        self.assertEqual(bench.calibrated_iterations(samples([1, 1], seconds=0.004), 1, 256), 256)
 
     def test_gate_and_advisory_exits_are_explicit(self):
         for status, exit_code in (('pass', 0), ('fail', 1), ('inconclusive', 2), ('error', 1)):
@@ -333,8 +339,9 @@ class FixtureTests(unittest.TestCase):
                                **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}), encoding='utf-8')
             output = work / 'report.json'
             argv = ['--baseline', str(source), '--candidate', str(source), '--metadata', str(metadata),
-                    '--output', str(output), '--pairs', '16', '--gate']
+                    '--output', str(output), '--pairs', '16', '--min-sample-seconds', '0.25', '--gate']
             events = []
+            warm_seconds = 0.01
 
             def fixture(root, binary, case):
                 project = root / 'project'
@@ -348,10 +355,10 @@ class FixtureTests(unittest.TestCase):
 
             def batch(_runner, fixture, case, iterations):
                 events.append((case, 'batch', fixture['label'], iterations))
-                elapsed = 0.01 if fixture['label'] == 'baseline' else 0.008
+                elapsed = warm_seconds if fixture['label'] == 'baseline' else warm_seconds * 0.8
                 return dict(seconds=elapsed * iterations, iterations=iterations, commands=[], output_validation={'verified': True})
 
-            for mutate, expected in ((False, 0), (True, 1)):
+            for mutate, warm_seconds, expected in ((False, 0.01, 0), (True, 0.01, 1), (False, 0.001, 2)):
                 events.clear()
 
                 def measured(*args):
@@ -370,13 +377,22 @@ class FixtureTests(unittest.TestCase):
                     case_events = [event for event in events if event[0] == row['case']]
                     self.assertEqual([event[1] for event in case_events[:2]], ['initialize', 'initialize'])
                     self.assertEqual([event[3] for event in case_events[2:6]], [1] * 4)
-                    self.assertEqual(row['iterations_per_batch'], 250 if row['case'] == 'warm-build-cache' else 63)
                     self.assertEqual(row['min_sample_seconds'], 1 if row['case'] == 'warm-build-cache' else 0.25)
                     self.assertEqual(row['fixture_unchanged'], not mutate)
+                    if expected == 2:
+                        self.assertEqual(len(case_events), 6)
+                        self.assertEqual(row['samples'], [])
+                        self.assertEqual(row['analysis']['status'], 'inconclusive')
+                        self.assertEqual(row['calibration_infeasible']['iteration_ceiling'], 256)
+                        self.assertGreater(row['calibration_infeasible']['minimum_iterations'], 256)
+                        self.assertLess(row['calibration_infeasible']['predicted_ceiling_batch_seconds'], row['min_sample_seconds'])
+                    else:
+                        self.assertEqual(row['iterations_per_batch'], 250 if row['case'] == 'warm-build-cache' else 63)
                 if mutate:
                     self.assertEqual(report['status'], 'error')
                 else:
-                    self.assertEqual(report['status'], 'pass')
+                    self.assertEqual(report['status'], 'inconclusive' if expected == 2 else 'pass')
+                    self.assertEqual(report['errors'], [])
                     self.assertEqual(len(report['results']), 3)
 
 

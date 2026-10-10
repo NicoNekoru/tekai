@@ -255,8 +255,11 @@ The benchmark covers nested lookup with 1000 unused folders, eight transparent
 images and warmed build-cache hits. Each side has equal input content and
 separate binaries, homes, outputs and caches. Cold initialization precedes two
 calibration warmups. Matched iteration counts target at least one second for
-cache-hit batches and 0.25 seconds for lookup and image batches. Calibration
-targets twice those durations with a ceiling of 256 iterations.
+every case. Calibration targets twice that duration with a ceiling of 256
+iterations. A ceiling that cannot reach the minimum according to the warmups
+is reported as inconclusive before inferential sampling, with the required
+iteration count recorded. Unexpectedly short measured batches remain
+inconclusive.
 Forty baseline/candidate pairs alternate execution order and retain all raw
 command samples. Adjacent opposite-order pairs form 20 geometric-mean ratio
 blocks. Exact median intervals use a familywise confidence level of at least

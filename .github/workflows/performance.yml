@@ -340,7 +340,7 @@ jobs:
             --metadata "$PERFORMANCE_REPORT_DIR/comparison-metadata.json" \
             --output "$PERFORMANCE_REPORT_DIR/comparison.json" \
             --pairs 40 --warmups 2 --timeout 30 --budget 900 --threshold 0.10 \
-            --min-sample-seconds 0.25 --warm-cache-min-sample-seconds 1.0 --max-iterations 256 --gate \
+            --min-sample-seconds 1.0 --warm-cache-min-sample-seconds 1.0 --max-iterations 256 --gate \
             2>&1 | tee "$PERFORMANCE_REPORT_DIR/comparison.log"
 
       - name: Build the bounded experimental expansion fixture
