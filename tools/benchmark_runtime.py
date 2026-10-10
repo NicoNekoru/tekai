@@ -60,6 +60,7 @@ TIMING_METADATA = {
                              'completion', 'cleanup_start', 'cleanup_end'],
     'command_scope': 'Parent capture setup through blocking-wait completion, including launch and completion scheduling.',
     'launch_scope': 'Parent capture setup and Popen return, not isolated loader time.',
+    'popen_scope': 'Popen call and mandatory ownership registration before the diagnostic return timestamp.',
     'cleanup_scope': 'Owned-group kill/reap, completed-wait confirmation, bounded capture reads and capture-file removal.',
     'unit_scope': 'Unit boundaries also include between-command cleanup and output verification, outside scored command sums.',
     'checkpoint_scope': 'Atomic checkpoint writes occur between units, outside command and unit timestamps.',
@@ -418,7 +419,9 @@ class Supervisor(PerformanceCI):
 
     def _execute(self, command, cwd, env):
         self._ensure_waiter()
-        allowance = min(self.timeout, self.remaining())
+        remaining = self.remaining()
+        allowance = min(self.timeout, remaining)
+        deadline_reason = 'Whole-run deadline exceeded' if remaining <= self.timeout else 'Command deadline exceeded'
         started = time.monotonic()
         process = self.start(command, cwd, env)
         launch_end = time.monotonic()
@@ -435,7 +438,7 @@ class Supervisor(PerformanceCI):
                     failure = 'Command capture exceeded the finite output limit'
                     break
                 if time.monotonic() >= process.started_at + allowance:
-                    failure = 'Command deadline exceeded'
+                    failure = deadline_reason
                     break
         finally:
             # The inherited method kills the exact owned group even after a
@@ -452,7 +455,7 @@ class Supervisor(PerformanceCI):
             raise BenchmarkError('Process waiter failed: ' + observation['error'])
         stdout, stderr, truncated = self.captured(process)
         if observation.get('seconds', 0) > allowance:
-            failure = failure or 'Command deadline exceeded'
+            failure = failure or deadline_reason
         if truncated or any(path.stat().st_size > MAX_CAPTURE_BYTES for path in process.capture_paths):
             failure = failure or 'Command capture exceeded the finite output limit'
         if failure or observation.get('code') != 0:
@@ -711,22 +714,33 @@ def execute_fixture(supervisor, fixture, case, initializing=False, validate_outp
 
 
 def batch(supervisor, fixture, case, iterations):
+    if type(iterations) is not int or not 1 <= iterations <= MAX_ITERATIONS:
+        raise ValueError('Batch iterations must be a bounded positive exact integer')
     observations = []
-    cache_before = cache_state_snapshot(fixture) if case == 'warm-build-cache' else None
-    for index in range(iterations):
-        result = execute_fixture(supervisor, fixture, case, validate_output=index == iterations - 1)
-        observation = {'command_id': result['command_id'], 'seconds': result['seconds'],
-                       'parent_timing': result['parent_timing'], 'command_timing': result['command_timing']}
-        if 'reported_build_timing' in result:
-            observation['reported_build_timing'] = result['reported_build_timing']
-        observations.append(observation)
-    row = {'seconds': sum(item['seconds'] for item in observations),
-            'iterations': iterations, 'commands': observations,
-            'output_validation': result['output_validation']}
-    if cache_before is not None:
-        row.update(cache_state_before=cache_before, cache_state_after=cache_state_snapshot(fixture),
-                   cache_state_unchanged=True)
-    return row
+    try:
+        cache_before = cache_state_snapshot(fixture) if case == 'warm-build-cache' else None
+        for index in range(iterations):
+            result = execute_fixture(supervisor, fixture, case, validate_output=index == iterations - 1)
+            observation = {'command_id': result['command_id'], 'seconds': result['seconds'],
+                           'parent_timing': result['parent_timing'], 'command_timing': result['command_timing']}
+            if 'reported_build_timing' in result:
+                observation['reported_build_timing'] = result['reported_build_timing']
+            observations.append(observation)
+        row = {'seconds': sum(item['seconds'] for item in observations),
+                'iterations': iterations, 'commands': observations,
+                'output_validation': result['output_validation']}
+        if cache_before is not None:
+            row.update(cache_state_before=cache_before, cache_state_after=cache_state_snapshot(fixture),
+                       cache_state_unchanged=True)
+        return row
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+        error.partial_batch = {'case': case,
+                               **{key: fixture.get(key) for key in ('slot', 'label', 'replica')},
+                               'requested_iterations': iterations, 'completed_iterations': len(observations),
+                               'seconds': sum(item['seconds'] for item in observations), 'commands': observations,
+                               'complete': False, 'used_for_gate': False,
+                               'scope': 'Completed commands from a failed active batch. Excluded from samples and journal.'}
+        raise
 
 
 def load_metadata(path):
@@ -858,7 +872,8 @@ def persist(report, path):
         # Never replace the last complete checkpoint with truncated evidence.
         # A separate bounded error manifest explains the failed final/checkpoint write.
         manifest = {'schema_version': SCHEMA_VERSION, 'status': 'error', 'exit_code': 1,
-                    'errors': ['Report exceeds the finite output limit; prior checkpoint retained unchanged'],
+                    'errors': [*report.get('errors', []),
+                               'Report exceeds the finite output limit; prior checkpoint retained unchanged'],
                     'attempted_bytes': size, 'maximum_bytes': MAX_REPORT_BYTES,
                     'retained_checkpoint': str(path), 'samples_dropped': False}
         atomic_text(path.with_suffix('.overflow.json'), json.dumps(manifest, allow_nan=False) + '\n')
@@ -1108,7 +1123,7 @@ def main(argv=None):
                          'artifact-by-copy/cache interactions. Units must be independent with a stable population median. '
                          'Arbitrary additive wall-clock overhead, changing positional effects, nonlinear drift and '
                          'serial dependence can violate these assumptions.'},
-              'executables': [], 'results': [], 'errors': []}
+              'executables': [], 'results': [], 'errors': [], 'partial_batches': []}
     previous_handler = signal.getsignal(signal.SIGTERM)
 
     def terminate(_number, _frame):
@@ -1124,7 +1139,25 @@ def main(argv=None):
             work = Path(temporary).resolve()
             supervisor = Supervisor(work, args.timeout, started + args.budget)
             journal = None
+            active_phase = None
             binaries = {slot: {} for slot in SLOTS}
+
+            def preserve_error_checkpoint(error):
+                partial = getattr(error, 'partial_batch', None)
+                if partial is not None:
+                    report['partial_batches'].append({**partial, 'phase': active_phase})
+                if journal is None:
+                    return
+                # Keep the last fully appended prefix binding and attached
+                # active commands. Never truncate a failed partial append or
+                # declare it a completed journal record.
+                report['raw_command_journal'] = journal.binding()
+                report['status'], report['exit_code'] = 'error', 1
+                try:
+                    checkpoint(report, args.output, 'bounded-evidence-error')
+                except (OSError, ValueError, RuntimeError) as checkpoint_error:
+                    report['errors'].append('Compact error checkpoint failed: ' + str(checkpoint_error))
+
             try:
                 verifiers = {name: shutil.which(name) for name in ('pdftotext', 'pdfinfo', 'pdfimages')}
                 if not all(verifiers.values()):
@@ -1202,6 +1235,7 @@ def main(argv=None):
                             warmup = {'warmup_index': warmup_index, **slot_pair(slot, warmup_index, case_index)}
                             row['warmups'].append(warmup)
                             for label in warmup['order']:
+                                active_phase = 'warmups'
                                 warmup[label] = batch(supervisor, fixtures[slot][label], case, 1)
                     journal.append(case_index, 'warmups', [(index, label, warmup[label])
                                    for index, warmup in enumerate(row['warmups']) for label in warmup['order']])
@@ -1214,6 +1248,7 @@ def main(argv=None):
                             # Pilots never enter inference.
                             row['calibration_pilots'].append(pilot)
                             for label in pilot['order']:
+                                active_phase = 'calibration_pilots'
                                 pilot[label] = batch(supervisor, fixtures[slot][label], case, CALIBRATION_ITERATIONS)
                             journal.append(case_index, 'calibration_pilots',
                                            [(len(row['calibration_pilots']) - 1, label, pilot[label]) for label in pilot['order']])
@@ -1241,6 +1276,7 @@ def main(argv=None):
                             # successful side's observation from the final artifact.
                             row['samples'].append(sample)
                             for label in sample['order']:
+                                active_phase = 'samples'
                                 sample[label] = batch(supervisor, fixtures[sample['slot']][label], case, iterations)
                             ratio = sample['candidate']['seconds'] / sample['baseline']['seconds']
                             if not math.isfinite(ratio) or ratio <= 0:
@@ -1264,18 +1300,10 @@ def main(argv=None):
                     checkpoint(report, args.output, 'case-complete', case)
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 report['errors'].append(f'{type(error).__name__}: {error}')
-                if isinstance(error, ReportTooLarge) and journal is not None:
-                    # Raw commands for the unappended unit are still attached.
-                    # Preserve those beside all earlier journal descriptors
-                    # before the one-time full restoration can exceed its cap.
-                    report['raw_command_journal'] = journal.binding()
-                    report['status'], report['exit_code'] = 'error', 1
-                    try:
-                        checkpoint(report, args.output, 'bounded-evidence-error')
-                    except (OSError, ValueError, RuntimeError) as checkpoint_error:
-                        report['errors'].append('Compact error checkpoint failed: ' + str(checkpoint_error))
-            except KeyboardInterrupt:
+                preserve_error_checkpoint(error)
+            except KeyboardInterrupt as error:
                 report['errors'].append('Run interrupted; terminating owned process groups')
+                preserve_error_checkpoint(error)
             finally:
                 try:
                     supervisor.close()

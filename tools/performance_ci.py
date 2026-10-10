@@ -639,23 +639,33 @@ class PerformanceCI(Audit):
         stdout_path, stderr_path = prefix.with_suffix('.stdout'), prefix.with_suffix('.stderr')
         invocation = list(map(str, command))
         capture_start = time.monotonic()
+        cleanup_attributes = {'capture_paths': (stdout_path, stderr_path), 'command_id': self.counter,
+                              'invocation': invocation, 'started_at': capture_start,
+                              'observe': False, 'timed_out': False}
+        process = None
         with stdout_path.open('wb') as stdout, stderr_path.open('wb') as stderr:
             capture_files_open = time.monotonic()
             popen_start = time.monotonic()
-            process = subprocess.Popen(invocation, cwd=project, env=env,
-                                       stdout=stdout, stderr=stderr, start_new_session=True)
+            try:
+                process = subprocess.Popen(invocation, cwd=project, env=env,
+                                           stdout=stdout, stderr=stderr, start_new_session=True)
+            finally:
+                if process is not None:
+                    # A returned child must be owned before optional clocks
+                    # or diagnostic attributes can raise or be interrupted.
+                    # This does not cover an interruption inside Popen before
+                    # it returns a process to this caller.
+                    try:
+                        process.__dict__.update(cleanup_attributes)
+                        process.observe = True
+                    finally:
+                        self.owned[process.pid] = process
             popen_return = time.monotonic()
         capture_files_closed = time.monotonic()
         # Diagnostic parent boundaries, never substituted for scored timings.
         process.launch_timing = [capture_start, capture_files_open, popen_start,
                                  popen_return, capture_files_closed]
-        process.capture_paths = (stdout_path, stderr_path)
-        process.command_id = self.counter
-        process.invocation = invocation
         process.started_at = time.monotonic()
-        process.observe = True
-        process.timed_out = False
-        self.owned[process.pid] = process
         return process
 
     def stop(self, process):
@@ -669,7 +679,7 @@ class PerformanceCI(Audit):
             # Files replace pipes, so an orphan cannot keep communicate open.
             process.wait(timeout=5)
         self.owned.pop(process.pid)
-        if process.observe:
+        if getattr(process, 'observe', False):
             peak = self.rss(self.captured(process)[1])
             self.report['observations'].append({'command_id': process.command_id,
                 'command': process.invocation, 'elapsed_seconds': time.monotonic() - process.started_at,

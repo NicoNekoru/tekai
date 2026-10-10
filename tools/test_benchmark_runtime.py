@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import random
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -436,12 +437,20 @@ class SupervisionTests(unittest.TestCase):
             original_stop(process)
 
         with patch.object(self.runner, 'stop', side_effect=stop):
-            with self.assertRaisesRegex(bench.BenchmarkError, 'deadline'):
+            with self.assertRaisesRegex(bench.BenchmarkError, 'Command deadline exceeded'):
                 self.runner.execute([sys.executable, '-c', 'import time; time.sleep(10)'], self.work, os.environ.copy())
         self.assertEqual(len(stopped), 1)
         self.assertFalse(self.runner.owned)
         with self.assertRaises(ProcessLookupError):
             os.killpg(stopped[0], 0)
+
+    def test_whole_run_limited_command_reports_the_global_deadline(self):
+        self.runner.timeout = 5
+        self.runner.deadline = time.monotonic() + 0.05
+        with self.assertRaisesRegex(bench.BenchmarkError, 'Whole-run deadline exceeded'):
+            self.runner.execute([sys.executable, '-c', 'import time; time.sleep(10)'], self.work, os.environ.copy())
+        self.assertFalse(self.runner.owned)
+        self.assertTrue(self.runner._waiter.is_alive())
 
     def test_completed_parent_cannot_leave_its_child_group_running(self):
         # The child holds file-backed logs open. It must not delay completion,
@@ -614,7 +623,12 @@ class FixtureTests(unittest.TestCase):
             finally:
                 journal.close()
 
-    def test_journal_overflow_retains_active_unit_in_compact_error_checkpoint(self):
+    def test_journal_errors_retain_active_unit_in_compact_error_checkpoint(self):
+        for failure_kind in ('limit', 'write', 'interrupt'):
+            with self.subTest(failure_kind=failure_kind):
+                self.assert_journal_error_checkpoint(failure_kind)
+
+    def assert_journal_error_checkpoint(self, failure_kind):
         with tempfile.TemporaryDirectory(prefix='test-journal-active-unit-overflow-') as temporary:
             work = Path(temporary)
             source = work / 'binary'
@@ -630,7 +644,19 @@ class FixtureTests(unittest.TestCase):
             def append(journal, case_index, phase, rows):
                 if phase == 'samples':
                     journal_before.append(journal.path.read_bytes())
-                    with patch.object(bench, 'MAX_REPORT_BYTES', journal.bytes):
+                    if failure_kind == 'limit':
+                        with patch.object(bench, 'MAX_REPORT_BYTES', journal.bytes):
+                            return original_append(journal, case_index, phase, rows)
+                    original_write = journal.handle.write
+
+                    def incomplete_write(data):
+                        original_write(data[:17])
+                        journal.handle.flush()
+                        if failure_kind == 'interrupt':
+                            raise KeyboardInterrupt
+                        raise OSError('controlled partial append write failed')
+
+                    with patch.object(journal.handle, 'write', side_effect=incomplete_write):
                         return original_append(journal, case_index, phase, rows)
                 return original_append(journal, case_index, phase, rows)
 
@@ -673,8 +699,20 @@ class FixtureTests(unittest.TestCase):
             self.assertTrue(all(len(sample[label]['commands']) == sample['iterations']
                                 for sample in active for label in bench.LABELS))
             journal = Path(checkpoint['raw_command_journal']['path'])
-            self.assertEqual(journal.read_bytes(), journal_before[0])
-            self.assertEqual(bench.executable_sha256(journal), checkpoint['raw_command_journal']['sha256'])
+            self.assertEqual(bench.hashlib.sha256(journal_before[0]).hexdigest(), checkpoint['raw_command_journal']['sha256'])
+            self.assertEqual(len(journal_before[0]), checkpoint['raw_command_journal']['bytes'])
+            if failure_kind == 'limit':
+                self.assertEqual(journal.read_bytes(), journal_before[0])
+            else:
+                actual = journal.read_bytes()
+                self.assertTrue(actual.startswith(journal_before[0]))
+                self.assertEqual(len(actual), len(journal_before[0]) + 17)
+                self.assertNotEqual(bench.executable_sha256(journal), checkpoint['raw_command_journal']['sha256'])
+                self.assertTrue(any('Raw command journal restore failed' in error for error in manifest['errors']))
+                if failure_kind == 'write':
+                    self.assertTrue(any('partial append write failed' in error for error in checkpoint['errors']))
+                else:
+                    self.assertIn('Run interrupted; terminating owned process groups', checkpoint['errors'])
 
     def test_future_cli_defaults_and_finite_upper_bounds(self):
         args = bench.parser().parse_args(['--baseline', 'A', '--candidate', 'B', '--metadata', 'M'])
@@ -827,6 +865,89 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual([command['seconds'] for command in result['commands']], [0.01, 0.02])
         self.assertEqual([command['parent_timing'] for command in result['commands']], [response['parent_timing'] for response in responses])
         self.assertLess(result['commands'][0]['reported_build_timing']['parent_minus_reported_seconds'], 0)
+
+    def test_partial_batch_keeps_completed_commands_and_never_admits_a_sample(self):
+        rng = random.Random(13361)
+        fixture = {'slot': 's0', 'label': 'candidate', 'replica': 'r1'}
+        failures = (bench.BenchmarkError('controlled command failure'), OSError('controlled capture failure'),
+                    ValueError('controlled output failure'), subprocess.SubprocessError('controlled launch failure'),
+                    KeyboardInterrupt())
+        for failure in failures:
+            iterations = rng.randrange(2, 33)
+            completed = rng.randrange(1, iterations)
+            responses = [{'command_id': index + 1, 'seconds': 0.01, 'parent_timing': [0, 0, 0.01],
+                          'command_timing': [0] * 12,
+                          'reported_build_timing': bench.reported_build_timing({'elapsed_ms': index}, 0.01),
+                          'output_validation': {'verified': True}} for index in range(completed)]
+            with self.subTest(failure=type(failure).__name__), \
+                    patch.object(bench, 'execute_fixture', side_effect=[*responses, failure]), \
+                    patch.object(bench, 'cache_state_snapshot', return_value={'verified': True}), \
+                    patch.object(bench, 'analyze_pairs') as analyze, self.assertRaises(type(failure)) as raised:
+                bench.batch(None, fixture, 'warm-build-cache', iterations)
+            partial = raised.exception.partial_batch
+            self.assertEqual(partial['completed_iterations'], completed)
+            self.assertEqual(partial['requested_iterations'], iterations)
+            self.assertEqual(partial['label'], 'candidate')
+            self.assertFalse(partial['complete'])
+            self.assertFalse(partial['used_for_gate'])
+            self.assertAlmostEqual(partial['seconds'], completed * 0.01)
+            self.assertEqual([command['command_id'] for command in partial['commands']], list(range(1, completed + 1)))
+            self.assertEqual([command['reported_build_timing'] for command in partial['commands']],
+                             [response['reported_build_timing'] for response in responses])
+            analyze.assert_not_called()
+        for iterations in (0, -1, True, 1.5, bench.MAX_ITERATIONS + 1):
+            with self.subTest(iterations=iterations), patch.object(bench, 'execute_fixture') as execute, self.assertRaises(ValueError):
+                bench.batch(None, fixture, 'cli-startup', iterations)
+            execute.assert_not_called()
+
+    def test_driver_preserves_mid_batch_commands_separately_from_failed_samples(self):
+        with tempfile.TemporaryDirectory(prefix='test-mid-batch-evidence-') as temporary:
+            work = Path(temporary)
+            source = work / 'binary'
+            source.write_bytes(b'executable fixture')
+            source.chmod(0o700)
+            metadata, output = work / 'metadata.json', work / 'report.json'
+            metadata.write_text(json.dumps({'runner_label': 'test', 'toolchain': 'exact',
+                                 **{label: {'revision': 'a' * 40, 'build_command': 'test', 'expected_version': '0.5.0'}
+                                    for label in bench.LABELS}}), encoding='utf-8')
+            for failure in (bench.BenchmarkError('controlled mid-batch failure'), KeyboardInterrupt()):
+                calls = {}
+
+                def execute(_runner, fixture, _case, initializing=False, validate_output=True):
+                    key = fixture['slot'], fixture['label']
+                    if not initializing:
+                        calls[key] = calls.get(key, 0) + 1
+                        # Each cell completes two warmups and two 32-command
+                        # pilots. Fail after two commands of its first sample.
+                        if key == ('s0', 'candidate') and calls[key] == 69:
+                            raise failure
+                    return {'command_id': sum(calls.values()), 'seconds': 0.01,
+                            'parent_timing': [0, 0, 0.01], 'command_timing': [0] * 12,
+                            'output_validation': {'verified': True}}
+
+                with self.subTest(failure=type(failure).__name__), \
+                        patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
+                        patch.object(bench, 'make_fixture', side_effect=mocked_fixture), \
+                        patch.object(bench, 'execute_fixture', side_effect=execute), \
+                        patch.object(bench, 'analyze_pairs') as analyze, contextlib.redirect_stdout(io.StringIO()):
+                    result = bench.main(['--baseline', str(source), '--candidate', str(source),
+                                         '--metadata', str(metadata), '--output', str(output), '--pairs', '40', '--gate'])
+                self.assertEqual(result, 1)
+                report = json.loads(output.read_text())
+                self.assertEqual((report['status'], report['exit_code']), ('error', 1))
+                self.assertEqual(len(report['partial_batches']), 1)
+                partial = report['partial_batches'][0]
+                self.assertEqual((partial['phase'], partial['label'], partial['completed_iterations']), ('samples', 'candidate', 2))
+                self.assertEqual(partial['requested_iterations'], 50)
+                self.assertEqual(len(partial['commands']), 2)
+                self.assertFalse(partial['complete'])
+                sample = report['results'][0]['samples'][0]
+                self.assertIn('baseline', sample)
+                self.assertNotIn('candidate', sample)
+                journal = Path(report['raw_command_journal']['path'])
+                self.assertFalse(any(json.loads(line)['batches'][0]['phase'] == 'samples'
+                                     for line in journal.read_text().splitlines()))
+                analyze.assert_not_called()
 
     def test_expected_text_rejects_an_empty_successful_pdf(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-output-') as temporary:

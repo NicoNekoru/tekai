@@ -370,6 +370,7 @@ class ProfileSupervisor(benchmark.Supervisor):
         row.update(status='running', launch_unix_ns=time.time_ns(), launch_monotonic_ns=time.monotonic_ns(),
                    popen_latency_seconds=None,
                    popen_latency_unavailable_reason='Pure Popen call latency is not separately timed',
+                   popen_latency_scope=benchmark.TIMING_METADATA['popen_scope'],
                    launch_setup_seconds=None, command_id=self.counter + 1)
         selected_env = dict(env, LC_ALL='C', TEKAI_DIAGNOSTIC_PROFILE='1')
         stderr, truncated = '', False

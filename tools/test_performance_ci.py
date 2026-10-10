@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -740,6 +741,39 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(popen.call_args.kwargs['start_new_session'])
         self.assertNotEqual(popen.call_args.kwargs['stdout'], subprocess.PIPE)
         self.audit.owned.clear()
+
+    @unittest.skipUnless(os.name == 'posix', 'Owned process groups require POSIX')
+    def test_interrupt_after_popen_returns_keeps_the_child_owned_and_cleaned(self):
+        native_popen, native_clock = subprocess.Popen, time.monotonic
+        launched = []
+        interrupted = False
+
+        def popen(*args, **kwargs):
+            process = native_popen(*args, **kwargs)
+            launched.append(process)
+            return process
+
+        def clock():
+            nonlocal interrupted
+            if launched and not interrupted:
+                interrupted = True
+                process = launched[0]
+                self.assertIs(self.audit.owned.get(process.pid), process)
+                self.assertEqual(process.invocation[0], sys.executable)
+                self.assertTrue(all(path.exists() for path in process.capture_paths))
+                raise KeyboardInterrupt
+            return native_clock()
+
+        with patch('performance_ci.subprocess.Popen', side_effect=popen), \
+                patch('performance_ci.time.monotonic', side_effect=clock), self.assertRaises(KeyboardInterrupt):
+            self.audit.start([sys.executable, '-c', 'import time; time.sleep(10)'], self.work, self.audit.env)
+        process = launched[0]
+        self.assertIs(self.audit.owned.get(process.pid), process)
+        self.audit.close()
+        self.assertIsNotNone(process.poll())
+        self.assertFalse(self.audit.owned)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(process.pid, 0)
 
     def test_cleanup_signals_only_the_owned_process_group(self):
         process = Mock(pid=12345, observe=False)

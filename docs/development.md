@@ -326,6 +326,8 @@ capture files opened, `Popen` entry and return, capture files closed, launch end
 waiter dispatch and acceptance, completion, and cleanup start and end. These
 separate observer work from process wait and cleanup. One owned worker handles
 blocking waits across commands instead of creating a thread for every launch.
+The `Popen` return timestamp includes mandatory child ownership registration.
+Registration remains protected if a later diagnostic step is interrupted.
 The scored duration remains command start through parent-observed completion.
 It includes process launch and scheduling, and is not a pure loader or cache
 algorithm measurement. Startup and dependency-heavy cache timings are separate
@@ -339,6 +341,11 @@ to its `.raw.*.jsonl` sibling by hash and exact batch descriptors. Preserve
 both files for diagnosis. A `compact-checkpoint` cannot stand in for completed
 evidence. A 128-MiB report limit preserves completed evidence and reports overflow instead of dropping
 samples. Journal or checkpoint errors fail the run.
+On a failed batch, `partial_batches` retains its earlier completed commands
+as diagnostic evidence. Incomplete batches never enter inference or the raw
+completed-unit journal. Error checkpoints also preserve active evidence after
+an interrupted or partial journal write. Deadline messages distinguish a
+per-command timeout from exhaustion of the whole-run budget.
 
 The cache oracle verifies that the initialized state records every referenced
 dependency and the main input. At batch boundaries it records the state's
