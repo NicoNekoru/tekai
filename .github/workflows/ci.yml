@@ -72,10 +72,11 @@ jobs:
             "PROPTEST_RNG_SEED=$property_seed" >> "$GITHUB_ENV"
           printf 'PROPTEST_RNG_SEED=%s\nPROPTEST_CASES=%s\nRUST_TOOLCHAIN=%s\n' "$property_seed" "$PROPTEST_CASES" "$RUST_TOOLCHAIN" | tee "$CI_REPORT_DIR/property-config.txt"
 
-      - name: Test diagnostic runner permissions and cleanup without compiling TeX
-        # The performance workflow owns the other Python suites. Linux there
-        # checks portability, while its ARM runtime checks native supervision.
-        if: matrix.os == 'macos-15'
+      - name: Test mocked audit-runner policy on main pushes
+        # Main pushes do not call the performance workflow. PR/manual runs
+        # already cover these mocked policy tests through its Linux discovery.
+        # These tests do not establish native process-supervision coverage.
+        if: matrix.os == 'macos-15' && github.event_name == 'push'
         run: |
           test -f tools/test_audit_runtime.py
           python3 -B -m unittest discover -s tools -p test_audit_runtime.py -v 2>&1 | tee "$CI_REPORT_DIR/audit-runner-tests.log"
