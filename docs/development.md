@@ -267,11 +267,13 @@ CI also records each built artifact's SHA-256. The benchmark and attribution
 controls bind any supplied build hash to the measured executable's bytes.
 
 The benchmark covers nested lookup with 1000 unused folders, eight transparent
-images and warmed build-cache hits. Each side has equal input content and
-separate binaries, homes, outputs and caches. Cold initialization precedes two
-single-command warmups and a fixed calibration block. Two opposite-order pilot
-pairs each run 32 commands per side. Calibration uses the fastest per-side
-median of parent-observed pilot batch time divided by its iteration count.
+images and warmed build-cache hits. Each artifact runs in both neutral slots,
+with four independent binary copies, homes, outputs and caches. Equal-length
+replica names reverse the artifact assignment between slots. Every cell has
+equal input content. Cold initialization precedes two single-command warmups
+per cell and a fixed calibration block. Each slot has two opposite-order pilot
+pairs, each with 32 commands per artifact. Calibration uses the fastest of the
+four cell medians of parent-observed pilot batch time divided by iteration count.
 Single-command warmups and pilots stay outside inferential samples.
 Matched iteration counts target twice the one-second minimum with a ceiling
 of 512 iterations. Reports retain pilot commands, normalized rates, required
@@ -280,16 +282,28 @@ inconclusive before inferential sampling. Iterations remain fixed afterward,
 and unexpectedly short measured batches remain inconclusive. There are no
 adaptive retries or replacement samples. The whole-run deadline stays at
 900 seconds.
-Forty baseline/candidate pairs alternate execution order and retain all raw
-command samples. Adjacent opposite-order pairs form 20 geometric-mean ratio
-blocks. Exact median intervals use a familywise confidence level of at least
-95 percent across the three declared cases.
+Forty baseline/candidate pairs retain all raw command samples. Four pairs form
+one eight-batch comparison unit. For baseline A and candidate B, the slot
+schedule is `A0 B0 B1 A1` followed by `B0 A0 A1 B1`. The first quad alternates
+between units and cases. Each artifact occupies every quad position and each
+slot-position combination. The unit ratio is the fourth root of the product
+of its four candidate times divided by the product of its four baseline times.
+For multiplicative timing effects, combining both quads before inference
+cancels fixed slot effects and a repeatable slot-position profile. The default
+produces 10 inference units. Exact median intervals use a familywise confidence
+level of at least 95 percent across the three declared cases. At this sample
+count the interval uses the minimum and maximum unit ratios, so uncertainty
+can remain broad.
 
 The declared slowdown boundary is 10 percent. A statistically demonstrated
 regression returns exit 1. Insufficient precision, excessive variability or
 order bias returns exit 2, not success. CI rejects both. Exit 0 requires all
-cases to pass. The intervals assume independent blocks and stable conditions,
-so even a passing hosted-runner comparison cannot prove universal performance.
+cases to pass. The 10 percent per-artifact variability guard retains all 40
+batches per artifact. The 5 percent order-bias guard uses uncanceled ratios
+within each slot. The intervals assume independent units and a stable median
+effect across slots. Crossover cannot remove arbitrary copy or cache effects,
+changing position profiles or serial dependence. A passing hosted-runner
+comparison cannot prove universal performance.
 Binary/input hashes, output controls and owned-process deadlines are checked
 separately. Reports are saved in `target/runtime-performance/report.json` and
 its Markdown companion by default. They make no peak-memory claim.

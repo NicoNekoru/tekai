@@ -245,16 +245,25 @@ jobs:
           python-version: '3.13'
 
       - name: Test native process supervision before compiling TeX
-        # Python portability is checked on Linux. One native macOS pass is enough
-        # for these Python suites; both architectures still run engine gates.
+        # Linux runs every suite. This one macOS pass selects process/session,
+        # descendant cleanup and file-capture behavior; both architectures run
+        # engine gates. Parity capture tests use real TemporaryFiles but mock
+        # Popen/killpg. The later full parity gate exercises its real supervisor.
         if: matrix.os == 'macos-15'
         run: |
-          test -f tools/test_performance_ci.py
-          test -f tools/test_verify_bundled_papers.py
-          test -f tools/test_benchmark_runtime.py
-          python3 -B -m unittest discover -s tools -p test_performance_ci.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/performance-runner-tests.log"
-          python3 -B -m unittest discover -s tools -p test_verify_bundled_papers.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/parity-runner-tests.log"
-          python3 -B -m unittest discover -s tools -p test_benchmark_runtime.py -v 2>&1 | tee "$PERFORMANCE_REPORT_DIR/paired-benchmark-tests.log"
+          PYTHONPATH=tools python3 -B -m unittest -v \
+            test_performance_ci.RunnerTests.test_python_subprocess_records_status_and_separate_observation \
+            test_performance_ci.RunnerTests.test_timeout_kills_and_reaps_owned_group \
+            test_performance_ci.RunnerTests.test_stdout_capture_has_a_limit \
+            test_performance_ci.RunnerTests.test_stderr_capture_keeps_the_tail \
+            test_verify_bundled_papers.CommandTests.test_successful_output_at_the_limit_is_not_truncated \
+            test_verify_bundled_papers.CommandTests.test_oversized_successful_stdout_fails_instead_of_hiding_a_pdf_difference \
+            test_benchmark_runtime.SupervisionTests.test_success_keeps_native_completion_time_and_no_owned_process \
+            test_benchmark_runtime.SupervisionTests.test_error_and_output_overflow_are_not_usable_samples \
+            test_benchmark_runtime.SupervisionTests.test_timeout_kills_the_owned_process_group \
+            test_benchmark_runtime.SupervisionTests.test_completed_parent_cannot_leave_its_child_group_running \
+            test_benchmark_runtime.SupervisionTests.test_whole_run_deadline_prevents_launch \
+            2>&1 | tee "$PERFORMANCE_REPORT_DIR/native-supervision-tests.log"
 
       - name: Install Rust
         timeout-minutes: 5

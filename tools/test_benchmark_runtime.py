@@ -17,17 +17,43 @@ from unittest.mock import patch
 import benchmark_runtime as bench
 
 
-def samples(ratios, seconds=1):
-    return [{'order': bench.paired_order(index), 'iterations': 1,
-             'baseline': {'seconds': seconds}, 'candidate': {'seconds': seconds * ratio}}
+def model_schedule(index, case_index=0):
+    # Literal complementary quads are independent of the production schedule.
+    quads = [('s0', ('baseline', 'candidate')), ('s1', ('candidate', 'baseline')),
+             ('s0', ('candidate', 'baseline')), ('s1', ('baseline', 'candidate'))]
+    unit, within = divmod(index, 4)
+    if (unit + case_index) % 2:
+        quads = quads[2:] + quads[:2]
+    slot, order = quads[within]
+    assignments = {'s0': {'baseline': 'r0', 'candidate': 'r1'},
+                   's1': {'baseline': 'r1', 'candidate': 'r0'}}
+    return {'pair_index': index, 'unit_index': unit, 'quad_index': within // 2,
+            'slot': slot, 'order': order, 'replicas': assignments[slot]}
+
+
+def samples(ratios, seconds=1, case_index=0):
+    return [{**model_schedule(index, case_index), 'iterations': 1,
+             'baseline': {'seconds': seconds, 'iterations': 1},
+             'candidate': {'seconds': seconds * ratio, 'iterations': 1}}
             for index, ratio in enumerate(ratios)]
 
 
-def calibration_pilots(baseline_rates, candidate_rates=None):
-    rates = {'baseline': baseline_rates, 'candidate': candidate_rates or baseline_rates}
-    return [{'pair_index': index, 'order': bench.paired_order(index), 'iterations': 32,
-             **{label: {'seconds': rates[label][index] * 32, 'iterations': 32} for label in bench.LABELS}}
-            for index in range(2)]
+def calibration_pilots(baseline_rates, candidate_rates=None, slot_rates=None):
+    rates = slot_rates or {slot: {'baseline': baseline_rates, 'candidate': candidate_rates or baseline_rates}
+                          for slot in bench.SLOTS}
+    return [{'pair_index': index, 'slot': slot,
+             'order': ('baseline', 'candidate') if (index + slot_index) % 2 == 0 else ('candidate', 'baseline'),
+             'replicas': model_schedule(slot_index)['replicas'], 'iterations': 32,
+             **{label: {'seconds': rates[slot][label][index] * 32, 'iterations': 32} for label in bench.LABELS}}
+            for index in range(2) for slot_index, slot in enumerate(bench.SLOTS)]
+
+
+def mocked_fixture(root, _binary, _case):
+    project, out = root / 'project', root / 'out'
+    bench.document(project)
+    out.mkdir()
+    return dict(root=root, project=project, out=out, env=bench.isolated_environment(root),
+                input_sha256=bench.fixture_sha256(project))
 
 
 class StatisticsTests(unittest.TestCase):
@@ -41,21 +67,26 @@ class StatisticsTests(unittest.TestCase):
         self.assertEqual((interval['lower'], interval['upper']), (1.04, 1.15))
         self.assertAlmostEqual(interval['coverage_at_least'], 1 - 2 * sum(math.comb(20, k) for k in range(5)) / 2 ** 20)
         self.assertGreaterEqual(interval['coverage_at_least'], 1 - 0.05 / 3)
+        ten = bench.median_interval(values[:10], 0.05 / 3)
+        self.assertEqual(ten['order_statistic'], 1)
+        self.assertEqual((ten['lower'], ten['upper']), (values[0], values[9]))
 
     def test_equal_binary_and_real_regression_are_distinguished(self):
         for ratio, outcome in ((1, 'pass'), (0.7, 'pass'), (1.09, 'pass'), (1.11, 'fail')):
             with self.subTest(ratio=ratio):
-                analysis = self.analyze([ratio] * 20)
+                analysis = self.analyze([ratio] * 40)
                 self.assertEqual(analysis['status'], outcome)
-                self.assertEqual(len(analysis['balanced_block_ratios']), 10)
+                self.assertEqual(analysis['inference_unit_count'], 10)
+                self.assertEqual(len(analysis['inference_unit_ratios']), 10)
+                self.assertEqual(analysis['median_ratio_interval']['order_statistic'], 1)
 
     def test_crossing_threshold_is_inconclusive(self):
-        analysis = self.analyze([1.08, 1.08, 1.12, 1.12] * 5)
+        analysis = self.analyze(([1.08] * 4 + [1.12] * 4) * 5)
         self.assertEqual(analysis['status'], 'inconclusive')
         self.assertIn('crosses', analysis['reasons'][0])
 
     def test_high_variability_and_order_bias_cannot_fail_a_gate(self):
-        noisy = samples([1.3] * 20)
+        noisy = samples([1.3] * 40)
         for index, sample in enumerate(noisy):
             factor = 0.5 if index % 2 else 1.5
             for label in bench.LABELS:
@@ -63,22 +94,32 @@ class StatisticsTests(unittest.TestCase):
         result = bench.analyze_pairs(noisy, 0.10, 0.25)
         self.assertEqual(result['status'], 'inconclusive')
         self.assertTrue(any('noise limit' in reason for reason in result['reasons']))
-        result = self.analyze([1.5, 1.2] * 10)
+        order_biased = samples([1] * 40)
+        for row in order_biased:
+            row['candidate']['seconds'] = 1.5 if row['order'][0] == 'baseline' else 1.2
+        result = bench.analyze_pairs(order_biased, 0.10, 0.25)
         self.assertEqual(result['status'], 'inconclusive')
         self.assertTrue(any('order-bias' in reason for reason in result['reasons']))
 
     def test_small_sample_and_short_batch_are_inconclusive(self):
         self.assertEqual(self.analyze([1.2] * 12)['status'], 'inconclusive')
-        self.assertEqual(self.analyze([1.2] * 20, seconds=0.01)['status'], 'inconclusive')
+        self.assertEqual(self.analyze([1.2] * 40, seconds=0.01)['status'], 'inconclusive')
         self.assertIsNone(bench.median_interval([1] * 6, 0.05 / 3))
 
     def test_balancing_is_per_case_and_rejects_unbalanced_data(self):
         for case_index in range(3):
-            order = [bench.paired_order(index, case_index) for index in range(20)]
-            self.assertEqual(order.count(('baseline', 'candidate')), 10)
-            self.assertEqual(order.count(('candidate', 'baseline')), 10)
-            self.assertTrue(all(order[index] == tuple(reversed(order[index + 1])) for index in range(0, 20, 2)))
-        bad = samples([1] * 20)
+            for index in range(40):
+                self.assertEqual(bench.crossover_pair(index, case_index), model_schedule(index, case_index))
+            rows = samples([1] * 40, case_index=case_index)
+            for start in range(0, 40, 4):
+                for slot in ('s0', 's1'):
+                    self.assertEqual([row['order'] for row in rows[start:start + 4] if row['slot'] == slot].count(('baseline', 'candidate')), 1)
+                    self.assertEqual([row['order'] for row in rows[start:start + 4] if row['slot'] == slot].count(('candidate', 'baseline')), 1)
+                for label in ('baseline', 'candidate'):
+                    for replica in ('r0', 'r1'):
+                        self.assertEqual(sum(row['replicas'][label] == replica for row in rows[start:start + 4]), 2)
+            self.assertEqual(bench.analyze_pairs(rows, 0.10, 0.25, case_index=case_index)['status'], 'pass')
+        bad = samples([1] * 40)
         bad[1]['order'] = bad[0]['order']
         with self.assertRaises(ValueError):
             bench.analyze_pairs(bad, 0.10, 0.25)
@@ -87,7 +128,7 @@ class StatisticsTests(unittest.TestCase):
         for value in (0, -1, math.inf, math.nan):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 bench.median_interval([value], 0.05)
-            bad = samples([1] * 20)
+            bad = samples([1] * 40)
             bad[0]['candidate']['seconds'] = value
             with self.subTest(value=value), self.assertRaises(ValueError):
                 bench.analyze_pairs(bad, 0.10, 0.25)
@@ -97,7 +138,7 @@ class StatisticsTests(unittest.TestCase):
         iterations = bench.calibrated_iterations(pilots, 0.25, 128)
         self.assertEqual(iterations, 63)
         # Even another 40% improvement after warmup retains meaningful batches.
-        measured = samples([0.48] * 20, seconds=0.01 * iterations)
+        measured = samples([0.48] * 40, seconds=0.01 * iterations)
         analysis = bench.analyze_pairs(measured, 0.10, 0.25)
         self.assertEqual(analysis['status'], 'pass')
         self.assertEqual(bench.calibrated_iterations(pilots, 0.8, 128), 128)
@@ -106,7 +147,7 @@ class StatisticsTests(unittest.TestCase):
         pilots = calibration_pilots([0.00657, 0.00657])
         details = bench.calibration_details(pilots, 1, 512)
         self.assertEqual(details['normalized_rates_seconds_per_iteration'],
-                         {label: [0.00657, 0.00657] for label in bench.LABELS})
+                         {slot: {label: [0.00657, 0.00657] for label in bench.LABELS} for slot in bench.SLOTS})
         self.assertEqual(details['minimum_iterations'], 153)
         self.assertEqual(details['requested_iterations'], 305)
         self.assertEqual(details['selected_iterations'], 305)
@@ -115,7 +156,7 @@ class StatisticsTests(unittest.TestCase):
         self.assertAlmostEqual(details['predicted_selected_batch_seconds'], 305 * 0.00657)
         self.assertEqual(bench.calibrated_iterations(pilots, 1, 512), 305)
         # A further 40% speedup still leaves batches above the declared floor.
-        self.assertEqual(bench.analyze_pairs(samples([1] * 20, seconds=305 * 0.00657 * 0.6), 0.10, 1)['status'], 'pass')
+        self.assertEqual(bench.analyze_pairs(samples([1] * 40, seconds=305 * 0.00657 * 0.6), 0.10, 1)['status'], 'pass')
 
     def test_infeasible_calibration_is_rejected_before_sampling(self):
         pilots = calibration_pilots([0.003, 0.003])
@@ -160,12 +201,14 @@ class StatisticsTests(unittest.TestCase):
         # independently checks normalization, fastest-role choice and clipping.
         generated = random.Random(20261009)
         for case_index in range(128):
-            numerators = [[generated.randint(1, 1024) for _ in range(2)] for _ in bench.LABELS]
+            numerators = {slot: {label: [generated.randint(1, 1024) for _ in range(2)] for label in bench.LABELS}
+                          for slot in bench.SLOTS}
             quarters = generated.choice((1, 2, 4, 8))
             ceiling = generated.choice((1, 8, 32, 64, 256, 512))
-            rates = [[value / 4096 for value in role] for role in numerators]
-            pilots = calibration_pilots(*rates)
-            fastest_numerator = min(sum(role) for role in numerators)
+            rates = {slot: {label: [value / 4096 for value in numerators[slot][label]] for label in bench.LABELS}
+                     for slot in bench.SLOTS}
+            pilots = calibration_pilots(None, slot_rates=rates)
+            fastest_numerator = min(sum(role) for cells in numerators.values() for role in cells.values())
             minimum = (quarters * 2048 + fastest_numerator - 1) // fastest_numerator
             requested = (quarters * 4096 + fastest_numerator - 1) // fastest_numerator
             with self.subTest(case=case_index, numerators=numerators, quarters=quarters, ceiling=ceiling):
@@ -175,7 +218,8 @@ class StatisticsTests(unittest.TestCase):
                 self.assertEqual(details['selected_iterations'], min(requested, ceiling))
                 self.assertEqual(details['minimum_feasible'], minimum <= ceiling)
                 self.assertEqual(details['headroom_clipped'], requested > ceiling)
-                swapped = bench.calibration_details(calibration_pilots(*reversed(rates)), quarters / 4, ceiling)
+                swapped_rates = {slot: dict(zip(bench.LABELS, reversed(list(rates[slot].values())))) for slot in bench.SLOTS}
+                swapped = bench.calibration_details(calibration_pilots(None, slot_rates=swapped_rates), quarters / 4, ceiling)
                 self.assertEqual(swapped['selected_iterations'], details['selected_iterations'])
                 self.assertEqual(swapped['fastest_pilot_median_seconds_per_iteration'],
                                  details['fastest_pilot_median_seconds_per_iteration'])
@@ -185,8 +229,77 @@ class StatisticsTests(unittest.TestCase):
             self.assertEqual(bench.comparison_exit(status, True), exit_code)
             self.assertEqual(bench.comparison_exit(status, False), 1 if status == 'error' else 0)
 
+    def test_generated_crossover_cancels_log_additive_slot_replica_and_repeatable_position_factors(self):
+        generated = random.Random(20261011)
+        for example in range(64):
+            artifact = generated.choice((0.7, 1.0, 1.05, 1.2))
+            case_index = generated.randrange(3)
+            slot_effects = {slot: 1 + generated.randrange(10) / 1000 for slot in ('s0', 's1')}
+            replica_effects = {replica: 1 + generated.randrange(10) / 1000 for replica in ('r0', 'r1')}
+            # The profile is arbitrary within each slot and repeats across the
+            # complementary quads. It is not a separable global position effect.
+            position_effects = {slot: [1 + generated.randrange(10) / 1000 for _ in range(4)] for slot in ('s0', 's1')}
+            noisy = example % 8 == 0
+            if noisy:
+                position_effects['s0'][:2] = (0.8, 1.2)
+                position_effects['s1'][2:] = (0.8, 1.2)
+            rows = samples([1] * 40, seconds=2, case_index=case_index)
+            for index, row in enumerate(rows):
+                for position, label in enumerate(row['order']):
+                    quad_position = (index % 2) * 2 + position
+                    row[label]['seconds'] = 2 * slot_effects[row['slot']] * replica_effects[row['replicas'][label]] \
+                        * position_effects[row['slot']][quad_position] * (artifact if label == 'candidate' else 1)
+            with self.subTest(example=example, artifact=artifact, case=case_index):
+                result = bench.analyze_pairs(rows, 0.10, 1, case_index=case_index)
+                self.assertEqual(result['inference_unit_count'], 10)
+                self.assertTrue(all(math.isclose(value, artifact, rel_tol=1e-12) for value in result['inference_unit_ratios']))
+                self.assertEqual(result['status'], 'inconclusive' if noisy else ('fail' if artifact > 1.10 else 'pass'))
+                if noisy:
+                    self.assertTrue(any('noise limit' in reason for reason in result['reasons']))
+
+    def test_incomplete_malformed_cells_and_indices_are_not_inference_units(self):
+        for field, value in (('slot', 's1'), ('replicas', {'baseline': 'r1', 'candidate': 'r0'}),
+                             ('order', ('baseline',)), ('pair_index', True), ('unit_index', False),
+                             ('quad_index', False), ('iterations', True)):
+            rows = samples([1] * 40)
+            rows[0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                bench.analyze_pairs(rows, 0.10, 1)
+        for field in ('candidate', 'slot', 'replicas', 'order'):
+            rows = samples([1] * 40)
+            del rows[0][field]
+            with self.subTest(missing=field), self.assertRaises(ValueError):
+                bench.analyze_pairs(rows, 0.10, 1)
+        with self.assertRaises(ValueError):
+            bench.analyze_pairs(samples([1] * 39), 0.10, 1)
+        for index in (True, -1):
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                bench.crossover_pair(index)
+        for change in (('slot', 's1'), ('replicas', {}), ('pair_index', False), ('iterations', True)):
+            pilots = calibration_pilots([0.01, 0.01])
+            pilots[0][change[0]] = change[1]
+            with self.subTest(pilot=change), self.assertRaises(ValueError):
+                bench.calibration_details(pilots, 1, 512)
+        with self.assertRaises(ValueError):
+            bench.calibration_details(calibration_pilots([0.01, 0.01])[:-1], 1, 512)
+
+    def test_extreme_finite_times_cannot_emit_nonfinite_or_zero_ratio_statistics(self):
+        for baseline, candidate in ((1e-308, 1e308), (1e308, 1e-308), (1e308, 1e308), (10 ** 400, 1), (1, 10 ** 400)):
+            rows = samples([1] * 40)
+            for row in rows:
+                row['baseline']['seconds'], row['candidate']['seconds'] = baseline, candidate
+            with self.subTest(baseline=baseline, candidate=candidate), self.assertRaises(ValueError):
+                bench.analyze_pairs(rows, 0.10, 1)
+        # Model an exp-log boundary failure after valid raw paired ratios.
+        with patch.object(bench.math, 'exp', side_effect=OverflowError('controlled exponent boundary')):
+            with self.assertRaisesRegex(ValueError, 'Crossover ratio overflowed'):
+                bench.analyze_pairs(samples([1] * 40), 0.10, 1)
+        with patch.object(bench.math, 'exp', return_value=0):
+            with self.assertRaisesRegex(ValueError, 'Crossover ratio overflowed or underflowed'):
+                bench.analyze_pairs(samples([1] * 40), 0.10, 1)
+
     def test_diagnostic_telemetry_cannot_change_calibration_or_inference(self):
-        for ratios in ([1] * 20, [1.2] * 20, [1.08, 1.08, 1.12, 1.12] * 5):
+        for ratios in ([1] * 40, [1.2] * 40, ([1.08] * 4 + [1.12] * 4) * 5):
             measured = samples(ratios)
             pilots = calibration_pilots([0.0065, 0.0065])
             analysis = bench.analyze_pairs(measured, 0.10, 0.25)
@@ -275,10 +388,11 @@ class FixtureTests(unittest.TestCase):
             with patch.dict(os.environ, {'TEKAI_EMBEDDED_ENGINE_RUNNER': '/host/engine', 'TEXINPUTS': '/host/files',
                                          'TEKAI_FORMAT_CACHE': '/host/cache', 'HOME': '/host/home',
                                          **{name: '/host/search-root' for name in bench.SEARCH_ENV_VARS}}):
-                fixtures = {label: bench.make_fixture(work / label, Path('/binary'), 'nested-lookup') for label in bench.LABELS}
-            self.assertEqual(fixtures['baseline']['input_sha256'], fixtures['candidate']['input_sha256'])
-            for label in bench.LABELS:
-                fixture = fixtures[label]
+                fixtures = [bench.make_fixture(work / slot / replica, Path('/binary'), 'nested-lookup')
+                            for slot in ('s0', 's1') for replica in ('r0', 'r1')]
+            self.assertEqual(len({fixture['input_sha256'] for fixture in fixtures}), 1)
+            self.assertEqual(len({len(str(fixture['root'])) for fixture in fixtures}), 1)
+            for fixture in fixtures:
                 env = fixture['env']
                 self.assertNotIn('TEKAI_EMBEDDED_ENGINE_RUNNER', env)
                 for name in bench.SEARCH_ENV_VARS:
@@ -286,7 +400,7 @@ class FixtureTests(unittest.TestCase):
                 self.assertEqual(env['PATH'], '')
                 for key in ('HOME', 'TEKAI_ENGINE_CACHE', 'TEKAI_FORMAT_CACHE', 'TEKAI_AUX_CACHE', 'TEKAI_BIBTEX_CACHE'):
                     self.assertTrue(Path(env[key]).is_relative_to(fixture['root']))
-                    self.assertNotEqual(env[key], fixtures[next(side for side in bench.LABELS if side != label)]['env'][key])
+                    self.assertEqual(len({cell['env'][key] for cell in fixtures}), 4)
                 self.assertTrue((fixture['project'] / 'content/ordinary/needle.tex').is_file())
 
     def test_cache_fixture_requires_a_real_warm_hit(self):
@@ -508,7 +622,10 @@ class FixtureTests(unittest.TestCase):
                 self.assertEqual((result, report['status'], report['exit_code']), (1, 'error', 1))
                 self.assertIn('controlled fixture failure', report['errors'][0])
                 self.assertEqual(report['metadata'], provenance)
-                self.assertEqual(len(report['executables']), 2)
+                self.assertEqual(len(report['executables']), 4)
+                self.assertEqual({(row['label'], row['slot'], row['replica']) for row in report['executables']},
+                                 {('baseline', 's0', 'r0'), ('candidate', 's0', 'r1'),
+                                  ('baseline', 's1', 'r1'), ('candidate', 's1', 'r0')})
                 self.assertTrue(all(row['unchanged'] for row in report['executables']))
                 self.assertTrue(all(row['sha256_start'] == bench.executable_sha256(source) for row in report['executables']))
                 self.assertTrue(output.with_suffix('.md').is_file())
@@ -554,15 +671,10 @@ class FixtureTests(unittest.TestCase):
                                           'artifact_sha256': bench.executable_sha256(source)} for label in bench.LABELS}}), encoding='utf-8')
             output = work / 'report.json'
             argv = ['--baseline', str(source), '--candidate', str(source), '--metadata', str(metadata),
-                    '--output', str(output), '--pairs', '16', '--min-sample-seconds', '0.25', '--gate']
+                    '--output', str(output), '--pairs', '40', '--min-sample-seconds', '0.25', '--gate']
             events = []
             warm_seconds = 0.01
             pilot_seconds = 0.01
-
-            def fixture(root, binary, case):
-                project = root / 'project'
-                bench.document(project)
-                return dict(root=root, project=project, label=root.parent.name, input_sha256=bench.fixture_sha256(project))
 
             def initialize(_runner, fixture, case, initializing=False):
                 self.assertTrue(initializing)
@@ -589,41 +701,56 @@ class FixtureTests(unittest.TestCase):
                     return result
 
                 with patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
-                        patch.object(bench, 'make_fixture', side_effect=fixture), \
+                        patch.object(bench, 'make_fixture', side_effect=mocked_fixture), \
                         patch.object(bench, 'execute_fixture', side_effect=initialize), \
                         patch.object(bench, 'batch', side_effect=measured), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(bench.main(argv), expected)
                 report = json.loads(output.read_text())
-                self.assertEqual(report['schema_version'], 3)
+                self.assertEqual(report['schema_version'], 4)
                 self.assertEqual(report['policy']['calibration_pairs'], 2)
                 self.assertEqual(report['policy']['calibration_iterations'], 32)
-                self.assertEqual(report['policy']['calibration_method'], 'balanced-batched-pilot-v1')
+                self.assertEqual(report['policy']['calibration_method'], 'balanced-batched-slot-pilot-v1')
                 self.assertEqual(report['policy']['max_iterations'], 512)
+                self.assertEqual(report['policy']['inference_units_per_case'], 10)
+                self.assertEqual(report['policy']['pairs_per_inference_unit'], 4)
+                self.assertEqual(report['policy']['batches_per_inference_unit'], 8)
                 self.assertFalse(report['diagnostic_telemetry']['reported_build_timing']['used_for_gate'])
                 for row in report['results']:
                     case_events = [event for event in events if event[0] == row['case']]
-                    self.assertEqual([event[1] for event in case_events[:2]], ['initialize', 'initialize'])
-                    self.assertEqual([event[3] for event in case_events[2:6]], [1] * 4)
-                    self.assertEqual([event[3] for event in case_events[6:10]], [32] * 4)
+                    self.assertEqual([event[1] for event in case_events[:4]], ['initialize'] * 4)
+                    self.assertEqual([event[3] for event in case_events[4:12]], [1] * 8)
+                    self.assertEqual([event[3] for event in case_events[12:20]], [32] * 8)
                     self.assertEqual(row['min_sample_seconds'], 1 if row['case'] == 'warm-build-cache' else 0.25)
                     self.assertEqual(row['fixture_unchanged'], not mutate)
-                    self.assertEqual(len(row['warmups']), 2)
-                    self.assertEqual(len(row['calibration_pilots']), 2)
+                    self.assertEqual(len(row['fixture_inventory']), 4)
+                    self.assertEqual(len({item['root'] for item in row['fixture_inventory']}), 4)
+                    self.assertEqual(len({len(item['root']) for item in row['fixture_inventory']}), 1)
+                    for cache in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX'):
+                        self.assertEqual(len({item['cache_paths'][cache] for item in row['fixture_inventory']}), 4)
+                    self.assertEqual(len(row['warmups']), 4)
+                    self.assertEqual(len(row['calibration_pilots']), 4)
                     case_index = bench.CASES.index(row['case'])
+                    expected_schedule = [model_schedule(index, case_index) for index in range(40)]
+                    self.assertEqual(row['slot_schedule'], json.loads(json.dumps(expected_schedule)))
+                    expected_cells = [{'slot': pair['slot'], 'label': label, 'replica': pair['replicas'][label]}
+                                      for pair in expected_schedule[:2] for label in pair['order']]
+                    self.assertEqual(row['initialization_order'], expected_cells)
                     for index, pilot in enumerate(row['calibration_pilots']):
-                        self.assertEqual(pilot['pair_index'], index)
-                        self.assertEqual(pilot['order'], list(bench.paired_order(index, case_index)))
+                        self.assertEqual(pilot['pair_index'], index // 2)
+                        self.assertEqual(pilot['slot'], ('s0', 's1')[index % 2])
+                        self.assertEqual(pilot['order'], list(('baseline', 'candidate') if (index // 2 + index % 2 + case_index) % 2 == 0
+                                                              else ('candidate', 'baseline')))
                         self.assertEqual(pilot['iterations'], 32)
                         self.assertEqual([pilot[label]['iterations'] for label in bench.LABELS], [32, 32])
                     self.assertEqual(row['calibration'], bench.calibration_details(row['calibration_pilots'], row['min_sample_seconds'], 512))
-                    for initialization in row['initialization'].values():
+                    for initialization in (value for slot in row['initialization'].values() for value in slot.values()):
                         if row['case'] == 'warm-build-cache':
                             self.assertEqual(initialization['reported_build_timing'],
                                              bench.reported_build_timing({'elapsed_ms': 125}, 100))
                         else:
                             self.assertNotIn('reported_build_timing', initialization)
                     if expected == 2:
-                        self.assertEqual(len(case_events), 10)
+                        self.assertEqual(len(case_events), 20)
                         self.assertEqual(row['samples'], [])
                         self.assertEqual(row['analysis']['status'], 'inconclusive')
                         self.assertEqual(row['calibration_infeasible'], row['calibration'])
@@ -633,7 +760,9 @@ class FixtureTests(unittest.TestCase):
                     else:
                         expected_counts = (97, 385) if pilot_seconds == 0.0065 else (63, 250)
                         self.assertEqual(row['iterations_per_batch'], expected_counts[row['case'] == 'warm-build-cache'])
-                        self.assertEqual(len(row['samples']), 16)
+                        self.assertEqual(len(row['samples']), 40)
+                        self.assertEqual(row['analysis']['inference_unit_count'], 10)
+                        self.assertEqual(row['analysis']['median_ratio_interval']['order_statistic'], 1)
                 if mutate:
                     self.assertEqual(report['status'], 'error')
                 else:
@@ -641,7 +770,7 @@ class FixtureTests(unittest.TestCase):
                     self.assertEqual(report['errors'], [])
                     self.assertEqual(len(report['results']), 3)
 
-    def test_later_side_failures_preserve_partial_warmups_and_pilots(self):
+    def test_later_side_failures_preserve_partial_initialization_warmups_pilots_and_samples(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-partial-calibration-') as temporary:
             work = Path(temporary)
             source = work / 'binary'
@@ -652,12 +781,12 @@ class FixtureTests(unittest.TestCase):
                                **{label: {'revision': 'a' * 40, 'build_command': 'test'} for label in bench.LABELS}}), encoding='utf-8')
             output = work / 'report.json'
 
-            def fixture(root, _binary, _case):
-                project = root / 'project'
-                bench.document(project)
-                return dict(root=root, project=project, label=root.parent.name, input_sha256=bench.fixture_sha256(project))
+            for phase, failure_iterations in (('initialization', None), ('warmups', 1), ('calibration_pilots', 32), ('samples', 200)):
+                def initialize(_runner, fixture, _case, initializing=False):
+                    if phase == 'initialization' and fixture['label'] == 'candidate':
+                        raise bench.BenchmarkError('controlled later-side ' + phase + ' failure')
+                    return {'command_id': 0, 'seconds': 1, 'output_validation': {'verified': True}}
 
-            for phase, failure_iterations in (('warmups', 1), ('calibration_pilots', 32)):
                 def measured(_runner, fixture, _case, iterations):
                     if iterations == failure_iterations and fixture['label'] == 'candidate':
                         raise bench.BenchmarkError('controlled later-side ' + phase + ' failure')
@@ -665,9 +794,8 @@ class FixtureTests(unittest.TestCase):
                             'output_validation': {'verified': True}}
 
                 with self.subTest(phase=phase), patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
-                        patch.object(bench, 'make_fixture', side_effect=fixture), \
-                        patch.object(bench, 'execute_fixture', return_value={'command_id': 0, 'seconds': 1,
-                                     'output_validation': {'verified': True}}), \
+                        patch.object(bench, 'make_fixture', side_effect=mocked_fixture), \
+                        patch.object(bench, 'execute_fixture', side_effect=initialize), \
                         patch.object(bench, 'batch', side_effect=measured), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(bench.main(['--baseline', str(source), '--candidate', str(source),
                                                 '--metadata', str(metadata), '--output', str(output), '--gate']), 1)
@@ -675,11 +803,16 @@ class FixtureTests(unittest.TestCase):
                 row = report['results'][0]
                 self.assertEqual(report['status'], 'error')
                 self.assertIn('controlled later-side ' + phase + ' failure', report['errors'][0])
-                self.assertEqual(len(row[phase]), 1)
-                self.assertIn('baseline', row[phase][0])
-                self.assertNotIn('candidate', row[phase][0])
-                self.assertEqual(row[phase][0]['baseline']['seconds'], failure_iterations * 0.01)
-                self.assertEqual(row['samples'], [])
+                partial = row[phase]['s0'] if phase == 'initialization' else row[phase][0]
+                self.assertIn('baseline', partial)
+                self.assertNotIn('candidate', partial)
+                if phase == 'initialization':
+                    self.assertEqual(row[phase]['s1'], {})
+                else:
+                    self.assertEqual(len(row[phase]), 1)
+                    self.assertEqual(partial['baseline']['seconds'], failure_iterations * 0.01)
+                if phase != 'samples':
+                    self.assertEqual(row['samples'], [])
                 self.assertTrue(all(binary['unchanged'] for binary in report['executables']))
 
 

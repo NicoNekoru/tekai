@@ -85,7 +85,7 @@ class AttributionTests(unittest.TestCase):
         prefix = fixture_prefix or self.work / 'control-fixtures'
         sample_status = 'pass' if status == 'error' else status
         ratios = [1.2] * 40 if sample_status == 'fail' else (
-            [1.08, 1.08, 1.12, 1.12] * 10 if sample_status == 'inconclusive' else [1.0] * 40)
+            ([1.08] * 4 + [1.12] * 4) * 5 if sample_status == 'inconclusive' else [1.0] * 40)
         command_id = 0
 
         def batch(case, seconds, iterations=1):
@@ -105,56 +105,71 @@ class AttributionTests(unittest.TestCase):
             fixture_hash = hashlib.sha256(('stable generated fixture ' + case).encode('ascii')).hexdigest()
             row = {
                 'case': case,
-                'fixture_sha256': {label: fixture_hash for label in benchmark.LABELS},
-                'fixture_sha256_end': {label: fixture_hash for label in benchmark.LABELS},
+                'fixture_sha256': {slot: {label: fixture_hash for label in benchmark.LABELS} for slot in benchmark.SLOTS},
+                'fixture_sha256_end': {slot: {label: fixture_hash for label in benchmark.LABELS} for slot in benchmark.SLOTS},
                 'fixture_unchanged': True,
-                'fixture_roots': {label: str(prefix / label / case) for label in benchmark.LABELS},
+                'fixture_roots': {slot: {label: str(prefix / slot / benchmark.replica_for(label, slot) / case)
+                                        for label in benchmark.LABELS} for slot in benchmark.SLOTS},
+                'fixture_inventory': [],
+                'slot_schedule': [attribution.json_schedule(benchmark.crossover_pair(index, case_index)) for index in range(40)],
+                'initialization_order': benchmark.cell_order(case_index),
                 'min_sample_seconds': 1.0,
-                'initialization': {}, 'warmups': [], 'calibration_pilots': [], 'samples': [],
+                'initialization': {slot: {} for slot in benchmark.SLOTS},
+                'warmups': [], 'calibration_pilots': [], 'samples': [],
             }
-            for label in benchmark.paired_order(0, case_index):
+            for cell in benchmark.cell_order(case_index):
+                slot, label, replica = cell['slot'], cell['label'], cell['replica']
+                root = prefix / slot / replica / case
+                row['fixture_inventory'].append({**cell, 'root': str(root), 'project': str(root / 'project'),
+                    'out': str(root / 'out'), 'home': str(root / 'home'), 'input_sha256': fixture_hash,
+                    'cache_paths': {kind: str(root / ('cache-' + kind.lower()))
+                                    for kind in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX')}})
                 observed = batch(case, 1.0)
-                row['initialization'][label] = {
+                row['initialization'][slot][label] = {
                     'command_id': observed['commands'][0]['command_id'],
                     'seconds': observed['seconds'], 'output_validation': observed['output_validation'],
                 }
             for index in range(2):
-                warmup = {'order': list(benchmark.paired_order(index, case_index))}
-                for label in warmup['order']:
-                    warmup[label] = batch(case, 1.0)
-                row['warmups'].append(warmup)
+                for slot in benchmark.SLOTS:
+                    warmup = {'warmup_index': index,
+                              **attribution.json_schedule(benchmark.slot_pair(slot, index, case_index))}
+                    for label in warmup['order']:
+                        warmup[label] = batch(case, 1.0)
+                    row['warmups'].append(warmup)
             for index in range(2):
-                pilot = {'pair_index': index, 'order': list(benchmark.paired_order(index, case_index)),
-                         'iterations': 32}
-                for label in pilot['order']:
-                    pilot[label] = batch(case, 1.0, 32)
-                row['calibration_pilots'].append(pilot)
+                for slot in benchmark.SLOTS:
+                    pilot = {'pair_index': index, 'iterations': 32,
+                             **attribution.json_schedule(benchmark.slot_pair(slot, index, case_index))}
+                    for label in pilot['order']:
+                        pilot[label] = batch(case, 1.0, 32)
+                    row['calibration_pilots'].append(pilot)
             row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], 1.0, 512)
             iterations = benchmark.calibrated_iterations(row['calibration_pilots'], 1.0, 512)
             row['iterations_per_batch'] = iterations
             for index, ratio in enumerate(ratios):
-                sample = {'pair_index': index, 'order': list(benchmark.paired_order(index, case_index)),
+                sample = {**attribution.json_schedule(benchmark.crossover_pair(index, case_index)),
                           'iterations': iterations}
                 for label in sample['order']:
                     sample[label] = batch(case, ratio if label == 'candidate' else 1.0, iterations)
-                sample['ratio'] = ratio
+                sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
                 row['samples'].append(sample)
-            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0)
+            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0, case_index=case_index)
             rows.append(row)
         report = {
-            'schema_version': 3, 'gate': gate, 'status': status,
+            'schema_version': 4, 'gate': gate, 'status': status,
             'metadata': copy.deepcopy(metadata), 'policy': copy.deepcopy(attribution.POLICY),
             'machine': {'system': 'Darwin', 'architecture': 'arm64'},
             'elapsed_seconds': 3.0, 'exit_code': benchmark.comparison_exit(status, gate),
             'executables': [], 'output_verifiers': {}, 'results': rows,
             'errors': [] if status != 'error' else ['BenchmarkError: Command failed; return code 7'],
         }
-        for label in benchmark.LABELS:
+        for cell in benchmark.cell_order():
+            label, slot, replica = cell['label'], cell['slot'], cell['replica']
             source = Path(sources[label]).resolve()
             content_hash = benchmark.executable_sha256(source)
             report['executables'].append({
-                'label': label, 'source_path': str(source),
-                'isolated_path': str(prefix.parent / (prefix.name + '-copies') / label / 'tekai'),
+                **cell, 'source_path': str(source),
+                'isolated_path': str(prefix / slot / replica / 'bin' / 'tekai'),
                 'source_sha256_start': content_hash, 'source_sha256_end': content_hash,
                 'sha256_start': content_hash, 'sha256_end': content_hash, 'unchanged': True,
             })
@@ -300,14 +315,14 @@ class AttributionTests(unittest.TestCase):
         def change(report, _args=None):
             row = report['results'][0]
             for pilot in row['calibration_pilots']:
-                for label in benchmark.LABELS:
-                    for command in pilot[label]['commands']:
-                        command['seconds'] = 2.0
-                    pilot[label]['seconds'] = 64.0
-            # The independently known rate of two seconds needs one
-            # iteration, but formal batches still claim the old count of two.
+                if pilot['slot'] == 's1':
+                    for command in pilot['candidate']['commands']:
+                        command['seconds'] = 0.25
+                    pilot['candidate']['seconds'] = 8.0
+            # One faster artifact-slot cell needs eight matched iterations.
+            # The other cells and formal batches still claim the old two.
             row['calibration'] = benchmark.calibration_details(row['calibration_pilots'], 1.0, 512)
-            self.assertEqual(row['calibration']['selected_iterations'], 1)
+            self.assertEqual(row['calibration']['selected_iterations'], 8)
             self.assertEqual(row['iterations_per_batch'], 2)
         primary = copy.deepcopy(self.primary)
         change(primary)
@@ -315,7 +330,7 @@ class AttributionTests(unittest.TestCase):
         self.assert_stopped(self.make_runner(mutations={'reversed': change}))
 
     def test_full_raw_pilot_contract_rejects_primary_and_control_corruption(self):
-        modes = ('missing', 'partial', 'duplicate', 'order', 'pair-index', 'iterations',
+        modes = ('missing', 'partial', 'duplicate', 'order', 'pair-index', 'slot', 'replicas', 'iterations',
                  'side', 'batch-count', 'command-count', 'command-type', 'command-id',
                  'command-time', 'batch-total', 'oracle', 'formal-contamination')
         for mode in modes:
@@ -334,6 +349,10 @@ class AttributionTests(unittest.TestCase):
                         pilot['order'].reverse()
                     elif mode == 'pair-index':
                         pilot['pair_index'] = False
+                    elif mode == 'slot':
+                        pilot['slot'] = 's1'
+                    elif mode == 'replicas':
+                        pilot['replicas']['candidate'] = pilot['replicas']['baseline']
                     elif mode == 'iterations':
                         pilot['iterations'] = 32.0
                     elif mode == 'side':
@@ -371,7 +390,7 @@ class AttributionTests(unittest.TestCase):
                     elif mode == 'extra':
                         details['unverified'] = 'ignored field'
                     elif mode == 'rate':
-                        details['normalized_rates_seconds_per_iteration']['baseline'][0] = 2.0
+                        details['normalized_rates_seconds_per_iteration']['s0']['baseline'][0] = 2.0
                     elif mode == 'nonfinite':
                         details['fastest_pilot_median_seconds_per_iteration'] = float('inf')
                     elif mode == 'boolean-count':
@@ -389,7 +408,8 @@ class AttributionTests(unittest.TestCase):
         def select_32(report):
             used_ids = []
             for row in report['results']:
-                used_ids.extend(value['command_id'] for value in row['initialization'].values())
+                used_ids.extend(value['command_id'] for slot in benchmark.SLOTS
+                                for value in row['initialization'][slot].values())
                 used_ids.extend(command['command_id'] for field in ('warmups', 'calibration_pilots', 'samples')
                                 for item in row[field] for label in benchmark.LABELS
                                 for command in item[label]['commands'])
@@ -413,6 +433,8 @@ class AttributionTests(unittest.TestCase):
                         next_id += 4
                         batch['commands'].append({'command_id': next_id, 'seconds': seconds})
                     batch.update(iterations=32, seconds=sum(command['seconds'] for command in batch['commands']))
+                sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
+            row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0)
             return row
 
         primary = copy.deepcopy(self.primary)
@@ -432,12 +454,14 @@ class AttributionTests(unittest.TestCase):
         self.assert_stopped(self.make_runner(mutations={'reversed': contaminate}))
 
     def test_previous_report_schema_has_no_silent_calibration_fallback(self):
-        def change(report, _args=None):
-            report['schema_version'] = 2
-        primary = copy.deepcopy(self.primary)
-        change(primary)
-        self.assert_skipped(primary=primary)
-        self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+        for schema in (2, 3):
+            with self.subTest(schema=schema):
+                def change(report, _args=None):
+                    report['schema_version'] = schema
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
 
     @staticmethod
     def make_infeasible_case(row):
@@ -536,6 +560,66 @@ class AttributionTests(unittest.TestCase):
                     else:
                         report['elapsed_seconds'] = 10 ** 400
                 self.assert_stopped(self.make_runner(mutations={'reversed': change}, statuses={'reversed': status}))
+
+    def test_ordinary_phase_failures_keep_partial_cell_evidence_and_allow_self_control(self):
+        for phase in ('warmups', 'calibration_pilots', 'samples'):
+            with self.subTest(phase=phase):
+                def change(report, args):
+                    selected = {label: getattr(args, label) for label in benchmark.LABELS}
+                    prefix = Path(report['executables'][0]['isolated_path']).parents[3]
+                    row = self.make_report(report['metadata'], selected, 'pass', fixture_prefix=prefix)['results'][0]
+                    row[phase] = row[phase][:1]
+                    row[phase][0].pop('candidate')
+                    row.pop('fixture_sha256_end')
+                    row.pop('fixture_unchanged')
+                    row.pop('analysis')
+                    if phase != 'samples':
+                        row['samples'] = []
+                        row.pop('iterations_per_batch')
+                        row.pop('calibration')
+                    if phase == 'warmups':
+                        row['calibration_pilots'] = []
+                    report['results'] = [row]
+                result, summary, runner, directory = self.invoke(
+                    runner=self.make_runner(mutations={'reversed': change}, statuses={'reversed': 'error'}))
+                self.assertEqual(result, 1)
+                self.assertEqual(summary['status'], 'complete')
+                self.assertEqual(runner.call_count, 2)
+                failed = json.loads((directory / 'reversed.json').read_text(encoding='utf-8'))['results'][0]
+                self.assertIn('baseline', failed[phase][0])
+                self.assertNotIn('candidate', failed[phase][0])
+
+    def test_ordinary_fixture_creation_failure_keeps_only_the_completed_cell_prefix(self):
+        for completed in range(4):
+            with self.subTest(completed=completed):
+                def change(report, args):
+                    selected = {label: getattr(args, label) for label in benchmark.LABELS}
+                    prefix = Path(report['executables'][0]['isolated_path']).parents[3]
+                    row = self.make_report(report['metadata'], selected, 'pass', fixture_prefix=prefix)['results'][0]
+                    row['fixture_inventory'] = row['fixture_inventory'][:completed]
+                    cells = {(entry['slot'], entry['label']) for entry in row['fixture_inventory']}
+                    for field in ('fixture_sha256', 'fixture_roots'):
+                        row[field] = {slot: {label: value for label, value in row[field][slot].items()
+                                           if (slot, label) in cells} for slot in benchmark.SLOTS}
+                    for field in ('initialization', 'initialization_order', 'fixture_sha256_end',
+                                  'fixture_unchanged', 'analysis', 'calibration', 'iterations_per_batch'):
+                        row.pop(field)
+                    for field in ('warmups', 'calibration_pilots', 'samples'):
+                        row[field] = []
+                    report['results'] = [row]
+                result, summary, runner, directory = self.invoke(
+                    runner=self.make_runner(mutations={'reversed': change}, statuses={'reversed': 'error'}))
+                self.assertEqual(result, 1)
+                self.assertEqual(summary['status'], 'complete')
+                self.assertEqual(runner.call_count, 2)
+                failed = json.loads((directory / 'reversed.json').read_text(encoding='utf-8'))['results'][0]
+                self.assertEqual(len(failed['fixture_inventory']), completed)
+                if completed:
+                    def malformed(report, args):
+                        change(report, args)
+                        entry = report['results'][0]['fixture_inventory'][0]
+                        entry['cache_paths']['ENGINE'] = entry['home']
+                    self.assert_stopped(self.make_runner(mutations={'reversed': malformed}, statuses={'reversed': 'error'}))
 
     def test_control_report_exit_and_runner_return_must_agree_with_status(self):
         for mode in ('error-zero', 'pass-one', 'missing-exit', 'boolean-exit'):
@@ -760,6 +844,119 @@ class AttributionTests(unittest.TestCase):
         primary['executables'][0]['sha256_end'] = 'c' * 64
         self.assert_skipped(primary=primary)
 
+    def test_crossover_copy_inventory_rejects_missing_aliased_and_misassigned_cells(self):
+        modes = ('missing', 'duplicate', 'slot', 'replica', 'copy-path', 'root', 'creation-order', 'other-slot-hash')
+        for mode in modes:
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    copies = report['executables']
+                    if mode == 'missing':
+                        copies.pop()
+                    elif mode == 'duplicate':
+                        copies[3] = copy.deepcopy(copies[0])
+                    elif mode == 'slot':
+                        copies[0]['slot'] = 's1'
+                    elif mode == 'replica':
+                        copies[0]['replica'] = 'r1'
+                    elif mode == 'copy-path':
+                        copies[3]['isolated_path'] = copies[0]['isolated_path']
+                    elif mode == 'root':
+                        path = Path(copies[3]['isolated_path'])
+                        copies[3]['isolated_path'] = str(path.parents[3] / 'other' / Path(*path.parts[-4:]))
+                    elif mode == 'creation-order':
+                        copies.reverse()
+                    else:
+                        for key in ('source_sha256_start', 'source_sha256_end', 'sha256_start', 'sha256_end'):
+                            copies[3][key] = 'c' * 64
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_crossover_fixture_inventory_rejects_shared_paths_and_broken_cells(self):
+        modes = ('missing', 'duplicate', 'order', 'replica', 'home', 'cache', 'project', 'root-map', 'hash-map', 'inventory-hash')
+        for mode in modes:
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    row = report['results'][0]
+                    inventory = row['fixture_inventory']
+                    if mode == 'missing':
+                        inventory.pop()
+                    elif mode == 'duplicate':
+                        inventory[3] = copy.deepcopy(inventory[0])
+                    elif mode == 'order':
+                        inventory.reverse()
+                    elif mode == 'replica':
+                        inventory[0]['replica'] = 'r1'
+                    elif mode in ('home', 'project'):
+                        inventory[3][mode] = inventory[0][mode]
+                    elif mode == 'cache':
+                        inventory[3]['cache_paths']['ENGINE'] = inventory[0]['cache_paths']['ENGINE']
+                    elif mode == 'root-map':
+                        row['fixture_roots']['s1']['baseline'] = row['fixture_roots']['s0']['baseline']
+                    elif mode == 'hash-map':
+                        row['fixture_sha256']['s1'].pop('baseline')
+                    else:
+                        inventory[0]['input_sha256'] = 'c' * 64
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_crossover_schedule_rejects_incomplete_or_unbalanced_eight_batch_units(self):
+        modes = ('truncated', 'slot', 'replicas', 'order', 'unit-index', 'quad-index', 'declared-only', 'initialization-order')
+        for mode in modes:
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    row = report['results'][0]
+                    if mode == 'truncated':
+                        row['samples'].pop()
+                    elif mode == 'initialization-order':
+                        row['initialization_order'].reverse()
+                    elif mode == 'declared-only':
+                        row['slot_schedule'][1]['slot'] = 's0'
+                    else:
+                        sample, schedule = row['samples'][1], row['slot_schedule'][1]
+                        if mode == 'slot':
+                            sample['slot'] = schedule['slot'] = 's0'
+                        elif mode == 'replicas':
+                            sample['replicas'] = schedule['replicas'] = {'baseline': 'r0', 'candidate': 'r1'}
+                        elif mode == 'order':
+                            sample['order'].reverse()
+                            schedule['order'].reverse()
+                        elif mode == 'unit-index':
+                            sample['unit_index'] = schedule['unit_index'] = False
+                        else:
+                            sample['quad_index'] = schedule['quad_index'] = 0.0
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
+    def test_crossover_analysis_cannot_claim_more_units_or_different_raw_statistics(self):
+        modes = ('unit-count', 'unit-ratio', 'paired-ratio', 'interval', 'noise', 'pair-ratio')
+        for mode in modes:
+            with self.subTest(mode=mode):
+                def change(report, _args=None):
+                    row = report['results'][0]
+                    analysis = row['analysis']
+                    if mode == 'unit-count':
+                        analysis['inference_unit_count'] = 20
+                    elif mode == 'unit-ratio':
+                        analysis['inference_unit_ratios'][0] = 0.95
+                    elif mode == 'paired-ratio':
+                        analysis['paired_ratios'][0] = 0.95
+                    elif mode == 'interval':
+                        analysis['median_ratio_interval']['lower'] = 0.95
+                    elif mode == 'noise':
+                        analysis['relative_mad']['baseline'] = 0.01
+                    else:
+                        row['samples'][0]['ratio'] = 0.95
+                primary = copy.deepcopy(self.primary)
+                change(primary)
+                self.assert_skipped(primary=primary)
+                self.assert_stopped(self.make_runner(mutations={'reversed': change}))
+
     def test_stable_primary_replacement_cannot_retain_previous_build_hash(self):
         for label in benchmark.LABELS:
             source = self.sources[label]
@@ -836,9 +1033,10 @@ class AttributionTests(unittest.TestCase):
         for mode in ('duplicate', 'missing'):
             with self.subTest(mode=mode):
                 def change(report, _args):
-                    report['executables'] = [copy.deepcopy(report['executables'][0])]
                     if mode == 'duplicate':
-                        report['executables'].append(copy.deepcopy(report['executables'][0]))
+                        report['executables'][3] = copy.deepcopy(report['executables'][0])
+                    else:
+                        report['executables'].pop()
                 self.assert_stopped(self.make_runner(mutations={'reversed': change}))
 
     def test_control_provenance_or_gate_mismatch_stops(self):
@@ -876,11 +1074,12 @@ class AttributionTests(unittest.TestCase):
                     if mode == 'flag':
                         row['fixture_unchanged'] = False
                     else:
-                        row['fixture_sha256_end']['candidate'] = 'c' * 64
+                        row['fixture_sha256_end']['s0']['candidate'] = 'c' * 64
                 self.assert_stopped(self.make_runner(mutations={'reversed': change}))
 
     def test_primary_metadata_revision_settings_and_policy_mismatches_skip(self):
-        for mode in ('metadata', 'revision', 'build', 'settings', 'policy', 'bool-policy'):
+        for mode in ('metadata', 'revision', 'build', 'settings', 'policy', 'bool-policy',
+                     'replica-policy', 'float-unit-policy', 'bool-unit-policy', 'slot-policy'):
             with self.subTest(mode=mode):
                 primary, metadata = copy.deepcopy(self.primary), copy.deepcopy(self.metadata)
                 if mode == 'metadata':
@@ -896,8 +1095,16 @@ class AttributionTests(unittest.TestCase):
                     primary['metadata'] = copy.deepcopy(metadata)
                 elif mode == 'policy':
                     primary['policy']['relative_threshold'] = 0.20
-                else:
+                elif mode == 'bool-policy':
                     primary['policy']['min_sample_seconds'] = True
+                elif mode == 'replica-policy':
+                    primary['policy']['replica_assignment']['s1']['baseline'] = 'r0'
+                elif mode == 'float-unit-policy':
+                    primary['policy']['inference_units_per_case'] = 10.0
+                elif mode == 'bool-unit-policy':
+                    primary['policy']['pairs_per_inference_unit'] = True
+                else:
+                    primary['policy']['slot_ids'] = ['s0', 's0']
                 self.assert_skipped(primary=primary, metadata=metadata)
 
     def test_equal_invalid_or_unmatched_primary_revisions_skip(self):
@@ -933,7 +1140,7 @@ class AttributionTests(unittest.TestCase):
                 if mode == 'duplicate-case':
                     primary['results'][1]['case'] = row['case']
                 elif mode == 'fixture-hash':
-                    row['fixture_sha256_end']['candidate'] = 'c' * 64
+                    row['fixture_sha256_end']['s0']['candidate'] = 'c' * 64
                 elif mode == 'fixture-flag':
                     row['fixture_unchanged'] = False
                 elif mode == 'partial-pair':
@@ -951,7 +1158,7 @@ class AttributionTests(unittest.TestCase):
                 elif mode == 'oracle':
                     row['samples'][0]['candidate']['output_validation']['expected_text'] = 'Wrong text.'
                 else:
-                    del row['initialization']['candidate']
+                    del row['initialization']['s0']['candidate']
                 self.assert_skipped(primary=primary)
 
     def test_non_object_primary_json_is_skipped(self):
@@ -1006,7 +1213,7 @@ class AttributionTests(unittest.TestCase):
                     elif place == 'command':
                         row['samples'][0]['candidate']['commands'][0]['seconds'] = value
                     else:
-                        row['initialization']['candidate']['seconds'] = value
+                        row['initialization']['s0']['candidate']['seconds'] = value
                     self.assert_skipped(primary=primary)
 
     def test_existing_output_directory_is_not_reused_or_overwritten(self):

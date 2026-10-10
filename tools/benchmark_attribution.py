@@ -19,7 +19,15 @@ POLICY = {
     'pairs_per_case': 40, 'warmups_per_side': 2, 'min_sample_seconds': 1.0,
     'warm_cache_min_sample_seconds': 1.0, 'max_iterations': 512,
     'calibration_pairs': 2, 'calibration_iterations': 32,
-    'calibration_method': 'balanced-batched-pilot-v1',
+    'calibration_pair_unit': 'per-slot',
+    'calibration_method': 'balanced-batched-slot-pilot-v1',
+    'warmup_unit': 'artifact-slot-cell',
+    'crossover_design': 'fixed-slot-complementary-quads-v1',
+    'pairs_per_inference_unit': 4, 'batches_per_inference_unit': 8,
+    'inference_units_per_case': 10,
+    'slot_ids': ['s0', 's1'], 'replica_ids': ['r0', 'r1'],
+    'replica_assignment': {'s0': {'baseline': 'r0', 'candidate': 'r1'},
+                           's1': {'baseline': 'r1', 'candidate': 'r0'}},
     'per_command_deadline_seconds': 30.0, 'whole_run_deadline_seconds': 900.0,
     'relative_threshold': 0.10, 'familywise_confidence': 0.95,
     'calibration_headroom': 2.0, 'noise_relative_mad_limit': 0.10,
@@ -90,25 +98,96 @@ def require(condition, reason):
 
 def validate_policy(report):
     require(isinstance(report.get('policy'), dict) and all(
-                (type(report['policy'].get(key)) is str if isinstance(value, str)
-                 else type(report['policy'].get(key)) in (int, float))
-                and report['policy'][key] == value for key, value in POLICY.items()),
+                (type(report['policy'].get(key)) in (int, float) and report['policy'][key] == value
+                 if type(value) is float else matching_details(report['policy'].get(key), value))
+                for key, value in POLICY.items()),
             'Reported policy differs from the fixed control policy')
 
 
-def matching_calibration_details(recorded, expected):
-    """Compare recomputed details without accepting booleans as numeric fields."""
+def matching_details(recorded, expected):
+    """Compare recorded evidence without accepting booleans as numeric fields."""
     if type(recorded) is not type(expected):
         return False
     if isinstance(expected, dict):
         return recorded.keys() == expected.keys() and all(
-            matching_calibration_details(recorded[key], value) for key, value in expected.items())
+            matching_details(recorded[key], value) for key, value in expected.items())
     if isinstance(expected, list):
         return len(recorded) == len(expected) and all(
-            matching_calibration_details(value, reference) for value, reference in zip(recorded, expected))
+            matching_details(value, reference) for value, reference in zip(recorded, expected))
     if isinstance(expected, float) and not math.isfinite(recorded):
         return False
     return recorded == expected
+
+
+def json_schedule(value):
+    return json.loads(json.dumps(value))
+
+
+def copy_inventory(report, complete=True):
+    rows = report.get('executables', [])
+    require(records(rows), 'Executable cell inventory is malformed')
+    cells, roots, paths = {}, set(), set()
+    for row in rows:
+        label, slot, replica = row.get('label'), row.get('slot'), row.get('replica')
+        require(type(label) is str and label in benchmark.LABELS
+                and type(slot) is str and slot in benchmark.SLOTS
+                and replica == benchmark.replica_for(label, slot), 'Executable artifact-slot assignment differs')
+        key = (slot, label)
+        path = row.get('isolated_path')
+        require(isinstance(path, str) and Path(path).is_absolute()
+                and str(Path(path)) == path and Path(path).resolve() == Path(path), 'Executable isolated path is missing')
+        path = Path(path)
+        require(key not in cells and path not in paths
+                and path.parts[-4:] == (slot, replica, 'bin', 'tekai'), 'Executable cell paths are aliased or misplaced')
+        cells[key] = row
+        paths.add(path)
+        roots.add(path.parents[3])
+    require(len(roots) <= 1 and (not complete or set(cells) == {
+        (slot, label) for slot in benchmark.SLOTS for label in benchmark.LABELS}),
+        'Executable artifact-slot inventory is incomplete or disjoint')
+    require([{key: row.get(key) for key in ('slot', 'label', 'replica')} for row in rows]
+            == benchmark.cell_order()[:len(rows)], 'Executable cell creation order differs')
+    return cells, next(iter(roots), None)
+
+
+def fixture_inventory(row, work, complete=True):
+    start, end, roots = row.get('fixture_sha256'), row.get('fixture_sha256_end'), row.get('fixture_roots')
+    require(isinstance(start, dict) and set(start) == set(benchmark.SLOTS)
+            and isinstance(roots, dict) and set(roots) == set(benchmark.SLOTS)
+            and all(isinstance(start[slot], dict) and set(start[slot]) <= set(benchmark.LABELS)
+                    and (not complete or set(start[slot]) == set(benchmark.LABELS))
+                    and isinstance(roots[slot], dict) and set(roots[slot]) == set(start[slot])
+                    for slot in benchmark.SLOTS), 'Fixture artifact-slot maps are incomplete')
+    hashes = [value for slot in benchmark.SLOTS for value in start[slot].values()]
+    require(all(digest(value) for value in hashes) and len(set(hashes)) <= 1,
+            'Fixture artifact-slot inputs differ')
+    require(row.get('fixture_unchanged') is not False
+            and ('fixture_sha256_end' not in row or (start == end and row.get('fixture_unchanged') is True))
+            and (not complete or (start == end and row.get('fixture_unchanged') is True)),
+            'Fixture input integrity is invalid')
+    inventory = row.get('fixture_inventory')
+    require(records(inventory) and len(inventory) == len(hashes) <= 4
+            and (not complete or len(inventory) == 4) and work is not None,
+            'Fixture cell inventory is incomplete')
+    expected_order = benchmark.cell_order(benchmark.CASES.index(row.get('case')))
+    require({(slot, label) for slot in benchmark.SLOTS for label in start[slot]}
+            == {(cell['slot'], cell['label']) for cell in expected_order[:len(inventory)]},
+            'Partial fixture maps differ from completed cell inventory')
+    owned = set()
+    for entry, cell in zip(inventory, expected_order):
+        require(all(matching_details(entry.get(key), value) for key, value in cell.items()),
+                'Fixture cell creation order or assignment differs')
+        slot, label, replica = cell['slot'], cell['label'], cell['replica']
+        root = work / slot / replica / row['case']
+        expected = {'root': str(root), 'project': str(root / 'project'), 'out': str(root / 'out'),
+                    'home': str(root / 'home'), 'input_sha256': start[slot][label],
+                    'cache_paths': {kind: str(root / ('cache-' + kind.lower()))
+                                    for kind in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX')}}
+        require(all(matching_details(entry.get(key), value) for key, value in expected.items())
+                and roots[slot][label] == str(root), 'Fixture owned paths or input hash differ')
+        paths = [entry[key] for key in ('root', 'project', 'out', 'home')] + list(entry['cache_paths'].values())
+        require(len(set(paths)) == len(paths) and owned.isdisjoint(paths), 'Fixture cells share owned paths')
+        owned.update(paths)
 
 
 def validate_cases(report, allow_infeasible=False):
@@ -117,6 +196,7 @@ def validate_cases(report, allow_infeasible=False):
             'Completed case inventory is incomplete')
     outcomes = []
     observed_commands = set()
+    _, work = copy_inventory(report)
 
     def claim_commands(command_ids):
         require(len(set(command_ids)) == len(command_ids) and observed_commands.isdisjoint(command_ids),
@@ -124,61 +204,66 @@ def validate_cases(report, allow_infeasible=False):
         observed_commands.update(command_ids)
 
     for case_index, row in enumerate(rows):
-        start, end = row.get('fixture_sha256'), row.get('fixture_sha256_end')
-        require(isinstance(start, dict) and row.get('fixture_unchanged') is True
-                and set(start) == set(benchmark.LABELS) and start == end
-                and all(digest(value) for value in start.values()) and len(set(start.values())) == 1,
-                'Completed fixture integrity is invalid')
+        fixture_inventory(row, work)
+        schedule = [json_schedule(benchmark.crossover_pair(index, case_index)) for index in range(40)]
+        require(matching_details(row.get('slot_schedule'), schedule), 'Predeclared crossover schedule differs')
         samples, iterations = row.get('samples'), row.get('iterations_per_batch')
         warmups, initial = row.get('warmups'), row.get('initialization')
-        require(records(samples) and records(warmups) and len(warmups) == 2
+        require(records(samples) and records(warmups) and len(warmups) == 4
                 and type(row.get('min_sample_seconds')) in (int, float) and row['min_sample_seconds'] == 1.0,
                 'Completed case sampling configuration differs')
-        require(isinstance(initial, dict) and set(initial) == set(benchmark.LABELS)
+        require(matching_details(row.get('initialization_order'), benchmark.cell_order(case_index))
+                and isinstance(initial, dict) and set(initial) == set(benchmark.SLOTS)
+                and all(isinstance(initial[slot], dict) and set(initial[slot]) == set(benchmark.LABELS)
+                        for slot in benchmark.SLOTS)
                 and all(isinstance(value, dict) and positive(value.get('seconds'))
                         and type(value.get('command_id')) is int and value['command_id'] > 0
-                        and verified_output(row['case'], value.get('output_validation')) for value in initial.values()),
+                        and verified_output(row['case'], value.get('output_validation'))
+                        for slot in benchmark.SLOTS for value in initial[slot].values()),
                 'Completed initialization is incomplete')
         for index, warmup in enumerate(warmups):
-            require(warmup.get('order') == list(benchmark.paired_order(index, case_index))
+            expected = {'warmup_index': index // 2,
+                        **json_schedule(benchmark.slot_pair(benchmark.SLOTS[index % 2], index // 2, case_index))}
+            require(all(matching_details(warmup.get(key), value) for key, value in expected.items())
                     and all(valid_batch(warmup.get(label), 1, row['case']) for label in benchmark.LABELS),
                     'Completed warmups are incomplete')
         pilots = row.get('calibration_pilots')
-        require(records(pilots) and len(pilots) == 2, 'Completed calibration pilots are incomplete')
+        require(records(pilots) and len(pilots) == 4, 'Completed calibration pilots are incomplete')
         for index, pilot in enumerate(pilots):
-            require(type(pilot.get('pair_index')) is int and pilot['pair_index'] == index
-                    and type(pilot.get('iterations')) is int and pilot['iterations'] == 32
-                    and pilot.get('order') == list(benchmark.paired_order(index, case_index))
+            expected = {'pair_index': index // 2, 'iterations': 32,
+                        **json_schedule(benchmark.slot_pair(benchmark.SLOTS[index % 2], index // 2, case_index))}
+            require(all(matching_details(pilot.get(key), value) for key, value in expected.items())
                     and all(valid_batch(pilot.get(label), 32, row['case']) for label in benchmark.LABELS),
                     'Completed calibration pilot batches are incomplete')
-        claim_commands([value['command_id'] for value in initial.values()] + [
+        claim_commands([value['command_id'] for slot in benchmark.SLOTS for value in initial[slot].values()] + [
             command['command_id'] for item in warmups + pilots for label in benchmark.LABELS
             for command in item[label]['commands']])
         details = benchmark.calibration_details(pilots, 1.0, 512)
-        require(matching_calibration_details(row.get('calibration'), details),
+        require(matching_details(row.get('calibration'), details),
                 'Completed calibration details differ from raw pilots')
         try:
             calibrated = benchmark.calibrated_iterations(pilots, 1.0, 512)
         except benchmark.CalibrationInfeasible as error:
             require(allow_infeasible and samples == [] and iterations is None
-                    and matching_calibration_details(row.get('calibration_infeasible'), error.details)
-                    and isinstance(row.get('analysis'), dict) and row['analysis'].get('status') == 'inconclusive',
+                    and matching_details(row.get('calibration_infeasible'), error.details)
+                    and matching_details(row.get('analysis'), {'status': 'inconclusive', 'reasons': [str(error)]}),
                     'Completed calibration is infeasible or inconsistent')
             outcomes.append('inconclusive')
             continue
         require(len(samples) == 40 and type(iterations) is int and iterations == calibrated
                 and 'calibration_infeasible' not in row, 'Completed case batches differ from calibration')
         for index, sample in enumerate(samples):
-            require(type(sample.get('pair_index')) is int and sample['pair_index'] == index
-                    and type(sample.get('iterations')) is int and sample['iterations'] == iterations
-                    and sample.get('order') == list(benchmark.paired_order(index, case_index)),
+            require(all(matching_details(sample.get(key), value) for key, value in schedule[index].items())
+                    and type(sample.get('iterations')) is int and sample['iterations'] == iterations,
                     'Completed sample inventory is incomplete')
             require(all(valid_batch(sample.get(label), iterations, row['case']) for label in benchmark.LABELS),
                     'Completed paired batches are incomplete')
+            require(matching_details(sample.get('ratio'), sample['candidate']['seconds'] / sample['baseline']['seconds']),
+                    'Completed pair ratio differs from raw batches')
             claim_commands([command['command_id'] for label in benchmark.LABELS
                             for command in sample[label]['commands']])
-        analysis = benchmark.analyze_pairs(samples, 0.10, 1.0)
-        require(isinstance(row.get('analysis'), dict) and row['analysis'].get('status') == analysis['status'],
+        analysis = benchmark.analyze_pairs(samples, 0.10, 1.0, case_index=case_index)
+        require(matching_details(row.get('analysis'), analysis),
                 'Completed sample analysis differs')
         outcomes.append(analysis['status'])
     overall = 'fail' if 'fail' in outcomes else ('inconclusive' if 'inconclusive' in outcomes else 'pass')
@@ -189,7 +274,7 @@ def eligible(primary, metadata, sources, revisions, profile):
     """Validate completed evidence, without changing its verdict or statistics."""
     require(isinstance(primary, dict), 'Report must be a JSON object')
     require(profile == 'full', 'Attribution is limited to the full profile')
-    require(type(primary.get('schema_version')) is int and primary['schema_version'] == 3
+    require(type(primary.get('schema_version')) is int and primary['schema_version'] == 4
             and primary.get('gate') is True,
             'Requires a primary statistical gate report')
     status = primary.get('status')
@@ -210,11 +295,8 @@ def eligible(primary, metadata, sources, revisions, profile):
                 and side.get('build_command') == BUILD_COMMAND, 'Primary revision/build provenance differs')
     require(revisions['baseline'] != revisions['candidate'], 'The primary must compare distinct revisions')
     protected = {}
-    executables = primary.get('executables', [])
-    require(records(executables) and len(executables) == 2
-            and {row.get('label') for row in executables} == set(benchmark.LABELS),
-            'Primary executable inventory is incomplete')
-    for row in executables:
+    executables, _ = copy_inventory(primary)
+    for row in executables.values():
         label = row['label']
         hashes = [row.get(key) for key in ('source_sha256_start', 'source_sha256_end', 'sha256_start', 'sha256_end')]
         require(row.get('unchanged') is True and all(digest(value) for value in hashes) and len(set(hashes)) == 1,
@@ -224,6 +306,8 @@ def eligible(primary, metadata, sources, revisions, profile):
         require(Path(row.get('source_path', '')).resolve() == sources[label]
                 and sources[label].is_file() and os.access(sources[label], os.X_OK),
                 'Primary executable source path differs')
+        require(sources[label] not in protected or protected[sources[label]] == hashes[0],
+                'Primary artifact identity differs across slots')
         protected[sources[label]] = hashes[0]
     verifiers = primary.get('output_verifiers', {})
     require(isinstance(verifiers, dict) and set(verifiers) == {'pdftotext', 'pdfinfo', 'pdfimages'}
@@ -272,9 +356,9 @@ def stop_reason(report, selected, expected):
     require(records(executables) and isinstance(verifiers, dict)
             and all(isinstance(row, dict) for row in verifiers.values()) and records(fixtures),
             'Control integrity inventories are malformed')
+    _, work = copy_inventory(report, complete=report.get('status') != 'error')
     if report.get('status') != 'error':
-        require(len(executables) == 2 and {row.get('label') for row in executables} == set(benchmark.LABELS)
-                and set(verifiers) == {'pdftotext', 'pdfinfo', 'pdfimages'}, 'Control integrity inventories are incomplete')
+        require(set(verifiers) == {'pdftotext', 'pdfinfo', 'pdfimages'}, 'Control integrity inventories are incomplete')
         require(errors == [] and positive(report.get('elapsed_seconds')), 'Completed control has errors or no elapsed time')
         validate_cases(report, allow_infeasible=True)
     for row in executables:
@@ -294,13 +378,10 @@ def stop_reason(report, selected, expected):
                 or row['sha256_start'] != expected.get(path) or shutil.which(name) is None \
                 or Path(shutil.which(name)).resolve() != path:
             return 'Control Poppler integrity failed'
-    for row in fixtures:
-        start, end = row.get('fixture_sha256'), row.get('fixture_sha256_end')
-        if not isinstance(start, dict) or set(start) != set(benchmark.LABELS) \
-                or not all(digest(value) for value in start.values()) or len(set(start.values())) != 1 \
-                or ('fixture_sha256_end' in row and (start != end or row.get('fixture_unchanged') is not True)) \
-                or row.get('fixture_unchanged') is False:
-            return 'Control fixture integrity failed'
+    require([row.get('case') for row in fixtures] == list(benchmark.CASES)[:len(fixtures)],
+            'Control fixture case prefix is invalid')
+    for index, row in enumerate(fixtures):
+        fixture_inventory(row, work, complete=report.get('status') != 'error' or index < len(fixtures) - 1)
     return None
 
 
@@ -400,7 +481,7 @@ def run_attribution(primary_path, metadata_path, sources, revisions, directory, 
                 persist(summary, directory)
                 verify_current(protected, primary['output_verifiers'])
                 if output.exists():
-                    require(type(control.get('schema_version')) is int and control['schema_version'] == 3
+                    require(type(control.get('schema_version')) is int and control['schema_version'] == 4
                             and control.get('gate') is False
                             and control.get('metadata') == provenance, 'Control report provenance/gate differs')
                     validate_policy(control)

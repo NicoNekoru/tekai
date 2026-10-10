@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bounded same-runner paired comparison, using generated ordinary inputs.
 
-Baseline and candidate have separate binaries, inputs, homes and caches.
+Each artifact crosses two neutral slots with independent binaries and caches.
 Timings are advisory unless --gate is selected. A gate can be inconclusive.
 """
 
@@ -29,6 +29,9 @@ from runtime_fixtures import document, pad, png  # Keep the existing helper impo
 REPO = Path(__file__).resolve().parent.parent
 CASES = ('nested-lookup', 'image-compile', 'warm-build-cache')
 LABELS = ('baseline', 'candidate')
+SLOTS = ('s0', 's1')
+REPLICAS = ('r0', 'r1')
+PAIRS_PER_UNIT = 4
 MAX_CAPTURE_BYTES = 1024 * 1024
 CALIBRATION_HEADROOM = 2.0
 CALIBRATION_PAIRS = 2
@@ -64,6 +67,37 @@ def paired_order(pair_index, case_index=0):
     return LABELS if (pair_index + case_index) % 2 == 0 else tuple(reversed(LABELS))
 
 
+def replica_for(label, slot):
+    """Each artifact occupies each equal-length replica position once."""
+    return REPLICAS[(LABELS.index(label) + SLOTS.index(slot)) % 2]
+
+
+def slot_pair(slot, pair_index, case_index=0):
+    if slot not in SLOTS or type(pair_index) is not int or pair_index < 0 \
+            or type(case_index) is not int or not 0 <= case_index < len(CASES):
+        raise ValueError('Slot schedule requires valid slots and exact nonnegative integer indices')
+    return {'slot': slot, 'order': paired_order(pair_index, SLOTS.index(slot) + case_index),
+            'replicas': {label: replica_for(label, slot) for label in LABELS}}
+
+
+def crossover_pair(pair_index, case_index=0):
+    """Complementary ABBA/BAAB quads form one eight-batch inference unit."""
+    if type(pair_index) is not int or pair_index < 0:
+        raise ValueError('Crossover pair index must be an exact nonnegative integer')
+    within = pair_index % PAIRS_PER_UNIT
+    unit = pair_index // PAIRS_PER_UNIT
+    quad = within // 2
+    slot = SLOTS[within % 2]
+    return {'pair_index': pair_index, 'unit_index': unit, 'quad_index': quad,
+            **slot_pair(slot, quad + unit, case_index)}
+
+
+def cell_order(case_index=0):
+    """Balanced creation/initialization order for all four owned cells."""
+    return [{'slot': row['slot'], 'label': label, 'replica': row['replicas'][label]}
+            for row in (crossover_pair(index, case_index) for index in range(2)) for label in row['order']]
+
+
 def median_interval(values, alpha):
     """Exact two-sided sign interval, with no normal approximation or randomness.
 
@@ -90,7 +124,12 @@ def median_interval(values, alpha):
 
 def relative_mad(values):
     center = statistics.median(values)
-    return statistics.median(abs(value - center) for value in values) / center
+    if not math.isfinite(center) or center <= 0:
+        raise ValueError('Noise calculation needs a finite positive median')
+    result = statistics.median(abs(value - center) for value in values) / center
+    if not math.isfinite(result) or result < 0:
+        raise ValueError('Noise calculation produced an unusable ratio')
+    return result
 
 
 def calibration_details(pilots, min_seconds, ceiling):
@@ -109,18 +148,22 @@ def calibration_details(pilots, min_seconds, ceiling):
     min_seconds = positive_seconds(min_seconds)
     if type(ceiling) is not int or not 1 <= ceiling <= MAX_ITERATIONS:
         raise ValueError(f'Calibration ceiling must be an integer from 1 to {MAX_ITERATIONS}')
-    if not isinstance(pilots, (list, tuple)) or len(pilots) != CALIBRATION_PAIRS:
-        raise ValueError('Calibration requires exactly two complete balanced pilot pairs')
-    rates = {label: [] for label in LABELS}
+    if not isinstance(pilots, (list, tuple)) or len(pilots) != CALIBRATION_PAIRS * len(SLOTS):
+        raise ValueError('Calibration requires exactly two complete balanced pilot pairs per slot')
+    rates = {slot: {label: [] for label in LABELS} for slot in SLOTS}
     for index, pilot in enumerate(pilots):
-        if not isinstance(pilot, dict) or not {'pair_index', 'order', 'iterations', *LABELS} <= pilot.keys() \
+        if not isinstance(pilot, dict) or not {'pair_index', 'slot', 'replicas', 'order', 'iterations', *LABELS} <= pilot.keys() \
                 or not isinstance(pilot['order'], (list, tuple)) \
                 or any(type(label) is not str for label in pilot['order']):
             raise ValueError('Calibration requires complete pilot rows and raw role batches')
         order = tuple(pilot['order'])
-        if type(pilot['pair_index']) is not int or pilot['pair_index'] != index \
+        slot = SLOTS[index % len(SLOTS)]
+        if type(pilot['pair_index']) is not int or pilot['pair_index'] != index // len(SLOTS) \
+                or pilot['slot'] != slot \
+                or pilot['replicas'] != {label: replica_for(label, slot) for label in LABELS} \
                 or len(order) != 2 or set(order) != set(LABELS) \
-                or (index and order != tuple(reversed(pilots[index - 1]['order']))):
+                or (index % 2 and order != tuple(reversed(pilots[index - 1]['order']))) \
+                or (index >= len(SLOTS) and order != tuple(reversed(pilots[index - len(SLOTS)]['order']))):
             raise ValueError('Calibration pilot indices and role orders must be balanced')
         if type(pilot['iterations']) is not int or pilot['iterations'] != CALIBRATION_ITERATIONS:
             raise ValueError('Calibration pilots require exactly 32 iterations per side')
@@ -132,9 +175,9 @@ def calibration_details(pilots, min_seconds, ceiling):
             if type(iterations) is not int or iterations != pilot['iterations']:
                 raise ValueError('Calibration batch iteration counts must match the declared pilot count')
             rate = positive_seconds(positive_seconds(observed['seconds']) / iterations)
-            rates[label].append(rate)
-    medians = {label: statistics.median(rates[label]) for label in LABELS}
-    fastest = min(medians.values())
+            rates[slot][label].append(rate)
+    medians = {slot: {label: statistics.median(rates[slot][label]) for label in LABELS} for slot in SLOTS}
+    fastest = min(medians[slot][label] for slot in SLOTS for label in LABELS)
     # Exact ratios of the finite observed floats avoid overflowing count
     # arithmetic for an exceptionally small positive calibration duration.
     relative_duration = Fraction(min_seconds) / Fraction(fastest)
@@ -162,38 +205,73 @@ def calibrated_iterations(pilots, min_seconds, ceiling):
     return details['selected_iterations']
 
 
-def analyze_pairs(samples, threshold, min_seconds, case_count=len(CASES)):
+def analyze_pairs(samples, threshold, min_seconds, case_count=len(CASES), case_index=0):
     """Keep insufficient precision and unstable measurements inconclusive."""
     if not math.isfinite(threshold) or not 0 < threshold <= 1:
         raise ValueError('Practical threshold must be finite and in (0, 1]')
-    if not math.isfinite(min_seconds) or min_seconds <= 0 or case_count < 1:
+    if not math.isfinite(min_seconds) or min_seconds <= 0 or type(case_count) is not int or case_count < 1:
         raise ValueError('Duration and comparison count must be positive')
-    if len(samples) % 2 or not samples:
-        raise ValueError('Paired samples must contain complete balanced blocks')
+    if len(samples) % PAIRS_PER_UNIT or not samples:
+        raise ValueError('Paired samples must contain complete eight-batch crossover units')
     values = {label: [] for label in LABELS}
     ratios, orders = [], {label: [] for label in LABELS}
     for index, sample in enumerate(samples):
+        expected = crossover_pair(index, case_index)
+        if not isinstance(sample, dict) or any(sample.get(key) != value for key, value in expected.items() if key != 'order') \
+                or any(type(sample.get(key)) is not int for key in ('pair_index', 'unit_index', 'quad_index')):
+            raise ValueError('Sample slot, replica and crossover indices differ from the declared schedule')
+        if not isinstance(sample.get('order'), (list, tuple)):
+            raise ValueError('Sample requires its declared execution order')
         order = tuple(sample['order'])
-        if set(order) != set(LABELS) or len(order) != 2:
-            raise ValueError('Each sample must execute each binary once')
-        if index % 2 and order != tuple(reversed(samples[index - 1]['order'])):
-            raise ValueError('Adjacent pairs must balance execution order')
+        if order != expected['order']:
+            raise ValueError('Sample execution order differs from the declared crossover schedule')
+        iterations = sample.get('iterations')
+        if type(iterations) is not int or not 1 <= iterations <= MAX_ITERATIONS \
+                or iterations != samples[0].get('iterations'):
+            raise ValueError('Formal samples require one fixed matched iteration count')
         for label in LABELS:
-            elapsed = sample[label]['seconds']
-            if not math.isfinite(elapsed) or elapsed <= 0:
+            observed = sample.get(label)
+            if not isinstance(observed, dict) or type(observed.get('iterations')) is not int \
+                    or observed['iterations'] != iterations:
+                raise ValueError('Sample requires both complete matched artifact batches')
+            elapsed = observed.get('seconds')
+            try:
+                valid = type(elapsed) in (int, float) and math.isfinite(elapsed) and elapsed > 0
+            except OverflowError:
+                valid = False
+            if not valid:
                 raise ValueError('Elapsed times must be finite and positive')
             values[label].append(elapsed)
-        ratio = values['candidate'][-1] / values['baseline'][-1]
+        try:
+            ratio = values['candidate'][-1] / values['baseline'][-1]
+        except OverflowError as error:
+            raise ValueError('Paired ratio overflowed; statistics are unusable') from error
+        if not math.isfinite(ratio) or ratio <= 0:
+            raise ValueError('Paired ratio overflowed or underflowed; statistics are unusable')
         ratios.append(ratio)
         orders[order[0]].append(ratio)
-    # BC/CB neighbors form one inference unit. Taking their geometric mean
-    # cancels a fixed order effect; the two pairs are not independent samples.
-    blocks = [math.exp((math.log(ratios[n]) + math.log(ratios[n + 1])) / 2)
-              for n in range(0, len(ratios), 2)]
+    # Combine complementary quads before inference. Four logical pairs are
+    # one unit, not four independent observations or two independent quads.
+    try:
+        blocks = [math.exp(math.fsum(math.log(samples[index]['candidate']['seconds'])
+                                    - math.log(samples[index]['baseline']['seconds'])
+                                    for index in range(start, start + PAIRS_PER_UNIT)) / PAIRS_PER_UNIT)
+                  for start in range(0, len(samples), PAIRS_PER_UNIT)]
+    except OverflowError as error:
+        raise ValueError('Crossover ratio overflowed; statistics are unusable') from error
+    if any(not math.isfinite(value) or value <= 0 for value in blocks):
+        raise ValueError('Crossover ratio overflowed or underflowed; statistics are unusable')
+    median_ratio = statistics.median(blocks)
+    if not math.isfinite(median_ratio) or median_ratio <= 0:
+        raise ValueError('Crossover median ratio is not finite and positive')
     interval = median_interval(blocks, FAMILY_ALPHA / case_count)
     noise = {label: relative_mad(values[label]) for label in LABELS}
     order_medians = {label: statistics.median(orders[label]) for label in LABELS}
+    if any(not math.isfinite(value) or value <= 0 for value in order_medians.values()):
+        raise ValueError('Order medians are not finite and positive')
     order_bias = max(order_medians.values()) / min(order_medians.values()) - 1
+    if not math.isfinite(order_bias):
+        raise ValueError('Order-bias ratio overflowed; statistics are unusable')
     issues = []
     if any(min(items) < min_seconds for items in values.values()):
         issues.append('At least one batch is shorter than the predeclared minimum duration')
@@ -202,7 +280,7 @@ def analyze_pairs(samples, threshold, min_seconds, case_count=len(CASES)):
     if order_bias > ORDER_BIAS_LIMIT:
         issues.append('Baseline-first and candidate-first ratios differ beyond the order-bias limit')
     if interval is None:
-        issues.append('Too few balanced blocks for a finite multiplicity-adjusted median interval')
+        issues.append('Too few complete crossover units for a finite multiplicity-adjusted median interval')
     boundary = 1 + threshold
     if issues:
         status = 'inconclusive'
@@ -213,8 +291,8 @@ def analyze_pairs(samples, threshold, min_seconds, case_count=len(CASES)):
     else:
         status = 'inconclusive'
         issues.append('Median-ratio uncertainty interval crosses the practical slowdown boundary')
-    return {'status': status, 'median_ratio': statistics.median(blocks),
-            'paired_ratios': ratios, 'balanced_block_ratios': blocks,
+    return {'status': status, 'median_ratio': median_ratio,
+            'paired_ratios': ratios, 'inference_unit_ratios': blocks, 'inference_unit_count': len(blocks),
             'median_ratio_interval': interval, 'relative_mad': noise,
             'order_median_ratios': order_medians, 'order_bias': order_bias,
             'reasons': issues, 'practical_slowdown_boundary': boundary}
@@ -531,9 +609,9 @@ def persist(report, path):
                   f"Practical slowdown threshold {report['policy']['relative_threshold']:.1%}.", '',
                   'A pass supports only these warm, generated workloads on this runner. '
                   'It does not establish universal speed, peak memory, asymptotic complexity or fidelity.', '',
-                  'Intervals assume independent balanced blocks with a stable population median. '
+                  'Intervals assume independent complete crossover units with a stable population median. '
                   'Shared-runner drift and scheduling correlations can violate that assumption. '
-                  'Noise checks detect some violations, not all of them.', ''])
+                  'Noise checks detect some violations, not all of them.', '', report['policy']['assumptions'], ''])
     for case in report['results']:
         lines.extend(f"- {case['case']}, {reason}" for reason in case.get('analysis', {}).get('reasons', []))
     lines.extend('- ' + error for error in report['errors'])
@@ -547,8 +625,8 @@ def parser():
     result.add_argument('--metadata', type=Path, required=True,
                         help='JSON with runner_label, toolchain and per-side revision/build_command')
     result.add_argument('--output', type=Path, default=REPO / 'target/runtime-performance/report.json')
-    result.add_argument('--pairs', type=int, default=40, help='Even paired batch count, 16 to 60')
-    result.add_argument('--warmups', type=int, default=2, help='Per-side single-command warmups before separate calibration pilots, 2 to 10')
+    result.add_argument('--pairs', type=int, default=40, help='Logical paired batch count, a multiple of four from 16 to 60')
+    result.add_argument('--warmups', type=int, default=2, help='Per artifact/slot single-command warmups before separate calibration pilots, 2 to 10')
     result.add_argument('--timeout', type=float, default=30, help='Per-command deadline, (0, 60] seconds')
     result.add_argument('--budget', type=float, default=900, help='Whole-run deadline, (0, 1800] seconds')
     result.add_argument('--threshold', type=float, default=0.10, help='Predeclared relative practical slowdown, (0, 1]')
@@ -574,9 +652,9 @@ def main(argv=None):
         argument_parser.error('--min-sample-seconds must be finite and in [0.05, 2]')
     if not math.isfinite(args.warm_cache_min_sample_seconds) or not 0.25 <= args.warm_cache_min_sample_seconds <= 4:
         argument_parser.error('--warm-cache-min-sample-seconds must be finite and in [0.25, 4]')
-    if not 16 <= args.pairs <= 60 or args.pairs % 2 or not 2 <= args.warmups <= 10 \
+    if not 16 <= args.pairs <= 60 or args.pairs % PAIRS_PER_UNIT or not 2 <= args.warmups <= 10 \
             or not 1 <= args.max_iterations <= MAX_ITERATIONS:
-        argument_parser.error(f'Requires even --pairs 16..60, --warmups 2..10 and --max-iterations 1..{MAX_ITERATIONS}')
+        argument_parser.error(f'Requires --pairs 16..60 divisible by four, --warmups 2..10 and --max-iterations 1..{MAX_ITERATIONS}')
     args.output = args.output.resolve()
     if args.output.suffix.lower() != '.json':
         argument_parser.error('--output requires a .json extension to keep distinct JSON and Markdown reports')
@@ -591,7 +669,7 @@ def main(argv=None):
         for input_path in (*sources.values(), args.metadata.resolve()):
             if output_path == input_path or (output_path.exists() and output_path.samefile(input_path)):
                 argument_parser.error('Output paths must not overwrite selected inputs or aliases')
-    report = {'schema_version': 3, 'gate': args.gate, 'status': 'incomplete', 'metadata': metadata,
+    report = {'schema_version': 4, 'gate': args.gate, 'status': 'incomplete', 'metadata': metadata,
               'machine': {'system': platform.system(), 'release': platform.release(),
                           'architecture': platform.machine(), 'processor': platform.processor(),
                           'logical_cpu_count': os.cpu_count(), 'python': platform.python_version()},
@@ -602,20 +680,35 @@ def main(argv=None):
                       'CLI/configuration setup, serialization, exit and completion scheduling; it does not isolate loader time.'}},
               'policy': {'relative_threshold': args.threshold, 'familywise_confidence': 1 - FAMILY_ALPHA,
                          'pairs_per_case': args.pairs, 'warmups_per_side': args.warmups,
+                         'warmup_unit': 'artifact-slot-cell',
+                         'crossover_design': 'fixed-slot-complementary-quads-v1',
+                         'pairs_per_inference_unit': PAIRS_PER_UNIT, 'batches_per_inference_unit': 2 * PAIRS_PER_UNIT,
+                         'inference_units_per_case': args.pairs // PAIRS_PER_UNIT,
+                         'slot_ids': SLOTS, 'replica_ids': REPLICAS,
+                         'replica_assignment': {slot: {label: replica_for(label, slot) for label in LABELS} for slot in SLOTS},
                          'min_sample_seconds': args.min_sample_seconds, 'max_iterations': args.max_iterations,
                          'warm_cache_min_sample_seconds': args.warm_cache_min_sample_seconds,
                          'calibration_headroom': CALIBRATION_HEADROOM,
                          'calibration_pairs': CALIBRATION_PAIRS,
+                         'calibration_pair_unit': 'per-slot',
                          'calibration_iterations': CALIBRATION_ITERATIONS,
-                         'calibration_method': 'balanced-batched-pilot-v1',
+                         'calibration_method': 'balanced-batched-slot-pilot-v1',
                          'per_command_deadline_seconds': args.timeout, 'whole_run_deadline_seconds': args.budget,
                          'noise_relative_mad_limit': NOISE_LIMIT, 'order_bias_limit': ORDER_BIAS_LIMIT,
-                         'method': 'Adjacent opposite-order pairs form geometric-mean ratio blocks. '
-                         'Exact binomial sign/order-statistic intervals bound their population median, '
+                         'method': 'Four logical within-slot pairs form one complementary eight-batch crossover unit. '
+                         'Its artifact ratio is the fourth root of the product of four candidate times divided by '
+                         'the product of four baseline times. Exact binomial sign/order-statistic intervals bound '
+                         'the population median of complete unit ratios, '
                          'with Bonferroni correction across the three predeclared cases. '
                          'Fail requires the entire interval above the practical boundary and no noise flags. '
                          'Pass requires the entire interval at or below it and no noise flags. '
-                         'Otherwise the comparison is inconclusive.'},
+                         'Otherwise the comparison is inconclusive.',
+                         'assumptions': 'Complementary quads balance repeatable slot-by-quad-position factors '
+                         'that are additive in log time, equivalently multiplicative elapsed-time factors. '
+                         'Crossed neutral slots and replicas balance path factors additive in log time, not arbitrary '
+                         'artifact-by-copy/cache interactions. Units must be independent with a stable population median. '
+                         'Arbitrary additive wall-clock overhead, changing positional effects, nonlinear drift and '
+                         'serial dependence can violate these assumptions.'},
               'executables': [], 'results': [], 'errors': []}
     previous_handler = signal.getsignal(signal.SIGTERM)
 
@@ -628,18 +721,20 @@ def main(argv=None):
         with tempfile.TemporaryDirectory(prefix='tekai-paired-benchmark-') as temporary:
             work = Path(temporary).resolve()
             supervisor = Supervisor(work, args.timeout, started + args.budget)
-            binaries = {}
+            binaries = {slot: {} for slot in SLOTS}
             try:
                 verifiers = {name: shutil.which(name) for name in ('pdftotext', 'pdfinfo', 'pdfimages')}
                 if not all(verifiers.values()):
                     raise BenchmarkError('Poppler pdftotext, pdfinfo and pdfimages are required for independent fixture verification')
                 report['output_verifiers'] = {name: {'path': path, 'sha256_start': executable_sha256(Path(path))}
                                               for name, path in verifiers.items()}
-                for label, source in sources.items():
+                for cell in cell_order():
+                    label, slot, replica = cell['label'], cell['slot'], cell['replica']
+                    source = sources[label]
                     supervisor.remaining()
-                    dest = work / label / 'bin' / 'tekai'
+                    dest = work / slot / replica / 'bin' / 'tekai'
                     dest.parent.mkdir(parents=True)
-                    row = {'label': label, 'source_path': str(source), 'isolated_path': str(dest),
+                    row = {**cell, 'source_path': str(source), 'isolated_path': str(dest),
                            'source_sha256_start': executable_sha256(source)}
                     report['executables'].append(row)
                     shutil.copy2(source, dest)
@@ -651,42 +746,59 @@ def main(argv=None):
                     expected = metadata[label].get('artifact_sha256')
                     if expected is not None and expected != row['source_sha256_start']:
                         raise BenchmarkError('Selected ' + label + ' binary differs from its recorded build artifact SHA-256')
-                    binaries[label] = dest
+                    binaries[slot][label] = dest
                 persist(report, args.output)
                 for case_index, case in enumerate(CASES):
                     supervisor.remaining()
-                    fixtures = {label: make_fixture(work / label / case, binaries[label], case) for label in LABELS}
-                    for fixture in fixtures.values():
-                        fixture.update(verifiers)
-                    row = {'case': case, 'fixture_sha256': {label: fixtures[label]['input_sha256'] for label in LABELS},
-                           'fixture_roots': {label: str(fixtures[label]['root']) for label in LABELS},
+                    fixtures = {slot: {} for slot in SLOTS}
+                    inventory = []
+                    row = {'case': case, 'fixture_inventory': inventory,
+                           'fixture_sha256': {slot: {} for slot in SLOTS},
+                           'fixture_roots': {slot: {} for slot in SLOTS},
+                           'slot_schedule': [crossover_pair(index, case_index) for index in range(args.pairs)],
                            'min_sample_seconds': args.warm_cache_min_sample_seconds if case == 'warm-build-cache'
                            else args.min_sample_seconds,
                            'warmups': [], 'calibration_pilots': [], 'samples': []}
                     report['results'].append(row)
-                    if len(set(row['fixture_sha256'].values())) != 1:
+                    for cell in cell_order(case_index):
+                        slot, label, replica = cell['slot'], cell['label'], cell['replica']
+                        fixture = make_fixture(work / slot / replica / case, binaries[slot][label], case)
+                        fixture.update(verifiers, **cell)
+                        fixtures[slot][label] = fixture
+                        row['fixture_sha256'][slot][label] = fixture['input_sha256']
+                        row['fixture_roots'][slot][label] = str(fixture['root'])
+                        inventory.append({**cell, 'root': str(fixture['root']), 'project': str(fixture['project']),
+                                          'out': str(fixture['out']), 'home': fixture['env']['HOME'],
+                                          'cache_paths': {kind: fixture['env']['TEKAI_' + kind + '_CACHE']
+                                                          for kind in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX')},
+                                          'input_sha256': fixture['input_sha256']})
+                    if len({value for hashes in row['fixture_sha256'].values() for value in hashes.values()}) != 1:
                         raise BenchmarkError('Per-binary source fixtures do not have equal content')
-                    row['initialization'] = {}
-                    for label in paired_order(0, case_index):
-                        initial = execute_fixture(supervisor, fixtures[label], case, initializing=True)
-                        row['initialization'][label] = {'command_id': initial['command_id'], 'seconds': initial['seconds'],
-                                                       'output_validation': initial['output_validation']}
+                    row['initialization'] = {slot: {} for slot in SLOTS}
+                    row['initialization_order'] = cell_order(case_index)
+                    for cell in row['initialization_order']:
+                        slot, label = cell['slot'], cell['label']
+                        initial = execute_fixture(supervisor, fixtures[slot][label], case, initializing=True)
+                        row['initialization'][slot][label] = {'command_id': initial['command_id'], 'seconds': initial['seconds'],
+                                                             'output_validation': initial['output_validation']}
                         if 'reported_build_timing' in initial:
-                            row['initialization'][label]['reported_build_timing'] = initial['reported_build_timing']
+                            row['initialization'][slot][label]['reported_build_timing'] = initial['reported_build_timing']
                     for warmup_index in range(args.warmups):
-                        warmup = {'order': paired_order(warmup_index, case_index)}
-                        row['warmups'].append(warmup)
-                        for label in warmup['order']:
-                            warmup[label] = batch(supervisor, fixtures[label], case, 1)
+                        for slot in SLOTS:
+                            warmup = {'warmup_index': warmup_index, **slot_pair(slot, warmup_index, case_index)}
+                            row['warmups'].append(warmup)
+                            for label in warmup['order']:
+                                warmup[label] = batch(supervisor, fixtures[slot][label], case, 1)
                     for pilot_index in range(CALIBRATION_PAIRS):
-                        pilot = {'pair_index': pilot_index, 'order': paired_order(pilot_index, case_index),
-                                 'iterations': CALIBRATION_ITERATIONS}
-                        # Retain a completed side if its partner fails, exactly
-                        # as for formal samples. Pilots never enter inference.
-                        row['calibration_pilots'].append(pilot)
-                        for label in pilot['order']:
-                            pilot[label] = batch(supervisor, fixtures[label], case, CALIBRATION_ITERATIONS)
-                        persist(report, args.output)
+                        for slot in SLOTS:
+                            pilot = {'pair_index': pilot_index, **slot_pair(slot, pilot_index, case_index),
+                                     'iterations': CALIBRATION_ITERATIONS}
+                            # Retain completed-side evidence in every phase.
+                            # Pilots never enter inference.
+                            row['calibration_pilots'].append(pilot)
+                            for label in pilot['order']:
+                                pilot[label] = batch(supervisor, fixtures[slot][label], case, CALIBRATION_ITERATIONS)
+                            persist(report, args.output)
                     row['calibration'] = calibration_details(row['calibration_pilots'], row['min_sample_seconds'], args.max_iterations)
                     try:
                         iterations = calibrated_iterations(row['calibration_pilots'], row['min_sample_seconds'], args.max_iterations)
@@ -697,17 +809,19 @@ def main(argv=None):
                         row['iterations_per_batch'] = iterations
                         persist(report, args.output)
                         for pair_index in range(args.pairs):
-                            sample = {'pair_index': pair_index, 'order': paired_order(pair_index, case_index),
-                                      'iterations': iterations}
+                            sample = {**crossover_pair(pair_index, case_index), 'iterations': iterations}
                             # Keep partial pairs so a later failure cannot erase the
                             # successful side's observation from the final artifact.
                             row['samples'].append(sample)
                             for label in sample['order']:
-                                sample[label] = batch(supervisor, fixtures[label], case, iterations)
-                            sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
+                                sample[label] = batch(supervisor, fixtures[sample['slot']][label], case, iterations)
+                            ratio = sample['candidate']['seconds'] / sample['baseline']['seconds']
+                            if not math.isfinite(ratio) or ratio <= 0:
+                                raise ValueError('Paired ratio overflowed or underflowed; statistics are unusable')
+                            sample['ratio'] = ratio
                             persist(report, args.output)
-                        row['analysis'] = analyze_pairs(row['samples'], args.threshold, row['min_sample_seconds'])
-                    row['fixture_sha256_end'] = {label: fixture_sha256(fixtures[label]['project']) for label in LABELS}
+                        row['analysis'] = analyze_pairs(row['samples'], args.threshold, row['min_sample_seconds'], case_index=case_index)
+                    row['fixture_sha256_end'] = {slot: {label: fixture_sha256(fixtures[slot][label]['project']) for label in LABELS} for slot in SLOTS}
                     row['fixture_unchanged'] = row['fixture_sha256'] == row['fixture_sha256_end']
                     if not row['fixture_unchanged']:
                         raise BenchmarkError('Compiler changed or removed benchmark fixture inputs')
