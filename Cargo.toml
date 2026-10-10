@@ -17,6 +17,9 @@ publish = false
 members = ["crates/tekai-pdftex", "crates/tekai-engine"]
 resolver = "3"
 
+[workspace.dependencies]
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+
 [profile.release]
 codegen-units = 1
 lto = "fat"
@@ -38,3 +41,6 @@ tectonic_bridge_core = "0.5.2"
 tectonic_io_base = "0.6"
 tectonic_status_base = "0.2"
 serde-pickle = "1.2"
+
+[dev-dependencies]
+proptest = { workspace = true }

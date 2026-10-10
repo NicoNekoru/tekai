@@ -57,6 +57,36 @@ Integration tests that depend on optional external programs skip when those
 programs are unavailable. Do not interpret a skipped optional integration as
 proof that the external workflow works on the current machine.
 
+### Property based tests
+
+The lookup graph, watch inbox and linter use bounded `proptest` generators.
+Lookup results are compared with an exhaustive flattened-route model, including
+wildcard precedence, aliases, cycles, excluded trees and newly created outputs.
+Watch events are compared with a separate queue model across drains, errors and
+rescans, including exact count and byte limits. Linter properties check Unicode
+coordinates and compare safe math fixes with independently constructed output.
+Fixing that output again must make no changes.
+
+Keep generators finite and models independent of the production algorithm.
+Focused boundary regressions and scan/retention assertions remain useful. Tests
+that merely repeat roadmap text or check a plan's own constant list do not
+establish runtime behavior.
+
+CI records `PROPTEST_RNG_SEED`, the case count and any shrunk regression files.
+Replay a failing property with the recorded decimal seed and its test-name
+filter. For example, replace the seed below with the one from the failed run.
+
+```sh
+PROPTEST_RNG_SEED=12345 PROPTEST_CASES=512 \
+  cargo test --locked --lib property_scalar_coordinates_round_trip
+PROPTEST_RNG_SEED=12345 PROPTEST_CASES=512 \
+  cargo test --locked -p tekai-engine --lib generated_trees_match_flattened_wildcard_precedence
+```
+
+Commit shrunk `proptest-regressions` files for real failures alongside the fix.
+Do not fix the random seed permanently in a property or discard a regression
+just because a later random run passes.
+
 The `cli_texmf` suite exercises native shared-tree lookup without installed TeX.
 CI runs it on macOS 15 ARM64 and Intel, then installs BasicTeX and runs its real
 reference gate with `TEKAI_REQUIRE_SYSTEM_TEX=1`. That gate fails rather than

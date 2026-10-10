@@ -614,6 +614,7 @@ fn resolve_hops(parent: &Path, tail: &Path) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     const BUDGET: usize = 1024 * 1024;
@@ -642,6 +643,321 @@ mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    const LABELS: [&str; 3] = ["a", "b", "c"];
+    const FILENAMES: [&str; 3] = ["f.sty", "g.tex", "created.tex"];
+
+    #[derive(Clone, Debug, Default)]
+    struct ReferenceDirectory {
+        edges: [Option<usize>; 3],
+        files: u8,
+    }
+
+    #[derive(Clone, Debug)]
+    struct Query {
+        // Each chunk is literal. The gaps between chunks, and before the first
+        // chunk, can consume any number of directory components.
+        suffix: Option<Vec<Vec<u8>>>,
+        qualified: Vec<u8>,
+        file: u8,
+    }
+
+    fn queries() -> impl Strategy<Value = Vec<Query>> {
+        prop::collection::vec(
+            (
+                prop::option::of(prop::collection::vec(
+                    prop::collection::vec(0..3u8, 0..3),
+                    1..4,
+                )),
+                prop::collection::vec(0..3u8, 0..3),
+                0..3u8,
+            )
+                .prop_map(|(suffix, qualified, file)| Query {
+                    suffix,
+                    qualified,
+                    file,
+                }),
+            1..9,
+        )
+    }
+
+    fn with_root_queries(mut queries: Vec<Query>) -> Vec<Query> {
+        for file in 0..3 {
+            for suffix in [None, Some(vec![Vec::new()])] {
+                queries.push(Query {
+                    suffix,
+                    qualified: Vec::new(),
+                    file,
+                });
+            }
+        }
+        queries
+    }
+
+    fn lexical_path(root: &Path, labels: &[u8]) -> PathBuf {
+        labels.iter().fold(root.to_path_buf(), |path, &label| {
+            path.join(LABELS[usize::from(label)])
+        })
+    }
+
+    impl Query {
+        fn suffix_string(&self) -> Option<String> {
+            self.suffix.as_ref().map(|chunks| {
+                chunks
+                    .iter()
+                    .map(|chunk| {
+                        chunk
+                            .iter()
+                            .map(|&label| LABELS[usize::from(label)])
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("//")
+            })
+        }
+
+        fn requested(&self) -> PathBuf {
+            lexical_path(Path::new(""), &self.qualified).join(FILENAMES[usize::from(self.file)])
+        }
+    }
+
+    // Flatten every simple physical route first, without memoization or the
+    // production matcher. Small graphs make exhaustive reference search cheap.
+    fn reference_routes(
+        nodes: &[ReferenceDirectory],
+        start: usize,
+        excluded: Option<usize>,
+    ) -> Vec<(usize, Vec<u8>)> {
+        fn visit(
+            nodes: &[ReferenceDirectory],
+            node: usize,
+            excluded: Option<usize>,
+            ancestors: &mut Vec<usize>,
+            route: &mut Vec<u8>,
+            result: &mut Vec<(usize, Vec<u8>)>,
+        ) {
+            if Some(node) == excluded || ancestors.contains(&node) {
+                return;
+            }
+            result.push((node, route.clone()));
+            ancestors.push(node);
+            for (label, target) in nodes[node].edges.iter().enumerate() {
+                if let Some(target) = target {
+                    route.push(label as u8);
+                    visit(nodes, *target, excluded, ancestors, route, result);
+                    route.pop();
+                }
+            }
+            ancestors.pop();
+        }
+        let mut result = Vec::new();
+        visit(
+            nodes,
+            start,
+            excluded,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut result,
+        );
+        result
+    }
+
+    // Enumerate placements of literal chunks in one flattened route. Sorting
+    // the wildcard endpoint prefixes reproduces outer-first nested searches.
+    // This is deliberately exhaustive, unlike the production graph traversal.
+    fn reference_rank(
+        chunks: &[Vec<u8>],
+        route: &[u8],
+        position: usize,
+        end: usize,
+    ) -> Option<Vec<Vec<u8>>> {
+        if chunks.is_empty() {
+            return (position == end).then(Vec::new);
+        }
+        let mut best = None;
+        for gap_end in position..=end {
+            let literal_end = gap_end + chunks[0].len();
+            if literal_end > end || route[gap_end..literal_end] != chunks[0] {
+                continue;
+            }
+            if let Some(tail) = reference_rank(&chunks[1..], route, literal_end, end) {
+                let mut rank = vec![route[..gap_end].to_vec()];
+                rank.extend(tail);
+                if best.as_ref().is_none_or(|previous| &rank < previous) {
+                    best = Some(rank);
+                }
+            }
+        }
+        best
+    }
+
+    fn reference_find(
+        nodes: &[ReferenceDirectory],
+        start: usize,
+        excluded: Option<usize>,
+        query: &Query,
+    ) -> Option<Vec<u8>> {
+        reference_routes(nodes, start, excluded)
+            .into_iter()
+            .filter_map(|(node, route)| {
+                if nodes[node].files & (1 << query.file) == 0 || !route.ends_with(&query.qualified)
+                {
+                    return None;
+                }
+                let prefix_end = route.len() - query.qualified.len();
+                let mut rank = match &query.suffix {
+                    None => (prefix_end == 0).then(Vec::new)?,
+                    Some(chunks) => reference_rank(chunks, &route, 0, prefix_end)?,
+                };
+                rank.push(route.clone());
+                Some((rank, route))
+            })
+            .min_by(|left, right| left.0.cmp(&right.0))
+            .map(|(_, route)| route)
+    }
+
+    fn expected_path(
+        nodes: &[ReferenceDirectory],
+        start: usize,
+        excluded: Option<usize>,
+        root: &Path,
+        query: &Query,
+    ) -> Option<PathBuf> {
+        reference_find(nodes, start, excluded, query)
+            .map(|route| lexical_path(root, &route).join(FILENAMES[usize::from(query.file)]))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            max_shrink_iters: 4096,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn generated_trees_match_flattened_wildcard_precedence(
+            entries in prop::collection::vec((prop::collection::vec(0..3u8, 0..4), 0..4u8), 0..13),
+            generated_queries in queries(),
+            subtree in 0..40usize,
+        ) {
+            let fixture = Fixture::new();
+            let mut nodes = vec![ReferenceDirectory::default()];
+            let mut routes = vec![Vec::new()];
+            for (route, files) in entries {
+                let mut node = 0;
+                for label in route {
+                    let edge = usize::from(label);
+                    node = if let Some(target) = nodes[node].edges[edge] {
+                        target
+                    } else {
+                        let target = nodes.len();
+                        let mut route = routes[node].clone();
+                        route.push(label);
+                        nodes.push(ReferenceDirectory::default());
+                        routes.push(route);
+                        nodes[node].edges[edge] = Some(target);
+                        target
+                    };
+                }
+                nodes[node].files |= files;
+            }
+            let physical = routes.iter().map(|route| lexical_path(&fixture.0, route)).collect::<Vec<_>>();
+            for (node, path) in nodes.iter().zip(&physical) {
+                fs::create_dir_all(path).unwrap();
+                for file in 0..2 {
+                    if node.files & (1 << file) != 0 {
+                        fs::write(path.join(FILENAMES[file]), "file").unwrap();
+                    }
+                }
+            }
+            let graph = DirectoryGraph::build(&fixture.0, None, BUDGET).unwrap();
+            prop_assert_eq!(graph.read_dirs, nodes.len());
+            let start = subtree % nodes.len();
+            for query in with_root_queries(generated_queries) {
+                let suffix = query.suffix_string();
+                let requested = query.requested();
+                prop_assert_eq!(
+                    graph.find(suffix.as_deref(), &requested),
+                    expected_path(&nodes, 0, None, &fixture.0, &query),
+                    "query {:?}", query
+                );
+                prop_assert_eq!(
+                    graph.find_from(&physical[start], suffix.as_deref(), &requested),
+                    expected_path(&nodes, start, None, &physical[start], &query),
+                    "subtree {}, query {:?}", start, query
+                );
+            }
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn generated_alias_cycles_exclusions_and_outputs_match_simple_routes(
+            raw_nodes in prop::collection::vec((prop::array::uniform3(prop::option::of(0..6usize)), 0..4u8), 1..7),
+            excluded in prop::option::of(0..6usize),
+            generated_queries in queries(),
+            output_node in 0..6usize,
+        ) {
+            let fixture = Fixture::new();
+            let mut nodes = raw_nodes.iter().map(|(edges, files)| ReferenceDirectory {
+                edges: edges.map(|target| target.map(|target| target % raw_nodes.len())),
+                files: *files,
+            }).collect::<Vec<_>>();
+            let physical = (0..nodes.len()).map(|node| fixture.directory(&format!("physical/{node}"))).collect::<Vec<_>>();
+            for (node, path) in nodes.iter().zip(&physical) {
+                for (label, target) in node.edges.iter().enumerate() {
+                    if let Some(target) = target {
+                        std::os::unix::fs::symlink(&physical[*target], path.join(LABELS[label])).unwrap();
+                    }
+                }
+                for file in 0..2 {
+                    if node.files & (1 << file) != 0 {
+                        fs::write(path.join(FILENAMES[file]), "file").unwrap();
+                    }
+                }
+            }
+            let excluded = excluded.map(|node| node % nodes.len());
+            let graph = DirectoryGraph::build(&physical[0], excluded.map(|node| physical[node].as_path()), BUDGET);
+            if excluded == Some(0) {
+                prop_assert!(graph.is_none());
+                return Ok(());
+            }
+            let mut graph = graph.unwrap();
+            let reachable = reference_routes(&nodes, 0, excluded).into_iter().map(|(node, _)| node).collect::<HashSet<_>>();
+            prop_assert_eq!(graph.read_dirs, reachable.len());
+            for (node, path) in physical.iter().enumerate() {
+                prop_assert_eq!(graph.contains_directory(path), reachable.contains(&node));
+            }
+            let start = output_node % nodes.len();
+            for query in with_root_queries(generated_queries) {
+                let suffix = query.suffix_string();
+                let requested = query.requested();
+                prop_assert_eq!(
+                    graph.find(suffix.as_deref(), &requested),
+                    expected_path(&nodes, 0, excluded, &physical[0], &query),
+                    "query {:?}", query
+                );
+                let subtree_match = reachable.contains(&start).then(|| expected_path(&nodes, start, excluded, &physical[start], &query)).flatten();
+                prop_assert_eq!(graph.find_from(&physical[start], suffix.as_deref(), &requested), subtree_match);
+            }
+
+            fs::write(physical[start].join(FILENAMES[2]), "output").unwrap();
+            prop_assert_eq!(graph.add_output(&physical[start], OsStr::new(FILENAMES[2])), reachable.contains(&start));
+            nodes[start].files |= 1 << 2;
+            let bytes = graph.retained_bytes();
+            prop_assert_eq!(graph.add_output(&physical[start], OsStr::new(FILENAMES[2])), reachable.contains(&start));
+            prop_assert_eq!(graph.retained_bytes(), bytes);
+            let output_query = Query { suffix: Some(vec![Vec::new()]), qualified: Vec::new(), file: 2 };
+            prop_assert_eq!(graph.find(Some(""), Path::new(FILENAMES[2])), expected_path(&nodes, 0, excluded, &physical[0], &output_query));
+            for (label, target) in nodes[0].edges.iter().enumerate() {
+                if target.is_some() {
+                    let query = Query { suffix: Some(vec![vec![label as u8], Vec::new()]), qualified: Vec::new(), file: 2 };
+                    let suffix = query.suffix_string().unwrap();
+                    prop_assert_eq!(graph.find(Some(&suffix), Path::new(FILENAMES[2])), expected_path(&nodes, 0, excluded, &physical[0], &query));
+                }
+            }
         }
     }
 

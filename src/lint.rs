@@ -2203,6 +2203,68 @@ fn column_for_byte(line: &str, byte: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 128,
+            max_shrink_iters: 4096,
+            ..ProptestConfig::default()
+        })]
+
+        // Build coordinates in one forward scalar traversal, independently of
+        // the production newline/column searches. Include CRLF and UTF-8 so
+        // diagnostic columns cannot accidentally become byte offsets.
+        #[test]
+        fn property_scalar_coordinates_round_trip(
+            chars in prop::collection::vec(
+                prop_oneof![Just('\n'), Just('\r'), Just('é'), Just('界'), Just('🦀'), any::<char>()],
+                0..192,
+            ),
+        ) {
+            let source: String = chars.into_iter().collect();
+            let (mut line, mut column) = (1, 1);
+            for (offset, ch) in source.char_indices() {
+                prop_assert_eq!(byte_offset_for_line_column(&source, line, column), Some(offset));
+                if ch == '\n' {
+                    line += 1;
+                    column = 1;
+                } else {
+                    column += 1;
+                }
+            }
+            prop_assert_eq!(byte_offset_for_line_column(&source, line, column), Some(source.len()));
+            prop_assert_eq!(byte_offset_for_line_column(&source, line, column + 1), None);
+            prop_assert_eq!(byte_offset_for_line_column(&source, line + 1, 1), None);
+            prop_assert_eq!(byte_offset_for_line_column(&source, 0, 1), None);
+            prop_assert_eq!(byte_offset_for_line_column(&source, 1, 0), None);
+        }
+
+        #[test]
+        fn property_safe_math_fixes_preserve_unicode_and_reach_a_fixed_point(
+            fragments in prop::collection::vec(
+                ("[a-zé界🦀]{0,16}", "[a-zé界🦀+ =]{1,24}", any::<bool>(), any::<bool>()),
+                0..24,
+            ),
+        ) {
+            let mut source = String::new();
+            let mut expected = String::new();
+            for (prefix, body, display, crlf) in fragments {
+                let newline = if crlf { "\r\n" } else { "\n" };
+                let (dollar, open, close) = if display { ("$$", r"\[", r"\]") } else { ("$", r"\(", r"\)") };
+                source.push_str(&format!("Text {prefix} {dollar}{body}{dollar}.{newline}"));
+                expected.push_str(&format!("Text {prefix} {open}{body}{close}.{newline}"));
+            }
+            let config = LintConfig { max_line_length: None, ..LintConfig::default() };
+            let path = Path::new("property.tex");
+            let (fixed, _) = fix_source(path, &source, &config);
+            prop_assert_eq!(&fixed, &expected);
+            prop_assert!(lint_source(path, &fixed, &config).is_empty());
+            let (again, edits) = fix_source(path, &fixed, &config);
+            prop_assert_eq!(again, fixed);
+            prop_assert_eq!(edits, 0);
+        }
+    }
 
     #[test]
     fn catches_dollar_math_and_ascii_prime() {

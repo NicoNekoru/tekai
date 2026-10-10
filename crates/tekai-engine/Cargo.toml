@@ -30,3 +30,6 @@ lopdf = { version = "0.35", default-features = false, features = ["nom_parser"] 
 png = "0.17"
 tar = "0.4"
 walkdir = "2.5"
+
+[dev-dependencies]
+proptest = { workspace = true }

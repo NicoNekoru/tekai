@@ -141,45 +141,206 @@ impl EventReceiver for mpsc::Receiver<notify::Result<Event>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
+    use proptest::prelude::*;
+    use proptest::test_runner::TestCaseResult;
 
-    #[test]
-    fn repeated_events_coalesce_and_output_is_discarded_before_queueing() {
-        let (tx, rx) = channel(PathBuf::from("/project/out"));
-        for _ in 0..10000 {
-            tx.send(Ok(
-                Event::new(EventKind::Any).add_path("/project/main.tex".into())
-            ));
-            tx.send(Ok(
-                Event::new(EventKind::Any).add_path("/project/out/main.log".into())
-            ));
-        }
-        assert_eq!(
-            rx.recv().unwrap().unwrap().paths,
-            vec![PathBuf::from("/project/main.tex")]
-        );
-        assert!(matches!(
-            rx.recv_timeout(Duration::ZERO),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
+    #[derive(Clone, Debug)]
+    struct GeneratedEvent {
+        kind: u8,
+        paths: Vec<(u8, u8)>,
+        rescan: bool,
+        drain: bool,
     }
 
-    #[test]
-    fn overflow_is_bounded_and_requests_a_full_rescan_without_blocking() {
-        let (tx, rx) = channel(PathBuf::from("/project/out"));
-        let started = Instant::now();
-        for n in 0..10000 {
-            tx.send(Ok(
-                Event::new(EventKind::Any).add_path(format!("/project/{n}.tex").into())
-            ));
+    fn generated_events() -> impl Strategy<Value = Vec<GeneratedEvent>> {
+        prop::collection::vec(
+            (
+                0..5u8,
+                prop::collection::vec((0..8u8, 0..16u8), 0..9),
+                any::<bool>(),
+                any::<bool>(),
+            )
+                .prop_map(|(kind, paths, rescan, drain)| GeneratedEvent {
+                    kind,
+                    paths,
+                    rescan,
+                    drain,
+                }),
+            0..81,
+        )
+    }
+
+    // The boolean is part of the generated input's contract, rather than a
+    // call to the production ignore filter. Sibling and lookalike names matter.
+    fn generated_path(kind: u8, id: u8) -> (PathBuf, bool) {
+        let (directory, ignored) = match kind {
+            0 => ("/project", false),
+            1 => ("/project/out", true),
+            2 => ("/project/outside", false),
+            3 => ("/project/.git", true),
+            4 => ("/project/nested/target", true),
+            5 => ("/project/.tekai/deep", true),
+            6 => ("/project/.gitish", false),
+            _ => ("/project/src", false),
+        };
+        (PathBuf::from(format!("{directory}/{id}.tex")), ignored)
+    }
+
+    #[derive(Default)]
+    struct ReferencePending {
+        paths: Vec<PathBuf>,
+        rescan: bool,
+        error: bool,
+    }
+
+    impl ReferencePending {
+        fn send(&mut self, input: &GeneratedEvent) {
+            if input.kind == 4 {
+                self.error = true;
+                self.rescan = true;
+            } else if input.kind != 3 {
+                self.rescan |= input.rescan;
+                if !self.rescan {
+                    for &(kind, id) in &input.paths {
+                        let (path, ignored) = generated_path(kind, id);
+                        if !ignored && !self.paths.contains(&path) {
+                            self.paths.push(path);
+                        }
+                    }
+                }
+            }
+            if self.rescan {
+                self.paths.clear();
+            }
         }
-        let pending = tx.pending.lock().unwrap();
-        assert!(pending.rescan);
-        assert!(pending.paths.is_empty());
-        assert_eq!(pending.bytes, 0);
-        drop(pending);
-        assert!(rx.recv().unwrap().unwrap().need_rescan());
-        // The sender never waits for a consumer, even after the wakeup is full.
-        assert!(started.elapsed() < Duration::from_secs(10));
+
+        fn check_pending(&self, tx: &Sender) -> TestCaseResult {
+            let actual = tx.pending.lock().unwrap();
+            let mut expected = self.paths.clone();
+            expected.sort();
+            prop_assert_eq!(actual.paths.iter().cloned().collect::<Vec<_>>(), expected);
+            prop_assert_eq!(actual.rescan, self.rescan);
+            prop_assert_eq!(actual.error.is_some(), self.error);
+            prop_assert_eq!(
+                actual.bytes,
+                self.paths
+                    .iter()
+                    .map(|path| path.as_os_str().len() + 64)
+                    .sum::<usize>()
+            );
+            prop_assert!(actual.paths.len() <= MAX_PATHS);
+            prop_assert!(actual.bytes <= MAX_PATH_BYTES);
+            Ok(())
+        }
+
+        fn drain(&mut self, rx: &Inbox) -> TestCaseResult {
+            let result = rx.recv_timeout(Duration::ZERO);
+            if self.rescan || !self.paths.is_empty() {
+                let event = result.unwrap().unwrap();
+                self.paths.sort();
+                prop_assert_eq!(&event.paths, &self.paths);
+                prop_assert_eq!(event.need_rescan(), self.rescan);
+            } else {
+                prop_assert!(matches!(result, Err(mpsc::RecvTimeoutError::Timeout)));
+            }
+            *self = Self::default();
+            // Coalescing must leave at most one wakeup, not one per send.
+            prop_assert!(matches!(
+                rx.recv_timeout(Duration::ZERO),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            Ok(())
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            max_shrink_iters: 4096,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn generated_batches_match_the_reference_across_drains(inputs in generated_events()) {
+            let (tx, rx) = channel(PathBuf::from("/project/out"));
+            let mut model = ReferencePending::default();
+            for input in inputs {
+                let result = if input.kind == 4 {
+                    Err(notify::Error::generic("generated watcher failure"))
+                } else {
+                    let kind = match input.kind {
+                        0 => EventKind::Any,
+                        1 => EventKind::Create(notify::event::CreateKind::File),
+                        2 => EventKind::Modify(notify::event::ModifyKind::Any),
+                        _ => EventKind::Access(notify::event::AccessKind::Read),
+                    };
+                    let mut event = Event::new(kind);
+                    event.paths = input.paths.iter().map(|&(kind, id)| generated_path(kind, id).0).collect();
+                    if input.rescan {
+                        event = event.set_flag(Flag::Rescan);
+                    }
+                    Ok(event)
+                };
+                tx.send(result);
+                model.send(&input);
+                model.check_pending(&tx)?;
+                if input.drain {
+                    model.drain(&rx)?;
+                    model.check_pending(&tx)?;
+                }
+            }
+            model.drain(&rx)?;
+            model.check_pending(&tx)?;
+        }
+
+        #[test]
+        fn generated_limit_boundaries_rescan_exactly_when_a_cap_is_exceeded(
+            by_count in any::<bool>(),
+            short_name in 0..97usize,
+            long_name in 256..2049usize,
+            offset in -2i8..3,
+            late_paths in prop::collection::vec((0..8u8, 0..16u8), 0..33),
+        ) {
+            let (tx, rx) = channel(PathBuf::from("/project/out"));
+            let name_length = if by_count { short_name } else { long_name };
+            let padding = "x".repeat(name_length);
+            let path_bytes = format!("/project/00000-{padding}").len() + 64;
+            let capacity = if by_count { MAX_PATHS } else { MAX_PATH_BYTES / path_bytes };
+            let count = capacity.saturating_add_signed(isize::from(offset));
+            for id in 0..count {
+                let path = PathBuf::from(format!("/project/{id:05}-{padding}"));
+                // A duplicate must not spend another count or byte allowance.
+                tx.send(Ok(Event::new(EventKind::Any).add_path(path.clone()).add_path(path)));
+            }
+            let overflow = count > MAX_PATHS || count * path_bytes > MAX_PATH_BYTES;
+            if overflow {
+                // A full-root rescan stays latched as more edits arrive, even
+                // after the single wakeup has filled the channel.
+                for (kind, id) in late_paths {
+                    tx.send(Ok(Event::new(EventKind::Any).add_path(generated_path(kind, id).0)));
+                    let pending = tx.pending.lock().unwrap();
+                    prop_assert!(pending.rescan);
+                    prop_assert!(pending.paths.is_empty());
+                    prop_assert_eq!(pending.bytes, 0);
+                }
+            }
+            let pending = tx.pending.lock().unwrap();
+            prop_assert_eq!(pending.rescan, overflow);
+            prop_assert_eq!(pending.paths.len(), if overflow { 0 } else { count });
+            prop_assert_eq!(pending.bytes, if overflow { 0 } else { count * path_bytes });
+            drop(pending);
+            let event = rx.recv_timeout(Duration::ZERO).unwrap().unwrap();
+            prop_assert_eq!(event.need_rescan(), overflow);
+            prop_assert_eq!(event.paths.len(), if overflow { 0 } else { count });
+            prop_assert!(event.paths.windows(2).all(|pair| pair[0] < pair[1]));
+            prop_assert!(matches!(rx.recv_timeout(Duration::ZERO), Err(mpsc::RecvTimeoutError::Timeout)));
+
+            // Taking a rescan restores an empty inbox that accepts precise paths.
+            let next = PathBuf::from("/project/next.tex");
+            tx.send(Ok(Event::new(EventKind::Any).add_path(next.clone())));
+            let event = rx.recv_timeout(Duration::ZERO).unwrap().unwrap();
+            prop_assert!(!event.need_rescan());
+            prop_assert_eq!(event.paths, vec![next]);
+        }
     }
 }

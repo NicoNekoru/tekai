@@ -274,35 +274,3 @@ const NON_SOLUTIONS: &[NonSolution] = &[
     NonSolution::LegacySidecarFidelityAsGoal,
     NonSolution::ExactPdflatexLogCompatibility,
 ];
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plan_moves_pdftex_critical_path_into_the_rewrite() {
-        let plan = RewritePlan::new();
-
-        assert!(plan.moves_pdftex_work_in_process());
-    }
-
-    #[test]
-    fn clean_subsecond_plan_is_not_only_a_cache_or_scheduler_plan() {
-        let plan = RewritePlan::new();
-
-        assert!(plan.has_clean_subsecond_strategy());
-        assert!(
-            plan.non_solutions
-                .contains(&NonSolution::WrapperSchedulingOnly)
-        );
-        assert!(plan.non_solutions.contains(&NonSolution::PreambleCacheOnly));
-    }
-
-    #[test]
-    fn integration_uses_pdf_equivalence_as_the_contract() {
-        let plan = RewritePlan::new();
-
-        assert!(plan.uses_pdf_as_compatibility_contract());
-        assert!(plan.keeps_legacy_artifacts_optional());
-    }
-}
