@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import benchmark_runtime as bench
 
@@ -79,6 +79,21 @@ class StatisticsTests(unittest.TestCase):
                 self.assertEqual(analysis['inference_unit_count'], 10)
                 self.assertEqual(len(analysis['inference_unit_ratios']), 10)
                 self.assertEqual(analysis['median_ratio_interval']['order_statistic'], 1)
+
+    def test_future_fixed_plan_has_32_units_and_exact_rank_9_without_sample_selection(self):
+        for ratio, outcome in ((1, 'pass'), (1.11, 'fail')):
+            rows = samples([ratio] * 128, seconds=2)
+            result = bench.analyze_pairs(rows, 0.10, 1)
+            self.assertEqual(result['status'], outcome)
+            self.assertEqual(result['inference_unit_count'], 32)
+            self.assertEqual(result['median_ratio_interval']['order_statistic'], 9)
+            self.assertEqual(len(result['paired_ratios']), 128)
+        # Fixed ranks tolerate eight hypothetical upper-tail units, retaining
+        # every observation. Nine upper-tail units make the interval cross.
+        for count, status in ((8, 'pass'), (9, 'inconclusive')):
+            result = bench.analyze_pairs(samples([1.2] * (4 * count) + [1] * (128 - 4 * count), seconds=2), 0.10, 1)
+            self.assertEqual(result['status'], status)
+            self.assertEqual(len(result['inference_unit_ratios']), 32)
 
     def test_crossing_threshold_is_inconclusive(self):
         analysis = self.analyze(([1.08] * 4 + [1.12] * 4) * 5)
@@ -243,7 +258,7 @@ class StatisticsTests(unittest.TestCase):
             if noisy:
                 position_effects['s0'][:2] = (0.8, 1.2)
                 position_effects['s1'][2:] = (0.8, 1.2)
-            rows = samples([1] * 40, seconds=2, case_index=case_index)
+            rows = samples([1] * 128, seconds=2, case_index=case_index)
             for index, row in enumerate(rows):
                 for position, label in enumerate(row['order']):
                     quad_position = (index % 2) * 2 + position
@@ -251,7 +266,7 @@ class StatisticsTests(unittest.TestCase):
                         * position_effects[row['slot']][quad_position] * (artifact if label == 'candidate' else 1)
             with self.subTest(example=example, artifact=artifact, case=case_index):
                 result = bench.analyze_pairs(rows, 0.10, 1, case_index=case_index)
-                self.assertEqual(result['inference_unit_count'], 10)
+                self.assertEqual(result['inference_unit_count'], 32)
                 self.assertTrue(all(math.isclose(value, artifact, rel_tol=1e-12) for value in result['inference_unit_ratios']))
                 self.assertEqual(result['status'], 'inconclusive' if noisy else ('fail' if artifact > 1.10 else 'pass'))
                 if noisy:
@@ -310,11 +325,31 @@ class StatisticsTests(unittest.TestCase):
                     if diagnostic['status'] == 'reported':
                         diagnostic.update(reported_elapsed_ms=1e300, parent_minus_reported_seconds=-1e297)
                     sample[label]['commands'] = [{'reported_build_timing': diagnostic}]
+                    sample[label]['parent_timing'] = [math.nan, -1, math.inf]
             for pilot in pilots:
                 for label in bench.LABELS:
                     pilot[label]['commands'] = [{'reported_build_timing': diagnostic}] * 32
             self.assertEqual(bench.analyze_pairs(measured, 0.10, 0.25), analysis)
             self.assertEqual(bench.calibrated_iterations(pilots, 1, 512), iterations)
+
+    def test_parent_clock_model_preserves_existing_seconds_without_native_processes(self):
+        with tempfile.TemporaryDirectory(prefix='test-parent-clock-') as temporary:
+            work = Path(temporary)
+            captures = [work / 'stdout', work / 'stderr']
+            for path in captures:
+                path.touch()
+            process = Mock(command_id=1, capture_paths=captures)
+            process.wait.return_value = 0
+            runner = bench.Supervisor(work, 1, 100)
+            with patch.object(runner, 'remaining', return_value=1), patch.object(runner, 'start', return_value=process), \
+                    patch.object(runner, 'stop'), patch.object(runner, 'captured', return_value=('ok', '', False)), \
+                    patch.object(bench.time, 'monotonic', side_effect=(10, 10.03, 10.07, 10.08)):
+                result = runner.execute([], work, {})
+            start, launch, end = result['parent_timing']
+            self.assertEqual((start, launch), (10, 10.03))
+            self.assertGreaterEqual(end, launch)
+            self.assertEqual(result['seconds'], end - start)
+            self.assertFalse(any(path.exists() for path in captures))
 
 
 @unittest.skipUnless(os.name == 'posix', 'Owned process groups require POSIX')
@@ -382,10 +417,73 @@ class SupervisionTests(unittest.TestCase):
 
 
 class FixtureTests(unittest.TestCase):
+    def test_future_cli_defaults_and_finite_upper_bounds(self):
+        args = bench.parser().parse_args(['--baseline', 'A', '--candidate', 'B', '--metadata', 'M'])
+        self.assertEqual((args.pairs, args.budget), (128, 2700))
+        for flag, value in (('--pairs', '132'), ('--budget', '2701')):
+            with patch.object(bench, 'load_metadata') as load, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    bench.main(['--baseline', 'A', '--candidate', 'B', '--metadata', 'M', flag, value])
+            load.assert_not_called()
+
+    def test_host_snapshot_is_outside_timing_and_handles_unavailable_values(self):
+        for value in ([1.0, 2.0, 3.0], [math.nan, 2, 3], [True, 2, 3]):
+            with patch.object(bench.os, 'getloadavg', return_value=value), patch.object(bench.time, 'monotonic', return_value=7):
+                row = bench.host_snapshot('nested-lookup', 0)
+            self.assertEqual(row['monotonic_seconds'], 7)
+            self.assertFalse(row['used_for_gate'])
+            self.assertEqual(row['load_average_status'], 'reported' if value == [1.0, 2.0, 3.0] and type(value[0]) is float else 'unavailable')
+            self.assertTrue(all(row[key] == 'unavailable' for key in ('memory_status', 'swap_status', 'cpu_utilization_status')))
+        with patch.object(bench.os, 'getloadavg', side_effect=OSError('unsupported')):
+            self.assertEqual(bench.host_snapshot('image-compile', 1)['load_average_status'], 'unavailable')
+
+    def test_atomic_checkpoint_and_overflow_keep_prior_evidence(self):
+        with tempfile.TemporaryDirectory(prefix='test-checkpoint-') as temporary:
+            output = Path(temporary) / 'report.json'
+            report = {'gate': True, 'status': 'incomplete', 'results': [], 'errors': [],
+                      'policy': {'method': 'test', 'assumptions': 'test', 'relative_threshold': 0.10}}
+            bench.persist(report, output)
+            previous = output.read_bytes()
+            report['partial_completed_side'] = 'x' * 2000
+            with patch.object(bench, 'MAX_REPORT_BYTES', 1024), self.assertRaises(bench.ReportTooLarge):
+                bench.persist(report, output)
+            self.assertEqual(output.read_bytes(), previous)
+            manifest = json.loads(output.with_suffix('.overflow.json').read_text())
+            self.assertEqual((manifest['status'], manifest['exit_code']), ('error', 1))
+            self.assertFalse(manifest['samples_dropped'])
+            self.assertEqual(list(Path(temporary).glob('*.tmp')), [])
+            with patch.object(bench.os, 'replace', side_effect=OSError('controlled replacement failure')):
+                with self.assertRaises(OSError):
+                    bench.atomic_text(output, 'new evidence')
+            self.assertEqual(output.read_bytes(), previous)
+            self.assertEqual(list(Path(temporary).glob('*.tmp')), [])
+
+    def test_maximum_sampling_serialization_has_finite_headroom(self):
+        # A full 512-command batch bounds the largest command IDs and long
+        # finite float spellings. Compute repetition exactly without allocating
+        # all 393216 commands. Only the cache case has reported build telemetry.
+        commands = []
+        for index in range(512):
+            start = 100000.123456789 + index
+            end = start + 0.987654321012345
+            commands.append({'command_id': 999999 + index, 'seconds': end - start,
+                             'parent_timing': [start, start + 0.123456789012345, end]})
+        batch = {'iterations': 512, 'seconds': sum(item['seconds'] for item in commands),
+                 'commands': commands, 'output_validation': {'verified': True}}
+        ordinary_size = len(json.dumps(batch, separators=(',', ':'), allow_nan=False).encode())
+        for command in commands:
+            command['reported_build_timing'] = bench.reported_build_timing({'elapsed_ms': 1.7976931348623157e308}, command['seconds'])
+        cache_size = len(json.dumps(batch, separators=(',', ':'), allow_nan=False).encode())
+        # 128 pairs have two batches apiece. A generous 8MiB covers all fixed
+        # inventories, pilots, schedules, unit/host metadata and UTF-8 provenance.
+        bounded_bytes = 256 * (2 * ordinary_size + cache_size) + 8 * 1024 * 1024
+        self.assertGreater(bounded_bytes, 64 * 1024 * 1024)
+        self.assertLess(bounded_bytes, bench.MAX_REPORT_BYTES)
     def test_sides_have_equal_inputs_and_disjoint_private_caches(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-isolation-') as temporary:
             work = Path(temporary)
             with patch.dict(os.environ, {'TEKAI_EMBEDDED_ENGINE_RUNNER': '/host/engine', 'TEXINPUTS': '/host/files',
+                                         'TEKAI_DIAGNOSTIC_PROFILE': '1',
                                          'TEKAI_FORMAT_CACHE': '/host/cache', 'HOME': '/host/home',
                                          **{name: '/host/search-root' for name in bench.SEARCH_ENV_VARS}}):
                 fixtures = [bench.make_fixture(work / slot / replica, Path('/binary'), 'nested-lookup')
@@ -395,6 +493,7 @@ class FixtureTests(unittest.TestCase):
             for fixture in fixtures:
                 env = fixture['env']
                 self.assertNotIn('TEKAI_EMBEDDED_ENGINE_RUNNER', env)
+                self.assertNotIn('TEKAI_DIAGNOSTIC_PROFILE', env)
                 for name in bench.SEARCH_ENV_VARS:
                     self.assertNotIn(name, env)
                 self.assertEqual(env['PATH'], '')
@@ -451,6 +550,7 @@ class FixtureTests(unittest.TestCase):
         diagnostics = [bench.reported_build_timing({'elapsed_ms': 30}, 0.01),
                        bench.reported_build_timing({'elapsed_ms': None}, 0.02)]
         responses = [{'command_id': index + 1, 'seconds': seconds,
+                      'parent_timing': [float(index), float(index), float(index) + seconds],
                       'reported_build_timing': diagnostic, 'output_validation': {'verified': True}}
                      for index, (seconds, diagnostic) in enumerate(zip((0.01, 0.02), diagnostics))]
         with patch.object(bench, 'execute_fixture', side_effect=responses):
@@ -459,6 +559,7 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(result['iterations'], 2)
         self.assertEqual([command['reported_build_timing'] for command in result['commands']], diagnostics)
         self.assertEqual([command['seconds'] for command in result['commands']], [0.01, 0.02])
+        self.assertEqual([command['parent_timing'] for command in result['commands']], [response['parent_timing'] for response in responses])
         self.assertLess(result['commands'][0]['reported_build_timing']['parent_minus_reported_seconds'], 0)
 
     def test_expected_text_rejects_an_empty_successful_pdf(self):
@@ -679,7 +780,7 @@ class FixtureTests(unittest.TestCase):
             def initialize(_runner, fixture, case, initializing=False):
                 self.assertTrue(initializing)
                 events.append((case, 'initialize', fixture['label']))
-                result = {'command_id': 0, 'seconds': 100, 'output_validation': {'verified': True}}
+                result = {'command_id': 0, 'seconds': 100, 'parent_timing': [0, 1, 100], 'output_validation': {'verified': True}}
                 if case == 'warm-build-cache':
                     result['reported_build_timing'] = bench.reported_build_timing({'elapsed_ms': 125}, 100)
                 return result
@@ -693,6 +794,12 @@ class FixtureTests(unittest.TestCase):
             for mutate, warm_seconds, pilot_seconds, expected in ((False, 0.01, 0.01, 0), (True, 0.01, 0.01, 1),
                                                                   (False, 0.014, 0.0065, 0), (False, 0.001, 0.0001, 2)):
                 events.clear()
+                checkpoints = []
+                original_persist = bench.persist
+
+                def checkpoint(report, path):
+                    checkpoints.append({row['case']: len(row['samples']) for row in report['results']})
+                    original_persist(report, path)
 
                 def measured(*args):
                     result = batch(*args)
@@ -703,10 +810,11 @@ class FixtureTests(unittest.TestCase):
                 with patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
                         patch.object(bench, 'make_fixture', side_effect=mocked_fixture), \
                         patch.object(bench, 'execute_fixture', side_effect=initialize), \
-                        patch.object(bench, 'batch', side_effect=measured), contextlib.redirect_stdout(io.StringIO()):
+                        patch.object(bench, 'batch', side_effect=measured), \
+                        patch.object(bench, 'persist', side_effect=checkpoint), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(bench.main(argv), expected)
                 report = json.loads(output.read_text())
-                self.assertEqual(report['schema_version'], 4)
+                self.assertEqual(report['schema_version'], 5)
                 self.assertEqual(report['policy']['calibration_pairs'], 2)
                 self.assertEqual(report['policy']['calibration_iterations'], 32)
                 self.assertEqual(report['policy']['calibration_method'], 'balanced-batched-slot-pilot-v1')
@@ -717,6 +825,8 @@ class FixtureTests(unittest.TestCase):
                 self.assertFalse(report['diagnostic_telemetry']['reported_build_timing']['used_for_gate'])
                 for row in report['results']:
                     case_events = [event for event in events if event[0] == row['case']]
+                    recorded_counts = sorted({state.get(row['case'], 0) for state in checkpoints})
+                    self.assertEqual(recorded_counts, [0] if expected == 2 else list(range(0, 41, 4)))
                     self.assertEqual([event[1] for event in case_events[:4]], ['initialize'] * 4)
                     self.assertEqual([event[3] for event in case_events[4:12]], [1] * 8)
                     self.assertEqual([event[3] for event in case_events[12:20]], [32] * 8)
@@ -763,6 +873,9 @@ class FixtureTests(unittest.TestCase):
                         self.assertEqual(len(row['samples']), 40)
                         self.assertEqual(row['analysis']['inference_unit_count'], 10)
                         self.assertEqual(row['analysis']['median_ratio_interval']['order_statistic'], 1)
+                        self.assertEqual(len(row['unit_timing']), 10)
+                        self.assertTrue(all(unit['complete'] for unit in row['unit_timing']))
+                        self.assertEqual(len([host for host in report['host_observations'] if host['case'] == row['case']]), 10)
                 if mutate:
                     self.assertEqual(report['status'], 'error')
                 else:
@@ -785,7 +898,7 @@ class FixtureTests(unittest.TestCase):
                 def initialize(_runner, fixture, _case, initializing=False):
                     if phase == 'initialization' and fixture['label'] == 'candidate':
                         raise bench.BenchmarkError('controlled later-side ' + phase + ' failure')
-                    return {'command_id': 0, 'seconds': 1, 'output_validation': {'verified': True}}
+                    return {'command_id': 0, 'seconds': 1, 'parent_timing': [0, 0.1, 1], 'output_validation': {'verified': True}}
 
                 def measured(_runner, fixture, _case, iterations):
                     if iterations == failure_iterations and fixture['label'] == 'candidate':
@@ -813,6 +926,12 @@ class FixtureTests(unittest.TestCase):
                     self.assertEqual(partial['baseline']['seconds'], failure_iterations * 0.01)
                 if phase != 'samples':
                     self.assertEqual(row['samples'], [])
+                    self.assertEqual(row['unit_timing'], [])
+                else:
+                    self.assertEqual(len(row['unit_timing']), 1)
+                    self.assertFalse(row['unit_timing'][0]['complete'])
+                    self.assertNotIn('monotonic_end_seconds', row['unit_timing'][0])
+                self.assertEqual(report['host_observations'], [])
                 self.assertTrue(all(binary['unchanged'] for binary in report['executables']))
 
 

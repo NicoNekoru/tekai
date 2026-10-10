@@ -253,7 +253,7 @@ binaries or establish the cause of a measured slowdown.
 ```sh
 python3 -B tools/benchmark_runtime.py --candidate target/release/tekai \
   --baseline /path/to/previous/tekai \
-  --metadata /path/to/comparison-metadata.json --pairs 40 --gate
+  --metadata /path/to/comparison-metadata.json --pairs 128 --budget 2700 --gate
 python3 tools/verify_bundled_papers.py --engine target/release/tekai --images
 ```
 
@@ -280,9 +280,9 @@ of 512 iterations. Reports retain pilot commands, normalized rates, required
 and selected counts, and any clipped headroom. An unreachable minimum is
 inconclusive before inferential sampling. Iterations remain fixed afterward,
 and unexpectedly short measured batches remain inconclusive. There are no
-adaptive retries or replacement samples. The whole-run deadline stays at
-900 seconds.
-Forty baseline/candidate pairs retain all raw command samples. Four pairs form
+adaptive retries or replacement samples. The whole-run deadline is 2700 seconds.
+The prospective policy uses 128 baseline/candidate pairs and retains every
+raw command sample. Four pairs form
 one eight-batch comparison unit. For baseline A and candidate B, the slot
 schedule is `A0 B0 B1 A1` followed by `B0 A0 A1 B1`. The first quad alternates
 between units and cases. Each artifact occupies every quad position and each
@@ -290,15 +290,37 @@ slot-position combination. The unit ratio is the fourth root of the product
 of its four candidate times divided by the product of its four baseline times.
 For multiplicative timing effects, combining both quads before inference
 cancels fixed slot effects and a repeatable slot-position profile. The default
-produces 10 inference units. Exact median intervals use a familywise confidence
+produces 32 complete inference units. Exact median intervals use a familywise confidence
 level of at least 95 percent across the three declared cases. At this sample
-count the interval uses the minimum and maximum unit ratios, so uncertainty
-can remain broad.
+count the interval uses the ninth and twenty-fourth sorted unit ratios.
+The previous ten-unit policy used the minimum and maximum. Historical reports
+keep their original policy and outcome.
+
+The sample count comes from a prospective exact binomial power calculation,
+not trimming or rescoring previous CI samples. Let `q` be the probability that
+an independent complete unit ratio is at or below the fixed 1.10 boundary.
+The table shows the probability that the interval alone supports a pass,
+assuming a stable distribution and ignoring the separate noise and order guards.
+It does not estimate `q` on a hosted runner or guarantee CI success.
+
+| Probability `q` | Previous 10 units | Current 32 units |
+| --- | ---: | ---: |
+| 0.80 | 10.74% | 82.54% |
+| 0.90 | 34.87% | 99.67% |
+| 0.95 | 59.87% | 99.998% |
+
+Each command retains monotonic start, launch and completion timing so unusually
+slow commands can be located rather than hidden in an aggregate. Diagnostic
+host observations at unit boundaries stay outside measured command durations.
+These records cannot establish independence or remove shared-runner drift.
+Compact atomic report checkpoints are written after complete units, outside
+command timers. A 128-MiB report limit retains the previous checkpoint and a
+separate error manifest on overflow rather than dropping samples.
 
 The declared slowdown boundary is 10 percent. A statistically demonstrated
 regression returns exit 1. Insufficient precision, excessive variability or
 order bias returns exit 2, not success. CI rejects both. Exit 0 requires all
-cases to pass. The 10 percent per-artifact variability guard retains all 40
+cases to pass. The 10 percent per-artifact variability guard retains all 128
 batches per artifact. The 5 percent order-bias guard uses uncanceled ratios
 within each slot. The intervals assume independent units and a stable median
 effect across slots. Crossover cannot remove arbitrary copy or cache effects,
@@ -315,9 +337,58 @@ Their difference includes parent capture setup and completion scheduling,
 launch, CLI setup, serialization and exit overhead. It does not isolate loader
 time.
 
+### Separate diagnostic profiling
+
+Full CI profiles both original executables after uploading the primary gate
+evidence. This is a small, fixed profiling pass with two repetitions per
+artifact, slot and workload, a 30-second command limit and a 300-second total
+budget. It uses separate fixtures, binary copies, homes and caches. Instrumented
+timings cannot enter calibration, statistical samples or the primary decision.
+The profile records completion or errors and per-metric availability, not
+comparative pass or fail verdicts. Missing metrics are explicit rather than
+reported as zero.
+
+The report retains externally observed launch/finish timing and available
+process CPU time, peak resident memory, page faults, context switches and I/O
+counters. Host observations record available load, memory and swap information
+outside profiled commands. Resource measurements describe the system timer's
+scope, not the whole CI job or proof of leak-free behavior.
+Timer text shares the child's stderr channel and remains untrusted. Truncated
+or duplicate resource and phase records cannot establish valid measurements.
+
+Candidate processes can opt into a bounded `TEKAI_PROFILE ` JSON stderr record
+with `TEKAI_DIAGNOSTIC_PROFILE=1`. Phase durations are diagnostic and untrusted,
+just like optional build timing. Older baseline binaries may not support the
+record and must report phases as unavailable. The normal benchmark clears the
+profiling opt-in from its environment. Unmeasured phases are not inferred from
+the residual between external and internal timers.
+
+Phase records aggregate a fixed inventory of completed calls. Their scopes
+overlap, so their durations must not be summed into a total. The exact native
+engine exits without returning to the Rust CLI, so direct engine commands do
+not currently emit the phase record. Parent cache/build commands can report
+argument/configuration setup, state loading, freshness checks and TeX subprocess
+waits. Native format initialization remains explicitly unmeasured.
+
+```sh
+python3 -B tools/profile_runtime.py --candidate target/release/tekai \
+  --baseline /path/to/previous/tekai \
+  --metadata /path/to/comparison-metadata.json \
+  --primary-report /path/to/comparison.json \
+  --output target/runtime-performance/profiling/profile.json \
+  --repeats 2 --timeout 30 --budget 300
+```
+
+Profiling and failure-only attribution are separate artifacts. Neither can
+replace a failed or inconclusive primary result. They can perturb later runner
+conditions, so later observations cannot retrospectively explain a scheduling
+event without supporting time-aligned evidence.
+
 Full CI adds advisory attribution controls only after a completed non-green
 timing comparison. It saves the primary evidence first, then swaps the same
 executable artifacts' roles and compares the candidate artifact with itself.
+Controls require the separate profiler to finish without errors, so failed
+diagnostic cleanup cannot be followed by more measured commands.
 Current binary and verifier hashes must still match the primary report.
 Each control keeps separate provenance, logs and reports. The primary gate
 keeps its original result. These later measurements help investigate

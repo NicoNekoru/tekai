@@ -84,16 +84,21 @@ class AttributionTests(unittest.TestCase):
     def make_report(self, metadata, sources, status, gate=False, fixture_prefix=None):
         prefix = fixture_prefix or self.work / 'control-fixtures'
         sample_status = 'pass' if status == 'error' else status
-        ratios = [1.2] * 40 if sample_status == 'fail' else (
-            ([1.08] * 4 + [1.12] * 4) * 5 if sample_status == 'inconclusive' else [1.0] * 40)
+        pairs = attribution.POLICY['pairs_per_case']
+        ratios = [1.2] * pairs if sample_status == 'fail' else (
+            ([1.08] * 4 + [1.12] * 4) * (pairs // 8) if sample_status == 'inconclusive' else [1.0] * pairs)
         command_id = 0
+        clock = 10.0
+        hosts = []
 
         def batch(case, seconds, iterations=1):
-            nonlocal command_id
+            nonlocal command_id, clock
             commands = []
             for _ in range(iterations):
                 command_id += 4
-                commands.append({'command_id': command_id, 'seconds': seconds})
+                commands.append({'command_id': command_id, 'seconds': seconds,
+                                 'parent_timing': [clock, clock + seconds / 10, clock + seconds]})
+                clock += seconds + 0.1
             return {
                 'seconds': sum(command['seconds'] for command in commands), 'iterations': iterations,
                 'commands': commands,
@@ -111,11 +116,11 @@ class AttributionTests(unittest.TestCase):
                 'fixture_roots': {slot: {label: str(prefix / slot / benchmark.replica_for(label, slot) / case)
                                         for label in benchmark.LABELS} for slot in benchmark.SLOTS},
                 'fixture_inventory': [],
-                'slot_schedule': [attribution.json_schedule(benchmark.crossover_pair(index, case_index)) for index in range(40)],
+                'slot_schedule': [attribution.json_schedule(benchmark.crossover_pair(index, case_index)) for index in range(pairs)],
                 'initialization_order': benchmark.cell_order(case_index),
                 'min_sample_seconds': 1.0,
                 'initialization': {slot: {} for slot in benchmark.SLOTS},
-                'warmups': [], 'calibration_pilots': [], 'samples': [],
+                'warmups': [], 'calibration_pilots': [], 'samples': [], 'unit_timing': [],
             }
             for cell in benchmark.cell_order(case_index):
                 slot, label, replica = cell['slot'], cell['label'], cell['replica']
@@ -127,6 +132,7 @@ class AttributionTests(unittest.TestCase):
                 observed = batch(case, 1.0)
                 row['initialization'][slot][label] = {
                     'command_id': observed['commands'][0]['command_id'],
+                    'parent_timing': observed['commands'][0]['parent_timing'],
                     'seconds': observed['seconds'], 'output_validation': observed['output_validation'],
                 }
             for index in range(2):
@@ -147,19 +153,34 @@ class AttributionTests(unittest.TestCase):
             iterations = benchmark.calibrated_iterations(row['calibration_pilots'], 1.0, 512)
             row['iterations_per_batch'] = iterations
             for index, ratio in enumerate(ratios):
+                if index % 4 == 0:
+                    unit = {'unit_index': index // 4, 'first_pair_index': index, 'pair_count': 4,
+                            'monotonic_start_seconds': clock, 'complete': False}
+                    row['unit_timing'].append(unit)
                 sample = {**attribution.json_schedule(benchmark.crossover_pair(index, case_index)),
                           'iterations': iterations}
                 for label in sample['order']:
                     sample[label] = batch(case, ratio if label == 'candidate' else 1.0, iterations)
                 sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
                 row['samples'].append(sample)
+                if (index + 1) % 4 == 0:
+                    unit.update(monotonic_end_seconds=clock, complete=True)
+                    hosts.append({'case': case, 'unit_index': unit['unit_index'], 'monotonic_seconds': clock,
+                                  'used_for_gate': False, 'load_average': None, 'load_average_status': 'unavailable',
+                                  'memory_status': 'unavailable', 'swap_status': 'unavailable',
+                                  'cpu_utilization_status': 'unavailable'})
             row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0, case_index=case_index)
             rows.append(row)
         report = {
-            'schema_version': 4, 'gate': gate, 'status': status,
+            'schema_version': 5, 'gate': gate, 'status': status,
+            'prospective_sampling_study': benchmark.prospective_power_study(),
+            'timing_metadata': copy.deepcopy(benchmark.TIMING_METADATA), 'host_observations': hosts,
+            'monotonic_start_seconds': 10.0, 'monotonic_end_seconds': clock,
+            'clock_origin': {'unix_ns': 1800000000000000000, 'monotonic_seconds': 10.0,
+                             'alignment': 'Sequential wall then monotonic observations; approximate alignment only.'},
             'metadata': copy.deepcopy(metadata), 'policy': copy.deepcopy(attribution.POLICY),
             'machine': {'system': 'Darwin', 'architecture': 'arm64'},
-            'elapsed_seconds': 3.0, 'exit_code': benchmark.comparison_exit(status, gate),
+            'elapsed_seconds': clock - 10.0, 'exit_code': benchmark.comparison_exit(status, gate),
             'executables': [], 'output_verifiers': {}, 'results': rows,
             'errors': [] if status != 'error' else ['BenchmarkError: Command failed; return code 7'],
         }
@@ -184,6 +205,43 @@ class AttributionTests(unittest.TestCase):
     def save_inputs(self, primary=None, metadata=None):
         self.primary_path.write_text(json.dumps(self.primary if primary is None else primary), encoding='utf-8')
         self.metadata_path.write_text(json.dumps(self.metadata if metadata is None else metadata), encoding='utf-8')
+
+    @staticmethod
+    def retime_report(report):
+        """Build a fresh literal diagnostic clock after deliberate workload-model changes."""
+        clock, command_id = 10.0, 0
+        report['host_observations'] = []
+
+        def command(value):
+            nonlocal clock, command_id
+            command_id += 4
+            seconds = value['seconds']
+            value.update(command_id=command_id, parent_timing=[clock, clock + seconds / 10, clock + seconds])
+            clock += seconds + 0.1
+
+        for row in report['results']:
+            for cell in row['initialization_order']:
+                command(row['initialization'][cell['slot']][cell['label']])
+            for item in row['warmups'] + row['calibration_pilots']:
+                for label in item['order']:
+                    for value in item[label]['commands']:
+                        command(value)
+            row['unit_timing'] = []
+            for index, sample in enumerate(row['samples']):
+                if index % 4 == 0:
+                    unit = {'unit_index': index // 4, 'first_pair_index': index, 'pair_count': 4,
+                            'monotonic_start_seconds': clock, 'complete': False}
+                    row['unit_timing'].append(unit)
+                for label in sample['order']:
+                    for value in sample[label]['commands']:
+                        command(value)
+                if (index + 1) % 4 == 0:
+                    unit.update(monotonic_end_seconds=clock, complete=True)
+                    report['host_observations'].append({'case': row['case'], 'unit_index': index // 4,
+                        'monotonic_seconds': clock, 'used_for_gate': False, 'load_average': None,
+                        'load_average_status': 'unavailable', 'memory_status': 'unavailable',
+                        'swap_status': 'unavailable', 'cpu_utilization_status': 'unavailable'})
+        report.update(monotonic_end_seconds=clock, elapsed_seconds=clock - 10.0)
 
     def make_runner(self, mutations=None, statuses=None):
         mutations, statuses = mutations or {}, statuses or {}
@@ -306,6 +364,7 @@ class AttributionTests(unittest.TestCase):
             # Both 32-command totals stay at 32 seconds. Their normalized
             # rate is one second, so two seconds of headroom selects two.
             self.assertEqual(row['iterations_per_batch'], 2)
+        self.retime_report(primary)
         result, summary, runner, _ = self.invoke(primary=primary)
         self.assertEqual(result, 0)
         self.assertEqual(summary['status'], 'complete')
@@ -435,6 +494,7 @@ class AttributionTests(unittest.TestCase):
                     batch.update(iterations=32, seconds=sum(command['seconds'] for command in batch['commands']))
                 sample['ratio'] = sample['candidate']['seconds'] / sample['baseline']['seconds']
             row['analysis'] = benchmark.analyze_pairs(row['samples'], 0.10, 1.0)
+            self.retime_report(report)
             return row
 
         primary = copy.deepcopy(self.primary)
@@ -454,7 +514,7 @@ class AttributionTests(unittest.TestCase):
         self.assert_stopped(self.make_runner(mutations={'reversed': contaminate}))
 
     def test_previous_report_schema_has_no_silent_calibration_fallback(self):
-        for schema in (2, 3):
+        for schema in (2, 3, 4):
             with self.subTest(schema=schema):
                 def change(report, _args=None):
                     report['schema_version'] = schema
@@ -480,10 +540,12 @@ class AttributionTests(unittest.TestCase):
             raise AssertionError('Synthetic calibration must be infeasible')
         row.pop('iterations_per_batch', None)
         row['samples'] = []
+        row['unit_timing'] = []
 
     def test_genuine_calibration_infeasible_control_continues_to_self(self):
         def change(report, _args):
             self.make_infeasible_case(report['results'][0])
+            self.retime_report(report)
             report['status'] = 'inconclusive'
             report['exit_code'] = 0
         result, summary, runner, directory = self.invoke(
@@ -727,9 +789,52 @@ class AttributionTests(unittest.TestCase):
             self.assertNotIn('--gate', argv)
             args = benchmark.parser().parse_args(argv)
             self.assertFalse(args.gate)
-            self.assertEqual((args.pairs, args.warmups, args.max_iterations), (40, 2, 512))
-            self.assertEqual((args.timeout, args.budget, args.threshold), (30.0, 900.0, 0.10))
+            self.assertEqual((args.pairs, args.warmups, args.max_iterations), (128, 2, 512))
+            self.assertEqual((args.timeout, args.budget, args.threshold), (30.0, 2700.0, 0.10))
             self.assertEqual((args.min_sample_seconds, args.warm_cache_min_sample_seconds), (1.0, 1.0))
+
+    def test_parent_clock_unit_boundaries_and_host_records_are_bound_diagnostics(self):
+        for mode in ('missing-timing', 'clock-total', 'launch-before-start', 'wrong-duration', 'wrong-launch-order',
+                     'unit-before-pilot', 'unit-incomplete', 'host-before-end', 'host-is-gating', 'study-is-gating'):
+            with self.subTest(mode=mode):
+                primary = copy.deepcopy(self.primary)
+                row = primary['results'][0]
+                sample = row['samples'][0]
+                command = sample[sample['order'][0]]['commands'][0]
+                if mode == 'missing-timing':
+                    command.pop('parent_timing')
+                elif mode == 'clock-total':
+                    primary['monotonic_end_seconds'] += 1
+                elif mode == 'launch-before-start':
+                    command['parent_timing'][1] = command['parent_timing'][0] - 1
+                elif mode == 'wrong-duration':
+                    command['parent_timing'][2] += 0.1
+                elif mode == 'wrong-launch-order':
+                    sample['baseline']['commands'][0]['parent_timing'], sample['candidate']['commands'][0]['parent_timing'] = \
+                        sample['candidate']['commands'][0]['parent_timing'], sample['baseline']['commands'][0]['parent_timing']
+                elif mode == 'unit-before-pilot':
+                    row['unit_timing'][0]['monotonic_start_seconds'] = primary['monotonic_start_seconds']
+                elif mode == 'unit-incomplete':
+                    row['unit_timing'][0]['complete'] = False
+                elif mode == 'host-before-end':
+                    primary['host_observations'][0]['monotonic_seconds'] = row['unit_timing'][0]['monotonic_start_seconds']
+                elif mode == 'host-is-gating':
+                    primary['host_observations'][0]['used_for_gate'] = True
+                else:
+                    primary['prospective_sampling_study']['used_for_gate'] = True
+                self.assert_skipped(primary=primary)
+
+    def test_valid_extreme_host_load_does_not_reinterpret_primary_or_controls(self):
+        def change(report, _args=None):
+            for host in report['host_observations']:
+                host.update(load_average_status='reported', load_average=[1000000.0] * 3)
+        primary = copy.deepcopy(self.primary)
+        original_analysis = copy.deepcopy([row['analysis'] for row in primary['results']])
+        change(primary)
+        result, summary, runner, _ = self.invoke(primary=primary, runner=self.make_runner(mutations={'reversed': change}))
+        self.assertEqual((result, summary['status']), (0, 'complete'))
+        self.assertEqual(runner.call_count, 2)
+        self.assertEqual([row['analysis'] for row in primary['results']], original_analysis)
 
     def test_control_semantic_fail_and_inconclusive_do_not_pass_or_replace_primary(self):
         runner = self.make_runner(statuses={'reversed': 'fail', 'candidate-self': 'inconclusive'})

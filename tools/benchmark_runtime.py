@@ -24,6 +24,8 @@ import threading
 import time
 
 from performance_ci import PerformanceCI
+from benchmark_sampling import (DEFAULT_PAIRS, MAX_PAIRS, DEFAULT_BUDGET, MAX_BUDGET,
+                                SCHEMA_VERSION, MAX_REPORT_BYTES, sign_interval_plan, prospective_power_study)
 from runtime_fixtures import document, pad, png  # Keep the existing helper imports usable.
 
 REPO = Path(__file__).resolve().parent.parent
@@ -40,6 +42,15 @@ MAX_ITERATIONS = 512
 NOISE_LIMIT = 0.10
 ORDER_BIAS_LIMIT = 0.05
 FAMILY_ALPHA = 0.05
+TIMING_METADATA = {
+    'clock': 'time.monotonic', 'unit': 'seconds',
+    'parent_timing_fields': ['start', 'launch_end', 'completion'],
+    'command_scope': 'Parent capture setup through blocking-wait completion, including launch and completion scheduling.',
+    'launch_scope': 'Parent capture setup and Popen return, not isolated loader time.',
+    'unit_scope': 'Unit boundaries also include between-command cleanup and output verification, outside scored command sums.',
+    'checkpoint_scope': 'Atomic checkpoint writes occur between units, outside command and unit timestamps.',
+    'used_for_gate': False,
+}
 SEARCH_ENV_VARS = frozenset(('WEB2C', 'INDEXSTYLE', 'BSTINPUTS', 'TFMFONTS', 'AFMFONTS',
                             'ENCFONTS', 'SFDFONTS', 'PKFONTS', 'GFFONTS', 'VFFONTS',
                             'T1FONTS', 'TTFONTS', 'OPENTYPEFONTS'))
@@ -110,16 +121,11 @@ def median_interval(values, alpha):
     if not 0 < alpha < 1:
         raise ValueError('Interval alpha must be between zero and one')
     ordered = sorted(values)
-    n, lower_tail, selected = len(ordered), 0, None
-    for k in range(1, (n + 1) // 2 + 1):
-        lower_tail += math.comb(n, k - 1)
-        noncoverage = 2 * lower_tail / 2 ** n
-        if noncoverage <= alpha:
-            selected = {'lower': ordered[k - 1], 'upper': ordered[n - k],
-                        'coverage_at_least': 1 - noncoverage, 'order_statistic': k}
-        else:
-            break
-    return selected
+    plan = sign_interval_plan(len(ordered), alpha)
+    if plan is None:
+        return None
+    k = plan['order_statistic']
+    return {'lower': ordered[k - 1], 'upper': ordered[len(ordered) - k], **plan}
 
 
 def relative_mad(values):
@@ -342,6 +348,7 @@ class Supervisor(PerformanceCI):
         allowance = min(self.timeout, self.remaining())
         started = time.monotonic()
         process = self.start(command, cwd, env)
+        launch_end = time.monotonic()
         process.observe = False
         process.started_at = started
         completed, observation = threading.Event(), {}
@@ -349,7 +356,8 @@ class Supervisor(PerformanceCI):
         def wait():
             try:
                 observation['code'] = process.wait()
-                observation['seconds'] = time.monotonic() - process.started_at
+                observation['completion'] = time.monotonic()
+                observation['seconds'] = observation['completion'] - process.started_at
             finally:
                 completed.set()
 
@@ -382,6 +390,7 @@ class Supervisor(PerformanceCI):
         for path in process.capture_paths:
             path.unlink()
         return {'command_id': process.command_id, 'seconds': observation['seconds'],
+                'parent_timing': [started, launch_end, observation['completion']],
                 'stdout': stdout, 'stderr_tail': stderr}
 
 
@@ -562,7 +571,8 @@ def batch(supervisor, fixture, case, iterations):
     observations = []
     for index in range(iterations):
         result = execute_fixture(supervisor, fixture, case, validate_output=index == iterations - 1)
-        observation = {'command_id': result['command_id'], 'seconds': result['seconds']}
+        observation = {'command_id': result['command_id'], 'seconds': result['seconds'],
+                       'parent_timing': result['parent_timing']}
         if 'reported_build_timing' in result:
             observation['reported_build_timing'] = result['reported_build_timing']
         observations.append(observation)
@@ -591,9 +601,38 @@ def load_metadata(path):
     return metadata
 
 
-def persist(report, path):
+class ReportTooLarge(BenchmarkError):
+    pass
+
+
+def atomic_text(path, value):
+    """Replace only the selected report using an owned temporary sibling."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, allow_nan=False) + '\n', encoding='utf-8')
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix=path.name + '.', suffix='.tmp', delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(value)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def persist(report, path):
+    encoded = json.dumps(report, separators=(',', ':'), allow_nan=False) + '\n'
+    size = len(encoded.encode('utf-8'))
+    if size > MAX_REPORT_BYTES:
+        # Never replace the last complete checkpoint with truncated evidence.
+        # A separate bounded error manifest explains the failed final/checkpoint write.
+        manifest = {'schema_version': SCHEMA_VERSION, 'status': 'error', 'exit_code': 1,
+                    'errors': ['Report exceeds the finite output limit; prior checkpoint retained unchanged'],
+                    'attempted_bytes': size, 'maximum_bytes': MAX_REPORT_BYTES,
+                    'retained_checkpoint': str(path), 'samples_dropped': False}
+        atomic_text(path.with_suffix('.overflow.json'), json.dumps(manifest, allow_nan=False) + '\n')
+        raise ReportTooLarge('Report exceeds the finite output limit; prior checkpoint retained unchanged')
+    atomic_text(path, encoded)
     lines = ['# Paired runtime comparison', '',
              'Mode ' + ('explicit statistical gate.' if report['gate'] else 'advisory timing evidence.'),
              '', 'Outcome `' + report['status'] + '`.', '',
@@ -615,7 +654,22 @@ def persist(report, path):
     for case in report['results']:
         lines.extend(f"- {case['case']}, {reason}" for reason in case.get('analysis', {}).get('reasons', []))
     lines.extend('- ' + error for error in report['errors'])
-    path.with_suffix('.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    atomic_text(path.with_suffix('.md'), '\n'.join(lines) + '\n')
+
+
+def host_snapshot(case, unit_index):
+    """One bounded, diagnostic-only in-process observation outside command clocks."""
+    row = {'case': case, 'unit_index': unit_index, 'monotonic_seconds': time.monotonic(),
+           'used_for_gate': False, 'load_average': None,
+           'load_average_status': 'unavailable', 'memory_status': 'unavailable',
+           'swap_status': 'unavailable', 'cpu_utilization_status': 'unavailable'}
+    try:
+        values = list(os.getloadavg())
+        if len(values) == 3 and all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in values):
+            row.update(load_average=values, load_average_status='reported')
+    except (AttributeError, OSError, ValueError, OverflowError):
+        pass
+    return row
 
 
 def parser():
@@ -625,10 +679,12 @@ def parser():
     result.add_argument('--metadata', type=Path, required=True,
                         help='JSON with runner_label, toolchain and per-side revision/build_command')
     result.add_argument('--output', type=Path, default=REPO / 'target/runtime-performance/report.json')
-    result.add_argument('--pairs', type=int, default=40, help='Logical paired batch count, a multiple of four from 16 to 60')
+    result.add_argument('--pairs', type=int, default=DEFAULT_PAIRS,
+                        help=f'Logical paired batch count, a multiple of four from 16 to {MAX_PAIRS}')
     result.add_argument('--warmups', type=int, default=2, help='Per artifact/slot single-command warmups before separate calibration pilots, 2 to 10')
     result.add_argument('--timeout', type=float, default=30, help='Per-command deadline, (0, 60] seconds')
-    result.add_argument('--budget', type=float, default=900, help='Whole-run deadline, (0, 1800] seconds')
+    result.add_argument('--budget', type=float, default=DEFAULT_BUDGET,
+                        help=f'Whole-run deadline, (0, {MAX_BUDGET:g}] seconds')
     result.add_argument('--threshold', type=float, default=0.10, help='Predeclared relative practical slowdown, (0, 1]')
     result.add_argument('--min-sample-seconds', type=float, default=1.0, help='Minimum aggregate batch duration, [0.05, 2] seconds')
     result.add_argument('--warm-cache-min-sample-seconds', type=float, default=1.0,
@@ -644,7 +700,7 @@ def main(argv=None):
     args = argument_parser.parse_args(argv)
     if os.name != 'posix' or platform.system() not in ('Linux', 'Darwin'):
         argument_parser.error('Requires macOS or Linux owned POSIX process groups')
-    for name, upper in (('timeout', 60), ('budget', 1800), ('threshold', 1)):
+    for name, upper in (('timeout', 60), ('budget', MAX_BUDGET), ('threshold', 1)):
         value = getattr(args, name)
         if not math.isfinite(value) or not 0 < value <= upper:
             argument_parser.error(f'--{name} must be finite and in (0, {upper}]')
@@ -652,9 +708,9 @@ def main(argv=None):
         argument_parser.error('--min-sample-seconds must be finite and in [0.05, 2]')
     if not math.isfinite(args.warm_cache_min_sample_seconds) or not 0.25 <= args.warm_cache_min_sample_seconds <= 4:
         argument_parser.error('--warm-cache-min-sample-seconds must be finite and in [0.25, 4]')
-    if not 16 <= args.pairs <= 60 or args.pairs % PAIRS_PER_UNIT or not 2 <= args.warmups <= 10 \
+    if not 16 <= args.pairs <= MAX_PAIRS or args.pairs % PAIRS_PER_UNIT or not 2 <= args.warmups <= 10 \
             or not 1 <= args.max_iterations <= MAX_ITERATIONS:
-        argument_parser.error(f'Requires --pairs 16..60 divisible by four, --warmups 2..10 and --max-iterations 1..{MAX_ITERATIONS}')
+        argument_parser.error(f'Requires --pairs 16..{MAX_PAIRS} divisible by four, --warmups 2..10 and --max-iterations 1..{MAX_ITERATIONS}')
     args.output = args.output.resolve()
     if args.output.suffix.lower() != '.json':
         argument_parser.error('--output requires a .json extension to keep distinct JSON and Markdown reports')
@@ -665,11 +721,13 @@ def main(argv=None):
     sources = {label: getattr(args, label).resolve() for label in LABELS}
     if any(not path.is_file() or not os.access(path, os.X_OK) for path in sources.values()):
         argument_parser.error('Both selected binary paths must be executable regular files')
-    for output_path in (args.output, args.output.with_suffix('.md')):
+    for output_path in (args.output, args.output.with_suffix('.md'), args.output.with_suffix('.overflow.json')):
         for input_path in (*sources.values(), args.metadata.resolve()):
             if output_path == input_path or (output_path.exists() and output_path.samefile(input_path)):
                 argument_parser.error('Output paths must not overwrite selected inputs or aliases')
-    report = {'schema_version': 4, 'gate': args.gate, 'status': 'incomplete', 'metadata': metadata,
+    report = {'schema_version': SCHEMA_VERSION, 'gate': args.gate, 'status': 'incomplete', 'metadata': metadata,
+              'timing_metadata': TIMING_METADATA, 'host_observations': [],
+              'prospective_sampling_study': prospective_power_study(),
               'machine': {'system': platform.system(), 'release': platform.release(),
                           'architecture': platform.machine(), 'processor': platform.processor(),
                           'logical_cpu_count': os.cpu_count(), 'python': platform.python_version()},
@@ -679,6 +737,7 @@ def main(argv=None):
                   'parent_minus_reported_seconds_scope': 'Diagnostic residual includes parent capture setup, launch, '
                       'CLI/configuration setup, serialization, exit and completion scheduling; it does not isolate loader time.'}},
               'policy': {'relative_threshold': args.threshold, 'familywise_confidence': 1 - FAMILY_ALPHA,
+                         'checkpoint_unit': 'complete-inference-unit', 'maximum_report_bytes': MAX_REPORT_BYTES,
                          'pairs_per_case': args.pairs, 'warmups_per_side': args.warmups,
                          'warmup_unit': 'artifact-slot-cell',
                          'crossover_design': 'fixed-slot-complementary-quads-v1',
@@ -717,6 +776,9 @@ def main(argv=None):
 
     signal.signal(signal.SIGTERM, terminate)
     started = time.monotonic()
+    report['monotonic_start_seconds'] = started
+    report['clock_origin'] = {'unix_ns': time.time_ns(), 'monotonic_seconds': time.monotonic(),
+                             'alignment': 'Sequential wall then monotonic observations; approximate alignment only.'}
     try:
         with tempfile.TemporaryDirectory(prefix='tekai-paired-benchmark-') as temporary:
             work = Path(temporary).resolve()
@@ -758,7 +820,7 @@ def main(argv=None):
                            'slot_schedule': [crossover_pair(index, case_index) for index in range(args.pairs)],
                            'min_sample_seconds': args.warm_cache_min_sample_seconds if case == 'warm-build-cache'
                            else args.min_sample_seconds,
-                           'warmups': [], 'calibration_pilots': [], 'samples': []}
+                           'warmups': [], 'calibration_pilots': [], 'samples': [], 'unit_timing': []}
                     report['results'].append(row)
                     for cell in cell_order(case_index):
                         slot, label, replica = cell['slot'], cell['label'], cell['replica']
@@ -780,6 +842,7 @@ def main(argv=None):
                         slot, label = cell['slot'], cell['label']
                         initial = execute_fixture(supervisor, fixtures[slot][label], case, initializing=True)
                         row['initialization'][slot][label] = {'command_id': initial['command_id'], 'seconds': initial['seconds'],
+                                                             'parent_timing': initial['parent_timing'],
                                                              'output_validation': initial['output_validation']}
                         if 'reported_build_timing' in initial:
                             row['initialization'][slot][label]['reported_build_timing'] = initial['reported_build_timing']
@@ -809,6 +872,11 @@ def main(argv=None):
                         row['iterations_per_batch'] = iterations
                         persist(report, args.output)
                         for pair_index in range(args.pairs):
+                            if pair_index % PAIRS_PER_UNIT == 0:
+                                unit = {'unit_index': pair_index // PAIRS_PER_UNIT,
+                                        'first_pair_index': pair_index, 'pair_count': PAIRS_PER_UNIT,
+                                        'monotonic_start_seconds': time.monotonic(), 'complete': False}
+                                row['unit_timing'].append(unit)
                             sample = {**crossover_pair(pair_index, case_index), 'iterations': iterations}
                             # Keep partial pairs so a later failure cannot erase the
                             # successful side's observation from the final artifact.
@@ -819,7 +887,10 @@ def main(argv=None):
                             if not math.isfinite(ratio) or ratio <= 0:
                                 raise ValueError('Paired ratio overflowed or underflowed; statistics are unusable')
                             sample['ratio'] = ratio
-                            persist(report, args.output)
+                            if (pair_index + 1) % PAIRS_PER_UNIT == 0:
+                                unit.update(monotonic_end_seconds=time.monotonic(), complete=True)
+                                report['host_observations'].append(host_snapshot(case, unit['unit_index']))
+                                persist(report, args.output)
                         row['analysis'] = analyze_pairs(row['samples'], args.threshold, row['min_sample_seconds'], case_index=case_index)
                     row['fixture_sha256_end'] = {slot: {label: fixture_sha256(fixtures[slot][label]['project']) for label in LABELS} for slot in SLOTS}
                     row['fixture_unchanged'] = row['fixture_sha256'] == row['fixture_sha256_end']
@@ -861,9 +932,14 @@ def main(argv=None):
     else:
         outcomes = [row['analysis']['status'] for row in report['results']]
         report['status'] = 'fail' if 'fail' in outcomes else ('inconclusive' if 'inconclusive' in outcomes else 'pass')
-    report['elapsed_seconds'] = time.monotonic() - started
+    report['monotonic_end_seconds'] = time.monotonic()
+    report['elapsed_seconds'] = report['monotonic_end_seconds'] - started
     report['exit_code'] = comparison_exit(report['status'], args.gate)
-    persist(report, args.output)
+    try:
+        persist(report, args.output)
+    except ReportTooLarge as error:
+        print(str(error), file=sys.stderr, flush=True)
+        return 1
     print('Comparison ' + report['status'] + '; report ' + str(args.output), flush=True)
     return report['exit_code']
 
