@@ -449,6 +449,7 @@ fn distinct_output_builds_serialize_shared_cache_save_and_restore() {
         ..options(&main, &second_out)
     };
     build(&first).unwrap();
+    let prior_pdf = fs::read(first_out.join("main.pdf")).unwrap();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
     let writer = {
         let barrier = barrier.clone();
@@ -474,10 +475,11 @@ fn distinct_output_builds_serialize_shared_cache_save_and_restore() {
     let restored = reader.join().unwrap();
     assert!(restored.skipped, "{restored:#?}");
     assert_eq!(restored.tex_runs, 0);
-    assert_eq!(
-        fs::read(first_out.join("main.pdf")).unwrap(),
-        fs::read(second_out.join("main.pdf")).unwrap()
-    );
+    let saved_pdf = fs::read(first_out.join("main.pdf")).unwrap();
+    let restored_pdf = fs::read(second_out.join("main.pdf")).unwrap();
+    // Restore can own the shared namespace before or after the force-save.
+    // It must accept one complete generation, never a mixed publication.
+    assert!(restored_pdf == prior_pdf || restored_pdf == saved_pdf);
     assert!(build(&first).unwrap().skipped);
     assert!(build(&second).unwrap().skipped);
     fs::remove_dir_all(root).unwrap();
@@ -485,6 +487,96 @@ fn distinct_output_builds_serialize_shared_cache_save_and_restore() {
 
 pub(super) struct BundledEnvironment {
     _guards: [EnvVarGuard; 4],
+}
+
+#[cfg(unix)]
+#[test]
+fn absolute_bibliography_source_alias_retarget_rebuilds_and_repairs_owned_state() {
+    use std::os::unix::fs::symlink;
+
+    let _test_guard = super::lock();
+    let _environment = bundled_environment();
+    let root = unique_temp_dir("tekai-bibliography-source-alias");
+    let project = root.join("project");
+    let external = root.join("external");
+    let old = external.join("old");
+    let new = external.join("new");
+    let alias = external.join("selected");
+    let out = project.join("out");
+    fs::create_dir_all(&out).unwrap();
+    fs::create_dir_all(&old).unwrap();
+    fs::create_dir_all(&new).unwrap();
+    for (directory, title) in [(&old, "OldAliasTitle"), (&new, "NewAliasTitle")] {
+        fs::write(
+            directory.join("refs.bib"),
+            format!("@book{{x, author={{A. Author}}, title={{{title}}}, year={{2026}}}}\n"),
+        )
+        .unwrap();
+    }
+    symlink(&old, &alias).unwrap();
+    let _bib_cache = EnvVarGuard::set(
+        "TEKAI_BIBTEX_CACHE",
+        root.join("bibliography-cache").display().to_string(),
+    );
+    let _aux_cache = EnvVarGuard::set(
+        "TEKAI_AUX_CACHE",
+        root.join("aux-cache").display().to_string(),
+    );
+    let main = project.join("main.tex");
+    fs::write(
+        &main,
+        format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\\cite{{x}}\n\\bibliographystyle{{plain}}\n\\bibliography{{{}/refs}}\n\\end{{document}}\n",
+            alias.display()
+        ),
+    )
+    .unwrap();
+    let options = BuildOptions {
+        external_tools: false,
+        ..options(&main, &out)
+    };
+    let first = build(&options).unwrap();
+    assert!(!first.skipped);
+    assert_eq!(first.bibliography_runs, 1, "{first:#?}");
+    assert!(
+        fs::read_to_string(out.join("main.bbl"))
+            .unwrap()
+            .contains("OldAliasTitle")
+    );
+    assert!(build(&options).unwrap().skipped);
+    let state = fs::read_to_string(out.join(".tekai-main.state.toml")).unwrap();
+    assert!(state.contains("tekai-input-alias:"));
+    fs::remove_file(&alias).unwrap();
+    symlink(&new, &alias).unwrap();
+    let next = build(&options).unwrap();
+    assert!(!next.skipped, "{next:#?}");
+    assert_eq!(next.bibliography_runs, 1, "{next:#?}");
+    let bibliography = fs::read_to_string(out.join("main.bbl")).unwrap();
+    assert!(bibliography.contains("NewAliasTitle"), "{bibliography}");
+    assert!(!bibliography.contains("OldAliasTitle"), "{bibliography}");
+    assert!(build(&options).unwrap().skipped);
+
+    // Interrupted owned metadata must not prevent a forced build from repair.
+    fs::write(out.join(".tekai-main.state.toml"), b"\xff").unwrap();
+    fs::write(out.join(".tekai-main.bibstate.toml"), "version = [").unwrap();
+    let repaired = build(&BuildOptions {
+        force: true,
+        ..options.clone()
+    })
+    .unwrap();
+    assert!(!repaired.skipped);
+    assert_eq!(repaired.bibliography_runs, 1, "{repaired:#?}");
+    assert!(build(&options).unwrap().skipped);
+    let state: toml::Value =
+        toml::from_str(&fs::read_to_string(out.join(".tekai-main.bibstate.toml")).unwrap())
+            .unwrap();
+    assert!(state["inputs"].as_array().unwrap().iter().any(|input| {
+        input["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("tekai-input-alias:")
+    }));
+    fs::remove_dir_all(root).unwrap();
 }
 
 pub(super) fn bundled_environment() -> BundledEnvironment {

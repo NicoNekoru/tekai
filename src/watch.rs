@@ -1910,29 +1910,163 @@ mod tests {
 
     #[test]
     fn preview_watch_dependency_paths_include_final_build_state() {
+        const CHILD_ROOT: &str = "TEKAI_TEST_WATCH_FINAL_DEPENDENCY_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let root = PathBuf::from(root);
+            let project = root.join("project");
+            let main = project.join("main.tex");
+            let final_only = root
+                .join("external/final-only.dat")
+                .canonicalize()
+                .expect("failed to resolve final-only input");
+            let mut final_options = watch_options(&main, &project).build_options;
+            final_options.out_dir = project.join("final-out");
+            build(&final_options).expect("failed to seed final build state");
+            assert!(
+                final_options
+                    .out_dir
+                    .join(".tekai-main.state.toml")
+                    .is_file(),
+                "the compiler must publish real final build state"
+            );
+            let final_paths = build_dependency_paths(&final_options)
+                .expect("failed to read final-state dependencies");
+            assert!(final_paths.contains(&final_only), "{final_paths:#?}");
+
+            let mut options = watch_options(&main, &project);
+            options.build_options.fast = true;
+            options.build_options.once = true;
+            let preview_only =
+                watch_dependency_paths(&options).expect("failed to read preview-only dependencies");
+            assert!(
+                !preview_only.contains(&final_only),
+                "the recorder-only external input must be absent from preview and source discovery: {preview_only:#?}"
+            );
+            options.final_build_options = Some(final_options);
+            let paths =
+                watch_dependency_paths(&options).expect("failed to read watch dependencies");
+            assert!(paths.contains(&final_only), "{paths:#?}");
+            return;
+        }
+
+        // Run the real compiler against a deterministic recorder fixture in a
+        // child process. Only the child gets this PATH; no installed TeX or
+        // global engine-environment mutation is required.
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        struct ChildGuard(std::process::Child);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
         let root = unique_temp_dir("tekai-watch-final-dependencies");
         fs::create_dir_all(&root).expect("failed to create temp directory");
-        let main = root.join("main.tex");
+        let fixture = Fixture(root.canonicalize().expect("failed to resolve fixture root"));
+        let project = fixture.0.join("project");
+        let bin = fixture.0.join("bin");
+        fs::create_dir_all(&project).expect("failed to create source directory");
+        fs::create_dir_all(&bin).expect("failed to create fake engine directory");
+        fs::create_dir_all(fixture.0.join("external"))
+            .expect("failed to create external input directory");
+        let main = project.join("main.tex");
+        let final_only = fixture.0.join("external/final-only.dat");
         fs::write(
             &main,
             "\\documentclass{article}\n\\begin{document}Hi\\end{document}\n",
         )
         .expect("failed to write main source");
-        let final_options = watch_options(&main, &root).build_options;
-        build(&final_options).expect("failed to seed final build state");
-        let mut options = watch_options(&main, &root);
-        options.build_options.fast = true;
-        options.build_options.once = true;
-        options.final_build_options = Some(final_options);
-
-        let paths = watch_dependency_paths(&options).expect("failed to read watch dependencies");
-
-        assert!(
-            paths.iter().any(|path| path.ends_with("main.tex")),
-            "{paths:#?}"
+        fs::write(&final_only, "recorder-only final input\n")
+            .expect("failed to write external input");
+        let engine = bin.join("pdflatex");
+        fs::write(
+            &engine,
+            r#"#!/bin/sh
+out=
+for arg in "$@"; do
+    case "$arg" in
+        -output-directory=*) out="${arg#-output-directory=}" ;;
+    esac
+done
+[ -n "$out" ] || exit 2
+IFS= read -r payload < "$TEKAI_TEST_WATCH_FINAL_INPUT" || exit 3
+printf '%s\n' "$payload" > "$out/main.pdf"
+printf '\\relax\n' > "$out/main.aux"
+printf 'INPUT %s\nINPUT %s\nOUTPUT %s\n' "$TEKAI_TEST_WATCH_MAIN" "$TEKAI_TEST_WATCH_FINAL_INPUT" "$out/main.pdf" > "$out/main.fls"
+printf 'deterministic fixture completed\n' > "$out/main.log"
+"#,
+        )
+        .expect("failed to write fake engine");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&engine, fs::Permissions::from_mode(0o700))
+                .expect("failed to make fake engine executable");
+        }
+        let stdout_path = fixture.0.join("child.stdout");
+        let stderr_path = fixture.0.join("child.stderr");
+        let mut child = ChildGuard(
+            std::process::Command::new(
+                std::env::current_exe().expect("test executable is available"),
+            )
+            .args([
+                "--exact",
+                "watch::tests::preview_watch_dependency_paths_include_final_build_state",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env(CHILD_ROOT, &fixture.0)
+            .env("TEKAI_TEST_WATCH_MAIN", &main)
+            .env("TEKAI_TEST_WATCH_FINAL_INPUT", &final_only)
+            .env("TEKAI_TEXMF_MODE", "bundled")
+            .env("TEKAI_ENGINE_CACHE", fixture.0.join("cache/engine"))
+            .env("TEKAI_FORMAT_CACHE", fixture.0.join("cache/formats"))
+            .env("TEKAI_AUX_CACHE", fixture.0.join("cache/aux"))
+            .env("TEKAI_BIBTEX_CACHE", fixture.0.join("cache/bibtex"))
+            .env("PATH", &bin)
+            .stdout(fs::File::create(&stdout_path).expect("failed to create child output"))
+            .stderr(fs::File::create(&stderr_path).expect("failed to create child error log"))
+            .spawn()
+            .expect("failed to launch isolated watch fixture"),
         );
-
-        let _ = fs::remove_dir_all(root);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = child
+                .0
+                .try_wait()
+                .expect("failed to wait for watch fixture")
+            {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "watch fixture exceeded 30 seconds"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        if !status.success() {
+            let read_log = |path: &Path| {
+                let mut bytes = Vec::new();
+                fs::File::open(path)
+                    .unwrap()
+                    .take(16 * 1024)
+                    .read_to_end(&mut bytes)
+                    .unwrap();
+                String::from_utf8_lossy(&bytes).into_owned()
+            };
+            panic!(
+                "fixture failed\n{}\n{}",
+                read_log(&stdout_path),
+                read_log(&stderr_path)
+            );
+        }
     }
 
     #[test]

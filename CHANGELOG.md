@@ -24,7 +24,11 @@ versioning.
   adjacent raw companions, track the source format and recover corrupt cache
   entries without writing shared installations.
 - Own subprocess groups, stop descendants on CLI cancellation and limit all
-  auxiliary commands to eight concurrent children.
+  auxiliary commands to eight concurrent children. Join background preamble
+  work before returning errors or unwinding.
+- Serialize equal and nested output folders and coordinate cleanup with active
+  builds. Validate current bibliography selection before restoring shared output,
+  track auxiliary source aliases and recover malformed owned cache metadata.
 - Replace the native BibTeX bridge archive and native zlib dependency with
   Rust-only implementations. Remove unused PNG nonlocal-jump compatibility code.
   Require Rust 1.89 for descriptor-owned output locks.

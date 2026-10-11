@@ -2,21 +2,32 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 struct Project(PathBuf);
 
 impl Project {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "tekai-self-contained-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(root.join("empty-bin")).unwrap();
-        Self(root)
+        static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+        for _ in 0..128 {
+            let root = std::env::temp_dir().join(format!(
+                "tekai-self-contained-{}-{}",
+                std::process::id(),
+                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
+            ));
+            // Wall-clock resolution cannot establish exclusive fixture ownership.
+            // Never reuse a stale directory, even after the OS recycles a PID.
+            match fs::create_dir(&root) {
+                Ok(()) => {
+                    let project = Self(root);
+                    fs::create_dir(project.0.join("empty-bin")).unwrap();
+                    return project;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("cannot create fixture {}: {error}", root.display()),
+            }
+        }
+        panic!("cannot reserve a self-contained test fixture after 128 attempts")
     }
 
     fn write(&self, name: &str, source: &str) {
@@ -263,7 +274,11 @@ fn bundled_engine_rejects_oversized_png_metadata_before_payload_reads() {
         let output = project.run(&["build", "main.tex", "--report-json", "--once", "--force"]);
         assert_eq!(output.status.code(), Some(1), "{output:?}");
         let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
-        assert!(log.contains(expected), "{log}");
+        // TeX wraps diagnostics at a fixed column, including within words.
+        // The fixture's path length must not change the asserted error text.
+        let diagnostic: String = log.split_ascii_whitespace().collect();
+        let expected: String = expected.split_ascii_whitespace().collect();
+        assert!(diagnostic.contains(&expected), "{log}");
     }
 }
 

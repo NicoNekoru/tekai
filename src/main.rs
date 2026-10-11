@@ -179,7 +179,7 @@ fn run_clean(args: CleanArgs) -> Result<()> {
         if !metadata.is_dir() {
             bail!("refusing to clean non-directory {}", target.display());
         }
-        let lock = BuildOutputLock::acquire(&target)?;
+        let lock = BuildOutputLock::acquire_for_clean(&target)?;
         let owned = clean_target_path(lock.output_path())?;
         let namespace = lock
             .lock_directory()

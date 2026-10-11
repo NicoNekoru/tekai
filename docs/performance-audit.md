@@ -37,6 +37,20 @@ outputs and maximum overlap, rather than treating completion as a scaling claim.
 SIGKILL cannot execute parent cleanup. Library callers retain their signal policy
 and must not independently reap children owned by the build scheduler.
 
+Output ownership covers equal and parent/child build folders. Sorted,
+deduplicated descriptor locks prevent lock-order deadlocks. Cleanup holds an
+exclusive lease while builds share it. Persistent lock retention is bounded by
+769 files. Hash collisions can serialize unrelated folders, and continuous
+builds can postpone cleanup. These guarantees require cooperating upgraded
+processes. Custom caches placed inside another build's output folder still need
+separate placement constraints.
+
+Global bibliography restoration validates the dependencies selected by the
+current invocation before copying cached output. Publication is serialized.
+Auxiliary source aliases remain dependencies, and malformed owned cache metadata
+causes a rebuild. State replacement is atomic, without a power-loss durability
+guarantee.
+
 ## Rust migration
 
 Local macOS workspace checks pass with C and C++ compilers disabled. CI now

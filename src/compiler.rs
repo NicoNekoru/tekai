@@ -15,13 +15,13 @@ use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
 
-const BUILD_STATE_VERSION: u32 = 42;
-const BIB_STATE_VERSION: u32 = 11;
-const INDEX_STATE_VERSION: u32 = 10;
+const BUILD_STATE_VERSION: u32 = 43;
+const BIB_STATE_VERSION: u32 = 12;
+const INDEX_STATE_VERSION: u32 = 11;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
-const EXTERNAL_TOOL_STATE_VERSION: u32 = 1;
+const EXTERNAL_TOOL_STATE_VERSION: u32 = 2;
 const PREAMBLE_FORMAT_STATE_VERSION: u32 = 2;
-const SETTLED_AUX_CACHE_STATE_VERSION: u32 = 4;
+const SETTLED_AUX_CACHE_STATE_VERSION: u32 = 5;
 
 #[cfg(windows)]
 const KPATHSEA_PATH_SEPARATOR: &str = ";";
@@ -671,6 +671,21 @@ fn append_input_alias_dependencies(
     Ok(())
 }
 
+fn append_auxiliary_source_input(
+    inputs: &mut Vec<FileFingerprint>,
+    path: &Path,
+    previous: &HashMap<String, FileFingerprint>,
+    aliases: &mut HashSet<PathBuf>,
+) -> Result<()> {
+    // Keep the lexical selection before fingerprinting its canonical target.
+    // Retargeting an external alias need not change any configured search tree.
+    append_input_alias_dependencies(inputs, path, aliases)?;
+    if let Some(fingerprint) = fingerprint_path_reusing(path, Some(previous))? {
+        inputs.push(fingerprint);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct GeneratedOutputFingerprint {
     path: String,
@@ -1048,48 +1063,55 @@ pub fn build(options: &BuildOptions) -> Result<BuildReport> {
 }
 
 /// A descriptor-owned lock serializes library threads and independent CLI
-/// processes that publish into the same output directory. The file remains
-/// present outside the output tree, and process exit releases ownership without
+/// processes that publish into equal or ancestor/descendant output directories.
+/// Lock files remain outside the output tree, and process exit releases ownership without
 /// stale-lock recovery. Cleanup must use the same lock and must never remove a
 /// tree containing this namespace. All compiler/clean processes for the user
 /// use one namespace, independent of project cache environment overrides.
 #[derive(Debug)]
 pub struct BuildOutputLock {
-    _file: fs::File,
+    // Drop shard descriptors before the outer build/cleanup lease.
+    _files: Vec<fs::File>,
+    _build_clean_lease: Option<fs::File>,
     output: PathBuf,
     directory: PathBuf,
 }
 
-impl BuildOutputLock {
-    pub fn acquire(output: &Path) -> Result<Self> {
-        Self::acquire_class(output, "output")
-    }
+const BUILD_OWNERSHIP_SHARDS: usize = 256;
 
-    fn acquire_preamble(output: &Path) -> Result<Self> {
-        Self::acquire_class(output, "preamble")
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BuildOwnershipMode {
+    Shared,
+    Exclusive,
+}
 
-    fn acquire_settled(output: &Path) -> Result<Self> {
-        Self::acquire_class(output, "settled")
-    }
+fn build_ownership_shard(path: &Path) -> usize {
+    (content_hash(path.as_os_str().as_encoded_bytes()) % BUILD_OWNERSHIP_SHARDS as u64) as usize
+}
 
-    fn acquire_class(output: &Path, class: &str) -> Result<Self> {
-        let output = absolute_from_cwd(output)?;
-        // Resolve aliases even when the leaf does not exist yet, without first
-        // creating the output while another owner may be cleaning it.
-        let output = canonicalize_missing_path(&output)?;
-        let directory = build_ownership_directory()?;
-        if directory.starts_with(&output) || output.starts_with(&directory) {
-            bail!("output directory cannot overlap its ownership namespace");
-        }
-        // Fixed FNV shards bound persistent inode retention. Collisions merely
-        // serialize unrelated targets. Separate classes preserve the only
-        // ownership order: output first, then independently preamble or settled.
-        // Shared settled operations never acquire output/preamble ownership.
-        let path = directory.join(format!(
-            "{class}-{:02x}.lock",
-            content_hash(output.as_os_str().as_encoded_bytes()) % 256
-        ));
+fn output_ownership_plan(output: &Path) -> Vec<(usize, BuildOwnershipMode)> {
+    let mut modes = [None; BUILD_OWNERSHIP_SHARDS];
+    for ancestor in output.ancestors().skip(1) {
+        modes[build_ownership_shard(ancestor)] = Some(BuildOwnershipMode::Shared);
+    }
+    // A leaf may collide with its own ancestors. Deduplicate the whole plan
+    // before acquisition and never attempt an in-place Shared-to-Exclusive upgrade.
+    modes[build_ownership_shard(output)] = Some(BuildOwnershipMode::Exclusive);
+    modes
+        .into_iter()
+        .enumerate()
+        .filter_map(|(shard, mode)| mode.map(|mode| (shard, mode)))
+        .collect()
+}
+
+fn acquire_ownership_shards(
+    directory: &Path,
+    class: &str,
+    plan: &[(usize, BuildOwnershipMode)],
+) -> Result<Vec<fs::File>> {
+    let mut files = Vec::with_capacity(plan.len());
+    for &(shard, mode) in plan {
+        let path = directory.join(format!("{class}-{shard:02x}.lock"));
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -1097,13 +1119,103 @@ impl BuildOutputLock {
             .truncate(false)
             .open(&path)
             .with_context(|| format!("cannot open build ownership lock {}", path.display()))?;
-        file.lock()
-            .with_context(|| format!("cannot acquire build ownership lock {}", path.display()))?;
-        Ok(Self {
-            _file: file,
-            output,
-            directory,
-        })
+        match mode {
+            BuildOwnershipMode::Shared => file.lock_shared(),
+            BuildOwnershipMode::Exclusive => file.lock(),
+        }
+        .with_context(|| format!("cannot acquire build ownership lock {}", path.display()))?;
+        files.push(file);
+    }
+    Ok(files)
+}
+
+impl BuildOutputLock {
+    pub fn acquire(output: &Path) -> Result<Self> {
+        Self::acquire_class(output, "output", Some(false))
+    }
+
+    /// Cleanup takes exclusive ownership before output shard locks, so an
+    /// ancestor cleanup cannot remove a concurrently owned nested output.
+    /// Unrelated builds retain concurrent shared leases.
+    pub fn acquire_for_clean(output: &Path) -> Result<Self> {
+        Self::acquire_class(output, "output", Some(true))
+    }
+
+    fn acquire_preamble(output: &Path) -> Result<Self> {
+        Self::acquire_class(output, "preamble", None)
+    }
+
+    fn acquire_settled(output: &Path) -> Result<Self> {
+        Self::acquire_class(output, "settled", None)
+    }
+
+    fn acquire_class(output: &Path, class: &str, exclusive_clean: Option<bool>) -> Result<Self> {
+        let output = absolute_from_cwd(output)?;
+        let directory = build_ownership_directory()?;
+        let build_clean_lease = exclusive_clean
+            .map(|exclusive| -> Result<fs::File> {
+                let lease = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(directory.join("build-clean.lock"))
+                    .context("cannot open build/cleanup ownership lease")?;
+                if exclusive {
+                    lease.lock()
+                } else {
+                    lease.lock_shared()
+                }
+                .context("cannot acquire build/cleanup ownership lease")?;
+                Ok(lease)
+            })
+            .transpose()?;
+        // Resolve aliases only after cleanup ownership. Missing leaves retain
+        // their spelling until creation, so builds recheck their canonical key.
+        let mut output = canonicalize_missing_path(&output)?;
+        for _ in 0..4 {
+            if directory.starts_with(&output) || output.starts_with(&directory) {
+                bail!("output directory cannot overlap its ownership namespace");
+            }
+            // Fixed FNV shards retain at most 256 files per class. Output plans
+            // take Shared ancestors and an Exclusive leaf in ascending shard
+            // order. Hash collisions only add conservative contention.
+            // Preamble/settled stay separate and never reacquire outer ownership.
+            let plan = if class == "output" {
+                output_ownership_plan(&output)
+            } else {
+                vec![(
+                    build_ownership_shard(&output),
+                    BuildOwnershipMode::Exclusive,
+                )]
+            };
+            let files = acquire_ownership_shards(&directory, class, &plan)?;
+            if exclusive_clean == Some(false) {
+                fs::create_dir_all(&output).with_context(|| {
+                    format!("cannot create owned output directory {}", output.display())
+                })?;
+                let canonical = output.canonicalize().with_context(|| {
+                    format!(
+                        "cannot resolve created output directory {}",
+                        output.display()
+                    )
+                })?;
+                if canonical != output {
+                    // Retain the global lease, but release the entire candidate
+                    // plan before reacquisition to preserve the global ordering.
+                    drop(files);
+                    output = canonical;
+                    continue;
+                }
+            }
+            return Ok(Self {
+                _files: files,
+                _build_clean_lease: build_clean_lease,
+                output,
+                directory,
+            });
+        }
+        bail!("output directory identity did not stabilize during ownership acquisition")
     }
 
     pub fn output_path(&self) -> &Path {
@@ -1182,10 +1294,9 @@ pub fn build_dependency_paths(options: &BuildOptions) -> Result<Vec<PathBuf>> {
     if !state_path.exists() {
         return Ok(paths);
     }
-    let source = fs::read_to_string(&state_path)
-        .with_context(|| format!("failed to read build state {}", state_path.display()))?;
-    let state: BuildState = toml::from_str(&source)
-        .with_context(|| format!("failed to parse build state {}", state_path.display()))?;
+    let Some(state) = read_owned_cache_state::<BuildState>(&state_path, "build state")? else {
+        return Ok(paths);
+    };
     let mode_key = direct_mode_key(options, &main);
     if state.version != BUILD_STATE_VERSION || state.mode_key != mode_key {
         return Ok(paths);
@@ -2221,7 +2332,33 @@ enum PreambleFormatOverride {
     Disabled,
 }
 
-type PreambleFormatBuildHandle = thread::JoinHandle<Result<Option<PreambleFormatPreparation>>>;
+/// Drain owned preamble work on every return path. Ordinary build errors may
+/// wait for an active engine invocation, just as successful builds already do;
+/// abandoning the thread would let its compiler survive a normal CLI exit.
+struct PreambleFormatBuildHandle {
+    worker: Option<thread::JoinHandle<Result<Option<PreambleFormatPreparation>>>>,
+}
+
+impl PreambleFormatBuildHandle {
+    fn join(mut self) -> Result<Option<PreambleFormatPreparation>> {
+        self.worker
+            .take()
+            .expect("preamble worker is joined only once")
+            .join()
+            .map_err(|_| anyhow!("preamble format builder thread panicked"))?
+    }
+}
+
+impl Drop for PreambleFormatBuildHandle {
+    fn drop(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            // Preserve the enclosing operation's original error/panic. Joining
+            // still waits for OwnedChild cleanup and drops any prepared-format
+            // ownership returned by the worker.
+            let _ = worker.join();
+        }
+    }
+}
 
 fn spawn_preamble_format_build(
     doc_dir: &Path,
@@ -2236,7 +2373,7 @@ fn spawn_preamble_format_build(
     let out_dir = out_dir.to_path_buf();
     let main = main.to_path_buf();
     let options = options.clone();
-    thread::spawn(move || {
+    let worker = thread::spawn(move || {
         prepare_preamble_format_for_kind(
             &doc_dir,
             &file_name,
@@ -2245,15 +2382,16 @@ fn spawn_preamble_format_build(
             &options,
             format_kind,
         )
-    })
+    });
+    PreambleFormatBuildHandle {
+        worker: Some(worker),
+    }
 }
 
 fn join_preamble_format_build(
     handle: PreambleFormatBuildHandle,
 ) -> Result<Option<PreambleFormatPreparation>> {
-    handle
-        .join()
-        .map_err(|_| anyhow!("preamble format builder thread panicked"))?
+    handle.join()
 }
 
 fn tex_direct_base_command(
@@ -2616,15 +2754,11 @@ fn restore_settled_aux_cache_if_fresh(
     let cache_dir = settled_aux_cache_dir(doc_dir, main, mode_key);
     let _ownership = BuildOutputLock::acquire_settled(&cache_dir)?;
     let state_path = cache_dir.join("state.toml");
-    let Some(source) = read_optional_text_file(&state_path, "settled aux cache state")? else {
+    let Some(cache_state) =
+        read_owned_cache_state::<SettledAuxCacheState>(&state_path, "settled aux cache state")?
+    else {
         return Ok(None);
     };
-    let cache_state: SettledAuxCacheState = toml::from_str(&source).with_context(|| {
-        format!(
-            "failed to parse settled aux cache state {}",
-            state_path.display()
-        )
-    })?;
     if cache_state.version != SETTLED_AUX_CACHE_STATE_VERSION || cache_state.mode_key != mode_key {
         return Ok(None);
     }
@@ -2704,7 +2838,7 @@ fn restore_settled_aux_cache_if_fresh(
                 format!("failed to read cached aux tool state {}", cached.display())
             })?;
             let source = source.replace(&cached_out_dir, &restored_out_dir);
-            fs::write(&destination, source).with_context(|| {
+            write_state_atomically(&destination, source.as_bytes()).with_context(|| {
                 format!(
                     "failed to restore cached aux tool state {} to {}",
                     cached.display(),
@@ -3061,12 +3195,7 @@ fn preamble_format_mode_key(
 }
 
 fn read_preamble_format_state_if_exists(path: &Path) -> Result<Option<PreambleFormatState>> {
-    let Some(source) = read_optional_text_file(path, "preamble format state")? else {
-        return Ok(None);
-    };
-    let state: PreambleFormatState = toml::from_str(&source)
-        .with_context(|| format!("failed to parse preamble format state {}", path.display()))?;
-    Ok(Some(state))
+    read_owned_cache_state(path, "preamble format state")
 }
 
 fn preamble_format_inputs_are_fresh(inputs: &[FileFingerprint]) -> Result<bool> {
@@ -6370,7 +6499,31 @@ fn restore_global_bibtex_cache_if_fresh(
     aux_source: &str,
 ) -> Result<bool> {
     let cache = global_bibtex_cache_paths(signature);
+    let _ownership = BuildOutputLock::acquire_settled(&cache.dir)?;
     if !bibtex_cache_is_fresh(&cache.state_path, signature, &cache.bbl_path)? {
+        return Ok(false);
+    }
+    let Some(cached_state) =
+        read_owned_cache_state::<BibState>(&cache.state_path, "global bibliography state")?
+    else {
+        return Ok(false);
+    };
+    let current = bibtex_inputs_from_aux(
+        aux_source,
+        doc_dir,
+        out_dir,
+        &fingerprint_map(cached_state.inputs.clone()),
+        job,
+    )?;
+    let selected = |inputs: &[FileFingerprint]| {
+        inputs
+            .iter()
+            .map(|input| (input.path.clone(), input.hash.clone()))
+            .collect::<HashSet<_>>()
+    };
+    if selected(&current) != selected(&cached_state.inputs) {
+        // A fresh old source is not proof that this output directory still
+        // selects it. Never rebind old bibliography bytes to new dependencies.
         return Ok(false);
     }
     if let Some(parent) = job.bbl_path.parent() {
@@ -6411,12 +6564,14 @@ fn save_global_bibtex_cache(
         return Ok(());
     }
     let cache = global_bibtex_cache_paths(signature);
+    let _ownership = BuildOutputLock::acquire_settled(&cache.dir)?;
     fs::create_dir_all(&cache.dir).with_context(|| {
         format!(
             "failed to create global bibliography cache {}",
             cache.dir.display()
         )
     })?;
+    remove_build_state_before_generation(&cache.state_path)?;
     fs::copy(&job.bbl_path, &cache.bbl_path).with_context(|| {
         format!(
             "failed to save bibliography cache {}",
@@ -6871,7 +7026,7 @@ fn write_biber_state(
         inputs,
     };
     let state_source = toml::to_string(&state).context("failed to serialize biber state")?;
-    fs::write(state_path, state_source)
+    write_state_atomically(state_path, state_source.as_bytes())
         .with_context(|| format!("failed to write biber state {}", state_path.display()))
 }
 
@@ -7094,10 +7249,9 @@ fn index_cache_is_fresh(state_path: &Path, signature: &str, job: &MakeIndexJob) 
     if !state_path.exists() || !job.output_path.exists() {
         return Ok(false);
     }
-    let source = fs::read_to_string(state_path)
-        .with_context(|| format!("failed to read index state {}", state_path.display()))?;
-    let state: IndexState = toml::from_str(&source)
-        .with_context(|| format!("failed to parse index state {}", state_path.display()))?;
+    let Some(state) = read_owned_cache_state::<IndexState>(state_path, "index state")? else {
+        return Ok(false);
+    };
     if state.version != INDEX_STATE_VERSION
         || state.signature != signature
         || state.output_path != job.output_path.display().to_string()
@@ -7120,10 +7274,10 @@ fn splitindex_cache_is_fresh(
     if !state_path.exists() || output_paths.iter().any(|path| !path.exists()) {
         return Ok(false);
     }
-    let source = fs::read_to_string(state_path)
-        .with_context(|| format!("failed to read split index state {}", state_path.display()))?;
-    let state: SplitIndexState = toml::from_str(&source)
-        .with_context(|| format!("failed to parse split index state {}", state_path.display()))?;
+    let Some(state) = read_owned_cache_state::<SplitIndexState>(state_path, "split index state")?
+    else {
+        return Ok(false);
+    };
     let outputs = output_paths
         .iter()
         .map(|path| path.display().to_string())
@@ -7145,11 +7299,11 @@ fn splitindex_cache_is_fresh(
 fn write_index_state(state_path: &Path, signature: &str, job: &MakeIndexJob) -> Result<()> {
     let previous = previous_index_input_map(state_path)?;
     let mut inputs = Vec::new();
+    let mut aliases = HashSet::new();
     if !job.style_is_build_output
         && let Some(style_path) = &job.style_path
-        && let Some(fingerprint) = fingerprint_path_reusing(style_path, Some(&previous))?
     {
-        inputs.push(fingerprint);
+        append_auxiliary_source_input(&mut inputs, style_path, &previous, &mut aliases)?;
     }
     let state = IndexState {
         version: INDEX_STATE_VERSION,
@@ -7158,7 +7312,7 @@ fn write_index_state(state_path: &Path, signature: &str, job: &MakeIndexJob) -> 
         inputs,
     };
     let source = toml::to_string(&state).context("failed to serialize index state")?;
-    fs::write(state_path, source)
+    write_state_atomically(state_path, source.as_bytes())
         .with_context(|| format!("failed to write index state {}", state_path.display()))
 }
 
@@ -7174,7 +7328,7 @@ fn write_splitindex_state(job: &SplitIndexJob, signature: &str) -> Result<()> {
         inputs: Vec::new(),
     };
     let source = toml::to_string(&state).context("failed to serialize split index state")?;
-    fs::write(&job.state_path, source).with_context(|| {
+    write_state_atomically(&job.state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to write split index state {}",
             job.state_path.display()
@@ -10308,13 +10462,10 @@ fn bib2gls_signature(job: &Bib2GlsJob) -> Result<String> {
 fn write_pythontex_state(job: &PythontexJob, signature: &str) -> Result<()> {
     let previous = previous_external_tool_input_map(&job.state_path)?;
     let mut inputs = Vec::new();
-    if let Some(fingerprint) = fingerprint_path_reusing(&job.code_path, Some(&previous))? {
-        inputs.push(fingerprint);
-    }
+    let mut aliases = HashSet::new();
+    append_auxiliary_source_input(&mut inputs, &job.code_path, &previous, &mut aliases)?;
     for path in pythontex_dependency_paths(job)? {
-        if let Some(fingerprint) = fingerprint_path_reusing(&path, Some(&previous))? {
-            inputs.push(fingerprint);
-        }
+        append_auxiliary_source_input(&mut inputs, &path, &previous, &mut aliases)?;
     }
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
@@ -10331,7 +10482,7 @@ fn write_pythontex_state(job: &PythontexJob, signature: &str) -> Result<()> {
         inputs,
     };
     let source = toml::to_string(&state).context("failed to serialize external tool state")?;
-    fs::write(&job.state_path, source).with_context(|| {
+    write_state_atomically(&job.state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to write external tool state {}",
             job.state_path.display()
@@ -10355,15 +10506,11 @@ fn external_tool_cache_is_fresh_for_outputs(
     if output_paths.iter().any(|path| !path.exists()) {
         return Ok(false);
     }
-    let Some(source) = read_optional_text_file(state_path, "external tool state")? else {
+    let Some(state) =
+        read_owned_cache_state::<ExternalToolState>(state_path, "external tool state")?
+    else {
         return Ok(false);
     };
-    let state: ExternalToolState = toml::from_str(&source).with_context(|| {
-        format!(
-            "failed to parse external tool state {}",
-            state_path.display()
-        )
-    })?;
     let output_path_strings = output_paths
         .iter()
         .map(|path| path.display().to_string())
@@ -10393,13 +10540,10 @@ fn external_tool_state_outputs(state: &ExternalToolState) -> Vec<String> {
 fn write_metapost_state(job: &MetapostJob, signature: &str) -> Result<()> {
     let previous = previous_external_tool_input_map(&job.state_path)?;
     let mut inputs = Vec::new();
-    if let Some(fingerprint) = fingerprint_path_reusing(&job.input_path, Some(&previous))? {
-        inputs.push(fingerprint);
-    }
+    let mut aliases = HashSet::new();
+    append_auxiliary_source_input(&mut inputs, &job.input_path, &previous, &mut aliases)?;
     for path in &job.input_paths {
-        if let Some(fingerprint) = fingerprint_path_reusing(path, Some(&previous))? {
-            inputs.push(fingerprint);
-        }
+        append_auxiliary_source_input(&mut inputs, path, &previous, &mut aliases)?;
     }
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
@@ -10416,7 +10560,7 @@ fn write_metapost_state(job: &MetapostJob, signature: &str) -> Result<()> {
         inputs,
     };
     let source = toml::to_string(&state).context("failed to serialize external tool state")?;
-    fs::write(&job.state_path, source).with_context(|| {
+    write_state_atomically(&job.state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to write external tool state {}",
             job.state_path.display()
@@ -10427,13 +10571,10 @@ fn write_metapost_state(job: &MetapostJob, signature: &str) -> Result<()> {
 fn write_gnuplottex_state(job: &GnuplottexJob, signature: &str) -> Result<()> {
     let previous = previous_external_tool_input_map(&job.state_path)?;
     let mut inputs = Vec::new();
-    if let Some(fingerprint) = fingerprint_path_reusing(&job.script_path, Some(&previous))? {
-        inputs.push(fingerprint);
-    }
+    let mut aliases = HashSet::new();
+    append_auxiliary_source_input(&mut inputs, &job.script_path, &previous, &mut aliases)?;
     for path in &job.input_paths {
-        if let Some(fingerprint) = fingerprint_path_reusing(path, Some(&previous))? {
-            inputs.push(fingerprint);
-        }
+        append_auxiliary_source_input(&mut inputs, path, &previous, &mut aliases)?;
     }
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
@@ -10445,7 +10586,7 @@ fn write_gnuplottex_state(job: &GnuplottexJob, signature: &str) -> Result<()> {
         inputs,
     };
     let source = toml::to_string(&state).context("failed to serialize external tool state")?;
-    fs::write(&job.state_path, source).with_context(|| {
+    write_state_atomically(&job.state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to write external tool state {}",
             job.state_path.display()
@@ -10456,13 +10597,10 @@ fn write_gnuplottex_state(job: &GnuplottexJob, signature: &str) -> Result<()> {
 fn write_bib2gls_state(job: &Bib2GlsJob, signature: &str) -> Result<()> {
     let previous = previous_external_tool_input_map(&job.state_path)?;
     let mut inputs = Vec::new();
-    if let Some(fingerprint) = fingerprint_path_reusing(&job.aux_path, Some(&previous))? {
-        inputs.push(fingerprint);
-    }
+    let mut aliases = HashSet::new();
+    append_auxiliary_source_input(&mut inputs, &job.aux_path, &previous, &mut aliases)?;
     for path in &job.resource_inputs {
-        if let Some(fingerprint) = fingerprint_path_reusing(path, Some(&previous))? {
-            inputs.push(fingerprint);
-        }
+        append_auxiliary_source_input(&mut inputs, path, &previous, &mut aliases)?;
     }
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
@@ -10479,7 +10617,7 @@ fn write_bib2gls_state(job: &Bib2GlsJob, signature: &str) -> Result<()> {
         inputs,
     };
     let source = toml::to_string(&state).context("failed to serialize external tool state")?;
-    fs::write(&job.state_path, source).with_context(|| {
+    write_state_atomically(&job.state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to write external tool state {}",
             job.state_path.display()
@@ -10490,9 +10628,8 @@ fn write_bib2gls_state(job: &Bib2GlsJob, signature: &str) -> Result<()> {
 fn write_eps_conversion_state(job: &EpsConversionJob, signature: &str) -> Result<()> {
     let previous = previous_external_tool_input_map(&job.state_path)?;
     let mut inputs = Vec::new();
-    if let Some(fingerprint) = fingerprint_path_reusing(&job.input_path, Some(&previous))? {
-        inputs.push(fingerprint);
-    }
+    let mut aliases = HashSet::new();
+    append_auxiliary_source_input(&mut inputs, &job.input_path, &previous, &mut aliases)?;
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
     let state = ExternalToolState {
@@ -10503,7 +10640,7 @@ fn write_eps_conversion_state(job: &EpsConversionJob, signature: &str) -> Result
         inputs,
     };
     let source = toml::to_string(&state).context("failed to serialize external tool state")?;
-    fs::write(&job.state_path, source).with_context(|| {
+    write_state_atomically(&job.state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to write external tool state {}",
             job.state_path.display()
@@ -10514,9 +10651,8 @@ fn write_eps_conversion_state(job: &EpsConversionJob, signature: &str) -> Result
 fn write_svg_conversion_state(job: &SvgConversionJob, signature: &str) -> Result<()> {
     let previous = previous_external_tool_input_map(&job.state_path)?;
     let mut inputs = Vec::new();
-    if let Some(fingerprint) = fingerprint_path_reusing(&job.input_path, Some(&previous))? {
-        inputs.push(fingerprint);
-    }
+    let mut aliases = HashSet::new();
+    append_auxiliary_source_input(&mut inputs, &job.input_path, &previous, &mut aliases)?;
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
     let output_paths = job
@@ -10532,7 +10668,7 @@ fn write_svg_conversion_state(job: &SvgConversionJob, signature: &str) -> Result
         inputs,
     };
     let source = toml::to_string(&state).context("failed to serialize external tool state")?;
-    fs::write(&job.state_path, source).with_context(|| {
+    write_state_atomically(&job.state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to write external tool state {}",
             job.state_path.display()
@@ -10543,18 +10679,13 @@ fn write_svg_conversion_state(job: &SvgConversionJob, signature: &str) -> Result
 fn write_asymptote_state(job: &AsymptoteJob, signature: &str) -> Result<()> {
     let previous = previous_external_tool_input_map(&job.state_path)?;
     let mut inputs = Vec::new();
-    if let Some(fingerprint) = fingerprint_path_reusing(&job.input_path, Some(&previous))? {
-        inputs.push(fingerprint);
-    }
-    if let Some(pre_path) = asymptote_preamble_path(&job.input_path)
-        && let Some(fingerprint) = fingerprint_path_reusing(&pre_path, Some(&previous))?
-    {
-        inputs.push(fingerprint);
+    let mut aliases = HashSet::new();
+    append_auxiliary_source_input(&mut inputs, &job.input_path, &previous, &mut aliases)?;
+    if let Some(pre_path) = asymptote_preamble_path(&job.input_path) {
+        append_auxiliary_source_input(&mut inputs, &pre_path, &previous, &mut aliases)?;
     }
     for path in &job.input_paths {
-        if let Some(fingerprint) = fingerprint_path_reusing(path, Some(&previous))? {
-            inputs.push(fingerprint);
-        }
+        append_auxiliary_source_input(&mut inputs, path, &previous, &mut aliases)?;
     }
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
@@ -10566,7 +10697,7 @@ fn write_asymptote_state(job: &AsymptoteJob, signature: &str) -> Result<()> {
         inputs,
     };
     let source = toml::to_string(&state).context("failed to serialize external tool state")?;
-    fs::write(&job.state_path, source).with_context(|| {
+    write_state_atomically(&job.state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to write external tool state {}",
             job.state_path.display()
@@ -10630,14 +10761,9 @@ fn bibtex_cache_is_fresh(state_path: &Path, signature: &str, bbl_path: &Path) ->
     if !state_path.exists() || !bbl_path.exists() {
         return Ok(false);
     }
-    let source = fs::read_to_string(state_path)
-        .with_context(|| format!("failed to read bibliography state {}", state_path.display()))?;
-    let state: BibState = toml::from_str(&source).with_context(|| {
-        format!(
-            "failed to parse bibliography state {}",
-            state_path.display()
-        )
-    })?;
+    let Some(state) = read_owned_cache_state::<BibState>(state_path, "bibliography state")? else {
+        return Ok(false);
+    };
     if state.version != BIB_STATE_VERSION
         || state.signature != signature
         || state.bbl_path != bbl_path.display().to_string()
@@ -10670,7 +10796,7 @@ fn write_bibtex_state_from_source(
         inputs,
     };
     let state_source = toml::to_string(&state).context("failed to serialize bibliography state")?;
-    fs::write(&job.state_path, state_source).with_context(|| {
+    write_state_atomically(&job.state_path, state_source.as_bytes()).with_context(|| {
         format!(
             "failed to write bibliography state {}",
             job.state_path.display()
@@ -10686,6 +10812,7 @@ fn bibtex_inputs_from_aux(
     job: &BibtexJob,
 ) -> Result<Vec<FileFingerprint>> {
     let mut inputs = Vec::new();
+    let mut aliases = HashSet::new();
     let citation_keys = bibtex_citation_keys(source);
     for line in source.lines() {
         if let Some(names) = braced_payload(line, r"\bibdata") {
@@ -10694,11 +10821,13 @@ fn bibtex_inputs_from_aux(
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
             {
-                if let Some(path) = resolve_bibtex_database_input(doc_dir, out_dir, name)?
-                    && let Some(fingerprint) =
+                if let Some(path) = resolve_bibtex_database_input(doc_dir, out_dir, name)? {
+                    append_input_alias_dependencies(&mut inputs, &path, &mut aliases)?;
+                    if let Some(fingerprint) =
                         fingerprint_bibtex_database_reusing(&path, Some(previous), &citation_keys)?
-                {
-                    inputs.push(fingerprint);
+                    {
+                        inputs.push(fingerprint);
+                    }
                 }
             }
         }
@@ -10706,16 +10835,13 @@ fn bibtex_inputs_from_aux(
             let name = name.trim();
             if !name.is_empty()
                 && let Some(path) = resolve_kpathsea_input(doc_dir, name, "bst")?
-                && let Some(fingerprint) = fingerprint_path_reusing(&path, Some(previous))?
             {
-                inputs.push(fingerprint);
+                append_auxiliary_source_input(&mut inputs, &path, previous, &mut aliases)?;
             }
         }
     }
     for path in &job.request_inputs {
-        if let Some(fingerprint) = fingerprint_path_reusing(path, Some(previous))? {
-            inputs.push(fingerprint);
-        }
+        append_auxiliary_source_input(&mut inputs, path, previous, &mut aliases)?;
     }
     Ok(inputs)
 }
@@ -10997,6 +11123,7 @@ fn biber_inputs_from_bcf(
     previous: &HashMap<String, FileFingerprint>,
 ) -> Result<Vec<FileFingerprint>> {
     let mut inputs = Vec::new();
+    let mut aliases = HashSet::new();
     let citation_keys = biber_citation_keys(source);
     for datasource in biber_datasource_specs(source) {
         if datasource.name.contains("://") {
@@ -11011,6 +11138,7 @@ fn biber_inputs_from_bcf(
             )?);
         }
         for path in paths {
+            append_input_alias_dependencies(&mut inputs, &path, &mut aliases)?;
             if let Some(fingerprint) = if datasource.supports_cited_entry_fingerprint {
                 fingerprint_bibtex_database_reusing(&path, Some(previous), &citation_keys)?
             } else {
@@ -11158,10 +11286,8 @@ fn biber_config_inputs(
         doc_dir,
         config_path.as_deref(),
     )];
-    if let Some(path) = config_path
-        && let Some(fingerprint) = fingerprint_path_reusing(&path, Some(previous))?
-    {
-        inputs.push(fingerprint);
+    if let Some(path) = config_path {
+        append_auxiliary_source_input(&mut inputs, &path, previous, &mut HashSet::new())?;
     }
     Ok(inputs)
 }
@@ -11550,21 +11676,41 @@ fn environment_signature(vars: &[&str], doc_dir: &Path) -> String {
 fn read_build_state_if_exists(state_path: &Path) -> Result<Option<BuildState>> {
     let _profile = diagnostic_profile::span(Phase::BuildStateLoad);
     let Some(source) = diagnostic_profile::measure(Phase::BuildStateRead, || {
-        read_optional_text_file(state_path, "build state")
+        read_owned_cache_bytes(state_path, "build state")
     })?
     else {
         return Ok(None);
     };
     diagnostic_profile::count(Counter::StateBytesRead, source.len() as u64);
-    let state: BuildState =
-        diagnostic_profile::measure(Phase::BuildStateParse, || toml::from_str(&source))
-            .with_context(|| format!("failed to parse build state {}", state_path.display()))?;
+    let state: Option<BuildState> = diagnostic_profile::measure(Phase::BuildStateParse, || {
+        std::str::from_utf8(&source)
+            .ok()
+            .and_then(|source| toml::from_str(source).ok())
+    });
+    let Some(state) = state else {
+        return Ok(None);
+    };
     diagnostic_profile::count(Counter::StateDependencies, state.inputs.len() as u64);
     Ok(Some(state))
 }
 
-fn read_optional_text_file(path: &Path, description: &str) -> Result<Option<String>> {
-    match fs::read_to_string(path) {
+/// Owned cache metadata is recoverable, unlike document/tool source data.
+/// Partial old writes, invalid UTF-8 and malformed TOML mean a cache miss;
+/// filesystem permission and other IO failures remain actionable errors.
+fn read_owned_cache_state<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    description: &str,
+) -> Result<Option<T>> {
+    let Some(source) = read_owned_cache_bytes(path, description)? else {
+        return Ok(None);
+    };
+    Ok(std::str::from_utf8(&source)
+        .ok()
+        .and_then(|source| toml::from_str(source).ok()))
+}
+
+fn read_owned_cache_bytes(path: &Path, description: &str) -> Result<Option<Vec<u8>>> {
+    match fs::read(path) {
         Ok(source) => Ok(Some(source)),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => {
@@ -11851,15 +11997,9 @@ fn write_state_atomically(path: &Path, source: &[u8]) -> Result<()> {
 }
 
 fn previous_bib_input_map(state_path: &Path) -> Result<HashMap<String, FileFingerprint>> {
-    let Some(source) = read_optional_text_file(state_path, "bibliography state")? else {
+    let Some(state) = read_owned_cache_state::<BibState>(state_path, "bibliography state")? else {
         return Ok(HashMap::new());
     };
-    let state: BibState = toml::from_str(&source).with_context(|| {
-        format!(
-            "failed to parse bibliography state {}",
-            state_path.display()
-        )
-    })?;
     if state.version == BIB_STATE_VERSION {
         Ok(fingerprint_map(state.inputs))
     } else {
@@ -11868,11 +12008,9 @@ fn previous_bib_input_map(state_path: &Path) -> Result<HashMap<String, FileFinge
 }
 
 fn previous_index_input_map(state_path: &Path) -> Result<HashMap<String, FileFingerprint>> {
-    let Some(source) = read_optional_text_file(state_path, "index state")? else {
+    let Some(state) = read_owned_cache_state::<IndexState>(state_path, "index state")? else {
         return Ok(HashMap::new());
     };
-    let state: IndexState = toml::from_str(&source)
-        .with_context(|| format!("failed to parse index state {}", state_path.display()))?;
     if state.version == INDEX_STATE_VERSION {
         Ok(fingerprint_map(state.inputs))
     } else {
@@ -11881,15 +12019,11 @@ fn previous_index_input_map(state_path: &Path) -> Result<HashMap<String, FileFin
 }
 
 fn previous_external_tool_input_map(state_path: &Path) -> Result<HashMap<String, FileFingerprint>> {
-    let Some(source) = read_optional_text_file(state_path, "external tool state")? else {
+    let Some(state) =
+        read_owned_cache_state::<ExternalToolState>(state_path, "external tool state")?
+    else {
         return Ok(HashMap::new());
     };
-    let state: ExternalToolState = toml::from_str(&source).with_context(|| {
-        format!(
-            "failed to parse external tool state {}",
-            state_path.display()
-        )
-    })?;
     if state.version == EXTERNAL_TOOL_STATE_VERSION {
         Ok(fingerprint_map(state.inputs))
     } else {
@@ -11904,6 +12038,19 @@ fn fingerprint_map(inputs: Vec<FileFingerprint>) -> HashMap<String, FileFingerpr
         .collect()
 }
 
+fn append_unavailable_owned_cache_state(inputs: &mut Vec<FileFingerprint>, path: &Path) {
+    // An incomplete auxiliary state cannot supply the consumed dependencies.
+    // Preserve successful compilation, but make generation_can_publish decline
+    // the final cache rather than publish a dependency list with silent gaps.
+    inputs.push(FileFingerprint {
+        path: path.display().to_string(),
+        len: 0,
+        modified_ns: 0,
+        hash: "unavailable-owned-cache-state".to_string(),
+        metadata: None,
+    });
+}
+
 fn append_bibtex_inputs(
     inputs: &mut Vec<FileFingerprint>,
     doc_dir: &Path,
@@ -11915,17 +12062,15 @@ fn append_bibtex_inputs(
         if !state_path.exists() {
             continue;
         }
-        let source = fs::read_to_string(&state_path).with_context(|| {
-            format!("failed to read bibliography state {}", state_path.display())
-        })?;
-        let state: BibState = toml::from_str(&source).with_context(|| {
-            format!(
-                "failed to parse bibliography state {}",
-                state_path.display()
-            )
-        })?;
+        let Some(state) = read_owned_cache_state::<BibState>(&state_path, "bibliography state")?
+        else {
+            append_unavailable_owned_cache_state(inputs, &state_path);
+            continue;
+        };
         if state.version == BIB_STATE_VERSION {
             inputs.extend(state.inputs);
+        } else {
+            append_unavailable_owned_cache_state(inputs, &state_path);
         }
     }
     Ok(())
@@ -11944,12 +12089,14 @@ fn append_biber_inputs(
     if !state_path.exists() {
         return Ok(());
     }
-    let source = fs::read_to_string(&state_path)
-        .with_context(|| format!("failed to read biber state {}", state_path.display()))?;
-    let state: BibState = toml::from_str(&source)
-        .with_context(|| format!("failed to parse biber state {}", state_path.display()))?;
+    let Some(state) = read_owned_cache_state::<BibState>(&state_path, "biber state")? else {
+        append_unavailable_owned_cache_state(inputs, &state_path);
+        return Ok(());
+    };
     if state.version == BIB_STATE_VERSION {
         inputs.extend(state.inputs);
+    } else {
+        append_unavailable_owned_cache_state(inputs, &state_path);
     }
     Ok(())
 }
@@ -11964,12 +12111,15 @@ fn append_index_inputs(
         if !job.state_path.exists() {
             continue;
         }
-        let source = fs::read_to_string(&job.state_path)
-            .with_context(|| format!("failed to read index state {}", job.state_path.display()))?;
-        let state: IndexState = toml::from_str(&source)
-            .with_context(|| format!("failed to parse index state {}", job.state_path.display()))?;
+        let Some(state) = read_owned_cache_state::<IndexState>(&job.state_path, "index state")?
+        else {
+            append_unavailable_owned_cache_state(inputs, &job.state_path);
+            continue;
+        };
         if state.version == INDEX_STATE_VERSION {
             inputs.extend(state.inputs);
+        } else {
+            append_unavailable_owned_cache_state(inputs, &job.state_path);
         }
     }
     Ok(())
@@ -12029,20 +12179,16 @@ fn append_external_tool_state_inputs(
     if !state_path.exists() {
         return Ok(());
     }
-    let source = fs::read_to_string(state_path).with_context(|| {
-        format!(
-            "failed to read external tool state {}",
-            state_path.display()
-        )
-    })?;
-    let state: ExternalToolState = toml::from_str(&source).with_context(|| {
-        format!(
-            "failed to parse external tool state {}",
-            state_path.display()
-        )
-    })?;
+    let Some(state) =
+        read_owned_cache_state::<ExternalToolState>(state_path, "external tool state")?
+    else {
+        append_unavailable_owned_cache_state(inputs, state_path);
+        return Ok(());
+    };
     if state.version == EXTERNAL_TOOL_STATE_VERSION {
         inputs.extend(state.inputs);
+    } else {
+        append_unavailable_owned_cache_state(inputs, state_path);
     }
     Ok(())
 }
@@ -13404,6 +13550,47 @@ mod tests {
     static TEXINPUTS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
+    fn preamble_workers_are_joined_before_early_errors_or_unwinds_return() {
+        for unwind in [false, true] {
+            let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let (returned_tx, returned_rx) = std::sync::mpsc::channel();
+            let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let worker_shutdown = shutdown.clone();
+            let owner = thread::spawn(move || {
+                let operation = std::panic::catch_unwind(|| -> Result<()> {
+                    let _owned = PreambleFormatBuildHandle {
+                        worker: Some(thread::spawn(move || {
+                            release_rx.recv().unwrap();
+                            worker_shutdown.store(true, std::sync::atomic::Ordering::Release);
+                            Ok(None)
+                        })),
+                    };
+                    entered_tx.send(()).unwrap();
+                    if unwind {
+                        panic!("exercise enclosing build unwind");
+                    }
+                    bail!("exercise enclosing build error");
+                });
+                returned_tx.send(operation.is_err()).unwrap();
+            });
+            entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(matches!(
+                returned_rx.recv_timeout(Duration::from_millis(100)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ));
+            assert!(!shutdown.load(std::sync::atomic::Ordering::Acquire));
+            release_tx.send(()).unwrap();
+            assert_eq!(
+                returned_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+                unwind
+            );
+            owner.join().unwrap();
+            assert!(shutdown.load(std::sync::atomic::Ordering::Acquire));
+        }
+    }
+
+    #[test]
     fn tex_failure_excerpt_keeps_first_error_and_context() {
         assert_eq!(tex_failure_excerpt("No errors here\n"), "");
         assert_eq!(
@@ -14004,6 +14191,216 @@ mod tests {
     }
 
     #[test]
+    fn global_bibtex_cache_requires_the_current_selected_dependencies() {
+        let _env_lock = TEXINPUTS_TEST_LOCK.lock().unwrap();
+        let root = unique_temp_dir("tekai-global-bibtex-selection");
+        let source_out = root.join("source-out");
+        let restored_out = root.join("restored-out");
+        fs::create_dir_all(&source_out).unwrap();
+        fs::create_dir_all(&restored_out).unwrap();
+        let _cache = EnvVarGuard::set(
+            "TEKAI_BIBTEX_CACHE",
+            root.join("cache").display().to_string(),
+        );
+        let aux = "\\citation{x}\n\\bibstyle{plain}\n\\bibdata{refs}\n";
+        for (out, title) in [(&source_out, "OLD-TITLE"), (&restored_out, "NEW-TITLE")] {
+            fs::write(out.join("main.aux"), aux).unwrap();
+            fs::write(
+                out.join("refs.bib"),
+                format!("@book{{x, author={{A. Author}}, title={{{title}}}, year={{2026}}}}\n"),
+            )
+            .unwrap();
+        }
+        let source_job = bibtex_job(&source_out, &source_out.join("main.aux"), None);
+        fs::write(&source_job.bbl_path, "OLD-TITLE").unwrap();
+        let signature = bibtex_aux_signature_from_source(aux, &source_job, &root);
+        save_global_bibtex_cache(&root, &source_out, &source_job, &signature, aux).unwrap();
+        let cached = global_bibtex_cache_paths(&signature);
+        assert!(bibtex_cache_is_fresh(&cached.state_path, &signature, &cached.bbl_path).unwrap());
+        let restored_job = bibtex_job(&restored_out, &restored_out.join("main.aux"), None);
+        assert!(
+            !restore_global_bibtex_cache_if_fresh(
+                &root,
+                &restored_out,
+                &restored_job,
+                &signature,
+                aux,
+            )
+            .unwrap()
+        );
+        assert!(!restored_job.bbl_path.exists());
+        assert!(!restored_job.state_path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_global_bibtex_save_invalidates_prior_publication() {
+        let _env_lock = TEXINPUTS_TEST_LOCK.lock().unwrap();
+        let root = unique_temp_dir("tekai-global-bibtex-interrupted");
+        let out = root.join("out");
+        fs::create_dir_all(&out).unwrap();
+        let _cache = EnvVarGuard::set(
+            "TEKAI_BIBTEX_CACHE",
+            root.join("cache").display().to_string(),
+        );
+        fs::write(root.join("refs.bib"), "@book{x,title={X}}\n").unwrap();
+        let aux = "\\citation{x}\n\\bibdata{refs}\n";
+        fs::write(out.join("main.aux"), aux).unwrap();
+        let job = bibtex_job(&out, &out.join("main.aux"), None);
+        fs::write(&job.bbl_path, "OLD").unwrap();
+        let signature = bibtex_aux_signature_from_source(aux, &job, &root);
+        save_global_bibtex_cache(&root, &out, &job, &signature, aux).unwrap();
+        let cache = global_bibtex_cache_paths(&signature);
+        assert!(cache.state_path.is_file());
+        fs::create_dir(&cache.blg_path).unwrap();
+        fs::write(job.bbl_path.with_extension("blg"), "new log").unwrap();
+        fs::write(&job.bbl_path, "NEW").unwrap();
+        assert!(save_global_bibtex_cache(&root, &out, &job, &signature, aux).is_err());
+        assert_eq!(fs::read_to_string(&cache.bbl_path).unwrap(), "NEW");
+        assert!(!cache.state_path.exists());
+        assert!(!restore_global_bibtex_cache_if_fresh(&root, &out, &job, &signature, aux).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn malformed_owned_states_are_misses_and_do_not_publish_incomplete_inputs() {
+        let root = unique_temp_dir("tekai-owned-state-recovery");
+        fs::create_dir_all(&root).unwrap();
+        let state_path = root.join("state.toml");
+        let output = root.join("artifact");
+        fs::write(&output, "artifact").unwrap();
+        let index_job = MakeIndexJob {
+            tool: IndexTool::MakeIndex,
+            program: None,
+            input_path: root.join("main.idx"),
+            output_path: output.clone(),
+            transcript_path: root.join("main.ilg"),
+            style_path: None,
+            command_options: Vec::new(),
+            style_is_build_output: false,
+            state_path: state_path.clone(),
+        };
+        for malformed in [b"version = [".as_slice(), b"\xff\xfe".as_slice()] {
+            fs::write(&state_path, malformed).unwrap();
+            assert!(read_build_state_if_exists(&state_path).unwrap().is_none());
+            assert!(
+                read_preamble_format_state_if_exists(&state_path)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(!bibtex_cache_is_fresh(&state_path, "sig", &output).unwrap());
+            assert!(!index_cache_is_fresh(&state_path, "sig", &index_job).unwrap());
+            assert!(
+                !splitindex_cache_is_fresh(&state_path, "sig", std::slice::from_ref(&output))
+                    .unwrap()
+            );
+            assert!(!external_tool_cache_is_fresh(&state_path, "sig", &output).unwrap());
+            assert!(previous_bib_input_map(&state_path).unwrap().is_empty());
+            assert!(previous_index_input_map(&state_path).unwrap().is_empty());
+            assert!(
+                previous_external_tool_input_map(&state_path)
+                    .unwrap()
+                    .is_empty()
+            );
+            let mut incomplete = Vec::new();
+            append_external_tool_state_inputs(&mut incomplete, &state_path).unwrap();
+            let generation = BuildGeneration {
+                started_ns: 0,
+                lookup_inputs: Some(Vec::new()),
+                owned_format_directories: Vec::new(),
+            };
+            assert!(!generation_can_publish(&incomplete, &generation));
+        }
+        write_index_state(&state_path, "sig", &index_job).unwrap();
+        assert!(index_cache_is_fresh(&state_path, "sig", &index_job).unwrap());
+        // Recovering owned metadata must not change strict source-data reads.
+        let invalid_source = root.join("invalid.aux");
+        fs::write(&invalid_source, b"\xff").unwrap();
+        assert!(biber_signature(&invalid_source, &root).is_err());
+        assert!(fs::read_dir(&root).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tekai-state-")
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn converter_rebuilds_after_external_source_alias_retarget_and_malformed_state() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let _env_lock = TEXINPUTS_TEST_LOCK.lock().unwrap();
+        let root = unique_temp_dir("tekai-converter-alias");
+        let project = root.join("project");
+        let external = root.join("external");
+        let bin = root.join("bin");
+        fs::create_dir_all(project.join("out")).unwrap();
+        fs::create_dir_all(&external).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        let old = external.join("old.eps");
+        let new = external.join("new.eps");
+        let alias = external.join("selected.eps");
+        fs::write(&old, "OLD-CONVERTER-CONTENT").unwrap();
+        fs::write(&new, "NEW-CONVERTER-CONTENT").unwrap();
+        symlink(&old, &alias).unwrap();
+        let program = bin.join("epstopdf");
+        fs::write(
+            &program,
+            "#!/bin/sh\n/bin/cp \"$1\" \"${2#--outfile=}\"\nprintf 'run\\n' >> \"${2#--outfile=}.runs\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        let _path = EnvVarGuard::set("PATH", bin.display().to_string());
+        let _texinputs = EnvVarGuard::set("TEXINPUTS", String::new());
+        let _program_texinputs = EnvVarGuard::set("TEXINPUTS_pdflatex", String::new());
+        let job = EpsConversionJob {
+            input_path: alias.clone(),
+            output_path: project.join("out/converted.pdf"),
+            state_path: project.join("out/converted.epspdfstate.toml"),
+        };
+        let options = test_build_options(
+            &project.join("main.tex"),
+            &project.join("out"),
+            DraftPrepass::Never,
+        );
+        assert!(run_eps_conversion_if_stale(&job, &options).unwrap());
+        assert!(!run_eps_conversion_if_stale(&job, &options).unwrap());
+        let state = read_owned_cache_state::<ExternalToolState>(&job.state_path, "state")
+            .unwrap()
+            .unwrap();
+        assert!(
+            state
+                .inputs
+                .iter()
+                .any(|input| input.path == format!("{INPUT_ALIAS_PATH_PREFIX}{}", alias.display()))
+        );
+        fs::remove_file(&alias).unwrap();
+        symlink(&new, &alias).unwrap();
+        // The old canonical target remains unchanged and available.
+        assert_eq!(fs::read_to_string(&old).unwrap(), "OLD-CONVERTER-CONTENT");
+        assert!(run_eps_conversion_if_stale(&job, &options).unwrap());
+        assert_eq!(
+            fs::read_to_string(&job.output_path).unwrap(),
+            "NEW-CONVERTER-CONTENT"
+        );
+        assert!(!run_eps_conversion_if_stale(&job, &options).unwrap());
+        fs::write(&job.state_path, "version = [").unwrap();
+        assert!(run_eps_conversion_if_stale(&job, &options).unwrap());
+        assert!(!run_eps_conversion_if_stale(&job, &options).unwrap());
+        assert_eq!(
+            fs::read_to_string(job.output_path.with_extension("pdf.runs"))
+                .unwrap()
+                .lines()
+                .count(),
+            3
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn source_features_do_not_treat_comments_as_commands() {
         let root = unique_temp_dir("tekai-source-comments");
         fs::create_dir_all(&root).expect("failed to create temp root");
@@ -14156,7 +14553,7 @@ mod tests {
         acquired_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         second.join().unwrap();
         assert!(namespace.is_dir());
-        assert!(fs::read_dir(&namespace).unwrap().count() <= 512);
+        assert!(fs::read_dir(&namespace).unwrap().count() <= 769);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -14182,7 +14579,275 @@ mod tests {
         drop(owned);
         acquired_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         waiter.join().unwrap();
+        let missing_alias = root.join("alias/missing/nested");
+        let created = BuildOutputLock::acquire(&missing_alias).unwrap();
+        assert_eq!(
+            created.output_path(),
+            root.join("actual/missing/nested").canonicalize().unwrap()
+        );
+        assert!(missing_alias.is_dir());
+        drop(created);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ancestor_cleanup_waits_for_an_owned_nested_build() {
+        let root = unique_temp_dir("tekai-nested-clean-ownership");
+        let outer = root.join("build");
+        let inner = outer.join("chapter");
+        fs::create_dir_all(&inner).unwrap();
+        fs::write(inner.join("active.marker"), "owned").unwrap();
+        let build = BuildOutputLock::acquire(&inner).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (cleaned_tx, cleaned_rx) = std::sync::mpsc::channel();
+        let cleaner = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let cleanup = BuildOutputLock::acquire_for_clean(&outer).unwrap();
+            fs::remove_dir_all(cleanup.output_path()).unwrap();
+            cleaned_tx.send(()).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(
+            cleaned_rx.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(inner.join("active.marker").is_file());
+        drop(build);
+        cleaned_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        cleaner.join().unwrap();
+        assert!(!inner.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unrelated_build_leases_remain_concurrent() {
+        let root = unique_temp_dir("tekai-shared-build-leases");
+        fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let first_path = (0..4096)
+            .map(|index| root.join(format!("first-{index}")))
+            .find(|path| {
+                path.ancestors()
+                    .skip(1)
+                    .all(|ancestor| build_ownership_shard(ancestor) != build_ownership_shard(path))
+            })
+            .unwrap();
+        let first = BuildOutputLock::acquire(&first_path).unwrap();
+        let first_plan = output_ownership_plan(first.output_path());
+        let second = (0..4096)
+            .map(|index| root.join(format!("second-{index}")))
+            .find(|path| !ownership_plans_conflict(&first_plan, &output_ownership_plan(path)))
+            .unwrap();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let other = thread::spawn(move || {
+            let _ownership = BuildOutputLock::acquire(&second).unwrap();
+            acquired_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        // A second shared lease can be owned while the first remains live.
+        acquired_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        release_tx.send(()).unwrap();
+        other.join().unwrap();
+        drop(first);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn ownership_plans_conflict(
+        first: &[(usize, BuildOwnershipMode)],
+        second: &[(usize, BuildOwnershipMode)],
+    ) -> bool {
+        first.iter().any(|&(shard, mode)| {
+            second.iter().any(|&(other_shard, other_mode)| {
+                shard == other_shard
+                    && (mode == BuildOwnershipMode::Exclusive
+                        || other_mode == BuildOwnershipMode::Exclusive)
+            })
+        })
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn output_ownership_plans_are_sorted_bounded_and_cover_descendants(
+            parts in proptest::prop_oneof![
+                9 => proptest::collection::vec("[a-z0-9]{1,12}", 0..64),
+                1 => proptest::collection::vec("[a-z0-9]{1,12}", 256..300),
+            ],
+            leaf in "[a-z0-9]{1,12}",
+        ) {
+            let root = std::env::temp_dir().join("tekai-ownership-plan-property");
+            let output = parts.iter().fold(root, |path, part| path.join(part));
+            let plan = output_ownership_plan(&output);
+            proptest::prop_assert!(plan.len() <= BUILD_OWNERSHIP_SHARDS);
+            proptest::prop_assert!(plan.windows(2).all(|pair| pair[0].0 < pair[1].0));
+            proptest::prop_assert_eq!(
+                plan.iter().filter(|(_, mode)| *mode == BuildOwnershipMode::Exclusive).count(),
+                1,
+            );
+            proptest::prop_assert!(plan.contains(&(
+                build_ownership_shard(&output),
+                BuildOwnershipMode::Exclusive,
+            )));
+            for ancestor in output.ancestors().skip(1) {
+                let ancestor_shard = build_ownership_shard(ancestor);
+                proptest::prop_assert!(plan.iter().any(|&(shard, _)| shard == ancestor_shard));
+            }
+            let descendant_plan = output_ownership_plan(&output.join(leaf));
+            proptest::prop_assert!(ownership_plans_conflict(&plan, &descendant_plan));
+        }
+    }
+
+    #[test]
+    fn output_ownership_hierarchy_and_collisions_complete_in_bounded_processes() {
+        const TEST_NAME: &str = "compiler::tests::output_ownership_hierarchy_and_collisions_complete_in_bounded_processes";
+        const CHILD_ROLE: &str = "TEKAI_TEST_OUTPUT_OWNERSHIP_ROLE";
+        const CHILD_ROOT: &str = "TEKAI_TEST_OUTPUT_OWNERSHIP_ROOT";
+        const CHILD_OUTPUT: &str = "TEKAI_TEST_OUTPUT_OWNERSHIP_OUTPUT";
+
+        if let Some(role) = std::env::var_os(CHILD_ROLE) {
+            let role = role.to_str().unwrap();
+            let root = PathBuf::from(std::env::var_os(CHILD_ROOT).unwrap());
+            let output = PathBuf::from(std::env::var_os(CHILD_OUTPUT).unwrap());
+            fs::write(root.join(format!("{role}.started")), "started").unwrap();
+            let ownership = BuildOutputLock::acquire(&output).unwrap();
+            assert_eq!(ownership.output_path(), output.canonicalize().unwrap());
+            fs::write(root.join(format!("{role}.acquired")), "acquired").unwrap();
+            if role == "holder" {
+                let deadline = Instant::now() + Duration::from_secs(15);
+                while !root.join("release").is_file() {
+                    assert!(Instant::now() < deadline, "holder release timed out");
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            return;
+        }
+
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        struct Child {
+            process: std::process::Child,
+            stdout: PathBuf,
+            stderr: PathBuf,
+        }
+        impl Child {
+            fn wait(&mut self) {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let status = loop {
+                    if let Some(status) = self.process.try_wait().unwrap() {
+                        break status;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "ownership child exceeded 10 seconds"
+                    );
+                    thread::sleep(Duration::from_millis(5));
+                };
+                if !status.success() {
+                    use std::io::Read;
+                    let read_log = |path: &Path| {
+                        let mut bytes = Vec::new();
+                        fs::File::open(path)
+                            .unwrap()
+                            .take(16 * 1024)
+                            .read_to_end(&mut bytes)
+                            .unwrap();
+                        String::from_utf8_lossy(&bytes).into_owned()
+                    };
+                    panic!(
+                        "ownership child failed\n{}\n{}",
+                        read_log(&self.stdout),
+                        read_log(&self.stderr)
+                    );
+                }
+            }
+        }
+        impl Drop for Child {
+            fn drop(&mut self) {
+                let _ = self.process.kill();
+                let _ = self.process.wait();
+            }
+        }
+
+        let spawn = |root: &Path, output: &Path, role: &str| {
+            let stdout = root.join(format!("{role}.stdout"));
+            let stderr = root.join(format!("{role}.stderr"));
+            let process = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST_NAME, "--test-threads=1", "--nocapture"])
+                .env(CHILD_ROLE, role)
+                .env(CHILD_ROOT, root)
+                .env(CHILD_OUTPUT, output)
+                .stdout(fs::File::create(&stdout).unwrap())
+                .stderr(fs::File::create(&stderr).unwrap())
+                .spawn()
+                .unwrap();
+            Child {
+                process,
+                stdout,
+                stderr,
+            }
+        };
+        let await_marker = |root: &Path, role: &str, marker: &str, child: &mut Child| {
+            let path = root.join(format!("{role}.{marker}"));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !path.is_file() {
+                if child.process.try_wait().unwrap().is_some() {
+                    child.wait();
+                    panic!("ownership child exited before {}", path.display());
+                }
+                assert!(Instant::now() < deadline, "ownership marker timed out");
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+
+        let root = unique_temp_dir("tekai-output-hierarchy-processes");
+        fs::create_dir_all(&root).unwrap();
+        let fixture = Fixture(root.canonicalize().unwrap());
+        for ancestor_first in [true, false] {
+            let case = fixture.0.join(format!("ancestor-first-{ancestor_first}"));
+            fs::create_dir_all(&case).unwrap();
+            let outer = case.join("output");
+            let inner = outer.join("chapter");
+            let (held, waiting) = if ancestor_first {
+                (&outer, &inner)
+            } else {
+                (&inner, &outer)
+            };
+            let mut holder = spawn(&case, held, "holder");
+            await_marker(&case, "holder", "acquired", &mut holder);
+            let mut waiter = spawn(&case, waiting, "waiter");
+            await_marker(&case, "waiter", "started", &mut waiter);
+            thread::sleep(Duration::from_millis(100));
+            assert!(!case.join("waiter.acquired").exists());
+            assert!(waiter.process.try_wait().unwrap().is_none());
+            fs::write(case.join("release"), "release").unwrap();
+            holder.wait();
+            waiter.wait();
+            assert!(case.join("waiter.acquired").is_file());
+        }
+
+        let case = fixture.0.join("collision");
+        fs::create_dir_all(&case).unwrap();
+        let output = (0..4096)
+            .map(|index| case.join(format!("output-{index}")))
+            .find(|path| build_ownership_shard(path) == build_ownership_shard(&case))
+            .expect("fixture must force a leaf/ancestor shard collision");
+        let plan = output_ownership_plan(&output);
+        assert!(plan.contains(&(build_ownership_shard(&case), BuildOwnershipMode::Exclusive)));
+        let mut collision = spawn(&case, &output, "collision");
+        collision.wait();
+        assert!(case.join("collision.acquired").is_file());
+
+        let missing = fixture.0.join("never-created/by-clean");
+        let cleanup = BuildOutputLock::acquire_for_clean(&missing).unwrap();
+        assert!(
+            !missing.exists(),
+            "cleanup ownership must never create its target"
+        );
+        drop(cleanup);
     }
 
     #[test]
@@ -15569,7 +16234,18 @@ mod tests {
 
         let inputs = biber_config_inputs(&root, &HashMap::new())
             .expect("failed to fingerprint Biber config inputs");
-        assert_eq!(inputs.len(), 2, "{inputs:#?}");
+        assert!(
+            inputs.iter().any(
+                |input| input.path == canonical_or_original(&config_path).display().to_string()
+            ),
+            "{inputs:#?}"
+        );
+        assert!(
+            inputs
+                .iter()
+                .any(|input| input.path.starts_with(BIBER_CONFIG_FINGERPRINT_PATH_PREFIX)),
+            "{inputs:#?}"
+        );
         assert!(
             inputs
                 .iter()
