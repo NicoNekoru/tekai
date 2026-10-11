@@ -372,7 +372,9 @@ fn materialize_embedded_pdflatex_format() -> io::Result<PathBuf> {
     )
 }
 
-fn embedded_engine_cache_root() -> PathBuf {
+/// Current format materialization cache policy, independent of the embedded
+/// texmf root's process-lifetime initialization.
+pub fn engine_cache_root() -> PathBuf {
     if let Some(path) = std::env::var_os("TEKAI_ENGINE_CACHE") {
         return PathBuf::from(path);
     }
@@ -395,6 +397,10 @@ fn embedded_engine_cache_root() -> PathBuf {
             .join("engine");
     }
     std::env::temp_dir().join("tekai").join("engine")
+}
+
+fn embedded_engine_cache_root() -> PathBuf {
+    engine_cache_root()
 }
 
 /// Directories whose additions can change the format selected by the engine.
@@ -703,7 +709,7 @@ fn search_input(
         let found = if entry.bundled {
             find_in_index(candidate, format)
         } else {
-            crate::runtime::find_in_path(base, candidate, Path::new(&entry.path))
+            crate::lookup::find_search_path(base, candidate, &entry)
         };
         found.map(|path| InputLocation {
             path,
@@ -753,8 +759,11 @@ pub fn cache_dependency_search_paths() -> Vec<crate::search::SearchPath> {
         left.path
             .cmp(&right.path)
             .then_with(|| left.bundled.cmp(&right.bundled))
+            .then_with(|| left.source.cmp(right.source))
     });
-    paths.dedup_by(|left, right| left.path == right.path && left.bundled == right.bundled);
+    paths.dedup_by(|left, right| {
+        left.path == right.path && left.bundled == right.bundled && left.source == right.source
+    });
     paths
 }
 

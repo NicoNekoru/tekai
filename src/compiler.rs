@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
@@ -5,22 +6,22 @@ use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::diagnostic_profile::{self, Counter, Phase};
 use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
 
-const BUILD_STATE_VERSION: u32 = 41;
+const BUILD_STATE_VERSION: u32 = 42;
 const BIB_STATE_VERSION: u32 = 11;
 const INDEX_STATE_VERSION: u32 = 10;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
 const EXTERNAL_TOOL_STATE_VERSION: u32 = 1;
-const PREAMBLE_FORMAT_STATE_VERSION: u32 = 1;
-const SETTLED_AUX_CACHE_STATE_VERSION: u32 = 3;
+const PREAMBLE_FORMAT_STATE_VERSION: u32 = 2;
+const SETTLED_AUX_CACHE_STATE_VERSION: u32 = 4;
 
 #[cfg(windows)]
 const KPATHSEA_PATH_SEPARATOR: &str = ";";
@@ -48,6 +49,14 @@ const BUILD_ENV_VARS: &[&str] = &[
     "TEXFONTMAPS",
     "WEB2C",
     "TEXFORMATS",
+    "TEKAI_ENGINE_FORMATS",
+    "TEKAI_ENGINE_CACHE",
+    "TEKAI_FORMAT_CACHE",
+    "TEKAI_AUX_CACHE",
+    "TEKAI_BIBTEX_CACHE",
+    "XDG_CACHE_HOME",
+    "LOCALAPPDATA",
+    "APPDATA",
     "INDEXSTYLE",
     "TEXINDEXSTYLE",
     "TEXMFCNF",
@@ -70,14 +79,18 @@ const BIB_ENV_VARS: &[&str] = &[
     "TEXMFHOME",
     "TEXMFLOCAL",
 ];
-const TEX_ROOT_EFFECTIVE_HASH_PREFIX: &str = "tex-root-effective:";
-const TEX_INPUT_EFFECTIVE_HASH_PREFIX: &str = "tex-input-effective:";
-const TEX_PREAMBLE_EFFECTIVE_HASH_PREFIX: &str = "tex-preamble-effective:";
+const TEX_ROOT_RAW_HASH_PREFIX: &str = "tex-root-raw:";
+const TEX_INPUT_RAW_HASH_PREFIX: &str = "tex-input-raw:";
+const TEX_PREAMBLE_RAW_HASH_PREFIX: &str = "tex-preamble-raw:";
 const BIB_CITED_EFFECTIVE_HASH_PREFIX: &str = "bib-cited-effective:";
 const BIBER_GLOB_FINGERPRINT_PATH_PREFIX: &str = "tekai-biber-glob:";
 const BIBER_GLOB_MATCHES_HASH_PREFIX: &str = "biber-glob-matches:";
 const BIBER_CONFIG_FINGERPRINT_PATH_PREFIX: &str = "tekai-biber-config:";
 const BIBER_CONFIG_CHOICE_HASH_PREFIX: &str = "biber-config-choice:";
+const LOOKUP_DIRECTORY_PATH_PREFIX: &str = "tekai-lookup-directory:";
+const INPUT_ALIAS_PATH_PREFIX: &str = "tekai-input-alias:";
+const LOOKUP_ABSENT_DIRECTORY_PREFIX: &str = "tekai-lookup-absent-directory:";
+const LOOKUP_ABSENT_FILE_PREFIX: &str = "tekai-lookup-absent-file:";
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct KpathseaResolutionKey {
@@ -86,21 +99,14 @@ struct KpathseaResolutionKey {
     extension: String,
 }
 
-static KPATHSEA_RESOLUTION_CACHE: OnceLock<Mutex<HashMap<KpathseaResolutionKey, Option<PathBuf>>>> =
-    OnceLock::new();
+thread_local! {
+    static KPATHSEA_RESOLUTION_CACHE: RefCell<HashMap<KpathseaResolutionKey, Option<PathBuf>>> = RefCell::new(HashMap::new());
+}
 
 fn clear_kpathsea_resolution_cache() {
     let _profile = diagnostic_profile::span(Phase::LookupSessionReset);
     tekai_engine::lookup::reset();
-    if let Some(cache) = KPATHSEA_RESOLUTION_CACHE.get()
-        && let Ok(mut cache) = cache.lock()
-    {
-        *cache = HashMap::new();
-    }
-}
-
-fn kpathsea_resolution_cache() -> &'static Mutex<HashMap<KpathseaResolutionKey, Option<PathBuf>>> {
-    KPATHSEA_RESOLUTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    KPATHSEA_RESOLUTION_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Engine {
@@ -279,8 +285,8 @@ struct FileFingerprint {
     modified_ns: u64,
     #[serde(default)]
     hash: String,
-    // Effective-source lengths are not physical file sizes. Keep the latter
-    // together with the file identity used by every metadata-only fast path.
+    // Cited-bibliography normalization can select fewer bytes than the physical
+    // file. Keep physical identity for every metadata-only fast path.
     #[serde(default)]
     metadata: Option<FileMetadataFingerprint>,
 }
@@ -299,6 +305,370 @@ impl FileMetadataFingerprint {
         // cannot be distinguished from an unchanged file. Hash it instead.
         self.identity.is_some() && input.metadata == Some(self)
     }
+}
+
+struct BuildGeneration {
+    started_ns: u128,
+    lookup_inputs: Option<Vec<FileFingerprint>>,
+    owned_format_directories: Vec<PathBuf>,
+}
+
+impl BuildGeneration {
+    fn capture(doc_dir: &Path, out_dir: &Path, main: &Path) -> Result<Self> {
+        let generated_roots = generated_lookup_roots(doc_dir, out_dir, main)?;
+        let owned_format_directories = vec![
+            preamble_format_cache_dir(doc_dir, main).canonicalize()?,
+            canonicalize_missing_path(
+                &tekai_engine::kpathsea::engine_cache_root().join("raw-formats-v1"),
+            )?,
+        ];
+        let started_ns = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let mut entries = tekai_engine::kpathsea::cache_dependency_search_paths();
+        entries.sort_by(|left, right| {
+            (&left.path, left.source, left.bundled).cmp(&(&right.path, right.source, right.bundled))
+        });
+        entries.dedup_by(|left, right| {
+            left.path == right.path && left.source == right.source && left.bundled == right.bundled
+        });
+        let excluded = generated_roots
+            .iter()
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>();
+        let lookup_inputs = if !generated_roots.iter().any(|root| doc_dir.starts_with(root))
+            && !explicit_search_overlaps_generated(doc_dir, &entries, &generated_roots)
+        {
+            tekai_engine::lookup::dependency_snapshot(doc_dir, &entries, &excluded)
+        } else {
+            // No generated-cache override may exclude the source tree.
+            None
+        }
+        .map(|paths| {
+            paths
+                .iter()
+                .map(|dependency| match dependency {
+                    tekai_engine::lookup::LookupDependency::Path(path) => {
+                        lookup_dependency_fingerprint(path)
+                    }
+                    tekai_engine::lookup::LookupDependency::AbsentDirectory(path) => {
+                        Ok(lookup_absence_fingerprint(path, false))
+                    }
+                    tekai_engine::lookup::LookupDependency::AbsentFile(path) => {
+                        Ok(lookup_absence_fingerprint(path, true))
+                    }
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?;
+        Ok(Self {
+            started_ns,
+            lookup_inputs,
+            owned_format_directories,
+        })
+    }
+
+    #[cfg(test)]
+    fn validate(&self, inputs: &[FileFingerprint]) -> Result<bool> {
+        Ok(self.validation_failure(inputs)?.is_none())
+    }
+
+    fn validation_failure(&self, inputs: &[FileFingerprint]) -> Result<Option<String>> {
+        for input in inputs {
+            if is_virtual_fingerprint_path(&input.path) {
+                if !input_fingerprint_is_fresh(input)? {
+                    return Ok(Some(input.path.clone()));
+                }
+                if input.path.starts_with(INPUT_ALIAS_PATH_PREFIX)
+                    && input
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.identity)
+                        .is_some_and(|(_, _, seconds, nanos)| {
+                            let changed_ns =
+                                i128::from(seconds) * 1_000_000_000 + i128::from(nanos);
+                            changed_ns < 0 || changed_ns as u128 >= self.started_ns
+                        })
+                {
+                    return Ok(Some(input.path.clone()));
+                }
+                continue;
+            }
+            let path = Path::new(&input.path);
+            let Some(metadata) = file_metadata_fingerprint(path)? else {
+                return Ok(Some(input.path.clone()));
+            };
+            if input.metadata != Some(metadata) {
+                return Ok(Some(input.path.clone()));
+            }
+            if is_owned_generated_format(path, &self.owned_format_directories) {
+                continue;
+            }
+            let Some((_, _, seconds, nanos)) = metadata.identity else {
+                // Without a reliable change timestamp, bytes observed after
+                // the engine exits cannot prove what the engine consumed;
+                // publication declines these generations rather than failing
+                // an otherwise successful uncached build.
+                continue;
+            };
+            let changed_ns = i128::from(seconds) * 1_000_000_000 + i128::from(nanos);
+            if changed_ns < 0 || changed_ns as u128 >= self.started_ns {
+                return Ok(Some(input.path.clone()));
+            }
+        }
+        if let Some(dependencies) = &self.lookup_inputs {
+            for input in dependencies {
+                let stable =
+                    if let Some(path) = input.path.strip_prefix(LOOKUP_DIRECTORY_PATH_PREFIX) {
+                        // Publication needs an unchanged generation, not merely
+                        // equal final membership after transient engine-time edits.
+                        lookup_directory_metadata(Path::new(path))?
+                            .is_some_and(|current| current.matches(input))
+                    } else {
+                        input_fingerprint_is_fresh(input)?
+                    };
+                if !stable {
+                    return Ok(Some(input.path.clone()));
+                }
+                if input
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.identity)
+                    .is_some_and(|(_, _, seconds, nanos)| {
+                        let changed_ns = i128::from(seconds) * 1_000_000_000 + i128::from(nanos);
+                        changed_ns < 0 || changed_ns as u128 >= self.started_ns
+                    })
+                {
+                    return Ok(Some(input.path.clone()));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn generated_lookup_roots(doc_dir: &Path, out_dir: &Path, main: &Path) -> Result<Vec<PathBuf>> {
+    let bundle = tekai_engine::runtime::texmf_root()?;
+    let mut roots = [
+        Some(out_dir.to_path_buf()),
+        Some(build_ownership_directory()?),
+        bundle
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf),
+        Some(preamble_format_cache_dir(doc_dir, main)),
+        Some(tekai_engine::kpathsea::engine_cache_root()),
+        Some(cache_root_from_env(
+            "TEKAI_AUX_CACHE",
+            default_settled_aux_cache_root,
+        )),
+        Some(cache_root_from_env(
+            "TEKAI_BIBTEX_CACHE",
+            default_bibtex_cache_root,
+        )),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    for root in &mut roots {
+        fs::create_dir_all(&*root).with_context(|| {
+            format!("cannot create generated cache directory {}", root.display())
+        })?;
+        *root = root.canonicalize()?;
+    }
+    Ok(roots)
+}
+
+fn explicit_search_overlaps_generated(
+    doc_dir: &Path,
+    entries: &[tekai_engine::search::SearchPath],
+    generated: &[PathBuf],
+) -> bool {
+    entries
+        .iter()
+        .filter(|entry| !entry.bundled && entry.source != "project")
+        .any(|entry| {
+            let spelling = entry.path.strip_prefix("!!").unwrap_or(&entry.path);
+            let prefix = doc_dir.join(spelling.split("//").next().unwrap_or(spelling));
+            let prefix = canonicalize_missing_path(&prefix).unwrap_or(prefix);
+            generated.iter().any(|root| {
+                prefix.starts_with(root) || (spelling.contains("//") && root.starts_with(&prefix))
+            })
+        })
+}
+
+fn configure_implicit_lookup_exclusions(
+    command: &mut Command,
+    doc_dir: &Path,
+    out_dir: &Path,
+    main: &Path,
+) -> Result<()> {
+    let roots = generated_lookup_roots(doc_dir, out_dir, main)?;
+    command.env(
+        "TEKAI_ENGINE_PROJECT_EXCLUDES",
+        std::env::join_paths(roots.iter().filter(|root| !doc_dir.starts_with(root)))?,
+    );
+    command.env("TEKAI_ENGINE_PROJECT_ROOT", doc_dir);
+    command.env("TEKAI_ENGINE_OUTPUT_ROOT", out_dir);
+    Ok(())
+}
+
+fn lookup_dependency_fingerprint(path: &Path) -> Result<FileFingerprint> {
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("failed to stat lookup dependency {}", path.display()))?;
+    if metadata.is_file() {
+        return fingerprint_path_reusing(path, None)?.context("lookup database disappeared");
+    }
+    Ok(FileFingerprint {
+        path: format!("{LOOKUP_DIRECTORY_PATH_PREFIX}{}", path.display()),
+        len: metadata.len(),
+        modified_ns: metadata
+            .modified()?
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64,
+        hash: lookup_directory_membership_hash(path)?,
+        metadata: Some(FileMetadataFingerprint {
+            len: metadata.len(),
+            modified_ns: metadata
+                .modified()?
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64,
+            identity: tekai_engine::file_identity::change_identity(&metadata),
+        }),
+    })
+}
+
+fn lookup_absence_fingerprint(path: &Path, file: bool) -> FileFingerprint {
+    let prefix = if file {
+        LOOKUP_ABSENT_FILE_PREFIX
+    } else {
+        LOOKUP_ABSENT_DIRECTORY_PREFIX
+    };
+    FileFingerprint {
+        path: format!("{prefix}{}", path.display()),
+        len: 0,
+        modified_ns: 0,
+        hash: "absent".to_string(),
+        metadata: None,
+    }
+}
+
+fn is_owned_generated_format(path: &Path, owned_directories: &[PathBuf]) -> bool {
+    let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    if path.parent() == owned_directories.first().map(PathBuf::as_path)
+        && name
+            .strip_prefix("tekai-fastfmt-")
+            .and_then(|name| name.strip_suffix(".fmt"))
+            .is_some_and(|digest| {
+                digest.len() == 16 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+    {
+        return true;
+    }
+    path.parent() == owned_directories.get(1).map(PathBuf::as_path)
+        && name.strip_suffix(".fmt.raw").is_some_and(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+}
+
+fn lookup_directory_membership_hash(path: &Path) -> Result<String> {
+    let mut entries = Vec::new();
+    let mut retained = 0usize;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let name = entry.file_name();
+        let target = if kind.is_symlink() {
+            fs::read_link(entry.path())?
+        } else {
+            PathBuf::new()
+        };
+        retained = retained.saturating_add(name.len() + target.as_os_str().len() + 128);
+        if retained > 32 * 1024 * 1024 {
+            bail!("lookup directory membership exceeds bounded fingerprint budget");
+        }
+        let tag = if kind.is_symlink() {
+            3
+        } else if kind.is_dir() {
+            2
+        } else if kind.is_file() {
+            1
+        } else {
+            4
+        };
+        entries.push((name, tag, target));
+    }
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut hash = 0xcbf29ce484222325u64;
+    for (name, tag, target) in entries {
+        for bytes in [
+            name.as_encoded_bytes(),
+            &[tag],
+            target.as_os_str().as_encoded_bytes(),
+        ] {
+            for byte in (bytes.len() as u64).to_le_bytes().iter().chain(bytes) {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x100000001b3);
+            }
+        }
+    }
+    Ok(format!("lookup-membership:{hash:016x}"))
+}
+
+fn lookup_directory_metadata(path: &Path) -> Result<Option<FileMetadataFingerprint>> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => metadata,
+        Ok(_) => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(Some(FileMetadataFingerprint {
+        len: metadata.len(),
+        modified_ns: metadata
+            .modified()?
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64,
+        identity: tekai_engine::file_identity::change_identity(&metadata),
+    }))
+}
+
+fn input_alias_fingerprint(path: &Path) -> Result<FileFingerprint> {
+    let metadata = fs::symlink_metadata(path)?;
+    let canonical = path.canonicalize()?;
+    let modified_ns = metadata
+        .modified()?
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    Ok(FileFingerprint {
+        path: format!("{INPUT_ALIAS_PATH_PREFIX}{}", path.display()),
+        len: metadata.len(),
+        modified_ns,
+        hash: canonical.display().to_string(),
+        metadata: Some(FileMetadataFingerprint {
+            len: metadata.len(),
+            modified_ns,
+            identity: tekai_engine::file_identity::change_identity(&metadata),
+        }),
+    })
+}
+
+fn append_input_alias_dependencies(
+    inputs: &mut Vec<FileFingerprint>,
+    path: &Path,
+    observed: &mut HashSet<PathBuf>,
+) -> Result<()> {
+    for prefix in path.ancestors() {
+        if observed.insert(prefix.to_path_buf())
+            && fs::symlink_metadata(prefix).is_ok_and(|metadata| metadata.is_symlink())
+        {
+            inputs.push(input_alias_fingerprint(prefix)?);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -651,7 +1021,23 @@ impl IndexCommandProgram {
 
 pub fn build(options: &BuildOptions) -> Result<BuildReport> {
     let _profile = diagnostic_profile::span(Phase::BuildTotal);
+    let output_lock = BuildOutputLock::acquire(&options.out_dir)?;
+    let mut owned_options = options.clone();
+    owned_options.out_dir = output_lock.output_path().to_path_buf();
+    let options = &owned_options;
     clear_kpathsea_resolution_cache();
+    let _lookup_policy = if options.runner == Runner::Direct && options.engine != Engine::Tectonic {
+        let main = options.main.canonicalize()?;
+        let doc_dir = main.parent().context("root TeX file has no parent")?;
+        Some(tekai_engine::lookup::scoped_project_exclusions(
+            generated_lookup_roots(doc_dir, &options.out_dir, &main)?
+                .into_iter()
+                .filter(|root| !doc_dir.starts_with(root))
+                .collect(),
+        ))
+    } else {
+        None
+    };
     match options.runner {
         Runner::Direct if is_certified_tekai_pdftex_engine(options.engine) => {
             tekai_pdftex_direct_build(options)
@@ -659,6 +1045,119 @@ pub fn build(options: &BuildOptions) -> Result<BuildReport> {
         Runner::Direct if options.engine != Engine::Tectonic => direct_build(options),
         Runner::Direct | Runner::Latexmk => latexmk_or_tectonic_build(options),
     }
+}
+
+/// A descriptor-owned lock serializes library threads and independent CLI
+/// processes that publish into the same output directory. The file remains
+/// present outside the output tree, and process exit releases ownership without
+/// stale-lock recovery. Cleanup must use the same lock and must never remove a
+/// tree containing this namespace. All compiler/clean processes for the user
+/// use one namespace, independent of project cache environment overrides.
+#[derive(Debug)]
+pub struct BuildOutputLock {
+    _file: fs::File,
+    output: PathBuf,
+    directory: PathBuf,
+}
+
+impl BuildOutputLock {
+    pub fn acquire(output: &Path) -> Result<Self> {
+        Self::acquire_class(output, "output")
+    }
+
+    fn acquire_preamble(output: &Path) -> Result<Self> {
+        Self::acquire_class(output, "preamble")
+    }
+
+    fn acquire_settled(output: &Path) -> Result<Self> {
+        Self::acquire_class(output, "settled")
+    }
+
+    fn acquire_class(output: &Path, class: &str) -> Result<Self> {
+        let output = absolute_from_cwd(output)?;
+        // Resolve aliases even when the leaf does not exist yet, without first
+        // creating the output while another owner may be cleaning it.
+        let output = canonicalize_missing_path(&output)?;
+        let directory = build_ownership_directory()?;
+        if directory.starts_with(&output) || output.starts_with(&directory) {
+            bail!("output directory cannot overlap its ownership namespace");
+        }
+        // Fixed FNV shards bound persistent inode retention. Collisions merely
+        // serialize unrelated targets. Separate classes preserve the only
+        // ownership order: output first, then independently preamble or settled.
+        // Shared settled operations never acquire output/preamble ownership.
+        let path = directory.join(format!(
+            "{class}-{:02x}.lock",
+            content_hash(output.as_os_str().as_encoded_bytes()) % 256
+        ));
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .with_context(|| format!("cannot open build ownership lock {}", path.display()))?;
+        file.lock()
+            .with_context(|| format!("cannot acquire build ownership lock {}", path.display()))?;
+        Ok(Self {
+            _file: file,
+            output,
+            directory,
+        })
+    }
+
+    pub fn output_path(&self) -> &Path {
+        &self.output
+    }
+
+    pub fn lock_directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
+fn build_ownership_directory() -> Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+        let owner = rustix::process::geteuid().as_raw();
+        // Fixed system temporary directory, not env-dependent temp_dir().
+        // Cache overrides and env_clear CLI callers must still share ownership.
+        let path = PathBuf::from("/tmp").join(format!("tekai-build-locks-{owner}"));
+        match fs::DirBuilder::new().mode(0o700).create(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error).context("cannot create build ownership namespace"),
+        }
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_dir() || metadata.uid() != owner || metadata.mode() & 0o077 != 0 {
+            bail!(
+                "build ownership namespace must be a private directory owned by this user: {}",
+                path.display()
+            );
+        }
+        path
+            .canonicalize()
+            .context("cannot resolve build ownership namespace")
+    }
+    #[cfg(not(unix))]
+    {
+        let path = default_tekai_cache_root("build-locks");
+        fs::create_dir_all(&path)?;
+        path.canonicalize()
+            .context("cannot resolve build ownership namespace")
+    }
+}
+
+fn canonicalize_missing_path(path: &Path) -> Result<PathBuf> {
+    if let Ok(path) = path.canonicalize() {
+        return Ok(path);
+    }
+    let parent = path.parent().context("path has no existing ancestor")?;
+    let leaf = path.file_name().context("path has no leaf name")?;
+    if fs::symlink_metadata(path).is_ok() {
+        bail!("cannot resolve output directory {}", path.display());
+    }
+    Ok(canonicalize_missing_path(parent)?.join(leaf))
 }
 
 pub fn build_dependency_paths(options: &BuildOptions) -> Result<Vec<PathBuf>> {
@@ -672,6 +1171,13 @@ pub fn build_dependency_paths(options: &BuildOptions) -> Result<Vec<PathBuf>> {
         .with_context(|| format!("cannot find root TeX file {}", options.main.display()))?;
     let job_name = build_job_name(options, &main)?;
     let out_dir = absolute_from_cwd(&options.out_dir)?;
+    let doc_dir = main.parent().context("root TeX file has no parent")?;
+    let _lookup_policy = tekai_engine::lookup::scoped_project_exclusions(
+        generated_lookup_roots(doc_dir, &out_dir, &main)?
+            .into_iter()
+            .filter(|root| !doc_dir.starts_with(root))
+            .collect(),
+    );
     let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
     let mut paths = source_seed_dependency_paths(&main)?;
     if !state_path.exists() {
@@ -762,8 +1268,10 @@ fn latexmk_or_tectonic_build(options: &BuildOptions) -> Result<BuildReport> {
     configure_output(&mut command, options);
 
     let started = Instant::now();
-    let status = diagnostic_profile::measure(Phase::TexSubprocess, || command.status())
-        .context("failed to launch TeX compiler")?;
+    let status = diagnostic_profile::measure(Phase::TexSubprocess, || {
+        crate::process_runner::status(&mut command)
+    })
+    .context("failed to launch TeX compiler")?;
     let elapsed = started.elapsed();
     if !status.success() {
         bail!("TeX build failed with status {status}");
@@ -861,74 +1369,8 @@ fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     }
 
     drop(cache_checks);
-    if is_certified_tekai_pdftex_engine(options.engine) {
-        return tekai_pdftex_certified_direct_build(options, started, &job_name, &out_dir, &main);
-    }
-
-    let run_mode = TexRunMode {
-        draft_graphics: false,
-        suppress_pdf_output: false,
-        force_pgf_list_and_make: false,
-    };
-    let pass_started = Instant::now();
-    let native_started = Instant::now();
-    match run_tekai_pdftex_native(&job_name, &out_dir, &main, options, run_mode)? {
-        TekaiPdftexRun::Native { input_paths } => {
-            let native_elapsed = native_started.elapsed();
-            write_native_build_state(
-                &state_path,
-                &mode_key,
-                &pdf_path,
-                &doc_dir,
-                &out_dir,
-                &main,
-                &input_paths,
-                previous_build_state.as_ref(),
-            )?;
-            Ok(BuildReport {
-                elapsed: started.elapsed(),
-                pdf_path: Some(pdf_path),
-                tex_runs: 1,
-                draft_tex_runs: 0,
-                final_tex_runs: 1,
-                pdf_tex_runs: 1,
-                passes: vec![TexPassReport {
-                    draft: false,
-                    pdf_output: true,
-                    elapsed: pass_started.elapsed(),
-                    tex_elapsed: native_elapsed,
-                    aux_elapsed: Duration::ZERO,
-                    rerun_reasons: Vec::new(),
-                    aux_outputs_changed: false,
-                    generated_outputs_changed: false,
-                    generated_inputs_unread: false,
-                    preamble_format_used: false,
-                    preamble_format_built: false,
-                    bibliography_runs: 0,
-                    index_runs: 0,
-                    external_runs: 0,
-                }],
-                bibliography_runs: 0,
-                index_runs: 0,
-                external_runs: 0,
-                skipped: false,
-                draft_prepass_used: false,
-                aux_preflight_used: false,
-                preamble_format_used: false,
-                preamble_format_built: false,
-            })
-        }
-        TekaiPdftexRun::Fallback(reason) => {
-            if !options.quiet {
-                eprintln!(
-                    "warning: tekai-pdftex native backend unsupported ({reason}); falling back to pdflatex"
-                );
-            }
-            let mut fallback_options = options.clone();
-            fallback_options.engine = Engine::PdfLatex;
-            direct_build(&fallback_options)
-        }
-    }
+    debug_assert!(is_certified_tekai_pdftex_engine(options.engine));
+    tekai_pdftex_certified_direct_build(options, started, &job_name, &out_dir, &main)
 }
 
 fn tekai_pdftex_certified_direct_build(
@@ -948,7 +1390,7 @@ fn tekai_pdftex_certified_direct_build(
     let native_elapsed = native_started.elapsed();
     if !options.quiet {
         match &native_result {
-            TekaiPdftexRun::Native { .. } => {
+            TekaiPdftexRun::Native => {
                 eprintln!(
                     "warning: certified tekai-pdftex uses pdfTeX as the final artifact oracle"
                 );
@@ -985,7 +1427,7 @@ fn append_tekai_pdftex_certification_trace(
             )
         })?;
     let native_status = match native_result {
-        TekaiPdftexRun::Native { .. } => "native-produced",
+        TekaiPdftexRun::Native => "native-produced",
         TekaiPdftexRun::Fallback(_) => "native-unsupported",
     };
     writeln!(trace, "certification_policy\tpdftex-final-oracle")
@@ -1081,6 +1523,8 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     }
 
     drop(cache_checks);
+    let generation = BuildGeneration::capture(&doc_dir, &out_dir, &main)?;
+    remove_build_state_before_generation(&state_path)?;
     let mut tex_runs = 0;
     let mut draft_tex_runs = 0;
     let mut final_tex_runs = 0;
@@ -1210,6 +1654,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
                     direct,
                     previous_build_state.as_ref(),
                     &[],
+                    &generation,
                 )?;
                 return Ok(BuildReport {
                     elapsed: started.elapsed(),
@@ -1554,7 +1999,6 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         );
     }
 
-    let elapsed = started.elapsed();
     if !options.once {
         refresh_bibtex_state_if_available(&doc_dir, &out_dir, &job_name)?;
         refresh_biber_state_if_available(&doc_dir, &out_dir, &job_name)?;
@@ -1567,8 +2011,10 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
         direct,
         previous_build_state.as_ref(),
         &preamble_format_inputs,
+        &generation,
     )?;
-    if !options.once
+    if let Some(final_build_state) = final_build_state
+        && !options.once
         && (!settled_aux_cache_accepts_stale_final_pdf
             || settled_aux_cache_snapshot_for_pdf.is_some())
     {
@@ -1583,6 +2029,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
             settled_aux_cache_accepts_stale_final_pdf,
         )?;
     }
+    let elapsed = started.elapsed();
     Ok(BuildReport {
         elapsed,
         pdf_path: Some(pdf_path),
@@ -1625,6 +2072,7 @@ fn run_tex_direct(
     };
     if let Some(precompiled) = precompiled {
         let mut command = tex_direct_base_command(doc_dir, job_name, out_dir, options, mode);
+        configure_implicit_lookup_exclusions(&mut command, doc_dir, out_dir, main)?;
         command.env("TEXFORMATS", texformats_env(&precompiled.format_dir));
         command.arg(format!("-fmt={}", precompiled.format_name));
         command.arg(file_name);
@@ -1633,7 +2081,9 @@ fn run_tex_direct(
             eprintln!("{}", display_command(&command));
         }
         configure_output(&mut command, options);
-        match diagnostic_profile::measure(Phase::TexSubprocess, || command.status()) {
+        match diagnostic_profile::measure(Phase::TexSubprocess, || {
+            crate::process_runner::status(&mut command)
+        }) {
             Ok(status) if status.success() => {
                 return Ok(TexInvocationReport {
                     preamble_format_used: true,
@@ -1661,6 +2111,7 @@ fn run_tex_direct(
     }
 
     let mut command = tex_direct_base_command(doc_dir, job_name, out_dir, options, mode);
+    configure_implicit_lookup_exclusions(&mut command, doc_dir, out_dir, main)?;
     if options.engine == Engine::TekaiPdftex {
         command.arg("-fmt=pdflatex");
     }
@@ -1670,8 +2121,10 @@ fn run_tex_direct(
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = diagnostic_profile::measure(Phase::TexSubprocess, || command.status())
-        .context("failed to launch TeX engine")?;
+    let status = diagnostic_profile::measure(Phase::TexSubprocess, || {
+        crate::process_runner::status(&mut command)
+    })
+    .context("failed to launch TeX engine")?;
     if !status.success() {
         let log_path = out_dir.join(format!("{job_name}.log"));
         let detail = fs::read(&log_path)
@@ -1713,7 +2166,7 @@ fn tex_failure_excerpt(log: &str) -> String {
 }
 
 enum TekaiPdftexRun {
-    Native { input_paths: Vec<PathBuf> },
+    Native,
     Fallback(String),
 }
 
@@ -1738,9 +2191,7 @@ fn run_tekai_pdftex_native(
     .context("failed to run tekai-pdftex native backend")?;
 
     match run.status {
-        tekai_pdftex::NativeEngineStatus::Native => Ok(TekaiPdftexRun::Native {
-            input_paths: run.input_paths,
-        }),
+        tekai_pdftex::NativeEngineStatus::Native => Ok(TekaiPdftexRun::Native),
         tekai_pdftex::NativeEngineStatus::Unsupported(unsupported) => {
             Ok(TekaiPdftexRun::Fallback(unsupported.reason))
         }
@@ -1756,6 +2207,7 @@ struct TexInvocationReport {
 
 #[derive(Debug, Clone)]
 struct PreambleFormatPreparation {
+    _ownership: Arc<BuildOutputLock>,
     format_name: String,
     format_dir: PathBuf,
     format_path: PathBuf,
@@ -1948,15 +2400,19 @@ fn prepare_preamble_format_for_kind_with_policy(
     format_kind: PreambleFormatKind,
     build_if_missing: bool,
 ) -> Result<Option<PreambleFormatPreparation>> {
-    let mode_key = preamble_format_mode_key(doc_dir, main, options, format_kind)?;
-    let format_name = format!("tekai-fastfmt-{:016x}", content_hash(mode_key.as_bytes()));
     let format_dir = preamble_format_cache_dir(doc_dir, main);
+    let ownership = Arc::new(BuildOutputLock::acquire_preamble(&format_dir)?);
+    let format_dir = ownership.output_path().to_path_buf();
     fs::create_dir_all(&format_dir).with_context(|| {
         format!(
             "failed to create preamble format cache directory {}",
             format_dir.display()
         )
     })?;
+    // State/source identities must be captured after shared format ownership,
+    // including when two output directories compile the same document.
+    let mode_key = preamble_format_mode_key(doc_dir, main, options, format_kind)?;
+    let format_name = format!("tekai-fastfmt-{:016x}", content_hash(mode_key.as_bytes()));
     let format_path = format_dir.join(format!("{format_name}.fmt"));
     let state_path = format_dir.join(format!("{format_name}.state.toml"));
     let fls_path = format_dir.join(format!("{format_name}.fls"));
@@ -1968,6 +2424,7 @@ fn prepare_preamble_format_for_kind_with_policy(
         && preamble_format_inputs_are_fresh(&state.inputs)?
     {
         return Ok(Some(PreambleFormatPreparation {
+            _ownership: ownership,
             format_name,
             format_dir,
             format_path,
@@ -1989,12 +2446,16 @@ fn prepare_preamble_format_for_kind_with_policy(
     let _ = fs::remove_file(&format_path);
     let _ = fs::remove_file(&fls_path);
     ensure_preamble_format_sidecar_inputs(&format_dir, &format_name)?;
+    let generation = BuildGeneration::capture(doc_dir, out_dir, main)?;
+    remove_build_state_before_generation(&state_path)?;
     let mut command = tex_engine_command(options.engine);
+    configure_implicit_lookup_exclusions(&mut command, doc_dir, out_dir, main)?;
     command.current_dir(doc_dir);
     command.env(
         "TEXINPUTS",
         texinputs_env_with_format_dir(doc_dir, out_dir, &format_dir),
     );
+    command.env("TEKAI_ENGINE_FORMAT_ROOT", &format_dir);
     if options.shell_escape {
         command.arg("-shell-escape");
     } else {
@@ -2014,7 +2475,9 @@ fn prepare_preamble_format_for_kind_with_policy(
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = match diagnostic_profile::measure(Phase::TexSubprocess, || command.status()) {
+    let status = match diagnostic_profile::measure(Phase::TexSubprocess, || {
+        crate::process_runner::status(&mut command)
+    }) {
         Ok(status) => status,
         Err(error) => {
             if !options.quiet {
@@ -2036,15 +2499,23 @@ fn prepare_preamble_format_for_kind_with_policy(
         return Ok(None);
     }
 
-    let inputs =
+    let mut inputs =
         recorded_preamble_format_inputs(&fls_path, doc_dir, out_dir, main, &previous_inputs)?;
+    if !append_direct_output_input_choices(&mut inputs, doc_dir, &format_dir)?
+        || !generation_can_publish(&inputs, &generation)
+        || generation.validation_failure(&inputs)?.is_some()
+    {
+        let _ = fs::remove_file(&format_path);
+        return Ok(None);
+    }
+    inputs.extend(generation.lookup_inputs.unwrap());
     let state = PreambleFormatState {
         version: PREAMBLE_FORMAT_STATE_VERSION,
         mode_key,
         inputs: inputs.clone(),
     };
     let source = toml::to_string(&state).context("failed to serialize preamble format state")?;
-    fs::write(&state_path, source).with_context(|| {
+    write_state_atomically(&state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to write preamble format state {}",
             state_path.display()
@@ -2052,6 +2523,7 @@ fn prepare_preamble_format_for_kind_with_policy(
     })?;
 
     Ok(Some(PreambleFormatPreparation {
+        _ownership: ownership,
         format_name,
         format_dir,
         format_path,
@@ -2143,6 +2615,7 @@ fn restore_settled_aux_cache_if_fresh(
 ) -> Result<Option<RestoredSettledAuxCache>> {
     let _profile = diagnostic_profile::span(Phase::SettledCacheRestore);
     let cache_dir = settled_aux_cache_dir(doc_dir, main, mode_key);
+    let _ownership = BuildOutputLock::acquire_settled(&cache_dir)?;
     let state_path = cache_dir.join("state.toml");
     let Some(source) = read_optional_text_file(&state_path, "settled aux cache state")? else {
         return Ok(None);
@@ -2156,12 +2629,40 @@ fn restore_settled_aux_cache_if_fresh(
     if cache_state.version != SETTLED_AUX_CACHE_STATE_VERSION || cache_state.mode_key != mode_key {
         return Ok(None);
     }
-    let restored_state = BuildState {
+    let mut restored_state = BuildState {
         version: BUILD_STATE_VERSION,
         mode_key: mode_key.to_string(),
         pdf_path: pdf_path.display().to_string(),
         inputs: cache_state.inputs,
     };
+    let previous_output = Path::new(&cache_state.out_dir);
+    // The engine's output-first lookup policy is relative to this invocation's
+    // output directory. Replay exact negative choices at the new destination;
+    // user inputs actually consumed from the old output cannot be transplanted.
+    for input in &mut restored_state.inputs {
+        if let Some(path) = input.path.strip_prefix(LOOKUP_ABSENT_FILE_PREFIX) {
+            if let Ok(relative) = Path::new(path).strip_prefix(previous_output) {
+                *input = lookup_absence_fingerprint(&out_dir.join(relative), true);
+            }
+        } else if !is_virtual_fingerprint_path(&input.path)
+            && Path::new(&input.path).starts_with(previous_output)
+        {
+            return Ok(None);
+        }
+    }
+    // Restored files are generated outputs, not search-tree dependencies.
+    // The original build's directory inventory may have included this new
+    // output directory before it became the active output location.
+    let canonical_out = out_dir.canonicalize()?;
+    restored_state.inputs.retain(|input| {
+        input
+            .path
+            .strip_prefix(LOOKUP_DIRECTORY_PATH_PREFIX)
+            .is_none_or(|path| {
+                !Path::new(path).starts_with(&canonical_out)
+                    && !Path::new(path).starts_with(out_dir)
+            })
+    });
     let mut freshness = InputFreshnessCache::default();
     if !build_state_inputs_are_fresh(&restored_state, &mut freshness)? {
         return Ok(None);
@@ -2253,19 +2754,28 @@ fn save_settled_aux_cache(
     }
 
     let cache_dir = settled_aux_cache_dir(doc_dir, main, mode_key);
+    let _ownership = BuildOutputLock::acquire_settled(&cache_dir)?;
     let files_dir = cache_dir.join("files");
     let stale_files_dir = cache_dir.join("files.stale");
     let state_path = cache_dir.join("state.toml");
-    let tmp_state_path = cache_dir.join("state.toml.tmp");
     fs::create_dir_all(&cache_dir).with_context(|| {
         format!(
             "failed to create settled aux cache directory {}",
             cache_dir.display()
         )
     })?;
-    let _ = fs::remove_dir_all(&stale_files_dir);
+    // No committed state may refer to a namespace while its files are being
+    // replaced. Failure or process interruption leaves a miss, never a mixed
+    // generation accepted under the previous input fingerprints.
+    remove_build_state_before_generation(&state_path)?;
+    match fs::remove_dir_all(&stale_files_dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("cannot remove prior settled cache staging files"),
+    }
     if files_dir.exists() {
-        let _ = fs::rename(&files_dir, &stale_files_dir);
+        fs::rename(&files_dir, &stale_files_dir)
+            .context("cannot stage prior settled cache files")?;
     }
     fs::create_dir_all(&files_dir).with_context(|| {
         format!(
@@ -2311,13 +2821,7 @@ fn save_settled_aux_cache(
     };
     let source =
         toml::to_string(&cache_state).context("failed to serialize settled aux cache state")?;
-    fs::write(&tmp_state_path, source).with_context(|| {
-        format!(
-            "failed to write settled aux cache state {}",
-            tmp_state_path.display()
-        )
-    })?;
-    fs::rename(&tmp_state_path, &state_path).with_context(|| {
+    write_state_atomically(&state_path, source.as_bytes()).with_context(|| {
         format!(
             "failed to publish settled aux cache state {}",
             state_path.display()
@@ -5232,7 +5736,8 @@ fn run_asymptote(job: &AsymptoteJob, options: &BuildOptions) -> Result<()> {
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch Asymptote")?;
+    let status =
+        crate::process_runner::status(&mut command).context("failed to launch Asymptote")?;
     if !status.success() {
         bail!("Asymptote failed with status {status}");
     }
@@ -5299,7 +5804,8 @@ fn run_pythontex(job: &PythontexJob, options: &BuildOptions) -> Result<()> {
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch PythonTeX")?;
+    let status =
+        crate::process_runner::status(&mut command).context("failed to launch PythonTeX")?;
     if !status.success() {
         bail!("PythonTeX failed with status {status}");
     }
@@ -5370,7 +5876,8 @@ fn run_metapost(job: &MetapostJob, options: &BuildOptions) -> Result<()> {
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch MetaPost")?;
+    let status =
+        crate::process_runner::status(&mut command).context("failed to launch MetaPost")?;
     if !status.success() {
         bail!("MetaPost failed with status {status}");
     }
@@ -5449,7 +5956,7 @@ fn run_gnuplottex(job: &GnuplottexJob, out_dir: &Path, options: &BuildOptions) -
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch gnuplot")?;
+    let status = crate::process_runner::status(&mut command).context("failed to launch gnuplot")?;
     if !status.success() {
         bail!("gnuplot failed with status {status}");
     }
@@ -5523,8 +6030,7 @@ fn pgf_external_make_status(
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command
-        .status()
+    let status = crate::process_runner::status(&mut command)
         .context("failed to launch make for PGF externalization")?;
     match status.code() {
         Some(0) => Ok(MakeStatus::UpToDate),
@@ -5557,8 +6063,7 @@ fn run_pgf_external_make(
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command
-        .status()
+    let status = crate::process_runner::status(&mut command)
         .context("failed to launch make for PGF externalization")?;
     if !status.success() {
         bail!("PGF externalization make failed with status {status}");
@@ -5626,7 +6131,7 @@ fn run_bib2gls(job: &Bib2GlsJob, options: &BuildOptions) -> Result<()> {
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch Bib2Gls")?;
+    let status = crate::process_runner::status(&mut command).context("failed to launch Bib2Gls")?;
     if !status.success() {
         bail!("Bib2Gls failed with status {status}");
     }
@@ -5696,7 +6201,8 @@ fn run_eps_conversion(job: &EpsConversionJob, options: &BuildOptions) -> Result<
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch epstopdf")?;
+    let status =
+        crate::process_runner::status(&mut command).context("failed to launch epstopdf")?;
     if !status.success() {
         bail!("epstopdf failed with status {status}");
     }
@@ -5783,7 +6289,8 @@ fn run_svg_conversion(job: &SvgConversionJob, options: &BuildOptions) -> Result<
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch Inkscape")?;
+    let status =
+        crate::process_runner::status(&mut command).context("failed to launch Inkscape")?;
     if !status.success() {
         bail!("Inkscape failed with status {status}");
     }
@@ -6252,8 +6759,7 @@ fn run_bibtex(
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command
-        .status()
+    let status = crate::process_runner::status(&mut command)
         .context("failed to launch BibTeX-family tool")?;
     if !status.success() {
         bail!("BibTeX-family tool failed with status {status}");
@@ -6278,7 +6784,7 @@ fn run_biber(doc_dir: &Path, out_dir: &Path, job_name: &str, options: &BuildOpti
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch Biber")?;
+    let status = crate::process_runner::status(&mut command).context("failed to launch Biber")?;
     if !status.success() {
         bail!("Biber failed with status {status}");
     }
@@ -6510,7 +7016,8 @@ fn run_makeindex(job: &MakeIndexJob, options: &BuildOptions) -> Result<()> {
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch index tool")?;
+    let status =
+        crate::process_runner::status(&mut command).context("failed to launch index tool")?;
     if !status.success() {
         bail!("index tool failed with status {status}");
     }
@@ -6536,7 +7043,8 @@ fn run_splitindex(job: &SplitIndexJob, options: &BuildOptions) -> Result<()> {
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command.status().context("failed to launch SplitIndex")?;
+    let status =
+        crate::process_runner::status(&mut command).context("failed to launch SplitIndex")?;
     if !status.success() {
         bail!("SplitIndex failed with status {status}");
     }
@@ -6559,9 +7067,8 @@ fn run_makeglossaries(
         eprintln!("{}", display_command(&command));
     }
     configure_output(&mut command, options);
-    let status = command
-        .status()
-        .context("failed to launch MakeGlossaries")?;
+    let status =
+        crate::process_runner::status(&mut command).context("failed to launch MakeGlossaries")?;
     if !status.success() {
         bail!("MakeGlossaries failed with status {status}");
     }
@@ -10313,7 +10820,7 @@ fn decode_hex_bytes(encoded: &str) -> Option<Vec<u8>> {
         return None;
     }
     let mut bytes = Vec::with_capacity(encoded.len() / 2);
-    for pair in encoded.as_bytes().chunks_exact(2) {
+    for pair in encoded.as_bytes().as_chunks::<2>().0 {
         let high = hex_value(pair[0])?;
         let low = hex_value(pair[1])?;
         bytes.push((high << 4) | low);
@@ -10868,17 +11375,15 @@ fn resolve_kpathsea_input(doc_dir: &Path, name: &str, extension: &str) -> Result
         candidate: candidate.clone(),
         extension: extension.to_string(),
     };
-    if let Ok(cache) = kpathsea_resolution_cache().lock()
-        && let Some(cached) = cache.get(&cache_key)
+    if let Some(cached) =
+        KPATHSEA_RESOLUTION_CACHE.with(|cache| cache.borrow().get(&cache_key).cloned())
     {
         return Ok(cached.clone());
     }
 
     let resolved = tekai_engine::kpathsea::resolve_input(doc_dir, &candidate, extension)
         .with_context(|| format!("failed to resolve TeX input {candidate}"))?;
-    if let Ok(mut cache) = kpathsea_resolution_cache().lock() {
-        cache.insert(cache_key, resolved.clone());
-    }
+    KPATHSEA_RESOLUTION_CACHE.with(|cache| cache.borrow_mut().insert(cache_key, resolved.clone()));
     Ok(resolved)
 }
 
@@ -11176,15 +11681,29 @@ fn write_build_state(
     direct: DirectContext<'_>,
     previous_build_state: Option<&BuildState>,
     extra_inputs: &[FileFingerprint],
-) -> Result<BuildState> {
+    generation: &BuildGeneration,
+) -> Result<Option<BuildState>> {
     let fls_path = direct.out_dir.join(format!("{}.fls", direct.job_name));
     let previous = previous_build_input_map(previous_build_state);
-    let mut inputs = recorded_inputs(
+    let owned_outputs = aux_output_paths(
+        direct.doc_dir,
+        direct.out_dir,
+        direct.job_name,
+        direct.main,
+        direct.options,
+        direct.aux_session_cache,
+    )?
+    .into_iter()
+    .map(|path| canonical_or_original(&path))
+    .collect::<HashSet<_>>();
+    let mut inputs = recorded_inputs_with_owned_outputs(
         &fls_path,
         direct.doc_dir,
         direct.out_dir,
         direct.main,
         &previous,
+        RawTexMode::Root,
+        &owned_outputs,
     )?;
     append_bibtex_inputs(&mut inputs, direct.doc_dir, direct.out_dir, direct.job_name)?;
     append_biber_inputs(&mut inputs, direct.doc_dir, direct.out_dir, direct.job_name)?;
@@ -11199,7 +11718,88 @@ fn write_build_state(
         Some(direct.aux_session_cache),
     )?;
     inputs.extend(extra_inputs.iter().cloned());
-    write_build_state_from_fingerprints(state_path, mode_key, pdf_path, inputs)
+    if !append_direct_output_input_choices(&mut inputs, direct.doc_dir, direct.out_dir)? {
+        return Ok(None);
+    }
+    publish_generation_state(state_path, mode_key, pdf_path, inputs, generation)
+}
+
+fn append_direct_output_input_choices(
+    inputs: &mut Vec<FileFingerprint>,
+    doc_dir: &Path,
+    out_dir: &Path,
+) -> Result<bool> {
+    let mut choices = HashSet::new();
+    for input in inputs
+        .iter()
+        .filter(|input| !is_virtual_fingerprint_path(&input.path))
+    {
+        let path = Path::new(&input.path);
+        if path.starts_with(out_dir) {
+            continue;
+        }
+        if let Some(name) = path.file_name() {
+            choices.insert(out_dir.join(name));
+        }
+        if let Ok(relative) = path.strip_prefix(doc_dir) {
+            choices.insert(out_dir.join(relative));
+        }
+    }
+    for choice in choices {
+        // open_input explicitly prefers output_directory/requested name before
+        // recursive search. Record exact absent input choices without scanning
+        // generated outputs. An unexpected existing choice declines caching.
+        if choice.is_file() {
+            return Ok(false);
+        }
+        inputs.push(lookup_absence_fingerprint(&choice, true));
+    }
+    Ok(true)
+}
+
+fn remove_build_state_before_generation(state_path: &Path) -> Result<()> {
+    match fs::remove_file(state_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("cannot invalidate build state {}", state_path.display())),
+    }
+}
+
+fn publish_generation_state(
+    state_path: &Path,
+    mode_key: &str,
+    pdf_path: &Path,
+    mut inputs: Vec<FileFingerprint>,
+    generation: &BuildGeneration,
+) -> Result<Option<BuildState>> {
+    if !generation_can_publish(&inputs, generation) {
+        // Incomplete lookup coverage must never become a cache hit.
+        return Ok(None);
+    }
+    let dependencies = generation.lookup_inputs.as_ref().unwrap();
+    if let Some(path) = generation.validation_failure(&inputs)? {
+        bail!(
+            "inputs or search directories changed during compilation at {path}. The PDF may be outdated, rerun the build"
+        );
+    }
+    inputs.extend(dependencies.iter().cloned());
+    write_build_state_from_fingerprints(state_path, mode_key, pdf_path, inputs).map(Some)
+}
+
+fn generation_can_publish(inputs: &[FileFingerprint], generation: &BuildGeneration) -> bool {
+    let Some(dependencies) = &generation.lookup_inputs else {
+        return false;
+    };
+    !inputs.iter().chain(dependencies).any(|input| {
+        (!is_virtual_fingerprint_path(&input.path)
+            || input.path.starts_with(LOOKUP_DIRECTORY_PATH_PREFIX)
+            || input.path.starts_with(INPUT_ALIAS_PATH_PREFIX))
+            && input
+                .metadata
+                .as_ref()
+                .is_none_or(|metadata| metadata.identity.is_none())
+    })
 }
 
 fn write_build_state_from_fingerprints(
@@ -11221,9 +11821,34 @@ fn write_build_state_from_fingerprints(
         inputs,
     };
     let source = toml::to_string(&state).context("failed to serialize build state")?;
-    fs::write(state_path, source)
+    write_state_atomically(state_path, source.as_bytes())
         .with_context(|| format!("failed to write build state {}", state_path.display()))?;
     Ok(state)
+}
+
+fn write_state_atomically(path: &Path, source: &[u8]) -> Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let parent = path.parent().context("state path has no parent")?;
+    let temporary = parent.join(format!(
+        ".tekai-state-{}-{}-{}.tmp",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let result = (|| {
+        file.write_all(source)?;
+        drop(file);
+        fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.context("failed to atomically publish state")
 }
 
 fn previous_bib_input_map(state_path: &Path) -> Result<HashMap<String, FileFingerprint>> {
@@ -11278,63 +11903,6 @@ fn fingerprint_map(inputs: Vec<FileFingerprint>) -> HashMap<String, FileFingerpr
         .into_iter()
         .map(|input| (input.path.clone(), input))
         .collect()
-}
-
-fn write_native_build_state(
-    state_path: &Path,
-    mode_key: &str,
-    pdf_path: &Path,
-    doc_dir: &Path,
-    out_dir: &Path,
-    main: &Path,
-    input_paths: &[PathBuf],
-    previous_build_state: Option<&BuildState>,
-) -> Result<BuildState> {
-    let previous = previous_build_input_map(previous_build_state);
-    let inputs = native_input_fingerprints(input_paths, doc_dir, out_dir, main, &previous)?;
-    write_build_state_from_fingerprints(state_path, mode_key, pdf_path, inputs)
-}
-
-fn native_input_fingerprints(
-    input_paths: &[PathBuf],
-    doc_dir: &Path,
-    out_dir: &Path,
-    main: &Path,
-    previous: &HashMap<String, FileFingerprint>,
-) -> Result<Vec<FileFingerprint>> {
-    let main = main.canonicalize().ok();
-    let out_dir_canonical = out_dir.canonicalize().ok();
-    let mut inputs = Vec::new();
-    for path in input_paths {
-        let path = if path.is_absolute() {
-            path.clone()
-        } else {
-            doc_dir.join(path)
-        };
-        if path_is_under_cached_directory(&path, out_dir, out_dir_canonical.as_deref()) {
-            continue;
-        }
-        let fingerprint = if main
-            .as_ref()
-            .is_some_and(|main| path_matches_canonical(&path, main))
-        {
-            fingerprint_effective_tex_path_reusing(&path, Some(previous), EffectiveTexMode::Root)?
-        } else if is_tex_like_source_input(&path) {
-            fingerprint_effective_tex_path_reusing(&path, Some(previous), EffectiveTexMode::Input)?
-        } else {
-            fingerprint_path_reusing(&path, Some(previous))?
-        };
-        if let Some(fingerprint) = fingerprint {
-            inputs.push(fingerprint);
-        }
-    }
-    inputs.sort_by(|left, right| {
-        left.path
-            .cmp(&right.path)
-            .then_with(|| left.hash.cmp(&right.hash))
-    });
-    inputs.dedup_by(|left, right| left.path == right.path && left.hash == right.hash);
-    Ok(inputs)
 }
 
 fn append_bibtex_inputs(
@@ -11480,6 +12048,7 @@ fn append_external_tool_state_inputs(
     Ok(())
 }
 
+#[cfg(test)]
 fn recorded_inputs(
     fls_path: &Path,
     doc_dir: &Path,
@@ -11487,14 +12056,7 @@ fn recorded_inputs(
     main: &Path,
     previous: &HashMap<String, FileFingerprint>,
 ) -> Result<Vec<FileFingerprint>> {
-    recorded_inputs_with_root_mode(
-        fls_path,
-        doc_dir,
-        out_dir,
-        main,
-        previous,
-        EffectiveTexMode::Root,
-    )
+    recorded_inputs_with_root_mode(fls_path, doc_dir, out_dir, main, previous, RawTexMode::Root)
 }
 
 fn recorded_preamble_format_inputs(
@@ -11510,7 +12072,7 @@ fn recorded_preamble_format_inputs(
         out_dir,
         main,
         previous,
-        EffectiveTexMode::Preamble,
+        RawTexMode::Preamble,
     )
 }
 
@@ -11520,34 +12082,75 @@ fn recorded_inputs_with_root_mode(
     out_dir: &Path,
     main: &Path,
     previous: &HashMap<String, FileFingerprint>,
-    root_mode: EffectiveTexMode,
+    root_mode: RawTexMode,
+) -> Result<Vec<FileFingerprint>> {
+    recorded_inputs_with_owned_outputs(
+        fls_path,
+        doc_dir,
+        out_dir,
+        main,
+        previous,
+        root_mode,
+        &HashSet::new(),
+    )
+}
+
+fn recorded_inputs_with_owned_outputs(
+    fls_path: &Path,
+    doc_dir: &Path,
+    out_dir: &Path,
+    main: &Path,
+    previous: &HashMap<String, FileFingerprint>,
+    root_mode: RawTexMode,
+    owned_outputs: &HashSet<PathBuf>,
 ) -> Result<Vec<FileFingerprint>> {
     let source = fs::read_to_string(fls_path)
         .with_context(|| format!("failed to read recorder file {}", fls_path.display()))?;
     let mut inputs = Vec::new();
+    let mut seen_paths = HashSet::new();
+    let mut aliases = HashSet::new();
     let main = main.canonicalize().ok();
     let out_dir_canonical = out_dir.canonicalize().ok();
+    let recorded_owned = recorded_outputs(fls_path, doc_dir)?
+        .into_iter()
+        .filter(|path| is_settled_aux_cache_sidecar(path) || path_extension_is_any(path, &["fmt"]))
+        .map(|path| canonical_or_original(&path))
+        .collect::<HashSet<_>>();
     for line in source.lines() {
         let Some(raw_path) = line.strip_prefix("INPUT ") else {
             continue;
         };
         let path = resolve_recorded_path(raw_path, doc_dir);
-        if path_is_under_cached_directory(&path, out_dir, out_dir_canonical.as_deref()) {
+        if !seen_paths.insert(path.clone()) {
             continue;
         }
+        let canonical = canonical_or_original(&path);
+        if !main
+            .as_ref()
+            .is_some_and(|main| path_matches_canonical(&path, main))
+            && (owned_outputs.contains(&canonical)
+                || (path_is_under_cached_directory(&path, out_dir, out_dir_canonical.as_deref())
+                    && recorded_owned.contains(&canonical)))
+        {
+            continue;
+        }
+        append_input_alias_dependencies(&mut inputs, &path, &mut aliases)?;
         let fingerprint = if main
             .as_ref()
             .is_some_and(|main| path_matches_canonical(&path, main))
         {
-            fingerprint_effective_tex_path_reusing(&path, Some(previous), root_mode)?
+            fingerprint_raw_tex_path_reusing(&path, Some(previous), root_mode)?
         } else if is_tex_like_source_input(&path) {
-            fingerprint_effective_tex_path_reusing(&path, Some(previous), EffectiveTexMode::Input)?
+            fingerprint_raw_tex_path_reusing(&path, Some(previous), RawTexMode::Input)?
         } else {
             fingerprint_path_reusing(&path, Some(previous))?
         };
-        if let Some(fingerprint) = fingerprint {
-            inputs.push(fingerprint);
-        }
+        inputs.push(fingerprint.with_context(|| {
+            format!(
+                "recorded input disappeared or is not a regular file after compilation: {}",
+                path.display()
+            )
+        })?);
     }
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
@@ -11592,6 +12195,24 @@ fn aux_output_snapshot(
     options: &BuildOptions,
     aux_session_cache: &AuxToolSessionCache,
 ) -> Result<Vec<GeneratedOutputFingerprint>> {
+    output_file_snapshot(aux_output_paths(
+        doc_dir,
+        out_dir,
+        job_name,
+        main,
+        options,
+        aux_session_cache,
+    )?)
+}
+
+fn aux_output_paths(
+    doc_dir: &Path,
+    out_dir: &Path,
+    job_name: &str,
+    main: &Path,
+    options: &BuildOptions,
+    aux_session_cache: &AuxToolSessionCache,
+) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     let source_external_jobs =
         source_external_tool_jobs(doc_dir, out_dir, main, options, aux_session_cache)?;
@@ -11629,7 +12250,7 @@ fn aux_output_snapshot(
     if let Some(job) = bib2gls_job_from_latest_run(doc_dir, out_dir, job_name)? {
         paths.extend(job.output_paths);
     }
-    output_file_snapshot(paths)
+    Ok(paths)
 }
 
 fn standard_rerun_output_snapshot(out_dir: &Path) -> Result<Vec<GeneratedOutputFingerprint>> {
@@ -12024,26 +12645,26 @@ fn fingerprint_path_reusing(
 }
 
 #[derive(Debug, Clone, Copy)]
-enum EffectiveTexMode {
+enum RawTexMode {
     Root,
     Preamble,
     Input,
 }
 
-impl EffectiveTexMode {
+impl RawTexMode {
     fn hash_prefix(self) -> &'static str {
         match self {
-            EffectiveTexMode::Root => TEX_ROOT_EFFECTIVE_HASH_PREFIX,
-            EffectiveTexMode::Preamble => TEX_PREAMBLE_EFFECTIVE_HASH_PREFIX,
-            EffectiveTexMode::Input => TEX_INPUT_EFFECTIVE_HASH_PREFIX,
+            RawTexMode::Root => TEX_ROOT_RAW_HASH_PREFIX,
+            RawTexMode::Preamble => TEX_PREAMBLE_RAW_HASH_PREFIX,
+            RawTexMode::Input => TEX_INPUT_RAW_HASH_PREFIX,
         }
     }
 }
 
-fn fingerprint_effective_tex_path_reusing(
+fn fingerprint_raw_tex_path_reusing(
     path: &Path,
     previous: Option<&HashMap<String, FileFingerprint>>,
-    mode: EffectiveTexMode,
+    mode: RawTexMode,
 ) -> Result<Option<FileFingerprint>> {
     let Ok(canonical) = path.canonicalize() else {
         return Ok(None);
@@ -12064,9 +12685,8 @@ fn fingerprint_effective_tex_path_reusing(
     }
     let bytes = fs::read(&canonical)
         .with_context(|| format!("failed to read TeX source {}", canonical.display()))?;
-    let effective = effective_tex_bytes(&bytes, mode);
-    let len = effective.len() as u64;
-    let hash = format!("{hash_prefix}{:016x}", content_hash(&effective));
+    let len = bytes.len() as u64;
+    let hash = format!("{hash_prefix}{:016x}", content_hash(&bytes));
     Ok(Some(FileFingerprint {
         path,
         len,
@@ -12077,6 +12697,50 @@ fn fingerprint_effective_tex_path_reusing(
 }
 
 fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
+    for (prefix, file) in [
+        (LOOKUP_ABSENT_FILE_PREFIX, true),
+        (LOOKUP_ABSENT_DIRECTORY_PREFIX, false),
+    ] {
+        if let Some(path) = input.path.strip_prefix(prefix) {
+            diagnostic_profile::count(Counter::VirtualFreshnessChecks, 1);
+            return Ok(match fs::metadata(path) {
+                Ok(metadata) => {
+                    if file {
+                        !metadata.is_file()
+                    } else {
+                        !metadata.is_dir()
+                    }
+                }
+                Err(error) => {
+                    matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)
+                }
+            });
+        }
+    }
+    if let Some(path) = input.path.strip_prefix(INPUT_ALIAS_PATH_PREFIX) {
+        diagnostic_profile::count(Counter::VirtualFreshnessChecks, 1);
+        let Ok(current) = input_alias_fingerprint(Path::new(path)) else {
+            return Ok(false);
+        };
+        return Ok(current.metadata == input.metadata && current.hash == input.hash);
+    }
+    if let Some(path) = input.path.strip_prefix(LOOKUP_DIRECTORY_PATH_PREFIX) {
+        diagnostic_profile::count(Counter::VirtualFreshnessChecks, 1);
+        let Ok(Some(current)) = lookup_directory_metadata(Path::new(path)) else {
+            return Ok(false);
+        };
+        if current.matches(input) {
+            return Ok(true);
+        }
+        // Only changed directories enumerate their direct entries. Equal final
+        // membership allows content-identical file replacement reuse; changed
+        // names, types and symlink targets invalidate lookup choices. Unchanged
+        // warm-cache trees never recurse or enumerate.
+        return Ok(lookup_directory_membership_hash(Path::new(path))
+            .ok()
+            .as_ref()
+            == Some(&input.hash));
+    }
     if let Some(expected_hash) = input.hash.strip_prefix(BIBER_GLOB_MATCHES_HASH_PREFIX) {
         diagnostic_profile::count(Counter::VirtualFreshnessChecks, 1);
         let Some((doc_dir, pattern)) = decode_biber_glob_fingerprint_path(&input.path) else {
@@ -12105,19 +12769,19 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
     let path = Path::new(&input.path);
     if let Some((expected_hash, mode)) = input
         .hash
-        .strip_prefix(TEX_ROOT_EFFECTIVE_HASH_PREFIX)
-        .map(|hash| (hash, EffectiveTexMode::Root))
+        .strip_prefix(TEX_ROOT_RAW_HASH_PREFIX)
+        .map(|hash| (hash, RawTexMode::Root))
         .or_else(|| {
             input
                 .hash
-                .strip_prefix(TEX_PREAMBLE_EFFECTIVE_HASH_PREFIX)
-                .map(|hash| (hash, EffectiveTexMode::Preamble))
+                .strip_prefix(TEX_PREAMBLE_RAW_HASH_PREFIX)
+                .map(|hash| (hash, RawTexMode::Preamble))
         })
         .or_else(|| {
             input
                 .hash
-                .strip_prefix(TEX_INPUT_EFFECTIVE_HASH_PREFIX)
-                .map(|hash| (hash, EffectiveTexMode::Input))
+                .strip_prefix(TEX_INPUT_RAW_HASH_PREFIX)
+                .map(|hash| (hash, RawTexMode::Input))
         })
     {
         let Some(metadata) = file_metadata_fingerprint(path)? else {
@@ -12131,11 +12795,11 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
         let _profile = diagnostic_profile::span(Phase::InputEffectiveHash);
         let bytes =
             fs::read(path).with_context(|| format!("failed to read input {}", path.display()))?;
-        let effective = effective_tex_bytes(&bytes, mode);
-        if effective.len() as u64 != input.len {
+        let _ = mode;
+        if bytes.len() as u64 != input.len {
             return Ok(false);
         }
-        return Ok(format!("{:016x}", content_hash(&effective)) == expected_hash);
+        return Ok(format!("{:016x}", content_hash(&bytes)) == expected_hash);
     }
     if let Some(encoded) = input.hash.strip_prefix(BIB_CITED_EFFECTIVE_HASH_PREFIX) {
         let Some((encoded_keys, expected_hash)) = encoded.rsplit_once(':') else {
@@ -12181,6 +12845,10 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
 fn is_virtual_fingerprint_path(path: &str) -> bool {
     path.starts_with(BIBER_GLOB_FINGERPRINT_PATH_PREFIX)
         || path.starts_with(BIBER_CONFIG_FINGERPRINT_PATH_PREFIX)
+        || path.starts_with(LOOKUP_DIRECTORY_PATH_PREFIX)
+        || path.starts_with(INPUT_ALIAS_PATH_PREFIX)
+        || path.starts_with(LOOKUP_ABSENT_DIRECTORY_PREFIX)
+        || path.starts_with(LOOKUP_ABSENT_FILE_PREFIX)
 }
 
 /// One immutable input sequence is checked in index order. A checked-fresh
@@ -12240,125 +12908,6 @@ fn input_fingerprint_is_fresh_cached(
     build_state_input_freshness.check_with(index, || input_fingerprint_is_fresh(input))
 }
 
-fn effective_tex_bytes(bytes: &[u8], mode: EffectiveTexMode) -> Vec<u8> {
-    let mut offset = 0;
-    let mut effective = Vec::with_capacity(bytes.len());
-    let policy = effective_tex_policy(bytes);
-    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-        let visible = strip_tex_comment_bytes(line);
-        if policy.stop_at_boundaries
-            && matches!(mode, EffectiveTexMode::Preamble)
-            && let Some(begin_offset) = begin_document_end_offset_bytes(visible)
-        {
-            append_canonical_tex_line(
-                &mut effective,
-                &bytes[offset..offset + begin_offset],
-                policy,
-            );
-            return effective;
-        }
-        if policy.stop_at_boundaries
-            && matches!(mode, EffectiveTexMode::Root)
-            && let Some(end_offset) = end_document_end_offset_bytes(visible)
-        {
-            append_canonical_tex_line(&mut effective, &bytes[offset..offset + end_offset], policy);
-            return effective;
-        }
-        if policy.stop_at_boundaries && line_contains_endinput_bytes(visible) {
-            append_canonical_tex_line(&mut effective, line, policy);
-            return effective;
-        }
-        append_canonical_tex_line(&mut effective, line, policy);
-        offset += line.len();
-    }
-    effective
-}
-
-#[derive(Debug, Clone, Copy)]
-struct EffectiveTexPolicy {
-    stop_at_boundaries: bool,
-    ignore_comment_text: bool,
-}
-
-fn effective_tex_policy(bytes: &[u8]) -> EffectiveTexPolicy {
-    let has_explicit_catcode = bytes
-        .windows(b"\\catcode".len())
-        .any(|window| window == b"\\catcode");
-    let has_catcode_sensitive_construct = [
-        b"\\begin{verbatim}".as_slice(),
-        b"\\begin {verbatim}".as_slice(),
-        b"\\begin{lstlisting}".as_slice(),
-        b"\\begin {lstlisting}".as_slice(),
-        b"\\begin{minted}".as_slice(),
-        b"\\begin {minted}".as_slice(),
-        b"\\begin{filecontents}".as_slice(),
-        b"\\begin {filecontents}".as_slice(),
-        b"\\begin{filecontents*}".as_slice(),
-        b"\\begin {filecontents*}".as_slice(),
-        b"\\begin{comment}".as_slice(),
-        b"\\begin {comment}".as_slice(),
-    ]
-    .into_iter()
-    .any(|needle| bytes.windows(needle.len()).any(|window| window == needle));
-    let conservative = has_explicit_catcode
-        || has_catcode_sensitive_construct
-        || has_unparseable_inline_literal(bytes);
-    EffectiveTexPolicy {
-        stop_at_boundaries: !conservative,
-        ignore_comment_text: !conservative,
-    }
-}
-
-fn append_canonical_tex_line(output: &mut Vec<u8>, line: &[u8], policy: EffectiveTexPolicy) {
-    let (body, ending) = if let Some(body) = line.strip_suffix(b"\r\n") {
-        (body, &b"\r\n"[..])
-    } else if let Some(body) = line.strip_suffix(b"\n") {
-        (body, &b"\n"[..])
-    } else if let Some(body) = line.strip_suffix(b"\r") {
-        (body, &b"\r"[..])
-    } else {
-        (line, &b""[..])
-    };
-    if policy.ignore_comment_text
-        && let Some(comment_start) = tex_comment_start_bytes(body)
-    {
-        if comment_start > 0 {
-            append_canonical_inline_comment_prefix(output, &body[..comment_start]);
-            output.push(b'%');
-        }
-        return;
-    }
-    let mut body_end = body.len();
-    while body_end > 0 && body[body_end - 1] == b' ' {
-        body_end -= 1;
-    }
-    let body = &body[..body_end];
-    output.extend_from_slice(body);
-    output.extend_from_slice(ending);
-}
-
-fn append_canonical_inline_comment_prefix(output: &mut Vec<u8>, prefix: &[u8]) {
-    let mut trimmed_end = prefix.len();
-    while trimmed_end > 0 && prefix[trimmed_end - 1] == b' ' {
-        trimmed_end -= 1;
-    }
-    if trimmed_end == 0 {
-        output.extend_from_slice(prefix);
-        return;
-    }
-    output.extend_from_slice(&prefix[..trimmed_end]);
-    if trimmed_end < prefix.len() {
-        output.push(b' ');
-    }
-}
-
-fn strip_tex_comment_bytes(line: &[u8]) -> &[u8] {
-    if let Some(comment_start) = tex_comment_start_bytes(line) {
-        return &line[..comment_start];
-    }
-    line
-}
-
 fn tex_comment_start_bytes(line: &[u8]) -> Option<usize> {
     let mut escaped = false;
     let mut index = 0;
@@ -12389,10 +12938,6 @@ fn begin_document_end_offset_bytes(line: &[u8]) -> Option<usize> {
     document_environment_command_end_offset_bytes(line, b"\\begin")
 }
 
-fn end_document_end_offset_bytes(line: &[u8]) -> Option<usize> {
-    document_environment_command_end_offset_bytes(line, b"\\end")
-}
-
 fn document_environment_command_end_offset_bytes(line: &[u8], command: &[u8]) -> Option<usize> {
     let mut cursor = 0;
     while cursor < line.len() {
@@ -12421,46 +12966,6 @@ fn document_environment_command_end_offset_bytes(line: &[u8], command: &[u8]) ->
         cursor = end;
     }
     None
-}
-
-fn line_contains_endinput_bytes(line: &[u8]) -> bool {
-    let command = b"\\endinput";
-    let mut cursor = 0;
-    while cursor < line.len() {
-        if let Some(end) = inline_literal_span_end_bytes(line, cursor) {
-            cursor = end;
-            continue;
-        }
-        let command_start = cursor;
-        if !line[command_start..].starts_with(command) {
-            cursor += 1;
-            continue;
-        }
-        let after_command = command_start + command.len();
-        if line.get(after_command).is_some_and(u8::is_ascii_alphabetic) {
-            cursor = after_command;
-            continue;
-        }
-        return true;
-    }
-    false
-}
-
-fn has_unparseable_inline_literal(bytes: &[u8]) -> bool {
-    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-        let mut cursor = 0;
-        while cursor < line.len() {
-            if starts_inline_literal_command_bytes(line, cursor) {
-                let Some(end) = inline_literal_span_end_bytes(line, cursor) else {
-                    return true;
-                };
-                cursor = end;
-                continue;
-            }
-            cursor += 1;
-        }
-    }
-    false
 }
 
 fn inline_literal_span_end_bytes(line: &[u8], command_start: usize) -> Option<usize> {
@@ -12509,13 +13014,6 @@ fn delimited_inline_span_end_bytes(line: &[u8], delimiter: usize) -> Option<usiz
         .iter()
         .position(|byte| *byte == delimiter_byte)
         .map(|offset| delimiter + 1 + offset + 1)
-}
-
-fn starts_inline_literal_command_bytes(line: &[u8], command_start: usize) -> bool {
-    inline_command_end_bytes(line, command_start, b"\\verb").is_some()
-        || inline_command_end_bytes(line, command_start, b"\\lstinline").is_some()
-        || inline_command_end_bytes(line, command_start, b"\\mintinline").is_some()
-        || inline_command_end_bytes(line, command_start, b"\\mint").is_some()
 }
 
 fn inline_command_end_bytes(line: &[u8], command_start: usize, command: &[u8]) -> Option<usize> {
@@ -13551,149 +14049,363 @@ mod tests {
     }
 
     #[test]
-    fn effective_root_bytes_stop_at_uncommented_end_document() {
-        let source =
-            b"before\n% \\end{document}\nstill effective\n\\end {document} ignored\n% trailing\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
+    fn source_fingerprints_do_not_infer_execution_boundaries() {
+        let root = unique_temp_dir("tekai-full-source-identity");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("main.tex");
+        for source in [
+            "\\iffalse\\end{document}\\fi\nActive text\n",
+            "\\def\\finish{\\end{document}}\nActive text\\finish\n",
+            "\\iffalse\\endinput\\fi\nActive text\n",
+            "\\let\\hidden=\\catcode\n\\hidden37=12\n% Active percent text\n",
+        ] {
+            fs::write(&path, source).unwrap();
+            for mode in [RawTexMode::Root, RawTexMode::Input, RawTexMode::Preamble] {
+                let fingerprint = fingerprint_raw_tex_path_reusing(&path, None, mode)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(fingerprint.len, source.len() as u64);
+                assert_eq!(
+                    fingerprint.hash,
+                    format!(
+                        "{}{:016x}",
+                        mode.hash_prefix(),
+                        content_hash(source.as_bytes())
+                    )
+                );
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
-        assert_eq!(effective, "before\nstill effective\n\\end {document}");
+    #[cfg(unix)]
+    #[test]
+    fn generation_rejects_edits_after_inputs_were_consumed() {
+        use std::fs::{File, FileTimes};
+
+        let root = unique_temp_dir("tekai-generation-input-edits");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("main.tex");
+        let state_path = root.join("state.toml");
+        for atomic in [false, true] {
+            fs::write(&path, "OLD-CONTENT").unwrap();
+            let modified = fs::metadata(&path).unwrap().modified().unwrap();
+            let generation = BuildGeneration {
+                started_ns: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                lookup_inputs: Some(Vec::new()),
+                owned_format_directories: Vec::new(),
+            };
+            fs::write(&state_path, "previous state").unwrap();
+            remove_build_state_before_generation(&state_path).unwrap();
+            let destination = if atomic {
+                root.join("replacement.tex")
+            } else {
+                path.clone()
+            };
+            fs::write(&destination, "NEW-CONTENT").unwrap();
+            File::open(&destination)
+                .unwrap()
+                .set_times(FileTimes::new().set_modified(modified))
+                .unwrap();
+            if atomic {
+                fs::rename(&destination, &path).unwrap();
+            }
+            let final_inputs = vec![
+                fingerprint_raw_tex_path_reusing(&path, None, RawTexMode::Root)
+                    .unwrap()
+                    .unwrap(),
+            ];
+            assert!(!generation.validate(&final_inputs).unwrap());
+            let error = publish_generation_state(
+                &state_path,
+                "mode",
+                &root.join("main.pdf"),
+                final_inputs,
+                &generation,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("changed during compilation"));
+            assert!(!state_path.exists());
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn effective_input_bytes_stop_after_endinput_line() {
-        let source = b"before\n% \\endinput\nstill effective\n\\endinput same-line kept\nignored\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Input))
-            .expect("effective input bytes should stay valid UTF-8");
+    fn output_ownership_lock_serializes_library_threads() {
+        let root = unique_temp_dir("tekai-output-ownership");
+        fs::create_dir_all(&root).unwrap();
+        let first = BuildOutputLock::acquire(&root).unwrap();
+        let namespace = first.lock_directory().to_path_buf();
+        assert!(!namespace.starts_with(&root));
+        // Cleaning and recreating an owned output cannot replace its lock inode.
+        fs::remove_dir_all(&root).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let other_root = root.clone();
+        let second = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let _lock = BuildOutputLock::acquire(&other_root).unwrap();
+            acquired_tx.send(()).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(acquired_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(first);
+        acquired_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        second.join().unwrap();
+        assert!(namespace.is_dir());
+        assert!(fs::read_dir(&namespace).unwrap().count() <= 512);
+        fs::remove_dir_all(root).unwrap();
+    }
 
+    #[cfg(unix)]
+    #[test]
+    fn output_ownership_aliases_share_a_canonical_target() {
+        use std::os::unix::fs::symlink;
+        let root = unique_temp_dir("tekai-output-alias");
+        fs::create_dir_all(root.join("actual")).unwrap();
+        symlink(root.join("actual"), root.join("alias")).unwrap();
+        let owned = BuildOutputLock::acquire(&root.join("alias")).unwrap();
         assert_eq!(
-            effective,
-            "before\nstill effective\n\\endinput same-line kept\n"
+            owned.output_path(),
+            root.join("actual").canonicalize().unwrap()
         );
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let actual = root.join("actual");
+        let waiter = thread::spawn(move || {
+            let _ownership = BuildOutputLock::acquire(&actual).unwrap();
+            acquired_tx.send(()).unwrap();
+        });
+        assert!(acquired_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(owned);
+        acquired_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        waiter.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn effective_tex_bytes_discard_physical_trailing_spaces() {
-        let source = b"before   \ninside  text   \n\\end{document}   ignored\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
+    fn generation_without_reliable_input_identity_declines_publication() {
+        let root = unique_temp_dir("tekai-generation-no-identity");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("main.tex"), "source").unwrap();
+        let mut input = fingerprint_path_reusing(&root.join("main.tex"), None)
+            .unwrap()
+            .unwrap();
+        input.metadata.as_mut().unwrap().identity = None;
+        let generation = BuildGeneration {
+            started_ns: u128::MAX,
+            lookup_inputs: Some(Vec::new()),
+            owned_format_directories: Vec::new(),
+        };
+        let state = root.join("state.toml");
+        assert!(
+            publish_generation_state(
+                &state,
+                "mode",
+                &root.join("main.pdf"),
+                vec![input],
+                &generation
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(!state.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 
-        assert_eq!(effective, "before\ninside  text\n\\end{document}");
+    #[cfg(unix)]
+    #[test]
+    fn equal_directory_membership_can_reuse_cache_but_not_prove_generation_stability() {
+        let root = unique_temp_dir("tekai-generation-directory-replacement");
+        fs::create_dir_all(&root).unwrap();
+        let input = root.join("main.tex");
+        fs::write(&input, "identical bytes").unwrap();
+        let dependency = lookup_dependency_fingerprint(&root).unwrap();
+        let generation = BuildGeneration {
+            started_ns: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            lookup_inputs: Some(vec![dependency.clone()]),
+            owned_format_directories: Vec::new(),
+        };
+        let replacement = root.join("replacement.tex");
+        fs::copy(&input, &replacement).unwrap();
+        fs::rename(&replacement, &input).unwrap();
+        assert!(input_fingerprint_is_fresh(&dependency).unwrap());
+        assert!(!generation.validate(&[]).unwrap());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn effective_tex_bytes_ignore_column_zero_comment_text() {
-        let source = b"before\n% comment text changes here   \n  % indented comment remains visible spacing\n\\end{document}\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
-
-        assert_eq!(effective, "before\n  %\\end{document}");
+    fn recorder_inputs_cannot_disappear_before_publication() {
+        let root = unique_temp_dir("tekai-recorder-missing-input");
+        fs::create_dir_all(root.join("out")).unwrap();
+        fs::write(root.join("main.tex"), "source").unwrap();
+        let recorder = root.join("out/main.fls");
+        fs::write(&recorder, "INPUT missing.tex\n").unwrap();
+        let error = recorded_inputs_with_root_mode(
+            &recorder,
+            &root,
+            &root.join("out"),
+            &root.join("main.tex"),
+            &HashMap::new(),
+            RawTexMode::Root,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("recorded input disappeared"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn effective_tex_bytes_ignore_inline_comment_text() {
-        let source = b"before % comment text\nnext line\nliteral \\% percent\n\\end{document}\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
+    fn generated_format_freshness_trust_is_confined_to_exact_owned_namespaces() {
+        let roots = [
+            PathBuf::from("/owned/preamble"),
+            PathBuf::from("/owned/engine/raw-formats-v1"),
+        ];
+        let format = "tekai-fastfmt-0123456789abcdef.fmt";
+        let raw = format!("{}.fmt.raw", "a".repeat(64));
+        assert!(is_owned_generated_format(&roots[0].join(format), &roots));
+        assert!(is_owned_generated_format(&roots[1].join(&raw), &roots));
+        assert!(!is_owned_generated_format(
+            &Path::new("/project/out").join(format),
+            &roots
+        ));
+        assert!(!is_owned_generated_format(
+            &Path::new("/project/out/raw-formats-v1").join(raw),
+            &roots
+        ));
+        assert!(!is_owned_generated_format(
+            &roots[0].join("custom.fmt"),
+            &roots
+        ));
+    }
 
+    #[cfg(unix)]
+    #[test]
+    fn directory_dependencies_observe_new_higher_priority_candidates() {
+        let root = unique_temp_dir("tekai-lookup-generation");
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir_all(root.join("z")).unwrap();
+        fs::write(root.join("z/choice.tex"), "OLD-CHOICE").unwrap();
+        let entries = [tekai_engine::search::SearchPath {
+            path: ".//".to_string(),
+            source: "test",
+            bundled: false,
+        }];
+        let paths = tekai_engine::lookup::dependency_paths(&root, &entries, &[]).unwrap();
+        let dependencies = paths
+            .iter()
+            .map(|path| lookup_dependency_fingerprint(path).unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            dependencies
+                .iter()
+                .all(|input| input_fingerprint_is_fresh(input).unwrap())
+        );
+        fs::write(root.join("a/choice.tex"), "NEW-CHOICE").unwrap();
+        assert!(
+            dependencies
+                .iter()
+                .any(|input| !input_fingerprint_is_fresh(input).unwrap())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recorded_alias_dependencies_observe_external_symlink_retargeting() {
+        use std::os::unix::fs::symlink;
+        let root = unique_temp_dir("tekai-recorded-alias");
+        fs::create_dir_all(root.join("old")).unwrap();
+        fs::create_dir_all(root.join("new")).unwrap();
+        fs::write(root.join("old/choice.tex"), "OLD-CONTENT").unwrap();
+        fs::write(root.join("new/choice.tex"), "NEW-CONTENT").unwrap();
+        let alias = root.join("alias");
+        symlink(root.join("old"), &alias).unwrap();
+        let fls = root.join("main.fls");
+        fs::write(
+            &fls,
+            format!(
+                "INPUT {}\nINPUT {}\n",
+                alias.join("choice.tex").display(),
+                alias.join("choice.tex").display()
+            ),
+        )
+        .unwrap();
+        let inputs = recorded_inputs(
+            &fls,
+            &root,
+            &root.join("out"),
+            &root.join("main.tex"),
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert!(
+            inputs
+                .iter()
+                .all(|input| input_fingerprint_is_fresh(input).unwrap())
+        );
         assert_eq!(
-            effective,
-            "before %next line\nliteral \\% percent\n\\end{document}"
+            inputs
+                .iter()
+                .filter(|input| input.path.starts_with(INPUT_ALIAS_PATH_PREFIX)
+                    && input.path.ends_with("/alias"))
+                .count(),
+            1
         );
+        fs::remove_file(&alias).unwrap();
+        symlink(root.join("new"), &alias).unwrap();
+        assert!(
+            inputs
+                .iter()
+                .any(|input| !input_fingerprint_is_fresh(input).unwrap())
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn effective_tex_bytes_canonicalize_spaces_before_inline_comments() {
-        let compact = effective_tex_bytes(
-            b"before % comment text\n\\end{document}\n",
-            EffectiveTexMode::Root,
+    fn recorder_tracks_original_format_source_and_materialized_raw_file() {
+        let root = unique_temp_dir("tekai-recorded-format-source");
+        fs::create_dir_all(&root).unwrap();
+        let original = root.join("custom.fmt");
+        let raw = root.join("content-addressed.fmt.raw");
+        fs::write(&original, "old compressed bytes").unwrap();
+        fs::write(&raw, "old decoded bytes").unwrap();
+        let fls = root.join("main.fls");
+        fs::write(
+            &fls,
+            format!("INPUT {}\nINPUT {}\n", original.display(), raw.display()),
+        )
+        .unwrap();
+        let inputs = recorded_inputs(
+            &fls,
+            &root,
+            &root.join("out"),
+            &root.join("main.tex"),
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert!(
+            inputs
+                .iter()
+                .any(|input| input.path == original.canonicalize().unwrap().display().to_string())
         );
-        let padded = effective_tex_bytes(
-            b"before    % changed comment text\n\\end{document}\n",
-            EffectiveTexMode::Root,
+        assert!(
+            inputs
+                .iter()
+                .any(|input| input.path == raw.canonicalize().unwrap().display().to_string())
         );
-        let tight = effective_tex_bytes(
-            b"before% changed comment text\n\\end{document}\n",
-            EffectiveTexMode::Root,
+        fs::write(&original, "new compressed bytes").unwrap();
+        assert!(
+            inputs
+                .iter()
+                .any(|input| !input_fingerprint_is_fresh(input).unwrap())
         );
-
-        assert_eq!(compact, padded);
-        assert_ne!(compact, tight);
-    }
-
-    #[test]
-    fn effective_tex_bytes_ignore_comments_and_boundaries_inside_inline_verb() {
-        let source =
-            b"before \\verb|% literal \\end{document}| text % comment\n\\end{document}\ntrailing\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
-
-        assert_eq!(
-            effective,
-            "before \\verb|% literal \\end{document}| text %\\end{document}"
-        );
-    }
-
-    #[test]
-    fn effective_tex_bytes_ignore_comments_and_boundaries_inside_inline_literal_commands() {
-        let source = b"before \\lstinline[language=TeX]|% literal \\end{document}| text % comment\nnext \\mintinline{tex}|% literal \\endinput| text % comment\n\\end{document}\ntrailing\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
-
-        assert_eq!(
-            effective,
-            "before \\lstinline[language=TeX]|% literal \\end{document}| text %next \\mintinline{tex}|% literal \\endinput| text %\\end{document}"
-        );
-    }
-
-    #[test]
-    fn effective_tex_bytes_preserve_unparseable_inline_verb_conservatively() {
-        let source =
-            b"before \\verb|unterminated % visible percent text\n\\end{document}\ntrailing\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
-
-        assert_eq!(
-            effective,
-            "before \\verb|unterminated % visible percent text\n\\end{document}\ntrailing\n"
-        );
-    }
-
-    #[test]
-    fn effective_tex_bytes_preserve_unparseable_inline_literal_conservatively() {
-        let source =
-            b"before \\lstinline|unterminated % visible percent text\n\\end{document}\ntrailing\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
-
-        assert_eq!(
-            effective,
-            "before \\lstinline|unterminated % visible percent text\n\\end{document}\ntrailing\n"
-        );
-    }
-
-    #[test]
-    fn effective_tex_bytes_preserve_percent_lines_when_catcode_is_explicit() {
-        let source = b"before\n\\catcode37=12\n% visible percent text\n\\end{document}\ntrailing\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
-
-        assert_eq!(
-            effective,
-            "before\n\\catcode37=12\n% visible percent text\n\\end{document}\ntrailing\n"
-        );
-    }
-
-    #[test]
-    fn effective_tex_bytes_preserve_percent_text_in_verbatim() {
-        let source = b"before\n\\begin{verbatim}\n% visible percent text\n\\end{verbatim}\n\\end{document}\ntrailing\n";
-        let effective = String::from_utf8(effective_tex_bytes(source, EffectiveTexMode::Root))
-            .expect("effective root bytes should stay valid UTF-8");
-
-        assert_eq!(
-            effective,
-            "before\n\\begin{verbatim}\n% visible percent text\n\\end{verbatim}\n\\end{document}\ntrailing\n"
-        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -14929,21 +15641,9 @@ mod tests {
             let fingerprint = |path: &Path, previous: Option<&HashMap<String, FileFingerprint>>| {
                 match kind {
                     0 => fingerprint_path_reusing(path, previous),
-                    1 => fingerprint_effective_tex_path_reusing(
-                        path,
-                        previous,
-                        EffectiveTexMode::Root,
-                    ),
-                    2 => fingerprint_effective_tex_path_reusing(
-                        path,
-                        previous,
-                        EffectiveTexMode::Input,
-                    ),
-                    3 => fingerprint_effective_tex_path_reusing(
-                        path,
-                        previous,
-                        EffectiveTexMode::Preamble,
-                    ),
+                    1 => fingerprint_raw_tex_path_reusing(path, previous, RawTexMode::Root),
+                    2 => fingerprint_raw_tex_path_reusing(path, previous, RawTexMode::Input),
+                    3 => fingerprint_raw_tex_path_reusing(path, previous, RawTexMode::Preamble),
                     _ => fingerprint_bibtex_database_reusing(path, previous, &citation_keys),
                 }
                 .unwrap()
@@ -14999,29 +15699,24 @@ mod tests {
     }
 
     #[test]
-    fn effective_source_rehash_preserves_cache_hits_for_unchanged_content() {
+    fn raw_source_rehash_preserves_cache_hits_for_unchanged_content() {
         let root = unique_temp_dir("tekai-effective-identity-rehash");
         fs::create_dir_all(&root).unwrap();
         let path = root.join("main.tex");
         fs::write(&path, "\\begin{document}Body\\end{document}\n").unwrap();
-        let initial = fingerprint_effective_tex_path_reusing(&path, None, EffectiveTexMode::Root)
+        let initial = fingerprint_raw_tex_path_reusing(&path, None, RawTexMode::Root)
             .unwrap()
             .unwrap();
-        fs::write(
-            &path,
-            "% A longer comment\n\\begin{document}Body\\end{document}\n",
-        )
-        .unwrap();
+        fs::write(&path, "\\begin{document}Body\\end{document}\n").unwrap();
         assert!(input_fingerprint_is_fresh(&initial).unwrap());
         let previous = HashMap::from([(initial.path.clone(), initial.clone())]);
-        let updated =
-            fingerprint_effective_tex_path_reusing(&path, Some(&previous), EffectiveTexMode::Root)
-                .unwrap()
-                .unwrap();
+        let updated = fingerprint_raw_tex_path_reusing(&path, Some(&previous), RawTexMode::Root)
+            .unwrap()
+            .unwrap();
         assert_eq!(updated.hash, initial.hash);
         assert_eq!(updated.len, initial.len);
         assert_ne!(updated.metadata, initial.metadata);
-        assert!(updated.metadata.unwrap().len > initial.metadata.unwrap().len);
+        assert_eq!(updated.metadata.unwrap().len, initial.metadata.unwrap().len);
 
         let mut serialized = serde_json::to_value(&initial).unwrap();
         serialized.as_object_mut().unwrap().remove("metadata");
@@ -15033,7 +15728,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn effective_tex_fingerprint_reuses_previous_metadata_without_reading() {
+    fn raw_tex_fingerprint_reuses_previous_metadata_without_reading() {
         let root = unique_temp_dir("tekai-effective-fingerprint-reuse");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let input = root.join("main.tex");
@@ -15043,20 +15738,18 @@ mod tests {
         )
         .expect("failed to write input");
 
-        let mut initial =
-            fingerprint_effective_tex_path_reusing(&input, None, EffectiveTexMode::Root)
-                .expect("failed to fingerprint TeX input")
-                .expect("fingerprint should exist");
+        let mut initial = fingerprint_raw_tex_path_reusing(&input, None, RawTexMode::Root)
+            .expect("failed to fingerprint TeX input")
+            .expect("fingerprint should exist");
         // A sentinel proves that matching identity takes the metadata-only
         // path. Changing permissions would change ctime and require a read.
-        initial.hash = format!("{TEX_ROOT_EFFECTIVE_HASH_PREFIX}reused-without-reading");
+        initial.hash = format!("{TEX_ROOT_RAW_HASH_PREFIX}reused-without-reading");
         let mut previous = HashMap::new();
         previous.insert(initial.path.clone(), initial.clone());
 
-        let reused =
-            fingerprint_effective_tex_path_reusing(&input, Some(&previous), EffectiveTexMode::Root)
-                .expect("unchanged effective fingerprint should not read file")
-                .expect("fingerprint should exist");
+        let reused = fingerprint_raw_tex_path_reusing(&input, Some(&previous), RawTexMode::Root)
+            .expect("unchanged effective fingerprint should not read file")
+            .expect("fingerprint should exist");
         assert_eq!(reused, initial);
         assert!(
             input_fingerprint_is_fresh(&initial)
@@ -15132,6 +15825,37 @@ mod tests {
 
     proptest::proptest! {
         #![proptest_config(proptest::test_runner::Config::default())]
+        #[test]
+        fn source_identity_covers_arbitrary_bytes_after_apparent_boundaries(
+            prefix in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..128),
+            mut suffix in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..128),
+            mode in 0u8..3,
+            boundary in 0usize..4,
+        ) {
+            let root = unique_temp_dir("tekai-source-identity-property");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.join("input.tex");
+            let markers: [&[u8]; 4] = [b"\\iffalse\\end{document}\\fi", b"\\def\\finish{\\end{document}}", b"\\iffalse\\endinput\\fi", b"% apparent comment\n"];
+            let mut bytes = prefix;
+            bytes.extend_from_slice(markers[boundary]);
+            bytes.extend_from_slice(&suffix);
+            let mode = [RawTexMode::Root, RawTexMode::Input, RawTexMode::Preamble][mode as usize];
+            fs::write(&path, &bytes).unwrap();
+            let first = fingerprint_raw_tex_path_reusing(&path, None, mode).unwrap().unwrap();
+            proptest::prop_assert_eq!(first.len, bytes.len() as u64);
+            proptest::prop_assert!(input_fingerprint_is_fresh(&first).unwrap());
+            suffix[0] ^= 1;
+            let offset = bytes.len() - suffix.len();
+            bytes[offset..].copy_from_slice(&suffix);
+            fs::write(&path, &bytes).unwrap();
+            proptest::prop_assert!(!input_fingerprint_is_fresh(&first).unwrap());
+            let previous = HashMap::from([(first.path.clone(), first.clone())]);
+            let next = fingerprint_raw_tex_path_reusing(&path, Some(&previous), mode).unwrap().unwrap();
+            proptest::prop_assert_ne!(&first.hash, &next.hash);
+            proptest::prop_assert!(input_fingerprint_is_fresh(&next).unwrap());
+            fs::remove_dir_all(root).unwrap();
+        }
+
         #[test]
         fn ordered_freshness_reuses_snapshot_for_any_input_permutation(
             mut keyed in proptest::collection::vec((proptest::prelude::any::<u16>(), proptest::prelude::any::<bool>()), 0..256)
@@ -15812,6 +16536,121 @@ mod tests {
         assert!(!stale_out_dir.join("main.pdf").exists());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interrupted_settled_cache_replacement_cannot_restore_mixed_files() {
+        let _env_lock = TEXINPUTS_TEST_LOCK.lock().unwrap();
+        let root = unique_temp_dir("tekai-settled-publication-failure");
+        let out_dir = root.join("out");
+        let restore_dir = root.join("restore");
+        fs::create_dir_all(&out_dir).unwrap();
+        fs::create_dir_all(&restore_dir).unwrap();
+        let _cache = EnvVarGuard::set("TEKAI_AUX_CACHE", root.join("cache").display().to_string());
+        let main = root.join("main.tex");
+        fs::write(&main, "unchanged source").unwrap();
+        let state = BuildState {
+            version: BUILD_STATE_VERSION,
+            mode_key: "interruption-test".to_string(),
+            pdf_path: out_dir.join("main.pdf").display().to_string(),
+            inputs: vec![fingerprint_path_reusing(&main, None).unwrap().unwrap()],
+        };
+        let old_files = [SettledAuxCacheFile {
+            relative: "main.pdf".to_string(),
+            bytes: b"%PDF-old".to_vec(),
+        }];
+        save_settled_aux_cache(
+            &root,
+            &out_dir,
+            &main,
+            &state.mode_key,
+            &state,
+            None,
+            Some(&old_files),
+            false,
+        )
+        .unwrap();
+        assert!(
+            restore_settled_aux_cache_if_fresh(
+                &root,
+                &restore_dir,
+                &main,
+                &state.mode_key,
+                &restore_dir.join("main.pdf")
+            )
+            .unwrap()
+            .is_some()
+        );
+        assert_eq!(fs::read(restore_dir.join("main.pdf")).unwrap(), b"%PDF-old");
+        let partial_files = [
+            SettledAuxCacheFile {
+                relative: "main.pdf".to_string(),
+                bytes: b"%PDF-new".to_vec(),
+            },
+            SettledAuxCacheFile {
+                relative: "blocked".to_string(),
+                bytes: b"regular file".to_vec(),
+            },
+            SettledAuxCacheFile {
+                relative: "blocked/unwritable.aux".to_string(),
+                bytes: b"incomplete".to_vec(),
+            },
+        ];
+        assert!(
+            save_settled_aux_cache(
+                &root,
+                &out_dir,
+                &main,
+                &state.mode_key,
+                &state,
+                None,
+                Some(&partial_files),
+                false
+            )
+            .is_err()
+        );
+        let cache_dir = settled_aux_cache_dir(&root, &main, &state.mode_key);
+        assert!(!cache_dir.join("state.toml").exists());
+        assert_eq!(
+            fs::read(cache_dir.join("files/main.pdf")).unwrap(),
+            b"%PDF-new"
+        );
+        assert!(
+            restore_settled_aux_cache_if_fresh(
+                &root,
+                &restore_dir,
+                &main,
+                &state.mode_key,
+                &restore_dir.join("main.pdf")
+            )
+            .unwrap()
+            .is_none()
+        );
+        // The destination was not overwritten with a partly published artifact.
+        assert_eq!(fs::read(restore_dir.join("main.pdf")).unwrap(), b"%PDF-old");
+        save_settled_aux_cache(
+            &root,
+            &out_dir,
+            &main,
+            &state.mode_key,
+            &state,
+            None,
+            Some(&old_files),
+            false,
+        )
+        .unwrap();
+        assert!(
+            restore_settled_aux_cache_if_fresh(
+                &root,
+                &restore_dir,
+                &main,
+                &state.mode_key,
+                &restore_dir.join("main.pdf")
+            )
+            .unwrap()
+            .is_some()
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

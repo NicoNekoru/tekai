@@ -40,6 +40,7 @@ pub(crate) struct DirectoryGraph {
     cyclic_components: Vec<bool>,
     bytes: usize,
     budget: usize,
+    dependencies_complete: bool,
     #[cfg(test)]
     read_dirs: usize,
     #[cfg(test)]
@@ -83,10 +84,24 @@ impl DirectoryGraph {
         excluded_bundle: Option<&Path>,
         budget: usize,
     ) -> Option<Self> {
+        Self::build_excluding(
+            root,
+            &excluded_bundle.into_iter().collect::<Vec<_>>(),
+            budget,
+        )
+    }
+
+    pub(crate) fn build_excluding(
+        root: &Path,
+        excluded_paths: &[&Path],
+        budget: usize,
+    ) -> Option<Self> {
         let canonical = root.canonicalize().ok()?;
-        let excluded =
-            excluded_bundle.map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
-        if excluded.as_ref() == Some(&canonical) {
+        let excluded = excluded_paths
+            .iter()
+            .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+            .collect::<Vec<_>>();
+        if excluded.iter().any(|path| canonical.starts_with(path)) {
             return None;
         }
         let mut graph = Self {
@@ -98,12 +113,13 @@ impl DirectoryGraph {
             cyclic_components: Vec::new(),
             bytes: root.as_os_str().len() + std::mem::size_of::<Self>() + 256,
             budget,
+            dependencies_complete: true,
             #[cfg(test)]
             read_dirs: 0,
             #[cfg(test)]
             entry_metadata_followups: 0,
             #[cfg(test)]
-            directory_canonicalizations: 1 + usize::from(excluded_bundle.is_some()),
+            directory_canonicalizations: 1 + excluded_paths.len(),
             #[cfg(test)]
             ordinary_directory_canonicalizations: 0,
         };
@@ -115,9 +131,14 @@ impl DirectoryGraph {
                 graph.read_dirs += 1;
             }
             if let Ok(entries) = fs::read_dir(&graph.nodes[next].canonical) {
-                for entry in entries.filter_map(Result::ok) {
+                for entry in entries {
+                    let Ok(entry) = entry else {
+                        graph.dependencies_complete = false;
+                        continue;
+                    };
                     let name = entry.file_name();
                     let Ok(file_type) = entry.file_type() else {
+                        graph.dependencies_complete = false;
                         continue;
                     };
                     // Directory-entry type normally comes from read_dir. Only
@@ -135,6 +156,7 @@ impl DirectoryGraph {
                             graph.entry_metadata_followups += 1;
                         }
                         let Ok(metadata) = fs::metadata(entry.path()) else {
+                            graph.dependencies_complete = false;
                             continue;
                         };
                         metadata.file_type()
@@ -150,6 +172,7 @@ impl DirectoryGraph {
                                 graph.ordinary_directory_canonicalizations += usize::from(!symlink);
                             }
                             let Ok(target) = path.canonicalize() else {
+                                graph.dependencies_complete = false;
                                 continue;
                             };
                             target
@@ -160,7 +183,7 @@ impl DirectoryGraph {
                             // reparse points and namespace normalization differ.
                             path
                         };
-                        if excluded.as_ref() == Some(&target) {
+                        if excluded.iter().any(|path| target.starts_with(path)) {
                             continue;
                         }
                         let target = if let Some(&target) = graph.by_path.get(&target) {
@@ -174,6 +197,8 @@ impl DirectoryGraph {
                         return None;
                     }
                 }
+            } else {
+                graph.dependencies_complete = false;
             }
             graph.nodes[next]
                 .edges
@@ -187,6 +212,14 @@ impl DirectoryGraph {
 
     pub(crate) fn retained_bytes(&self) -> usize {
         self.bytes
+    }
+
+    pub(crate) fn dependency_directories(&self) -> impl Iterator<Item = &Path> {
+        self.nodes.iter().map(|node| node.canonical.as_path())
+    }
+
+    pub(crate) fn dependencies_complete(&self) -> bool {
+        self.dependencies_complete
     }
 
     pub(crate) fn contains_directory(&self, canonical: &Path) -> bool {

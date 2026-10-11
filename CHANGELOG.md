@@ -16,8 +16,18 @@ versioning.
 - Prune preview snapshots to active dependencies and cap their retained size.
   Coalesce watch notifications in a bounded queue, use whole-build fallback on
   overflow, and preserve source edits made during startup builds.
-- Fingerprint only searched personal TDS subtrees and site filename databases.
-  Include cache-validation work in reported direct-build timings.
+- Capture bounded search-directory identities during cold builds and inspect
+  those identities without recursive enumeration on warm cache checks. Validate
+  complete source bytes and compilation generations before publishing cache
+  state. Preserve external symlink dependencies and serialize output publication.
+- Materialize compressed formats in a private content-addressed cache. Ignore
+  adjacent raw companions, track the source format and recover corrupt cache
+  entries without writing shared installations.
+- Own subprocess groups, stop descendants on CLI cancellation and limit all
+  auxiliary commands to eight concurrent children.
+- Replace the native BibTeX bridge archive and native zlib dependency with
+  Rust-only implementations. Remove unused PNG nonlocal-jump compatibility code.
+  Require Rust 1.89 for descriptor-owned output locks.
 - Add deterministic scan-count, eviction and watcher-retention CI tests,
   a repeatable runtime benchmark, and transparent-image PDF parity coverage.
 

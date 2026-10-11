@@ -2,12 +2,14 @@
 //! filename or recursive wildcard. A build/pass owns a session. TeX writes are
 //! registered as they happen; external edits are observed by the next session.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
+use std::marker::PhantomData;
 use std::path::{Component, Path, PathBuf};
+use std::rc::Rc;
 use std::time::SystemTime;
 
 use crate::cache::BudgetCache;
@@ -25,7 +27,7 @@ struct FileStamp {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum IndexKey {
-    Disk(PathBuf),
+    Disk(PathBuf, bool),
     Database(PathBuf),
 }
 
@@ -87,6 +89,9 @@ struct LookupSession {
     // Oversized trees use a streaming fallback, without repeatedly allocating
     // an index that cannot be retained. This set is bounded too.
     oversized: Vec<IndexKey>,
+    exclusion_config: Option<OsString>,
+    policy_generation: u64,
+    project_exclusions: Vec<PathBuf>,
     #[cfg(test)]
     disk_scans: usize,
     #[cfg(test)]
@@ -99,6 +104,9 @@ impl LookupSession {
             indices: BudgetCache::new(INDEX_BUDGET, INDEX_LIMIT),
             budget: INDEX_BUDGET,
             oversized: Vec::new(),
+            exclusion_config: std::env::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES"),
+            policy_generation: POLICY_GENERATION.with(Cell::get),
+            project_exclusions: project_exclusions(),
             #[cfg(test)]
             disk_scans: 0,
             #[cfg(test)]
@@ -107,6 +115,21 @@ impl LookupSession {
     }
 
     fn find(&mut self, base: &Path, candidate: &str, entry: &str) -> Option<PathBuf> {
+        self.find_policy(base, candidate, entry, false)
+    }
+
+    fn find_policy(
+        &mut self,
+        base: &Path,
+        candidate: &str,
+        entry: &str,
+        implicit_project: bool,
+    ) -> Option<PathBuf> {
+        if self.exclusion_config != std::env::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES")
+            || self.policy_generation != POLICY_GENERATION.with(Cell::get)
+        {
+            *self = Self::new();
+        }
         let database_only = entry.starts_with("!!");
         let entry = entry.strip_prefix("!!").unwrap_or(entry);
         if entry.is_empty() {
@@ -162,6 +185,22 @@ impl LookupSession {
             }
             return found;
         }
+        // Explicit path components retain direct access to generated inputs;
+        // only implicit recursive filename discovery skips owned namespaces.
+        if implicit_project && requested.components().count() > 1 {
+            let direct = root.join(requested);
+            if direct.is_file() {
+                return Some(direct);
+            }
+        }
+        if implicit_project
+            && self
+                .project_exclusions
+                .iter()
+                .any(|excluded| root.starts_with(excluded))
+        {
+            return None;
+        }
         // A zero-directory wildcard always searches the root first. This also
         // sees freshly generated files without a recursive scan.
         if let Some(suffix) = suffix {
@@ -178,7 +217,7 @@ impl LookupSession {
             .indices
             .keys()
             .filter_map(|key| match key {
-                IndexKey::Disk(_) => self
+                IndexKey::Disk(_, policy) if *policy == implicit_project => self
                     .indices
                     .peek(key)
                     .and_then(|index| index.graph.as_ref())
@@ -187,7 +226,7 @@ impl LookupSession {
                 _ => None,
             })
             .min_by(|left, right| match (left, right) {
-                (IndexKey::Disk(left), IndexKey::Disk(right)) => left
+                (IndexKey::Disk(left, _), IndexKey::Disk(right, _)) => left
                     .components()
                     .count()
                     .cmp(&right.components().count())
@@ -197,14 +236,21 @@ impl LookupSession {
         if let Some(key) = key {
             return self.indices.get(&key)?.find(requested, &pattern);
         }
-        let key = IndexKey::Disk(root.clone());
+        let key = IndexKey::Disk(root.clone(), implicit_project);
+        let mut excluded = crate::runtime::installed_bundle_root()
+            .map(Path::to_path_buf)
+            .into_iter()
+            .collect::<Vec<_>>();
+        if implicit_project {
+            excluded.extend(self.project_exclusions.iter().cloned());
+        }
         #[cfg(test)]
         {
             self.disk_scans += 1;
         }
         if self.oversized.contains(&key) {
             return best_match(
-                disk_entries(&root)
+                disk_entries(&root, excluded)
                     .filter(|entry| entry.file_type().is_file())
                     .map(|entry| entry.into_path()),
                 requested,
@@ -212,9 +258,9 @@ impl LookupSession {
             );
         }
         let mut index = FileIndex::new(root.clone());
-        if let Some(graph) = DirectoryGraph::build(
+        if let Some(graph) = DirectoryGraph::build_excluding(
             &root,
-            crate::runtime::installed_bundle_root(),
+            &excluded.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
             self.budget.saturating_sub(index.bytes),
         ) {
             index.bytes += graph.retained_bytes();
@@ -229,7 +275,7 @@ impl LookupSession {
         }
         self.oversized.push(key);
         best_match(
-            disk_entries(&root)
+            disk_entries(&root, excluded)
                 .filter(|entry| entry.file_type().is_file())
                 .map(|entry| entry.into_path()),
             requested,
@@ -241,7 +287,7 @@ impl LookupSession {
         if !self
             .indices
             .keys()
-            .any(|key| matches!(key, IndexKey::Disk(_)))
+            .any(|key| matches!(key, IndexKey::Disk(_, _)))
         {
             return;
         }
@@ -267,7 +313,7 @@ impl LookupSession {
         let keys = self
             .indices
             .keys()
-            .filter(|key| matches!(key, IndexKey::Disk(_)))
+            .filter(|key| matches!(key, IndexKey::Disk(_, _)))
             .cloned()
             .collect::<Vec<_>>();
         for key in keys {
@@ -299,20 +345,48 @@ impl LookupSession {
     }
 }
 
-fn disk_entries(root: &Path) -> impl Iterator<Item = walkdir::DirEntry> {
-    let bundle = crate::runtime::installed_bundle_root();
+fn disk_entries(root: &Path, excluded: Vec<PathBuf>) -> impl Iterator<Item = walkdir::DirEntry> {
     walkdir::WalkDir::new(root)
         .follow_links(true)
         .sort_by_file_name()
         .into_iter()
         .filter_entry(move |entry| {
-            !bundle.is_some_and(|path| {
-                entry.path() == path
+            !excluded.iter().any(|path| {
+                entry.path().starts_with(path)
                     || (entry.path_is_symlink()
-                        && entry.path().canonicalize().ok().as_deref() == Some(path))
+                        && entry
+                            .path()
+                            .canonicalize()
+                            .is_ok_and(|target| target.starts_with(path)))
             })
         })
         .filter_map(Result::ok)
+}
+
+fn project_exclusions() -> Vec<PathBuf> {
+    if let Some(paths) = SCOPED_PROJECT_EXCLUSIONS.with(|paths| paths.borrow().clone()) {
+        return paths;
+    }
+    std::env::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES")
+        .map(|value| {
+            std::env::split_paths(&value)
+                .filter_map(|path| path.canonicalize().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn find_search_path(
+    base: &Path,
+    candidate: &str,
+    entry: &crate::search::SearchPath,
+) -> Option<PathBuf> {
+    SESSION.with(|session| {
+        session
+            .borrow_mut()
+            .get_or_insert_with(LookupSession::new)
+            .find_policy(base, candidate, &entry.path, entry.source == "project")
+    })
 }
 
 fn file_stamp(path: &Path) -> Option<FileStamp> {
@@ -491,6 +565,32 @@ impl DirectoryPattern {
 
 thread_local! {
     static SESSION: RefCell<Option<LookupSession>> = const { RefCell::new(None) };
+    static SCOPED_PROJECT_EXCLUSIONS: RefCell<Option<Vec<PathBuf>>> = const { RefCell::new(None) };
+    static POLICY_GENERATION: Cell<u64> = const { Cell::new(0) };
+}
+
+/// A thread-owned implicit-search policy for compiler preflight. Explicit
+/// search entries and explicit relative paths keep their normal semantics.
+/// Dropping the guard restores the previous policy and invalidates its session.
+pub struct ProjectLookupPolicyGuard {
+    previous: Option<Vec<PathBuf>>,
+    _thread_owned: PhantomData<Rc<()>>,
+}
+
+pub fn scoped_project_exclusions(paths: Vec<PathBuf>) -> ProjectLookupPolicyGuard {
+    let previous = SCOPED_PROJECT_EXCLUSIONS.with(|current| current.replace(Some(paths)));
+    POLICY_GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
+    ProjectLookupPolicyGuard {
+        previous,
+        _thread_owned: PhantomData,
+    }
+}
+
+impl Drop for ProjectLookupPolicyGuard {
+    fn drop(&mut self) {
+        SCOPED_PROJECT_EXCLUSIONS.with(|current| current.replace(self.previous.take()));
+        POLICY_GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
+    }
 }
 
 /// Begin a build/pass's view of mutable search trees. Call again after external
@@ -499,6 +599,200 @@ pub fn reset() {
     // A cache-hit build never performs a lookup. Drop prior indices without
     // constructing an empty session that would immediately remain unused.
     SESSION.with(|session| *session.borrow_mut() = None);
+}
+
+/// Capture directory membership dependencies for a compiler generation.
+///
+/// Inventory each physical directory once, with the same alias and exclusion
+/// rules as recursive lookup. Persisted directory identities can then be
+/// checked without enumerating entries on a warm-cache build. An oversized or
+/// unreadable tree declines caching rather than publishing partial coverage.
+pub fn dependency_paths(
+    base: &Path,
+    entries: &[crate::search::SearchPath],
+    excluded: &[&Path],
+) -> Option<Vec<PathBuf>> {
+    dependency_snapshot(base, entries, excluded).map(|dependencies| {
+        let mut paths = dependencies
+            .into_iter()
+            .filter_map(|dependency| match dependency {
+                LookupDependency::Path(path) => Some(path),
+                LookupDependency::AbsentDirectory(path) | LookupDependency::AbsentFile(path) => {
+                    nearest_existing_directory(&path)
+                }
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    })
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum LookupDependency {
+    Path(PathBuf),
+    AbsentDirectory(PathBuf),
+    AbsentFile(PathBuf),
+}
+
+pub fn dependency_snapshot(
+    base: &Path,
+    entries: &[crate::search::SearchPath],
+    excluded: &[&Path],
+) -> Option<Vec<LookupDependency>> {
+    dependency_paths_with_budget(base, entries, excluded, INDEX_BUDGET)
+}
+
+fn dependency_paths_with_budget(
+    base: &Path,
+    entries: &[crate::search::SearchPath],
+    excluded: &[&Path],
+    mut budget: usize,
+) -> Option<Vec<LookupDependency>> {
+    let mut dependencies = HashSet::new();
+    let mut graphs: Vec<DirectoryGraph> = Vec::new();
+    for entry in entries.iter().filter(|entry| !entry.bundled) {
+        let database_only = entry.path.starts_with("!!");
+        let spelling = entry.path.strip_prefix("!!").unwrap_or(&entry.path);
+        let prefix = base.join(spelling.split("//").next()?);
+        if excluded.iter().any(|path| prefix.starts_with(path)) {
+            continue;
+        }
+        add_alias_parent_dependencies(&prefix, &mut dependencies, &mut budget)?;
+        if database_only {
+            // The nearest ancestral database wins. Track every candidate
+            // directory up to that winner, including absent candidates, so a
+            // newly created closer ls-R cannot leave the old choice fresh.
+            for candidate in prefix.ancestors() {
+                let database = candidate.join("ls-R");
+                if database.is_file() {
+                    add_alias_parent_dependencies(&database, &mut dependencies, &mut budget)?;
+                    add_dependency(&mut dependencies, database, &mut budget)?;
+                    break;
+                }
+                add_absent_file_dependency(&mut dependencies, database, &mut budget)?;
+            }
+            continue;
+        }
+        let Some(root) = prefix.canonicalize().ok() else {
+            if fs::symlink_metadata(&prefix).is_ok_and(|metadata| metadata.is_symlink()) {
+                // A missing symlink target can appear without changing the
+                // link's parent. Partial membership coverage is unsafe.
+                return None;
+            }
+            add_absent_dependency(&mut dependencies, prefix, &mut budget)?;
+            continue;
+        };
+        if !root.is_dir() {
+            add_absent_dependency(&mut dependencies, root, &mut budget)?;
+            continue;
+        }
+        if excluded.iter().any(|path| root.starts_with(path)) {
+            continue;
+        }
+        // Keep the lexical root too, so replacement of a root symlink changes
+        // its identity even when the old physical tree remains unchanged.
+        add_dependency(&mut dependencies, prefix, &mut budget)?;
+        if !spelling.contains("//") {
+            add_dependency(&mut dependencies, root, &mut budget)?;
+            continue;
+        }
+        if graphs.iter().any(|graph| graph.contains_directory(&root)) {
+            continue;
+        }
+        let graph = DirectoryGraph::build_excluding(&root, excluded, budget)?;
+        if !graph.dependencies_complete() {
+            return None;
+        }
+        budget = budget.checked_sub(graph.retained_bytes())?;
+        for directory in graph.dependency_directories() {
+            add_dependency(&mut dependencies, directory.to_path_buf(), &mut budget)?;
+        }
+        graphs.push(graph);
+    }
+    let mut dependencies = dependencies.into_iter().collect::<Vec<_>>();
+    dependencies.sort();
+    Some(dependencies)
+}
+
+fn add_alias_parent_dependencies(
+    path: &Path,
+    dependencies: &mut HashSet<LookupDependency>,
+    budget: &mut usize,
+) -> Option<()> {
+    for prefix in path.ancestors() {
+        match fs::symlink_metadata(prefix) {
+            Ok(metadata) if metadata.is_symlink() => {
+                // Any intermediate dangling alias can acquire a target without
+                // changing its lexical parent. Decline partial coverage.
+                prefix.canonicalize().ok()?;
+                add_dependency(dependencies, prefix.parent()?.to_path_buf(), budget)?;
+            }
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => {}
+            Err(_) => return None,
+        }
+    }
+    Some(())
+}
+
+fn add_dependency(
+    dependencies: &mut HashSet<LookupDependency>,
+    path: PathBuf,
+    budget: &mut usize,
+) -> Option<()> {
+    let dependency = LookupDependency::Path(path);
+    if !dependencies.contains(&dependency) {
+        let LookupDependency::Path(path) = &dependency else {
+            unreachable!()
+        };
+        *budget = budget.checked_sub(path.capacity() + std::mem::size_of::<PathBuf>() + 128)?;
+        dependencies.insert(dependency);
+    }
+    Some(())
+}
+
+fn add_absent_dependency(
+    dependencies: &mut HashSet<LookupDependency>,
+    path: PathBuf,
+    budget: &mut usize,
+) -> Option<()> {
+    let dependency = LookupDependency::AbsentDirectory(path);
+    if !dependencies.contains(&dependency) {
+        let LookupDependency::AbsentDirectory(path) = &dependency else {
+            unreachable!()
+        };
+        *budget = budget.checked_sub(path.capacity() + std::mem::size_of::<PathBuf>() + 128)?;
+        dependencies.insert(dependency);
+    }
+    Some(())
+}
+
+fn add_absent_file_dependency(
+    dependencies: &mut HashSet<LookupDependency>,
+    path: PathBuf,
+    budget: &mut usize,
+) -> Option<()> {
+    let dependency = LookupDependency::AbsentFile(path);
+    if !dependencies.contains(&dependency) {
+        let LookupDependency::AbsentFile(path) = &dependency else {
+            unreachable!()
+        };
+        *budget = budget.checked_sub(path.capacity() + std::mem::size_of::<PathBuf>() + 128)?;
+        dependencies.insert(dependency);
+    }
+    Some(())
+}
+
+fn nearest_existing_directory(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|path| path.is_dir())
+        .map(Path::to_path_buf)
 }
 
 pub(crate) fn find(base: &Path, candidate: &str, entry: &Path) -> Option<PathBuf> {
@@ -533,6 +827,167 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn implicit_project_exclusions_preserve_explicit_inputs_and_streaming_fallback() {
+        let root = fixture();
+        fs::create_dir_all(root.join("a-generated/deep")).unwrap();
+        fs::create_dir_all(root.join("z-source")).unwrap();
+        let generated = root.join("a-generated/deep/choice.sty");
+        let source = root.join("z-source/choice.sty");
+        fs::write(&generated, "generated").unwrap();
+        fs::write(&source, "source").unwrap();
+        for budget in [INDEX_BUDGET, 1] {
+            let mut session = LookupSession::new();
+            session.budget = budget;
+            session.project_exclusions = vec![root.join("a-generated")];
+            assert_eq!(
+                session.find_policy(&root, "choice.sty", ".//", true),
+                Some(source.clone())
+            );
+            assert_eq!(
+                session.find(&root, "choice.sty", ".//"),
+                Some(generated.clone())
+            );
+            assert_eq!(
+                session.find_policy(&root, "a-generated/deep/choice.sty", ".//", true),
+                Some(generated.clone())
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scoped_policy_restores_sessions_and_is_thread_local() {
+        let root = fixture();
+        fs::create_dir_all(root.join("a-generated")).unwrap();
+        fs::create_dir_all(root.join("z-source")).unwrap();
+        let generated = root.join("a-generated/choice.sty");
+        let source = root.join("z-source/choice.sty");
+        fs::write(&generated, "generated").unwrap();
+        fs::write(&source, "source").unwrap();
+        let entry = crate::search::SearchPath {
+            path: ".//".to_string(),
+            source: "project",
+            bundled: false,
+        };
+        reset();
+        assert_eq!(
+            find_search_path(&root, "choice.sty", &entry),
+            Some(generated.clone())
+        );
+        {
+            let _guard = scoped_project_exclusions(vec![root.join("a-generated")]);
+            assert_eq!(find_search_path(&root, "choice.sty", &entry), Some(source));
+            let thread_root = root.clone();
+            let thread_entry = entry.clone();
+            assert_eq!(
+                std::thread::spawn(move || find_search_path(
+                    &thread_root,
+                    "choice.sty",
+                    &thread_entry
+                ))
+                .join()
+                .unwrap(),
+                Some(generated.clone())
+            );
+        }
+        assert_eq!(
+            find_search_path(&root, "choice.sty", &entry),
+            Some(generated)
+        );
+        reset();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn dependency_inventory_deduplicates_overlapping_roots_and_excludes_outputs() {
+        let root = fixture();
+        fs::create_dir_all(root.join("tree/deep")).unwrap();
+        fs::create_dir_all(root.join("out/generated/deep")).unwrap();
+        let entries = [".//", "tree//", "missing/nested//"].map(|path| crate::search::SearchPath {
+            path: path.to_string(),
+            source: "test",
+            bundled: false,
+        });
+        let output = root.join("out");
+        let paths = dependency_paths(&root, &entries, &[&output]).unwrap();
+        assert_eq!(
+            paths
+                .iter()
+                .filter(|path| **path == root.join("tree/deep"))
+                .count(),
+            1
+        );
+        assert!(paths.iter().all(|path| !path.starts_with(&output)));
+        assert!(paths.contains(&root));
+        assert!(dependency_paths_with_budget(&root, &entries, &[&output], 128).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dependency_inventory_tracks_external_aliases_and_declines_broken_targets() {
+        use std::os::unix::fs::symlink;
+        let root = fixture();
+        let external = fixture();
+        fs::create_dir_all(external.join("deep")).unwrap();
+        symlink(&external, root.join("alias")).unwrap();
+        let entries = [crate::search::SearchPath {
+            path: ".//".to_string(),
+            source: "test",
+            bundled: false,
+        }];
+        let paths = dependency_paths(&root, &entries, &[]).unwrap();
+        assert!(paths.contains(&external.join("deep")));
+        symlink(external.join("absent"), root.join("broken")).unwrap();
+        assert!(dependency_paths(&root, &entries, &[]).is_none());
+        let intermediate = [crate::search::SearchPath {
+            path: "broken/subdir//".to_string(),
+            source: "test",
+            bundled: false,
+        }];
+        assert!(dependency_paths(&root, &intermediate, &[]).is_none());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
+    }
+
+    #[test]
+    fn dependency_inventory_tracks_nearer_database_choices_and_small_path_budgets() {
+        let root = fixture();
+        let leaf = root.join("tex/latex");
+        fs::create_dir_all(&leaf).unwrap();
+        fs::write(root.join("ls-R"), "./tex/latex:\nchoice.sty\n").unwrap();
+        let entries = [crate::search::SearchPath {
+            path: "!!tex/latex//".to_string(),
+            source: "test",
+            bundled: false,
+        }];
+        let paths = dependency_paths(&root, &entries, &[]).unwrap();
+        assert!(paths.contains(&root.join("ls-R")));
+        assert!(paths.contains(&leaf));
+        assert!(paths.contains(&root.join("tex")));
+        assert!(dependency_paths_with_budget(&root, &entries, &[], 1).is_none());
+        for entry in [".", "missing/leaf"] {
+            let entries = [crate::search::SearchPath {
+                path: entry.to_string(),
+                source: "test",
+                bundled: false,
+            }];
+            assert!(dependency_paths_with_budget(&root, &entries, &[], 1).is_none());
+        }
+        fs::write(root.join("not-a-directory"), "file").unwrap();
+        let entries = [crate::search::SearchPath {
+            path: "not-a-directory/missing//".to_string(),
+            source: "test",
+            bundled: false,
+        }];
+        assert_eq!(
+            dependency_paths(&root, &entries, &[]).unwrap(),
+            vec![root.clone()]
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

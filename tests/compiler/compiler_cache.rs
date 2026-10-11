@@ -19,10 +19,7 @@ See Section~\ref{sec:intro}.
 #[test]
 fn generated_output_dir_artifacts_do_not_invalidate_noop_cache() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping cache test; pdflatex is not available");
-        return;
-    }
+    let _environment = bundled_environment();
 
     let root = unique_temp_dir("tekai-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
@@ -49,10 +46,7 @@ fn generated_output_dir_artifacts_do_not_invalidate_noop_cache() {
 #[test]
 fn scheduler_policy_changes_do_not_invalidate_settled_final_cache() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping scheduler policy cache test; pdflatex is not available");
-        return;
-    }
+    let _environment = bundled_environment();
 
     let root = unique_temp_dir("tekai-scheduler-cache-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
@@ -86,10 +80,7 @@ fn scheduler_policy_changes_do_not_invalidate_settled_final_cache() {
 #[test]
 fn fresh_output_dir_restores_settled_pdf_artifact_from_shared_cache() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping shared artifact cache test; pdflatex is not available");
-        return;
-    }
+    let _environment = bundled_environment();
 
     let _env_lock = AUX_CACHE_TEST_LOCK
         .lock()
@@ -102,6 +93,9 @@ fn fresh_output_dir_restores_settled_pdf_artifact_from_shared_cache() {
     let first_out = root.join("first-out");
     let fresh_out = root.join("fresh-out");
     let force_out = root.join("force-out");
+    fs::create_dir_all(&first_out).unwrap();
+    fs::create_dir_all(&fresh_out).unwrap();
+    fs::create_dir_all(&force_out).unwrap();
     fs::write(&main, AUX_DOC).expect("failed to write test document");
 
     let first = build(&options(&main, &first_out)).expect("initial build failed");
@@ -134,404 +128,377 @@ fn fresh_output_dir_restores_settled_pdf_artifact_from_shared_cache() {
 }
 
 #[test]
-fn trailing_content_after_end_document_does_not_invalidate_root_cache() {
+fn source_edits_rebuild_after_apparent_execution_boundaries() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping root effective-source cache test; pdflatex is not available");
-        return;
+    let _environment = bundled_environment();
+    for (name, root_source, included_source) in [
+        (
+            "inactive-root-end",
+            "\\documentclass{article}\n\\begin{document}\n\\iffalse\\end{document}\\fi\nOLD-CONTENT\\end{document}\n",
+            None,
+        ),
+        (
+            "macro-root-end",
+            "\\documentclass{article}\n\\def\\finish{\\end{document}}\n\\begin{document}\nOLD-CONTENT\\finish\n",
+            None,
+        ),
+        (
+            "inactive-input-end",
+            "\\documentclass{article}\n\\begin{document}\\input{section}\\end{document}\n",
+            Some("\\iffalse\\endinput\\fi\nOLD-CONTENT\n"),
+        ),
+        (
+            "indirect-catcode",
+            "\\documentclass{article}\n\\let\\setcode\\catcode\n\\begin{document}\n\\setcode37=12\n% OLD-CONTENT\n\\setcode37=14\n\\end{document}\n",
+            None,
+        ),
+    ] {
+        let root = unique_temp_dir(name);
+        let out_dir = root.join("out");
+        fs::create_dir_all(&out_dir).unwrap();
+        let main = root.join("main.tex");
+        fs::write(&main, root_source).unwrap();
+        let changed = if let Some(source) = included_source {
+            let section = root.join("section.tex");
+            fs::write(&section, source).unwrap();
+            section
+        } else {
+            main.clone()
+        };
+        let options = BuildOptions {
+            external_tools: false,
+            ..options(&main, &out_dir)
+        };
+        let first = build(&options).unwrap();
+        assert!(!first.skipped);
+        assert!(build(&options).unwrap().skipped, "{name}");
+        let initial_pdf = fs::read(out_dir.join("main.pdf")).unwrap();
+        let source = fs::read_to_string(&changed).unwrap();
+        fs::write(&changed, source.replace("OLD-CONTENT", "NEW-CONTENT")).unwrap();
+        let next = build(&options).unwrap();
+        assert!(!next.skipped, "{name}: {next:#?}");
+        assert!(next.tex_runs > 0);
+        assert_ne!(
+            initial_pdf,
+            fs::read(out_dir.join("main.pdf")).unwrap(),
+            "{name}"
+        );
+        assert!(build(&options).unwrap().skipped, "{name}");
+        assert_pdf_text_when_available(&out_dir.join("main.pdf"), "NEW-CONTENT", "OLD-CONTENT");
+        fs::remove_dir_all(root).unwrap();
     }
-
-    let root = unique_temp_dir("tekai-effective-root-cache-test");
-    fs::create_dir_all(&root).expect("failed to create test directory");
-    let main = root.join("main.tex");
-    let out_dir = root.join("out");
-    fs::write(&main, AUX_DOC).expect("failed to write test document");
-
-    let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert!(!first.skipped, "{first:#?}");
-    assert!(out_dir.join("main.pdf").exists());
-
-    fs::write(
-        &main,
-        format!("{AUX_DOC}\n% trailing notebook text ignored after end{{document}}\n"),
-    )
-    .expect("failed to append trailing content");
-    let trailing = build(&options(&main, &out_dir)).expect("trailing-content build failed");
-    assert!(trailing.skipped, "{trailing:#?}");
-    assert_eq!(trailing.tex_runs, 0, "{trailing:#?}");
-
-    fs::write(&main, AUX_DOC.replace("Intro", "Changed Intro"))
-        .expect("failed to edit effective document body");
-    let body_edit = build(&options(&main, &out_dir)).expect("body edit build failed");
-    assert!(!body_edit.skipped, "{body_edit:#?}");
-    assert!(body_edit.tex_runs > 0, "{body_edit:#?}");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
-fn trailing_content_after_endinput_does_not_invalidate_tex_input_cache() {
+fn new_higher_priority_inputs_rebuild_without_forcing() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping endinput cache test; pdflatex is not available");
-        return;
-    }
-
-    let root = unique_temp_dir("tekai-effective-endinput-cache-test");
-    fs::create_dir_all(&root).expect("failed to create test directory");
-    let main = root.join("main.tex");
-    let section = root.join("section.tex");
+    let _environment = bundled_environment();
+    let root = unique_temp_dir("tekai-cache-lookup-precedence");
     let out_dir = root.join("out");
+    fs::create_dir_all(root.join("project/a")).unwrap();
+    fs::create_dir_all(root.join("project/z")).unwrap();
+    fs::create_dir_all(&out_dir).unwrap();
+    let main = root.join("main.tex");
     fs::write(
         &main,
-        "\\documentclass{article}\n\\begin{document}\n\\input{section}\n\\end{document}\n",
+        "\\documentclass{article}\n\\begin{document}\\input{choice}\\end{document}\n",
     )
-    .expect("failed to write test document");
-    fs::write(
-        &section,
-        "Visible section text.\n\\endinput same-line text stays visible\nignored tail\n",
-    )
-    .expect("failed to write section");
-
-    let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert!(!first.skipped, "{first:#?}");
-    assert!(out_dir.join("main.pdf").exists());
-
-    fs::write(
-        &section,
-        "Visible section text.\n\\endinput same-line text stays visible\nchanged ignored tail\n",
-    )
-    .expect("failed to edit ignored section tail");
-    let trailing = build(&options(&main, &out_dir)).expect("endinput-tail build failed");
-    assert!(trailing.skipped, "{trailing:#?}");
-    assert_eq!(trailing.tex_runs, 0, "{trailing:#?}");
-
-    fs::write(
-        &section,
-        "Visible section text.\n\\endinput changed same-line text stays visible\nchanged ignored tail\n",
-    )
-    .expect("failed to edit effective endinput line");
-    let same_line = build(&options(&main, &out_dir)).expect("endinput-line build failed");
-    assert!(!same_line.skipped, "{same_line:#?}");
-    assert!(same_line.tex_runs > 0, "{same_line:#?}");
-
-    let _ = fs::remove_dir_all(root);
+    .unwrap();
+    fs::write(root.join("project/z/choice.tex"), "OLD-CHOICE\n").unwrap();
+    let _inputs = EnvVarGuard::set(
+        "TEXINPUTS",
+        format!("{}//:", root.join("project").display()),
+    );
+    let _program_inputs = EnvVarGuard::set(
+        "TEXINPUTS_pdflatex",
+        format!("{}//:", root.join("project").display()),
+    );
+    let options = BuildOptions {
+        external_tools: false,
+        ..options(&main, &out_dir)
+    };
+    assert!(!build(&options).unwrap().skipped);
+    assert!(build(&options).unwrap().skipped);
+    fs::write(root.join("project/a/choice.tex"), "NEW-CHOICE\n").unwrap();
+    let next = build(&options).unwrap();
+    assert!(!next.skipped, "{next:#?}");
+    assert!(next.tex_runs > 0);
+    assert!(build(&options).unwrap().skipped);
+    assert_pdf_text_when_available(&out_dir.join("main.pdf"), "NEW-CHOICE", "OLD-CHOICE");
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn physical_trailing_spaces_do_not_invalidate_tex_cache() {
+fn implicit_generated_namespaces_are_ignored_but_explicit_search_remains_available() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping trailing-space cache test; pdflatex is not available");
-        return;
-    }
-
-    let root = unique_temp_dir("tekai-trailing-space-cache-test");
-    fs::create_dir_all(&root).expect("failed to create test directory");
+    let _environment = bundled_environment();
+    let root = unique_temp_dir("tekai-generated-lookup-policy");
+    let out_dir = root.join("a-output");
+    let cache_dir = root.join("b-cache");
+    fs::create_dir_all(root.join("z-source")).unwrap();
+    fs::create_dir_all(out_dir.join("nested")).unwrap();
+    fs::create_dir_all(cache_dir.join("nested")).unwrap();
+    let _cache = EnvVarGuard::set("TEKAI_AUX_CACHE", cache_dir.display().to_string());
     let main = root.join("main.tex");
-    let section = root.join("section.tex");
-    let out_dir = root.join("out");
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\n\\input{section}\n\\end{document}\n",
-    )
-    .expect("failed to write test document");
-    fs::write(&section, "Visible section text.\n").expect("failed to write section");
-
-    let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert!(!first.skipped, "{first:#?}");
-    assert!(out_dir.join("main.pdf").exists());
-
-    fs::write(
-        &main,
-        "\\documentclass{article}   \n\\begin{document}   \n\\input{section}   \n\\end{document}   \n",
-    )
-    .expect("failed to add trailing spaces to root");
-    fs::write(&section, "Visible section text.   \n").expect("failed to edit section");
-    let whitespace = build(&options(&main, &out_dir)).expect("trailing-space build failed");
-    assert!(whitespace.skipped, "{whitespace:#?}");
-    assert_eq!(whitespace.tex_runs, 0, "{whitespace:#?}");
-
-    fs::write(&section, "Visible  section text.   \n").expect("failed to edit effective text");
-    let body_edit = build(&options(&main, &out_dir)).expect("body edit build failed");
-    assert!(!body_edit.skipped, "{body_edit:#?}");
-    assert!(body_edit.tex_runs > 0, "{body_edit:#?}");
-
-    let _ = fs::remove_dir_all(root);
+    fs::write(&main, "\\documentclass{article}\n\\usepackage{choice}\n\\begin{document}\\choicecontent\\end{document}\n").unwrap();
+    let package =
+        |word| format!("\\ProvidesPackage{{choice}}\n\\newcommand{{\\choicecontent}}{{{word}}}\n");
+    fs::write(root.join("z-source/choice.sty"), package("SOURCE-CHOICE")).unwrap();
+    let options = BuildOptions {
+        external_tools: false,
+        ..options(&main, &out_dir)
+    };
+    assert!(!build(&options).unwrap().skipped);
+    assert!(build(&options).unwrap().skipped);
+    fs::write(out_dir.join("nested/choice.sty"), package("OUTPUT-CHOICE")).unwrap();
+    fs::write(cache_dir.join("nested/choice.sty"), package("CACHE-CHOICE")).unwrap();
+    assert!(build(&options).unwrap().skipped);
+    assert!(
+        !build(&BuildOptions {
+            force: true,
+            ..options.clone()
+        })
+        .unwrap()
+        .skipped
+    );
+    assert_pdf_text_when_available(&out_dir.join("main.pdf"), "SOURCE-CHOICE", "OUTPUT-CHOICE");
+    let route = format!("{}//:", out_dir.join("nested").display());
+    let _generic = EnvVarGuard::set("TEXINPUTS", route.clone());
+    let _program = EnvVarGuard::set("TEXINPUTS_pdflatex", route);
+    // Explicit routes retain their resolver semantics, but cannot reuse an
+    // inventory which intentionally excludes those mutable generated trees.
+    for _ in 0..2 {
+        assert!(!build(&options).unwrap().skipped);
+        assert!(!out_dir.join(".tekai-main.state.toml").exists());
+    }
+    assert_pdf_text_when_available(&out_dir.join("main.pdf"), "OUTPUT-CHOICE", "SOURCE-CHOICE");
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn column_zero_comment_text_does_not_invalidate_tex_cache() {
+fn explicit_output_tree_sources_and_pdfs_are_real_cache_inputs() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping full-line comment cache test; pdflatex is not available");
-        return;
-    }
-
-    let root = unique_temp_dir("tekai-full-line-comment-cache-test");
-    fs::create_dir_all(&root).expect("failed to create test directory");
-    let main = root.join("main.tex");
-    let section = root.join("section.tex");
+    let _environment = bundled_environment();
+    let root = unique_temp_dir("tekai-explicit-generated-inputs");
     let out_dir = root.join("out");
+    fs::create_dir_all(&out_dir).unwrap();
+    let main = root.join("main.tex");
     fs::write(
         &main,
-        "\\documentclass{article}\n% root note before body\n\\begin{document}\n\\input{section}\n\\end{document}\n",
+        "\\documentclass{article}\n\\begin{document}\\input{out/user.tex}\\end{document}\n",
     )
-    .expect("failed to write test document");
-    fs::write(&section, "% section note\nVisible section text.\n")
-        .expect("failed to write section");
+    .unwrap();
+    fs::write(out_dir.join("user.tex"), "OLD-TEX\n").unwrap();
+    let options = BuildOptions {
+        external_tools: false,
+        ..options(&main, &out_dir)
+    };
+    assert!(!build(&options).unwrap().skipped);
+    assert!(build(&options).unwrap().skipped);
+    fs::write(out_dir.join("user.tex"), "NEW-TEX\n").unwrap();
+    assert!(!build(&options).unwrap().skipped);
+    assert!(build(&options).unwrap().skipped);
+    assert_pdf_text_when_available(&out_dir.join("main.pdf"), "NEW-TEX", "OLD-TEX");
 
-    let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert!(!first.skipped, "{first:#?}");
-    assert!(out_dir.join("main.pdf").exists());
+    let fixture = root.join("fixture.tex");
+    let fixture_source =
+        |word| format!("\\documentclass{{article}}\n\\begin{{document}}{word}\\end{{document}}\n");
+    fs::write(&fixture, fixture_source("OLD-PDF")).unwrap();
+    build(&options_for_fixture(&fixture, &out_dir)).unwrap();
+    fs::copy(out_dir.join("fixture.pdf"), out_dir.join("user.pdf")).unwrap();
+    fs::write(&main, "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\\includegraphics[width=5cm]{out/user.pdf}\\end{document}\n").unwrap();
+    assert!(!build(&options).unwrap().skipped);
+    assert!(build(&options).unwrap().skipped);
+    fs::write(&fixture, fixture_source("NEW-PDF")).unwrap();
+    build(&options_for_fixture(&fixture, &out_dir)).unwrap();
+    fs::copy(out_dir.join("fixture.pdf"), out_dir.join("user.pdf")).unwrap();
+    assert!(!build(&options).unwrap().skipped);
+    assert!(build(&options).unwrap().skipped);
+    assert_pdf_text_when_available(&out_dir.join("main.pdf"), "NEW-PDF", "OLD-PDF");
+    fs::remove_dir_all(root).unwrap();
+}
 
-    fs::write(
-        &main,
-        "\\documentclass{article}\n% changed root note before body\n\\begin{document}\n\\input{section}\n\\end{document}\n",
-    )
-    .expect("failed to edit root comment");
-    fs::write(&section, "% changed section note\nVisible section text.\n")
-        .expect("failed to edit section comment");
-    let comment_edit = build(&options(&main, &out_dir)).expect("comment edit build failed");
-    assert!(comment_edit.skipped, "{comment_edit:#?}");
-    assert_eq!(comment_edit.tex_runs, 0, "{comment_edit:#?}");
-
-    fs::write(
-        &section,
-        "  % indented comment can contribute spacing\nVisible section text.\n",
-    )
-    .expect("failed to edit effective section spacing");
-    let indented_comment = build(&options(&main, &out_dir)).expect("indented comment build failed");
-    assert!(!indented_comment.skipped, "{indented_comment:#?}");
-    assert!(indented_comment.tex_runs > 0, "{indented_comment:#?}");
-
-    let _ = fs::remove_dir_all(root);
+fn options_for_fixture(main: &Path, out_dir: &Path) -> BuildOptions {
+    BuildOptions {
+        external_tools: false,
+        ..options(main, out_dir)
+    }
 }
 
 #[test]
-fn ordinary_comment_text_does_not_invalidate_tex_cache() {
+fn edits_during_compilation_never_publish_a_fresh_cache_state() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping ordinary comment cache test; pdflatex is not available");
-        return;
+    let _environment = bundled_environment();
+    for once in [false, true] {
+        let root = unique_temp_dir("tekai-cache-input-generation");
+        let out_dir = root.join("out");
+        fs::create_dir_all(&out_dir).unwrap();
+        let main = root.join("main.tex");
+        let source = "\\documentclass{article}\n\\newwrite\\markerfile\\newcount\\loopcount\n\\begin{document}\nOLD-CONTENT\\par\n\\immediate\\openout\\markerfile=consumed.marker\n\\immediate\\write\\markerfile{consumed}\\immediate\\closeout\\markerfile\n\\loop\\advance\\loopcount by1\\ifnum\\loopcount<1000000\\repeat\n\\end{document}\n";
+        fs::write(&main, source).unwrap();
+        let marker = out_dir.join("consumed.marker");
+        let edited_main = main.clone();
+        let editor = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while !marker.is_file() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "engine never consumed the old input"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            fs::write(edited_main, source.replace("OLD-CONTENT", "NEW-CONTENT")).unwrap();
+        });
+        let options = BuildOptions {
+            once,
+            external_tools: false,
+            ..options(&main, &out_dir)
+        };
+        let first = build(&options);
+        editor.join().unwrap();
+        let error = first.expect_err("changed input must reject publication");
+        assert!(
+            error.to_string().contains("changed during compilation"),
+            "{error:#}"
+        );
+        assert!(!out_dir.join(".tekai-main.state.toml").exists());
+        let next = build(&options).unwrap();
+        assert!(!next.skipped);
+        assert!(next.tex_runs > 0);
+        assert!(build(&options).unwrap().skipped);
+        assert_pdf_text_when_available(&out_dir.join("main.pdf"), "NEW-CONTENT", "OLD-CONTENT");
+        fs::remove_dir_all(root).unwrap();
     }
+}
 
-    let root = unique_temp_dir("tekai-comment-cache-test");
-    fs::create_dir_all(&root).expect("failed to create test directory");
-    let main = root.join("main.tex");
-    let section = root.join("section.tex");
-    let out_dir = root.join("out");
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\nVisible root text. % root note\n\\input{section}\n\\end{document}\n",
-    )
-    .expect("failed to write test document");
-    fs::write(&section, "Visible section text. % section note\n").expect("failed to write section");
-
-    let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert!(!first.skipped, "{first:#?}");
-    assert!(out_dir.join("main.pdf").exists());
-
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\nVisible root text. % changed root note\n% added full-line note\n\\input{section}\n\\end{document}\n",
-    )
-    .expect("failed to edit root comments");
-    fs::write(&section, "Visible section text. % changed section note\n")
-        .expect("failed to edit section comment");
-    let comment_edit = build(&options(&main, &out_dir)).expect("comment edit build failed");
-    assert!(comment_edit.skipped, "{comment_edit:#?}");
-    assert_eq!(comment_edit.tex_runs, 0, "{comment_edit:#?}");
-
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\nVisible root text.    % changed root note plus editor padding\n% added full-line note\n\\input{section}\n\\end{document}\n",
-    )
-    .expect("failed to edit inline comment padding");
-    fs::write(
-        &section,
-        "Visible section text.    % changed section note plus editor padding\n",
-    )
-    .expect("failed to edit section inline comment padding");
-    let padded_comment_edit =
-        build(&options(&main, &out_dir)).expect("comment padding edit build failed");
-    assert!(padded_comment_edit.skipped, "{padded_comment_edit:#?}");
-    assert_eq!(padded_comment_edit.tex_runs, 0, "{padded_comment_edit:#?}");
-
-    fs::write(
-        &section,
-        "Visible section text.% removed effective spacing before comment\n",
-    )
-    .expect("failed to remove effective section comment spacing");
-    let tight_comment_edit =
-        build(&options(&main, &out_dir)).expect("tight comment edit build failed");
-    assert!(!tight_comment_edit.skipped, "{tight_comment_edit:#?}");
-    assert!(tight_comment_edit.tex_runs > 0, "{tight_comment_edit:#?}");
-
-    fs::write(
-        &section,
-        "Visible changed section text. % changed section note\n",
-    )
-    .expect("failed to edit effective section text");
-    let body_edit = build(&options(&main, &out_dir)).expect("body edit build failed");
-    assert!(!body_edit.skipped, "{body_edit:#?}");
-    assert!(body_edit.tex_runs > 0, "{body_edit:#?}");
-
-    let _ = fs::remove_dir_all(root);
+fn assert_pdf_text_when_available(pdf: &Path, expected: &str, stale: &str) {
+    let output = std::process::Command::new("pdftotext")
+        .arg(pdf)
+        .arg("-")
+        .output();
+    if let Ok(output) = output {
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains(expected), "{text}");
+        assert!(!text.contains(stale), "{text}");
+    }
 }
 
 #[test]
-fn verbatim_percent_text_does_invalidate_tex_cache() {
+fn concurrent_library_builds_publish_once_then_reuse_the_cache() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping verbatim percent cache test; pdflatex is not available");
-        return;
-    }
-
-    let root = unique_temp_dir("tekai-verbatim-percent-cache-test");
-    fs::create_dir_all(&root).expect("failed to create test directory");
+    let _environment = bundled_environment();
+    let root = unique_temp_dir("tekai-concurrent-library-builds");
+    fs::create_dir_all(&root).unwrap();
     let main = root.join("main.tex");
+    fs::write(&main, "\\documentclass{article}\n\\newcount\\loopcount\n\\begin{document}\nConcurrent content.\\loop\\advance\\loopcount by1\\ifnum\\loopcount<1000000\\repeat\n\\end{document}\n").unwrap();
     let out_dir = root.join("out");
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\n\\begin{verbatim}\n% visible one\n\\end{verbatim}\n\\end{document}\n",
-    )
-    .expect("failed to write test document");
-
-    let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert!(!first.skipped, "{first:#?}");
-    assert!(out_dir.join("main.pdf").exists());
-
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\n\\begin{verbatim}\n% visible two\n\\end{verbatim}\n\\end{document}\n",
-    )
-    .expect("failed to edit verbatim percent text");
-    let percent_edit = build(&options(&main, &out_dir)).expect("verbatim edit build failed");
-    assert!(!percent_edit.skipped, "{percent_edit:#?}");
-    assert!(percent_edit.tex_runs > 0, "{percent_edit:#?}");
-
-    let _ = fs::remove_dir_all(root);
+    let options = BuildOptions {
+        external_tools: false,
+        ..options(&main, &out_dir)
+    };
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let builds = (0..2)
+        .map(|_| {
+            let options = options.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                build(&options).unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+    let reports = builds
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reports.iter().filter(|report| !report.skipped).count(),
+        1,
+        "{reports:#?}"
+    );
+    assert_eq!(
+        reports.iter().filter(|report| report.skipped).count(),
+        1,
+        "{reports:#?}"
+    );
+    assert!(build(&options).unwrap().skipped);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn inline_verb_does_not_disable_safe_effective_tex_cache() {
+fn distinct_output_builds_serialize_shared_cache_save_and_restore() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping inline verb cache test; pdflatex is not available");
-        return;
-    }
-
-    let root = unique_temp_dir("tekai-inline-verb-cache-test");
-    fs::create_dir_all(&root).expect("failed to create test directory");
+    let _environment = bundled_environment();
+    let root = unique_temp_dir("tekai-concurrent-shared-cache");
+    let generated = root.join("artifacts");
+    let first_out = generated.join("first");
+    let second_out = generated.join("second");
+    fs::create_dir_all(&first_out).unwrap();
+    fs::create_dir_all(&second_out).unwrap();
+    let _cache = EnvVarGuard::set("TEKAI_AUX_CACHE", generated.display().to_string());
     let main = root.join("main.tex");
-    let out_dir = root.join("out");
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\nInline \\verb|% literal \\end{document}| text. % note\n\\end{document}\n",
-    )
-    .expect("failed to write test document");
-
-    let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert!(!first.skipped, "{first:#?}");
-    assert!(out_dir.join("main.pdf").exists());
-
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\nInline \\verb|% literal \\end{document}| text.    % edited note\n\\end{document}\n% trailing notebook text\n",
-    )
-    .expect("failed to edit ignored comment and trailing content");
-    let comment_edit = build(&options(&main, &out_dir)).expect("inline verb comment edit failed");
-    assert!(comment_edit.skipped, "{comment_edit:#?}");
-    assert_eq!(comment_edit.tex_runs, 0, "{comment_edit:#?}");
-
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\nInline \\verb|% changed literal \\end{document}| text.    % edited note\n\\end{document}\n% trailing notebook text\n",
-    )
-    .expect("failed to edit inline verb literal");
-    let literal_edit = build(&options(&main, &out_dir)).expect("inline verb literal edit failed");
-    assert!(!literal_edit.skipped, "{literal_edit:#?}");
-    assert!(literal_edit.tex_runs > 0, "{literal_edit:#?}");
-
-    let _ = fs::remove_dir_all(root);
+    fs::write(&main, AUX_DOC).unwrap();
+    let first = BuildOptions {
+        external_tools: false,
+        ..options(&main, &first_out)
+    };
+    let second = BuildOptions {
+        external_tools: false,
+        ..options(&main, &second_out)
+    };
+    build(&first).unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let writer = {
+        let barrier = barrier.clone();
+        let options = BuildOptions {
+            force: true,
+            ..first.clone()
+        };
+        std::thread::spawn(move || {
+            barrier.wait();
+            build(&options).unwrap()
+        })
+    };
+    let reader = {
+        let barrier = barrier.clone();
+        let options = second.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            build(&options).unwrap()
+        })
+    };
+    barrier.wait();
+    assert!(!writer.join().unwrap().skipped);
+    let restored = reader.join().unwrap();
+    assert!(restored.skipped, "{restored:#?}");
+    assert_eq!(restored.tex_runs, 0);
+    assert_eq!(
+        fs::read(first_out.join("main.pdf")).unwrap(),
+        fs::read(second_out.join("main.pdf")).unwrap()
+    );
+    assert!(build(&first).unwrap().skipped);
+    assert!(build(&second).unwrap().skipped);
+    fs::remove_dir_all(root).unwrap();
 }
 
-#[test]
-fn lstinline_does_not_disable_safe_effective_tex_cache() {
-    let _test_guard = super::lock();
-    if !command_available("pdflatex") || !tex_file_available("listings.sty") {
-        eprintln!("skipping lstinline cache test; pdflatex or listings.sty is not available");
-        return;
-    }
-
-    let root = unique_temp_dir("tekai-lstinline-cache-test");
-    fs::create_dir_all(&root).expect("failed to create test directory");
-    let main = root.join("main.tex");
-    let out_dir = root.join("out");
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\nInline \\lstinline|% literal \\end{document}| text. % note\n\\end{document}\n",
-    )
-    .expect("failed to write test document");
-
-    let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert!(!first.skipped, "{first:#?}");
-    assert!(out_dir.join("main.pdf").exists());
-
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\nInline \\lstinline|% literal \\end{document}| text.    % edited note\n\\end{document}\n% trailing notebook text\n",
-    )
-    .expect("failed to edit ignored comment and trailing content");
-    let comment_edit = build(&options(&main, &out_dir)).expect("lstinline comment edit failed");
-    assert!(comment_edit.skipped, "{comment_edit:#?}");
-    assert_eq!(comment_edit.tex_runs, 0, "{comment_edit:#?}");
-
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\nInline \\lstinline|% changed literal \\end{document}| text.    % edited note\n\\end{document}\n% trailing notebook text\n",
-    )
-    .expect("failed to edit lstinline literal");
-    let literal_edit = build(&options(&main, &out_dir)).expect("lstinline literal edit failed");
-    assert!(!literal_edit.skipped, "{literal_edit:#?}");
-    assert!(literal_edit.tex_runs > 0, "{literal_edit:#?}");
-
-    let _ = fs::remove_dir_all(root);
+pub(super) struct BundledEnvironment {
+    _guards: [EnvVarGuard; 4],
 }
 
-#[test]
-fn percent_lines_with_explicit_catcode_do_invalidate_tex_cache() {
-    let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping percent catcode cache test; pdflatex is not available");
-        return;
+pub(super) fn bundled_environment() -> BundledEnvironment {
+    BundledEnvironment {
+        _guards: [
+            EnvVarGuard::set(
+                tekai::compiler::EMBEDDED_ENGINE_RUNNER_ENV,
+                env!("CARGO_BIN_EXE_tekai").to_string(),
+            ),
+            EnvVarGuard::set("TEKAI_TEXMF_MODE", "bundled".to_string()),
+            EnvVarGuard::set("TEXINPUTS", String::new()),
+            EnvVarGuard::set("TEXINPUTS_pdflatex", String::new()),
+        ],
     }
-
-    let root = unique_temp_dir("tekai-percent-catcode-cache-test");
-    fs::create_dir_all(&root).expect("failed to create test directory");
-    let main = root.join("main.tex");
-    let out_dir = root.join("out");
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\n\\catcode37=12\n% visible percent text one\n\\catcode37=14\n\\end{document}\n",
-    )
-    .expect("failed to write test document");
-
-    let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert!(!first.skipped, "{first:#?}");
-    assert!(out_dir.join("main.pdf").exists());
-
-    fs::write(
-        &main,
-        "\\documentclass{article}\n\\begin{document}\n\\catcode37=12\n% visible percent text two\n\\catcode37=14\n\\end{document}\n",
-    )
-    .expect("failed to edit percent text");
-    let percent_edit = build(&options(&main, &out_dir)).expect("percent edit build failed");
-    assert!(!percent_edit.skipped, "{percent_edit:#?}");
-    assert!(percent_edit.tex_runs > 0, "{percent_edit:#?}");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 fn options(main: &Path, out_dir: &Path) -> BuildOptions {
@@ -554,21 +521,6 @@ fn options(main: &Path, out_dir: &Path) -> BuildOptions {
         quiet: true,
         print_command: false,
     }
-}
-
-fn command_available(program: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths).any(|directory| directory.join(program).is_file())
-        })
-        .unwrap_or(false)
-}
-
-fn tex_file_available(name: &str) -> bool {
-    std::process::Command::new("kpsewhich")
-        .arg(name)
-        .output()
-        .is_ok_and(|output| output.status.success())
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {

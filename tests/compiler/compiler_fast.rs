@@ -139,12 +139,9 @@ fn fast_preview_uses_demo_graphics_even_when_document_requests_final_graphicx() 
 }
 
 #[test]
-fn fast_preview_precompile_preamble_reuses_format_after_body_edit() {
+fn fast_preview_precompile_preamble_rebuilds_format_after_body_edit() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") || !tex_file_available("mylatexformat.ltx") {
-        eprintln!("skipping precompiled preamble test; pdflatex or mylatexformat is unavailable");
-        return;
-    }
+    let _environment = super::compiler_cache::bundled_environment();
 
     let root = unique_temp_dir("tekai-fast-precompile-preamble-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
@@ -180,11 +177,11 @@ fn fast_preview_precompile_preamble_reuses_format_after_body_edit() {
         precompile_preamble: true,
         ..options(&main, &out_dir)
     })
-    .expect("body edit should reuse the precompiled preamble");
+    .expect("body edit should rebuild the precompiled preamble");
 
     assert_eq!(second.tex_runs, 1, "{second:#?}");
     assert!(second.preamble_format_used, "{second:#?}");
-    assert!(!second.preamble_format_built, "{second:#?}");
+    assert!(second.preamble_format_built, "{second:#?}");
 
     let _ = fs::remove_dir_all(root);
 }
@@ -227,14 +224,9 @@ fn fast_preview_precompile_preamble_falls_back_for_predocument_inputs() {
 }
 
 #[test]
-fn full_build_precompile_preamble_reuses_format_after_body_edit() {
+fn full_build_precompile_preamble_rebuilds_format_after_body_edit() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") || !tex_file_available("mylatexformat.ltx") {
-        eprintln!(
-            "skipping full precompiled preamble test; pdflatex or mylatexformat is unavailable"
-        );
-        return;
-    }
+    let _environment = super::compiler_cache::bundled_environment();
 
     let root = unique_temp_dir("tekai-full-precompile-preamble-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
@@ -266,11 +258,11 @@ fn full_build_precompile_preamble_reuses_format_after_body_edit() {
         precompile_preamble: true,
         ..options(&main, &out_dir)
     })
-    .expect("body edit should reuse the full-build precompiled preamble");
+    .expect("body edit should rebuild the full-build precompiled preamble");
 
     assert_eq!(second.tex_runs, 1, "{second:#?}");
     assert!(second.preamble_format_used, "{second:#?}");
-    assert!(!second.preamble_format_built, "{second:#?}");
+    assert!(second.preamble_format_built, "{second:#?}");
 
     let _ = fs::remove_dir_all(root);
 }

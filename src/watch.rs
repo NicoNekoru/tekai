@@ -31,6 +31,8 @@ pub struct WatchOptions {
 }
 
 pub fn watch(options: WatchOptions) -> Result<()> {
+    crate::process_runner::initialize_watch_cancellation()
+        .context("failed to initialize watch cancellation")?;
     let ignored_out_dir = absolute_output_dir(&options.build_options.out_dir)?;
     let (tx, rx) = events::channel(ignored_out_dir.clone());
     let mut watcher = notify::recommended_watcher(move |result| {

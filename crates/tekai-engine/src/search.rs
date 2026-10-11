@@ -211,19 +211,39 @@ pub fn paths(variables: &[&'static str], subdirs: &[&str]) -> Vec<SearchPath> {
         bundled: true,
     });
 
+    configured_paths(defaults, variables, &variable)
+}
+
+fn configured_paths(
+    defaults: Vec<SearchPath>,
+    variables: &[&'static str],
+    get: &impl Fn(&str) -> Option<String>,
+) -> Vec<SearchPath> {
     let configured = variables.iter().find_map(|key| {
-        let value = if *key == "TEXINPUTS" {
-            std::env::var("TEXINPUTS_pdflatex")
-                .ok()
-                .or_else(|| std::env::var(key).ok())
+        let (source, value) = if *key == "TEXINPUTS" {
+            match get("TEXINPUTS_pdflatex") {
+                Some(value) => ("TEXINPUTS_pdflatex", Some(value)),
+                None => (*key, get(key)),
+            }
         } else {
-            std::env::var(key).ok()
+            (*key, get(key))
         };
-        value.map(|value| (*key, expand_path(&value)))
+        value.map(|value| (source, expand_with(&value, get)))
     });
     let Some((key, entries)) = configured else {
         return defaults;
     };
+    // Only the compiler-injected generic TEXINPUTS prefix is implicit.
+    // User program-specific paths and later duplicates retain explicit lookup
+    // semantics, including access to generated/output namespaces.
+    let project_prefix = get("TEKAI_ENGINE_PROJECT_ROOT").map(|root| format!("{root}//"));
+    let output_prefix = get("TEKAI_ENGINE_OUTPUT_ROOT").map(|root| format!("{root}//"));
+    let format_prefix = get("TEKAI_ENGINE_FORMAT_ROOT").map(|root| format!("{root}//"));
+    let has_format_prefix =
+        key == "TEXINPUTS" && format_prefix.as_deref() == entries.first().map(String::as_str);
+    let project_position = usize::from(has_format_prefix);
+    let has_project_prefix = key == "TEXINPUTS"
+        && project_prefix.as_deref() == entries.get(project_position).map(String::as_str);
     // Kpathsea expands one empty element, preferring leading, trailing, then
     // doubled separators. A path without an empty element replaces defaults.
     let insertion = if entries.first().is_some_and(String::is_empty) {
@@ -239,8 +259,17 @@ pub fn paths(variables: &[&'static str], subdirs: &[&str]) -> Vec<SearchPath> {
             paths.extend(defaults.iter().cloned());
         } else if !path.is_empty() {
             paths.push(SearchPath {
+                source: if (has_format_prefix && i == 0)
+                    || (has_project_prefix
+                        && (i == project_position
+                            || (i == project_position + 1
+                                && output_prefix.as_deref() == Some(path.as_str()))))
+                {
+                    "project"
+                } else {
+                    key
+                },
                 path,
-                source: key,
                 bundled: false,
             });
         }
@@ -248,9 +277,8 @@ pub fn paths(variables: &[&'static str], subdirs: &[&str]) -> Vec<SearchPath> {
     paths
 }
 
-/// Include directory membership in build signatures. Used-file content is
-/// fingerprinted separately by the recorder. This catches newly added files
-/// that shadow a previously used package without changing that old file.
+/// Search configuration identity. Mutable membership is captured once by
+/// `lookup::dependency_paths` and checked through persisted directory stamps.
 pub fn tree_signature(base: &Path) -> String {
     signature_for_roots(base, &shared_roots())
 }
@@ -273,32 +301,7 @@ fn signature_for_roots(base: &Path, roots: &[SearchPath]) -> String {
             hash_metadata(&db, &mut signature);
             continue;
         }
-        hash_metadata(&root, &mut signature);
-        let mut visited = std::collections::HashSet::new();
-        // These are precisely the typed TDS subtrees used by the resolver.
-        // Root metadata also catches the creation of a previously absent type.
-        for kind in ["tex", "fonts", "bibtex", "makeindex"] {
-            let subtree = root.join(kind);
-            subtree.hash(&mut signature);
-            for entry in walkdir::WalkDir::new(subtree)
-                .follow_links(true)
-                .sort_by_file_name()
-                .into_iter()
-                .filter_entry(|entry| {
-                    !entry.file_type().is_dir()
-                        || entry
-                            .path()
-                            .canonicalize()
-                            .ok()
-                            .is_some_and(|path| visited.insert(path))
-                })
-            {
-                let Ok(entry) = entry else { continue };
-                if entry.file_type().is_dir() {
-                    hash_metadata(entry.path(), &mut signature);
-                }
-            }
-        }
+        root.hash(&mut signature);
     }
     format!("{:016x}", signature.finish())
 }
@@ -317,6 +320,126 @@ fn hash_metadata(path: &Path, signature: &mut impl std::hash::Hasher) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn configured_test_paths(
+        values: &[(&str, &str)],
+        variables: &[&'static str],
+    ) -> Vec<SearchPath> {
+        let defaults = vec![
+            SearchPath {
+                path: ".//".into(),
+                source: "project",
+                bundled: false,
+            },
+            SearchPath {
+                path: "<bundled>".into(),
+                source: "bundled",
+                bundled: true,
+            },
+        ];
+        configured_paths(defaults, variables, &|key| {
+            values
+                .iter()
+                .find_map(|(name, value)| (*name == key).then(|| (*value).to_owned()))
+        })
+    }
+
+    #[test]
+    fn compiler_prefix_is_implicit_but_later_duplicates_are_explicit() {
+        let paths = configured_test_paths(
+            &[
+                ("TEKAI_ENGINE_PROJECT_ROOT", "/project"),
+                ("TEKAI_ENGINE_OUTPUT_ROOT", "/project/build"),
+                (
+                    "TEXINPUTS",
+                    "/project//:/project/build//:/project//:/project/build//:",
+                ),
+            ],
+            &["TEXINPUTS"],
+        );
+        let actual: Vec<_> = paths
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry.source))
+            .collect();
+        assert_eq!(
+            actual,
+            [
+                ("/project//", "project"),
+                ("/project/build//", "project"),
+                ("/project//", "TEXINPUTS"),
+                ("/project/build//", "TEXINPUTS"),
+                (".//", "project"),
+                ("<bundled>", "bundled"),
+            ]
+        );
+    }
+
+    #[test]
+    fn program_specific_texinputs_never_acquires_project_exclusions() {
+        let paths = configured_test_paths(
+            &[
+                ("TEKAI_ENGINE_PROJECT_ROOT", "/project"),
+                ("TEKAI_ENGINE_OUTPUT_ROOT", "/project/build"),
+                ("TEXINPUTS", "/project//:"),
+                ("TEXINPUTS_pdflatex", "/project//:/user//"),
+            ],
+            &["TEXINPUTS"],
+        );
+        assert_eq!(paths.len(), 2);
+        assert!(paths
+            .iter()
+            .all(|entry| entry.source == "TEXINPUTS_pdflatex"));
+    }
+
+    #[test]
+    fn preamble_format_prefix_shifts_only_compiler_injected_project_entries() {
+        let paths = configured_test_paths(
+            &[
+                ("TEKAI_ENGINE_FORMAT_ROOT", "/formats"),
+                ("TEKAI_ENGINE_PROJECT_ROOT", "/project"),
+                ("TEKAI_ENGINE_OUTPUT_ROOT", "/project/build"),
+                (
+                    "TEXINPUTS",
+                    "/formats//:/project//:/project/build//:/formats//:/project//",
+                ),
+            ],
+            &["TEXINPUTS"],
+        );
+        assert_eq!(
+            paths.iter().map(|entry| entry.source).collect::<Vec<_>>(),
+            ["project", "project", "project", "TEXINPUTS", "TEXINPUTS"]
+        );
+    }
+
+    #[test]
+    fn typed_variables_keep_precedence_and_explicit_lookup_policy() {
+        let paths = configured_test_paths(
+            &[
+                ("TEKAI_ENGINE_PROJECT_ROOT", "/project"),
+                ("TEXINPUTS", "/project//:"),
+                ("TFMFONTS", "/project//"),
+            ],
+            &["TFMFONTS", "TEXINPUTS"],
+        );
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].path, "/project//");
+        assert_eq!(paths[0].source, "TFMFONTS");
+    }
+
+    #[test]
+    fn prefix_tag_requires_internal_marker_and_first_generic_position() {
+        for values in [
+            vec![("TEXINPUTS", "/project//")],
+            vec![
+                ("TEKAI_ENGINE_PROJECT_ROOT", "/project"),
+                ("TEKAI_ENGINE_OUTPUT_ROOT", "/project/build"),
+                ("TEXINPUTS", "/user//:/project/build//:/project//"),
+            ],
+        ] {
+            let paths = configured_test_paths(&values, &["TEXINPUTS"]);
+            assert!(paths.iter().all(|entry| entry.source == "TEXINPUTS"));
+        }
+    }
 
     #[test]
     fn variables_braces_tilde_and_empty_entries_expand_in_order() {
@@ -364,7 +487,7 @@ mod tests {
         }
         assert_eq!(signature_for_roots(Path::new("."), &roots), before);
         std::fs::create_dir(root.join("tex/latex/new-package")).unwrap();
-        assert_ne!(signature_for_roots(Path::new("."), &roots), before);
+        assert_eq!(signature_for_roots(Path::new("."), &roots), before);
         std::fs::write(root.join("ls-R"), "./tex/latex:\n").unwrap();
         let roots = vec![SearchPath {
             path: format!("!!{}", root.display()),

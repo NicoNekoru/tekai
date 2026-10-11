@@ -12,7 +12,7 @@ use tekai::cli::{
     WatchArgs,
 };
 use tekai::compiler::{
-    BuildOptions, EMBEDDED_ENGINE_RUNNER_ENV, EMBEDDED_ENGINE_SUBCOMMAND, build,
+    BuildOptions, BuildOutputLock, EMBEDDED_ENGINE_RUNNER_ENV, EMBEDDED_ENGINE_SUBCOMMAND, build,
     tex_source_dependency_paths,
 };
 use tekai::config::{
@@ -32,6 +32,7 @@ fn main() -> Result<()> {
     }
     diagnostic_profile::initialize();
     let result = run_cli();
+    tekai::process_runner::finish_cli_cancellation();
     diagnostic_profile::emit(if result.is_ok() { "success" } else { "error" });
     result
 }
@@ -44,6 +45,7 @@ fn run_cli() -> Result<()> {
     let build_flag_sources = BuildFlagSources::from_root_matches(&matches);
     let cli = Cli::from_arg_matches(&matches)?;
     drop(parsing);
+    tekai::process_runner::enable_cli_cancellation();
     match cli.command {
         Command::Build(args) => run_build(args, build_flag_sources),
         Command::Clean(args) => run_clean(args),
@@ -161,10 +163,14 @@ fn run_clean(args: CleanArgs) -> Result<()> {
         .out_dir
         .or(build_config.out_dir)
         .unwrap_or_else(|| PathBuf::from("build"));
-    let target = clean_target_path(&out_dir)?;
-    let existed = target.exists();
+    let mut target = clean_target_path(&out_dir)?;
+    let mut existed = target
+        .try_exists()
+        .with_context(|| format!("failed to inspect clean target {}", target.display()))?;
 
     if existed && !args.dry_run {
+        // Preserve the refusal of a leaf alias, then resolve ancestor aliases
+        // and wait for the same descriptor ownership used by builds.
         let metadata = fs::symlink_metadata(&target)
             .with_context(|| format!("failed to stat clean target {}", target.display()))?;
         if metadata.file_type().is_symlink() {
@@ -173,8 +179,32 @@ fn run_clean(args: CleanArgs) -> Result<()> {
         if !metadata.is_dir() {
             bail!("refusing to clean non-directory {}", target.display());
         }
-        fs::remove_dir_all(&target)
-            .with_context(|| format!("failed to remove {}", target.display()))?;
+        let lock = BuildOutputLock::acquire(&target)?;
+        let owned = clean_target_path(lock.output_path())?;
+        let namespace = lock
+            .lock_directory()
+            .canonicalize()
+            .context("failed to resolve build ownership namespace")?;
+        if namespace.starts_with(&owned) || owned.starts_with(&namespace) {
+            bail!(
+                "refusing to clean build ownership namespace {}",
+                owned.display()
+            );
+        }
+        existed = target.try_exists()?;
+        if existed {
+            let resolved = target.canonicalize()?;
+            if resolved != owned {
+                bail!("clean target changed while waiting for build ownership");
+            }
+            let metadata = fs::symlink_metadata(&target)?;
+            if metadata.is_symlink() || !metadata.is_dir() {
+                bail!("clean target changed while waiting for build ownership");
+            }
+            fs::remove_dir_all(&owned)
+                .with_context(|| format!("failed to remove {}", owned.display()))?;
+        }
+        target = owned;
     }
 
     let report = CleanReport {

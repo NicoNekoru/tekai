@@ -173,13 +173,27 @@ fn diagnostic_cache_routes_are_stable_and_profiling_preserves_outputs() {
 
     project.write(
         "deps/part-00.tex",
-        "% A changed comment takes the effective-hash route.\n",
+        "% A changed comment must invalidate the complete raw source.\n",
+    );
+    let (report, profile) = profiled(&project);
+    assert_eq!(report["skipped"], false);
+    assert_eq!(report["tex_runs"], 1);
+    assert_eq!(counter(&profile, "warm_cache_hits"), 0);
+    assert!(counter(&profile, "stale_inputs") > 0);
+    let refreshed_state = fs::read(&state_path).unwrap();
+    assert_ne!(refreshed_state, state);
+
+    // Identical bytes with changed metadata still exercise the full-source
+    // hash fallback. Comments are not removed or interpreted for freshness.
+    project.write(
+        "deps/part-00.tex",
+        "% A changed comment must invalidate the complete raw source.\n",
     );
     let (report, profile) = profiled(&project);
     assert_eq!(report["skipped"], true);
     assert_eq!(counter(&profile, "effective_hash_fallbacks"), 1);
     assert_eq!(counter(&profile, "stale_inputs"), 0);
-    assert_eq!(fs::read(&state_path).unwrap(), state);
+    assert_eq!(fs::read(&state_path).unwrap(), refreshed_state);
 
     project.write("deps/part-00.tex", "Changed dependency.\n");
     let (report, profile) = profiled(&project);
@@ -601,7 +615,7 @@ for arg in "$@"; do
     --outfile=*) /bin/cp build/fixture.pdf "${arg#--outfile=}" ;;
   esac
 done
-printf invoked >> epstopdf-invocations
+printf invoked >> build/epstopdf-invocations
 "#,
     );
     fs::set_permissions(
@@ -613,7 +627,7 @@ printf invoked >> epstopdf-invocations
     let disabled = project.run(&["build", "main.tex", "--report-json"]);
     assert!(!disabled.status.success());
     assert!(String::from_utf8_lossy(&disabled.stderr).contains("--external-tools"));
-    assert!(!project.0.join("epstopdf-invocations").exists());
+    assert!(!project.0.join("build/epstopdf-invocations").exists());
 
     let report = project.success(&["build", "main.tex", "--report-json", "--external-tools"]);
     assert_eq!(report["external_runs"], 1);
@@ -625,7 +639,7 @@ printf invoked >> epstopdf-invocations
         "TeX must not run a converter: {log}"
     );
     assert_eq!(
-        fs::read_to_string(project.0.join("epstopdf-invocations")).unwrap(),
+        fs::read_to_string(project.0.join("build/epstopdf-invocations")).unwrap(),
         "invoked"
     );
     let cached = project.success(&["build", "main.tex", "--report-json", "--external-tools"]);
