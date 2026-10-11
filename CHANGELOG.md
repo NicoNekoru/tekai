@@ -11,6 +11,10 @@ versioning.
 - Replace exponential recursive-wildcard matching with dynamic programming.
   Register files created by TeX immediately and refresh lookup after opted-in
   shell commands, so inventory caching does not hide generated inputs.
+- Discover observed generated inputs without scanning historical output trees.
+  Preserve generated-file observations across lookup eviction and later
+  non-overwriting passes, with bounded current-pass and whole-build ledgers.
+  Record dependencies during draft passes as well as final passes.
 - Bound retained lookup indexes and decoded PNG pixels. Drop compressed PNG
   buffers after decoding and remove the redundant unbounded bundled-name cache.
 - Prune preview snapshots to active dependencies and cap their retained size.
@@ -35,6 +39,10 @@ versioning.
 - Replace native engine allocation, formatting and stdio with Rust-owned code.
   Bound stream buffers and pushback, preserve EOF and seek behavior, and prevent
   failed writes from growing retained buffers without limit.
+- Share checked Rust core types and state imports, and replace initialization's
+  internal C-style calls with Rust calls while preserving format-file layout.
+- Use checked Rust calls for engine rounding and termination, with property
+  tests for rounding boundaries and saturation.
 - Add deterministic scan-count, eviction and watcher-retention CI tests,
   a repeatable runtime benchmark, and transparent-image PDF parity coverage.
 
