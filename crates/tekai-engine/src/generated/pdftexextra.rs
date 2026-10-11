@@ -1,3 +1,25 @@
+pub use crate::core_types::{
+    AsciiCode as ASCIIcode, Boolean as boolean, CharUsedArray as charusedarray,
+    DestinationNameEntry as destnameentry, EightBits as eightbits, FmEntryPtr as fmentryptr,
+    FontIndex as fontindex, FontIntegerView as C2RustUnnamed_6, FontMemoryWord as fmemoryword,
+    FontQuartersView as C2RustUnnamed_5, FourQuarters as fourquarters, GlueOrder as glueord,
+    GlueRatio as glueratio, GroupCode as groupcode, Halfword as halfword,
+    HalfwordBytes as C2RustUnnamed_0, HalfwordPair as C2RustUnnamed_1, HyphPointer as hyphpointer,
+    InputStateRecord as instaterecord, Integer as integer,
+    InternalFontNumber as internalfontnumber, ListStateRecord as liststaterecord,
+    LongInteger as longinteger, MemoryIntegerView as C2RustUnnamed_4,
+    MemoryQuartersView as C2RustUnnamed_3, MemoryWord as memoryword, NineBits as ninebits,
+    ObjectEntry as objentry, PackedAsciiCode as packedASCIIcode,
+    PdfLinkStackRecord as pdflinkstackrecord, PoolPointer as poolpointer,
+    QuarterBytes as C2RustUnnamed_2, Quarterword as quarterword, Real as real, SChar as schar,
+    SavePointer as savepointer, Scaled as scaled, SmallNumber as smallnumber,
+    StrNumber as strnumber, Text as text, TrieOpcode as trieopcode, TriePointer as triepointer,
+    TwoHalves as twohalves, VfStackIndex as vfstackindex, VfStackRecord as vfstackrecord,
+    WordFile as wordfile,
+};
+
+use crate::generated::pdftexini::mainbody;
+
 use crate::openclose::{close_file, open_input, open_output};
 use crate::stdio::{gzread, gzwrite};
 use crate::support::{read_line, xfclose, xfopen};
@@ -108,7 +130,6 @@ extern "C" {
     fn kpse_in_name_ok(fname: const_string) -> boolean;
     fn kpse_reset_program_name(progname: const_string);
     fn kpse_var_value(var: const_string) -> string;
-    fn mainbody();
     fn recorder_record_input(_: const_string);
     fn recorder_record_output(_: const_string);
     static mut fullnameoffile: string;
@@ -202,7 +223,6 @@ pub struct timeval {
     pub tv_sec: __darwin_time_t,
     pub tv_usec: __darwin_suseconds_t,
 }
-pub type boolean = ::core::ffi::c_int;
 pub type string = *mut ::core::ffi::c_char;
 pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
@@ -377,9 +397,6 @@ pub struct kpathsea_instance {
     pub saved_count: ::core::ffi::c_int,
 }
 pub type kpathsea = *mut kpathsea_instance;
-pub type schar = ::core::ffi::c_schar;
-pub type integer = ::core::ffi::c_int;
-pub type longinteger = off_t;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct option {
@@ -388,8 +405,6 @@ pub struct option {
     pub flag: *mut ::core::ffi::c_int,
     pub val: ::core::ffi::c_int,
 }
-pub type real = ::core::ffi::c_double;
-pub type text = *mut FILE;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct _RuneEntry {
@@ -457,8 +472,6 @@ pub struct tm {
     pub tm_gmtoff: ::core::ffi::c_long,
     pub tm_zone: *mut ::core::ffi::c_char,
 }
-pub type packedASCIIcode = ::core::ffi::c_uchar;
-pub type poolpointer = integer;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct stat {
@@ -481,7 +494,6 @@ pub struct stat {
     pub st_lspare: __int32_t,
     pub st_qspare: [__int64_t; 2],
 }
-pub type strnumber = integer;
 pub type md5_byte_t = ::core::ffi::c_uchar;
 pub type md5_state_t = md5_state_s;
 #[derive(Copy, Clone)]
@@ -492,7 +504,6 @@ pub struct md5_state_s {
     pub buf: [md5_byte_t; 64],
 }
 pub type md5_word_t = ::core::ffi::c_uint;
-pub type ASCIIcode = ::core::ffi::c_uchar;
 pub type socklen_t = __darwin_socklen_t;
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -502,7 +513,6 @@ pub struct sockaddr {
     pub sa_data: [::core::ffi::c_char; 14],
 }
 pub type sa_family_t = __uint8_t;
-pub type glueratio = ::core::ffi::c_double;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct C2RustUnnamed {
@@ -519,147 +529,8 @@ pub type voidpc = *const ::core::ffi::c_void;
 pub type voidp = *mut ::core::ffi::c_void;
 pub use crate::stdio::Stream as gzFile_s;
 pub type gzFile = *mut gzFile_s;
-pub type eightbits = ::core::ffi::c_uchar;
 pub type alphafile = text;
 pub type bytefile = text;
-pub type scaled = integer;
-pub type smallnumber = ::core::ffi::c_uchar;
-pub type quarterword = ::core::ffi::c_uchar;
-pub type halfword = integer;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union twohalves {
-    pub v: C2RustUnnamed_1,
-    pub u: C2RustUnnamed_0,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_0 {
-    pub B1: ::core::ffi::c_short,
-    pub B0: ::core::ffi::c_short,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_1 {
-    pub LH: halfword,
-    pub RH: halfword,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fourquarters {
-    pub u: C2RustUnnamed_2,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_2 {
-    pub B3: quarterword,
-    pub B2: quarterword,
-    pub B1: quarterword,
-    pub B0: quarterword,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union memoryword {
-    pub gr: glueratio,
-    pub hh: twohalves,
-    pub u: C2RustUnnamed_4,
-    pub v: C2RustUnnamed_3,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_3 {
-    pub junk: halfword,
-    pub QQQQ: fourquarters,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_4 {
-    pub junk: halfword,
-    pub CINT: integer,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union fmemoryword {
-    pub u: C2RustUnnamed_6,
-    pub v: C2RustUnnamed_5,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_5 {
-    pub QQQQ: fourquarters,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_6 {
-    pub CINT: integer,
-}
-pub type wordfile = gzFile;
-pub type glueord = ::core::ffi::c_uchar;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct liststaterecord {
-    pub modefield: ::core::ffi::c_short,
-    pub headfield: halfword,
-    pub tailfield: halfword,
-    pub eTeXauxfield: halfword,
-    pub pgfield: integer,
-    pub mlfield: integer,
-    pub auxfield: memoryword,
-}
-pub type groupcode = ::core::ffi::c_uchar;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct instaterecord {
-    pub statefield: quarterword,
-    pub indexfield: quarterword,
-    pub startfield: halfword,
-    pub locfield: halfword,
-    pub limitfield: halfword,
-    pub namefield: halfword,
-    pub synctextagfield: integer,
-}
-pub type internalfontnumber = integer;
-pub type fontindex = integer;
-pub type ninebits = ::core::ffi::c_short;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct objentry {
-    pub int0: integer,
-    pub int1: integer,
-    pub int2: longinteger,
-    pub int3: integer,
-    pub int4: integer,
-}
-pub type charusedarray = [eightbits; 32];
-pub type fmentryptr = *mut integer;
-pub type vfstackindex = integer;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct vfstackrecord {
-    pub stackh: scaled,
-    pub stackv: scaled,
-    pub stackw: scaled,
-    pub stackx: scaled,
-    pub stacky: scaled,
-    pub stackz: scaled,
-}
-pub type triepointer = integer;
-pub type trieopcode = ::core::ffi::c_ushort;
-pub type hyphpointer = ::core::ffi::c_ushort;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct destnameentry {
-    pub objname: strnumber,
-    pub objnum: integer,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct pdflinkstackrecord {
-    pub nestinglevel: integer,
-    pub linknode: halfword,
-    pub reflinknode: halfword,
-}
-pub type savepointer = integer;
 pub const MAKE_TEX_FMT_BY_DEFAULT: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const MAKE_TEX_TEX_BY_DEFAULT: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const MAKE_TEX_TFM_BY_DEFAULT: ::core::ffi::c_int = 1 as ::core::ffi::c_int;

@@ -1,8 +1,9 @@
 //! Self-contained exact typesetting engine for Tekai.
 //!
 //! The CLI and standalone runner link this crate as a Rust library. The
-//! translated core keeps its internal web2c calling conventions, but this
-//! crate does not produce a C-linkable archive or export a C entrypoint.
+//! initialization functions and shared core state use checked Rust module
+//! interfaces. Legacy backend connections still use web2c calling conventions.
+//! This crate does not produce a C-linkable archive or export a C entrypoint.
 
 #![allow(
     clashing_extern_declarations,
@@ -55,6 +56,7 @@ pub mod generated {
 
 mod allocation;
 mod cache;
+mod core_types;
 mod directory_graph;
 mod embedded;
 pub mod file_identity;

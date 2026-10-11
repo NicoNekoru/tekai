@@ -1,3 +1,109 @@
+pub use crate::core_types::{
+    AsciiCode as ASCIIcode, Boolean as boolean, CharUsedArray as charusedarray,
+    DestinationNameEntry as destnameentry, EightBits as eightbits, FmEntryPtr as fmentryptr,
+    FontIndex as fontindex, FontIntegerView as C2RustUnnamed_5, FontMemoryWord as fmemoryword,
+    FontQuartersView as C2RustUnnamed_4, FourQuarters as fourquarters, GlueOrder as glueord,
+    GlueRatio as glueratio, GroupCode as groupcode, Halfword as halfword,
+    HalfwordBytes as C2RustUnnamed, HalfwordPair as C2RustUnnamed_0, HyphPointer as hyphpointer,
+    InputStateRecord as instaterecord, Integer as integer,
+    InternalFontNumber as internalfontnumber, ListStateRecord as liststaterecord,
+    LongInteger as longinteger, MemoryIntegerView as C2RustUnnamed_3,
+    MemoryQuartersView as C2RustUnnamed_2, MemoryWord as memoryword, NineBits as ninebits,
+    NonnegativeInteger as nonnegativeinteger, ObjectEntry as objentry,
+    PackedAsciiCode as packedASCIIcode, PdfLinkStackRecord as pdflinkstackrecord,
+    PoolPointer as poolpointer, QuarterBytes as C2RustUnnamed_1, Quarterword as quarterword,
+    Real as real, SChar as schar, SavePointer as savepointer, Scaled as scaled,
+    SmallNumber as smallnumber, StrNumber as strnumber, Text as text, TrieOpcode as trieopcode,
+    TriePointer as triepointer, TwoHalves as twohalves, VfStackIndex as vfstackindex,
+    VfStackRecord as vfstackrecord, WordFile as wordfile,
+};
+
+use crate::generated::pdftexextra::{
+    accentc, accentheight, accentslant, accentwidth, activenoconvert, activenodesize, activewidth,
+    adjusttail, advcharwidths, advcharwidthsout, aftertoken, alignptr, alignstate, altrule,
+    areadelimiter, aritherror, avail, background, basec, baseheight, baseptr, baseslant, basewidth,
+    basexheight, bchar, bcharlabel, bestbet, bestheightplusdepth, bestline, bestpagebreak,
+    bestplace, bestplglue, bestplline, bestplshort, bestsize, breadthmax, breakwidth, buffer,
+    bufsize, c, cancelboundary, charbase, condptr, countdosnapy, csconverting, cscount,
+    curactivewidth, curalign, curarea, curboundary, curbox, curc, curchr, curcmd, curcs, curdir,
+    curext, curf, curfontstep, curgroup, curh, curhead, curhoffset, curi, curif, curinput, curl,
+    curlang, curlevel, curlist, curloop, curmark, curmlist, curmu, curname, curorder, curp,
+    curpageheight, curpagewidth, curprehead, curpretail, curptr, curq, curr, curs, cursize,
+    curspan, curstyle, curtail, curtok, curv, curval, curvallevel, curvoffset, deadcycles, defref,
+    deletionsallowed, delta, depthbase, depththreshold, destnames, destnamessize, dig, discptr,
+    discwidth, doingleaders, dolastlinefit, downptr, dvibuf, dvibufsize, dvif, dvifile, dvigone,
+    dvih, dvilimit, dvioffset, dviptr, dviv, dynused, eTeXmode, easyline, editline, editnamelength,
+    editnamestart, emptyfield, enctexenabledp, eofseen, epochseconds, eqtbtop, errorcount,
+    errorline, expanddepth, expanddepthcount, extdelimiter, extenbase, f, falsebchar, ff,
+    filelineerrorstylep, fileoffset, fillwidth, finalpass, first, firstcount, firstindent, firstp,
+    firstwidth, fixeddecimaldigits, fixedgamma, fixedgentounicode, fixedimageapplygamma,
+    fixedimagegamma, fixedimagehicolor, fixedinclusioncopyfont, fixedpdfdraftmode,
+    fixedpdfdraftmodeset, fixedpdfmajorversion, fixedpdfminorversion, fixedpdfobjcompresslevel,
+    fixedpdfoutput, fixedpdfoutputset, fixedpkresolution, fmemptr, fmtfile, fontarea, fontbc,
+    fontbchar, fontcheck, fontdsize, fontec, fontexpandratio, fontfalsebchar, fontglue, fontinfo,
+    fontinshortdisplay, fontmax, fontmemsize, fontname, fontparams, fontptr, fontsize, fontused,
+    forceeof, formatdefaultlength, formatident, fullsourcefilenamestack, g, genfakedinterwordspace,
+    genrunninglink, grpstack, ha, halfbuf, halferrorline, haltingonerrorp, haltonerrorp, hash,
+    hashextra, hashhigh, hashused, hb, hc, headtab, heightbase, helpline, helpptr, hf, himemmin,
+    history, hliststack, hliststacklevel, hn, hu, hyf, hyfbchar, hyfchar, hyfdistance, hyfnext,
+    hyfnum, hyphcount, hyphenchar, hyphenpassed, hyphlink, hyphlist, hyphsize, hyphword, iac, ibc,
+    iflimit, ifline, ifstack, initlft, initlig, initlist, initpdfoutput, initpoolptr, initstrptr,
+    inopen, inputfile, inputptr, inputstack, insdisc, insertpenalties, insertsrcspecialauto,
+    insertsrcspecialeverymath, insertsrcspecialeverypar, insertsrcspecialeveryvbox, interaction,
+    interrupt, ipcon, isincsname, isshippingpage, italicbase, jobname, jrandom, justbox, kernbase,
+    l, last, lastbadness, lastbop, lastglue, lastkern, lastleftmostchar, lastnodetype, lastpenalty,
+    lastrightmostchar, lastspecialline, lastthread, lasttokensstring, leastpagecost, lfthit, lhyf,
+    ligaturepresent, ligkernbase, ligstack, line, linestack, logfile, logopened, lomemmax,
+    longhelpseen, longstate, lq, lr, magicoffset, magset, mainf, maini, mainj, maink, mainp, mains,
+    maxbufstack, maxh, maxinopen, maxinstack, maxneststack, maxparamstack, maxprintline, maxpush,
+    maxreghelpline, maxregnum, maxsavestack, maxshrinkratio, maxstretchratio, maxstrings, maxv,
+    membot, memend, memmax, memmin, memtop, messageprinting, microseconds, minbpval,
+    minimaldemerits, minimumdemerits, mlistpenalties, mltexenabledp, mubytecswrite, mubytekeep,
+    mubyteprefix, mubyteread, mubyteskeep, mubyteskip, mubyteslog, mubytesout, mubytesstart,
+    mubytestart, mubytestoken, mubytetoken, mubytewrite, nameinprogress, namelength, nameoffile,
+    nest, nestptr, nestsize, noconvert, nonewcontrolsequence, noshrinkerroryet, nullcharacter,
+    nulldelimiter, objptr, objtab, objtabsize, oldselectorignorederr, oldsetting, onebp,
+    onehundredbp, onehundredinch, oneinch, openparens, opstart, outputactive, outputcanend,
+    outputcomment, outputfilename, packbeginline, pagecontents, pagemaxdepth, pagesofar, pagestail,
+    pagetail, parambase, paramptr, paramsize, paramstack, parloc, parsefirstlinep, partoken,
+    passive, passnumber, pdfannotlist, pdfappendlistarg, pdfbeadlist, pdfboxspecart,
+    pdfboxspecbleed, pdfboxspeccrop, pdfboxspecmedia, pdfboxspectrim, pdfbuf, pdfbufsize,
+    pdfcatalogopenaction, pdfcatalogtoks, pdfcharused, pdfcurTma, pdfcurform, pdfdeltah,
+    pdfdestlist, pdfdestnamesptr, pdfdoingstring, pdfdoingtext, pdfdummyfont, pdff, pdffile,
+    pdffirstoutline, pdffontattr, pdffontautoexpand, pdffontblink, pdffontefbase, pdffontelink,
+    pdffontexpandratio, pdffonthasspacechar, pdffontknacbase, pdffontknbcbase, pdffontknbsbase,
+    pdffontlist, pdffontlpbase, pdffontmap, pdffontnobuiltintounicode, pdffontnum, pdffontrpbase,
+    pdffontshbsbase, pdffontshrink, pdffontsize, pdffontstbsbase, pdffontstep, pdffontstretch,
+    pdffonttype, pdfgone, pdfh, pdfimageprocset, pdfinfotoks, pdflastannot, pdflastbyte, pdflastf,
+    pdflastfs, pdflastlink, pdflastobj, pdflastoutline, pdflastpage, pdflastpages, pdflaststream,
+    pdflastthreadid, pdflastthreadnamedid, pdflastxform, pdflastximage, pdflastximagecolordepth,
+    pdflastximagepages, pdflastxpos, pdflastypos, pdflinklist, pdflinkstack, pdflinkstackptr,
+    pdfmem, pdfmemptr, pdfmemsize, pdfnamestoks, pdfobjcount, pdfobjlist, pdfopbuf, pdfopptr,
+    pdforiginh, pdforiginv, pdfosbuf, pdfosbufsize, pdfoscntr, pdfoscurobjnum, pdfosenable,
+    pdfosmode, pdfosobjidx, pdfosobjnum, pdfosobjoff, pdfosptr, pdfoutputvalue, pdfpagegroupval,
+    pdfparentoutline, pdfptr, pdfresnameprefix, pdfretval, pdfsaveoffset, pdfseekwritelength,
+    pdfsnapxrefpos, pdfsnapyrefpos, pdfspacefontname, pdfstreamlength, pdfstreamlengthoffset,
+    pdftexbanner, pdftextprocset, pdfthreaddp, pdfthreadht, pdfthreadlevel, pdfthreadwd,
+    pdftjstarth, pdftraileridtoks, pdftrailertoks, pdfv, pdfversionwritten, pdfxformcount,
+    pdfxformdepth, pdfxformheight, pdfxformlist, pdfxformwidth, pdfximagecount, pdfximagelist,
+    pkdpi, pkscalefactor, poolptr, poolsize, preadjusttail, prevcharp, prevp, prevtail, prim,
+    primused, printednode, pseudofiles, pstack, quotedfilename, radix, randoms, randomseed,
+    readfile, readopen, readyalready, restrictedshell, rhyf, rightptr, rover, rthit, ruledp,
+    ruleht, rulewd, sachain, salevel, sanull, saroot, savearitherror, savedpdfcurform, saveptr,
+    savesize, savestack, savetail, scaledout, scannerstatus, secondindent, secondwidth, selector,
+    setboxallowed, shellenabledp, shownmode, skewchar, skipline, sourcefilenamestack,
+    specialprinting, speclog, specsout, srcspecialsp, stacksize, stopatspace, strpool, strptr,
+    strstart, sysday, sysmonth, sysobjptr, systime, sysyear, tally, tempptr, tenpow, termoffset,
+    texmflogname, texremainder, tfmfile, threshold, tmpw, totalpages, totalshrink, totalstretch,
+    translate_filename, trickbuf, trickcount, trietrc, trietrl, trietro, twotothe, useerrhelp,
+    varused, vfcurs, vfdefaultfont, vfefnts, vffile, vfifnts, vflocalfontnum, vfnf, vfpacketbase,
+    vfpacketlength, vfstack, vfstackptr, warningindex, warnpdfpagebox, widthbase, writefile,
+    writeloc, writenoexpanding, writeopen, xchr, xord, xprn, zeqtb, zipwritestate, zmem, zzzaa,
+    LRproblems, LRptr, OKtointerrupt, TEXformatdefault,
+};
+
+use crate::generated::pdftexini::{prefixedcommand, zdomarks, zlinebreak};
+
 use crate::generated::pdftexextra::{
     close_file_or_pipe, input_line, open_in_or_pipe, open_out_or_pipe,
 };
@@ -41,619 +147,10 @@ extern "C" {
     fn getfiledump(s: integer, offset: ::core::ffi::c_int, length: ::core::ffi::c_int);
     fn getmd5sum(s: integer, file: ::core::ffi::c_int);
     fn runsystem(cmd: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    static mut translate_filename: string;
     fn ipcpage(_: ::core::ffi::c_int);
     fn get_date_and_time(_: *mut integer, _: *mut integer, _: *mut integer, _: *mut integer);
     fn get_seconds_and_micros(_: *mut integer, _: *mut integer);
     fn topenin();
-    static mut xord: [ASCIIcode; 256];
-    static mut xchr: [ASCIIcode; 256];
-    static mut xprn: [ASCIIcode; 256];
-    static mut mubyteread: [halfword; 256];
-    static mut mubytewrite: [strnumber; 256];
-    static mut mubytecswrite: [halfword; 128];
-    static mut mubyteskip: integer;
-    static mut mubytekeep: integer;
-    static mut mubyteskeep: integer;
-    static mut mubyteprefix: integer;
-    static mut mubytestart: boolean;
-    static mut mubytesstart: boolean;
-    static mut mubytetoken: halfword;
-    static mut mubytestoken: halfword;
-    static mut mubytesout: integer;
-    static mut mubyteslog: integer;
-    static mut specsout: integer;
-    static mut noconvert: boolean;
-    static mut activenoconvert: boolean;
-    static mut writenoexpanding: boolean;
-    static mut csconverting: boolean;
-    static mut specialprinting: boolean;
-    static mut messageprinting: boolean;
-    static mut nameoffile: *mut ASCIIcode;
-    static mut namelength: integer;
-    static mut buffer: *mut ASCIIcode;
-    static mut first: integer;
-    static mut last: integer;
-    static mut maxbufstack: integer;
-    static mut membot: integer;
-    static mut memmin: integer;
-    static mut memtop: integer;
-    static mut memmax: integer;
-    static mut errorline: integer;
-    static mut halferrorline: integer;
-    static mut maxprintline: integer;
-    static mut maxstrings: integer;
-    static mut poolsize: integer;
-    static mut fontmemsize: integer;
-    static mut fontmax: integer;
-    static mut hyphsize: integer;
-    static mut bufsize: integer;
-    static mut stacksize: integer;
-    static mut maxinopen: integer;
-    static mut paramsize: integer;
-    static mut nestsize: integer;
-    static mut savesize: integer;
-    static mut dvibufsize: integer;
-    static mut expanddepth: integer;
-    static mut parsefirstlinep: ::core::ffi::c_int;
-    static mut filelineerrorstylep: ::core::ffi::c_int;
-    static mut haltonerrorp: ::core::ffi::c_int;
-    static mut haltingonerrorp: boolean;
-    static mut quotedfilename: boolean;
-    static mut srcspecialsp: boolean;
-    static mut insertsrcspecialauto: boolean;
-    static mut insertsrcspecialeverypar: boolean;
-    static mut insertsrcspecialeverymath: boolean;
-    static mut insertsrcspecialeveryvbox: boolean;
-    static mut strpool: *mut packedASCIIcode;
-    static mut strstart: *mut poolpointer;
-    static mut poolptr: poolpointer;
-    static mut strptr: strnumber;
-    static mut initpoolptr: poolpointer;
-    static mut initstrptr: strnumber;
-    static mut logfile: alphafile;
-    static mut selector: ::core::ffi::c_uchar;
-    static mut dig: [::core::ffi::c_uchar; 23];
-    static mut tally: integer;
-    static mut termoffset: integer;
-    static mut fileoffset: integer;
-    static mut trickbuf: [ASCIIcode; 256];
-    static mut trickcount: integer;
-    static mut firstcount: integer;
-    static mut interaction: ::core::ffi::c_uchar;
-    static mut deletionsallowed: boolean;
-    static mut setboxallowed: boolean;
-    static mut history: ::core::ffi::c_uchar;
-    static mut errorcount: schar;
-    static mut helpline: [strnumber; 6];
-    static mut helpptr: ::core::ffi::c_uchar;
-    static mut useerrhelp: boolean;
-    static mut interrupt: integer;
-    static mut OKtointerrupt: boolean;
-    static mut savearitherror: boolean;
-    static mut aritherror: boolean;
-    static mut texremainder: scaled;
-    static mut randoms: [integer; 55];
-    static mut jrandom: ::core::ffi::c_uchar;
-    static mut randomseed: scaled;
-    static mut twotothe: [integer; 31];
-    static mut speclog: [integer; 29];
-    static mut tempptr: halfword;
-    static mut zmem: *mut memoryword;
-    static mut lomemmax: halfword;
-    static mut himemmin: halfword;
-    static mut varused: integer;
-    static mut dynused: integer;
-    static mut avail: halfword;
-    static mut memend: halfword;
-    static mut rover: halfword;
-    static mut fontinshortdisplay: integer;
-    static mut depththreshold: integer;
-    static mut breadthmax: integer;
-    static mut nest: *mut liststaterecord;
-    static mut nestptr: integer;
-    static mut maxneststack: integer;
-    static mut curlist: liststaterecord;
-    static mut shownmode: ::core::ffi::c_short;
-    static mut savetail: halfword;
-    static mut prevtail: halfword;
-    static mut oldsetting: ::core::ffi::c_uchar;
-    static mut oldselectorignorederr: ::core::ffi::c_uchar;
-    static mut systime: integer;
-    static mut sysday: integer;
-    static mut sysmonth: integer;
-    static mut sysyear: integer;
-    static mut zeqtb: *mut memoryword;
-    static mut zzzaa: [quarterword; 916];
-    static mut hash: *mut twohalves;
-    static mut hashused: halfword;
-    static mut hashextra: halfword;
-    static mut eqtbtop: halfword;
-    static mut hashhigh: halfword;
-    static mut nonewcontrolsequence: boolean;
-    static mut cscount: integer;
-    static mut prim: [twohalves; 2101];
-    static mut primused: halfword;
-    static mut savestack: *mut memoryword;
-    static mut saveptr: integer;
-    static mut maxsavestack: integer;
-    static mut curlevel: quarterword;
-    static mut curgroup: groupcode;
-    static mut curboundary: integer;
-    static mut magset: integer;
-    static mut curcmd: eightbits;
-    static mut curchr: halfword;
-    static mut curcs: halfword;
-    static mut curtok: halfword;
-    static mut inputstack: *mut instaterecord;
-    static mut inputptr: integer;
-    static mut maxinstack: integer;
-    static mut curinput: instaterecord;
-    static mut inopen: integer;
-    static mut openparens: integer;
-    static mut inputfile: *mut alphafile;
-    static mut line: integer;
-    static mut linestack: *mut integer;
-    static mut sourcefilenamestack: *mut strnumber;
-    static mut fullsourcefilenamestack: *mut strnumber;
-    static mut scannerstatus: ::core::ffi::c_uchar;
-    static mut warningindex: halfword;
-    static mut defref: halfword;
-    static mut paramstack: *mut halfword;
-    static mut paramptr: integer;
-    static mut maxparamstack: integer;
-    static mut alignstate: integer;
-    static mut baseptr: integer;
-    static mut parloc: halfword;
-    static mut partoken: halfword;
-    static mut forceeof: boolean;
-    static mut isincsname: boolean;
-    static mut curmark: [halfword; 5];
-    static mut longstate: ::core::ffi::c_uchar;
-    static mut pstack: [halfword; 9];
-    static mut curval: integer;
-    static mut curvallevel: ::core::ffi::c_uchar;
-    static mut radix: smallnumber;
-    static mut curorder: glueord;
-    static mut readfile: [alphafile; 16];
-    static mut readopen: [::core::ffi::c_uchar; 17];
-    static mut condptr: halfword;
-    static mut iflimit: ::core::ffi::c_uchar;
-    static mut curif: smallnumber;
-    static mut ifline: integer;
-    static mut skipline: integer;
-    static mut curname: strnumber;
-    static mut curarea: strnumber;
-    static mut curext: strnumber;
-    static mut areadelimiter: poolpointer;
-    static mut extdelimiter: poolpointer;
-    static mut formatdefaultlength: integer;
-    static mut TEXformatdefault: string;
-    static mut nameinprogress: boolean;
-    static mut jobname: strnumber;
-    static mut logopened: boolean;
-    static mut dvifile: bytefile;
-    static mut outputfilename: strnumber;
-    static mut texmflogname: strnumber;
-    static mut tfmfile: bytefile;
-    static mut fontinfo: *mut fmemoryword;
-    static mut fmemptr: fontindex;
-    static mut fontptr: internalfontnumber;
-    static mut fontcheck: *mut fourquarters;
-    static mut fontsize: *mut scaled;
-    static mut fontdsize: *mut scaled;
-    static mut fontparams: *mut fontindex;
-    static mut fontname: *mut strnumber;
-    static mut fontarea: *mut strnumber;
-    static mut fontbc: *mut eightbits;
-    static mut fontec: *mut eightbits;
-    static mut fontglue: *mut halfword;
-    static mut fontused: *mut boolean;
-    static mut hyphenchar: *mut integer;
-    static mut skewchar: *mut integer;
-    static mut bcharlabel: *mut fontindex;
-    static mut fontbchar: *mut ninebits;
-    static mut fontfalsebchar: *mut ninebits;
-    static mut charbase: *mut integer;
-    static mut widthbase: *mut integer;
-    static mut heightbase: *mut integer;
-    static mut depthbase: *mut integer;
-    static mut italicbase: *mut integer;
-    static mut ligkernbase: *mut integer;
-    static mut kernbase: *mut integer;
-    static mut extenbase: *mut integer;
-    static mut parambase: *mut integer;
-    static mut nullcharacter: fourquarters;
-    static mut totalpages: integer;
-    static mut maxv: scaled;
-    static mut maxh: scaled;
-    static mut maxpush: integer;
-    static mut lastbop: integer;
-    static mut deadcycles: integer;
-    static mut doingleaders: boolean;
-    static mut c: quarterword;
-    static mut f: internalfontnumber;
-    static mut ruleht: scaled;
-    static mut ruledp: scaled;
-    static mut rulewd: scaled;
-    static mut g: halfword;
-    static mut lq: integer;
-    static mut lr: integer;
-    static mut dvibuf: *mut eightbits;
-    static mut halfbuf: integer;
-    static mut dvilimit: integer;
-    static mut dviptr: integer;
-    static mut dvioffset: integer;
-    static mut dvigone: integer;
-    static mut downptr: halfword;
-    static mut rightptr: halfword;
-    static mut dvih: scaled;
-    static mut dviv: scaled;
-    static mut curv: scaled;
-    static mut curh: scaled;
-    static mut dvif: internalfontnumber;
-    static mut curs: integer;
-    static mut pdfmemsize: integer;
-    static mut pdfmem: *mut integer;
-    static mut pdfmemptr: integer;
-    static mut pdffile: bytefile;
-    static mut pdfbuf: *mut eightbits;
-    static mut pdfbufsize: integer;
-    static mut pdfptr: integer;
-    static mut pdfopbuf: *mut eightbits;
-    static mut pdfosbuf: *mut eightbits;
-    static mut pdfosbufsize: integer;
-    static mut pdfosobjnum: *mut integer;
-    static mut pdfosobjoff: *mut integer;
-    static mut pdfosobjidx: halfword;
-    static mut pdfoscntr: integer;
-    static mut pdfopptr: integer;
-    static mut pdfosptr: integer;
-    static mut pdfosmode: boolean;
-    static mut pdfosenable: boolean;
-    static mut pdfoscurobjnum: integer;
-    static mut pdfgone: longinteger;
-    static mut pdfsaveoffset: longinteger;
-    static mut zipwritestate: integer;
-    static mut fixedpdfmajorversion: integer;
-    static mut fixedpdfminorversion: integer;
-    static mut fixedpdfobjcompresslevel: integer;
-    static mut pdfversionwritten: boolean;
-    static mut fixedpdfoutput: integer;
-    static mut fixedpdfoutputset: boolean;
-    static mut fixedgamma: integer;
-    static mut fixedimagegamma: integer;
-    static mut fixedimagehicolor: boolean;
-    static mut fixedimageapplygamma: integer;
-    static mut epochseconds: integer;
-    static mut microseconds: integer;
-    static mut fixedpdfdraftmode: integer;
-    static mut fixedpdfdraftmodeset: boolean;
-    static mut pdfpagegroupval: integer;
-    static mut onebp: scaled;
-    static mut onehundredbp: scaled;
-    static mut onehundredinch: scaled;
-    static mut oneinch: integer;
-    static mut tenpow: [integer; 10];
-    static mut scaledout: integer;
-    static mut initpdfoutput: boolean;
-    static mut advcharwidths: integer;
-    static mut advcharwidthsout: scaled;
-    static mut pdff: internalfontnumber;
-    static mut pdfh: scaled;
-    static mut pdfv: scaled;
-    static mut pdftjstarth: scaled;
-    static mut pdfdeltah: scaled;
-    static mut pdforiginh: scaled;
-    static mut pdforiginv: scaled;
-    static mut pdfdoingstring: boolean;
-    static mut pdfdoingtext: boolean;
-    static mut minbpval: scaled;
-    static mut fixedpkresolution: integer;
-    static mut fixeddecimaldigits: integer;
-    static mut fixedgentounicode: integer;
-    static mut fixedinclusioncopyfont: integer;
-    static mut pkscalefactor: integer;
-    static mut pdfoutputvalue: integer;
-    static mut pdfcurTma: integer;
-    static mut pdflastf: internalfontnumber;
-    static mut pdflastfs: internalfontnumber;
-    static mut pdfdummyfont: internalfontnumber;
-    static mut objtabsize: integer;
-    static mut objtab: *mut objentry;
-    static mut headtab: [integer; 11];
-    static mut pagestail: integer;
-    static mut objptr: integer;
-    static mut sysobjptr: integer;
-    static mut pdflastpages: integer;
-    static mut pdflastpage: integer;
-    static mut pdflaststream: integer;
-    static mut pdfstreamlength: longinteger;
-    static mut pdfstreamlengthoffset: longinteger;
-    static mut pdfseekwritelength: boolean;
-    static mut pdflastbyte: eightbits;
-    static mut pdfappendlistarg: integer;
-    static mut ff: integer;
-    static mut pdfboxspecmedia: integer;
-    static mut pdfboxspeccrop: integer;
-    static mut pdfboxspecbleed: integer;
-    static mut pdfboxspectrim: integer;
-    static mut pdfboxspecart: integer;
-    static mut pdfimageprocset: integer;
-    static mut pdftextprocset: boolean;
-    static mut pdffonttype: *mut eightbits;
-    static mut pdffontattr: *mut strnumber;
-    static mut pdffontnobuiltintounicode: *mut boolean;
-    static mut pdfcharused: *mut charusedarray;
-    static mut pdffontsize: *mut scaled;
-    static mut pdffontnum: *mut integer;
-    static mut pdffontmap: *mut fmentryptr;
-    static mut pdffontlist: halfword;
-    static mut pdfresnameprefix: strnumber;
-    static mut lasttokensstring: strnumber;
-    static mut vfpacketbase: *mut integer;
-    static mut vfdefaultfont: *mut internalfontnumber;
-    static mut vflocalfontnum: *mut internalfontnumber;
-    static mut vfpacketlength: integer;
-    static mut vffile: bytefile;
-    static mut vfnf: internalfontnumber;
-    static mut vfefnts: *mut integer;
-    static mut vfifnts: *mut internalfontnumber;
-    static mut tmpw: memoryword;
-    static mut vfcurs: integer;
-    static mut vfstack: [vfstackrecord; 101];
-    static mut vfstackptr: vfstackindex;
-    static mut savedpdfcurform: integer;
-    static mut pdftexbanner: strnumber;
-    static mut totalstretch: [scaled; 4];
-    static mut totalshrink: [scaled; 4];
-    static mut lastbadness: integer;
-    static mut adjusttail: halfword;
-    static mut pdffontblink: *mut internalfontnumber;
-    static mut pdffontelink: *mut internalfontnumber;
-    static mut pdffonthasspacechar: *mut boolean;
-    static mut pdffontstretch: *mut integer;
-    static mut pdffontshrink: *mut integer;
-    static mut pdffontstep: *mut integer;
-    static mut pdffontexpandratio: *mut integer;
-    static mut pdffontautoexpand: *mut boolean;
-    static mut pdffontlpbase: *mut integer;
-    static mut pdffontrpbase: *mut integer;
-    static mut pdffontefbase: *mut integer;
-    static mut pdffontknbsbase: *mut integer;
-    static mut pdffontstbsbase: *mut integer;
-    static mut pdffontshbsbase: *mut integer;
-    static mut pdffontknbcbase: *mut integer;
-    static mut pdffontknacbase: *mut integer;
-    static mut fontexpandratio: integer;
-    static mut lastleftmostchar: halfword;
-    static mut lastrightmostchar: halfword;
-    static mut hliststack: [halfword; 513];
-    static mut hliststacklevel: ::core::ffi::c_short;
-    static mut preadjusttail: halfword;
-    static mut packbeginline: integer;
-    static mut emptyfield: twohalves;
-    static mut nulldelimiter: fourquarters;
-    static mut curmlist: halfword;
-    static mut curstyle: smallnumber;
-    static mut cursize: smallnumber;
-    static mut curmu: scaled;
-    static mut mlistpenalties: boolean;
-    static mut curf: internalfontnumber;
-    static mut curc: quarterword;
-    static mut curi: fourquarters;
-    static mut magicoffset: integer;
-    static mut curalign: halfword;
-    static mut curspan: halfword;
-    static mut curloop: halfword;
-    static mut alignptr: halfword;
-    static mut curhead: halfword;
-    static mut curtail: halfword;
-    static mut curprehead: halfword;
-    static mut curpretail: halfword;
-    static mut justbox: halfword;
-    static mut passive: halfword;
-    static mut printednode: halfword;
-    static mut passnumber: halfword;
-    static mut activewidth: [scaled; 9];
-    static mut curactivewidth: [scaled; 9];
-    static mut background: [scaled; 9];
-    static mut breakwidth: [scaled; 9];
-    static mut prevp: halfword;
-    static mut firstp: halfword;
-    static mut prevcharp: halfword;
-    static mut maxstretchratio: integer;
-    static mut maxshrinkratio: integer;
-    static mut curfontstep: integer;
-    static mut noshrinkerroryet: boolean;
-    static mut curp: halfword;
-    static mut finalpass: boolean;
-    static mut threshold: integer;
-    static mut minimaldemerits: [integer; 4];
-    static mut minimumdemerits: integer;
-    static mut bestplace: [halfword; 4];
-    static mut bestplline: [halfword; 4];
-    static mut discwidth: [scaled; 9];
-    static mut easyline: halfword;
-    static mut lastspecialline: halfword;
-    static mut firstwidth: scaled;
-    static mut secondwidth: scaled;
-    static mut firstindent: scaled;
-    static mut secondindent: scaled;
-    static mut bestbet: halfword;
-    static mut bestline: halfword;
-    static mut hc: [::core::ffi::c_short; 66];
-    static mut hn: ::core::ffi::c_uchar;
-    static mut hb: halfword;
-    static mut ha: halfword;
-    static mut hf: internalfontnumber;
-    static mut hu: [::core::ffi::c_short; 64];
-    static mut hyfchar: integer;
-    static mut curlang: ASCIIcode;
-    static mut lhyf: integer;
-    static mut rhyf: integer;
-    static mut hyfbchar: halfword;
-    static mut hyf: [::core::ffi::c_uchar; 65];
-    static mut initlist: halfword;
-    static mut initlig: boolean;
-    static mut initlft: boolean;
-    static mut hyphenpassed: smallnumber;
-    static mut curl: halfword;
-    static mut curr: halfword;
-    static mut curq: halfword;
-    static mut ligstack: halfword;
-    static mut ligaturepresent: boolean;
-    static mut lfthit: boolean;
-    static mut rthit: boolean;
-    static mut trietrl: *mut triepointer;
-    static mut trietro: *mut triepointer;
-    static mut trietrc: *mut quarterword;
-    static mut hyfdistance: [smallnumber; 35112];
-    static mut hyfnum: [smallnumber; 35112];
-    static mut hyfnext: [trieopcode; 35112];
-    static mut opstart: [integer; 256];
-    static mut hyphword: *mut strnumber;
-    static mut hyphlist: *mut halfword;
-    static mut hyphlink: *mut hyphpointer;
-    static mut hyphcount: integer;
-    static mut bestheightplusdepth: scaled;
-    static mut pagetail: halfword;
-    static mut pagecontents: ::core::ffi::c_uchar;
-    static mut pagemaxdepth: scaled;
-    static mut bestpagebreak: halfword;
-    static mut leastpagecost: integer;
-    static mut bestsize: scaled;
-    static mut pagesofar: [scaled; 8];
-    static mut lastglue: halfword;
-    static mut lastpenalty: integer;
-    static mut lastkern: scaled;
-    static mut lastnodetype: integer;
-    static mut insertpenalties: integer;
-    static mut outputactive: boolean;
-    static mut outputcanend: boolean;
-    static mut mainf: internalfontnumber;
-    static mut maini: fourquarters;
-    static mut mainj: fourquarters;
-    static mut maink: fontindex;
-    static mut mainp: halfword;
-    static mut mains: integer;
-    static mut bchar: halfword;
-    static mut falsebchar: halfword;
-    static mut cancelboundary: boolean;
-    static mut insdisc: boolean;
-    static mut curbox: halfword;
-    static mut aftertoken: halfword;
-    static mut longhelpseen: boolean;
-    static mut formatident: strnumber;
-    static mut fmtfile: wordfile;
-    static mut readyalready: integer;
-    static mut writefile: [alphafile; 16];
-    static mut writeopen: [boolean; 18];
-    static mut writeloc: halfword;
-    static mut pdflastobj: integer;
-    static mut pdflastxform: integer;
-    static mut pdflastximage: integer;
-    static mut pdflastximagepages: integer;
-    static mut pdflastximagecolordepth: integer;
-    static mut altrule: halfword;
-    static mut warnpdfpagebox: boolean;
-    static mut pdflastannot: integer;
-    static mut pdflastlink: integer;
-    static mut pdflastxpos: integer;
-    static mut pdflastypos: integer;
-    static mut pdfsnapxrefpos: integer;
-    static mut pdfsnapyrefpos: integer;
-    static mut countdosnapy: integer;
-    static mut pdfretval: integer;
-    static mut curpagewidth: scaled;
-    static mut curpageheight: scaled;
-    static mut curhoffset: scaled;
-    static mut curvoffset: scaled;
-    static mut pdfobjlist: halfword;
-    static mut pdfxformlist: halfword;
-    static mut pdfximagelist: halfword;
-    static mut lastthread: halfword;
-    static mut pdfthreadwd: scaled;
-    static mut pdfthreadht: scaled;
-    static mut pdfthreaddp: scaled;
-    static mut pdflastthreadid: halfword;
-    static mut pdflastthreadnamedid: boolean;
-    static mut pdfthreadlevel: integer;
-    static mut pdfannotlist: halfword;
-    static mut pdflinklist: halfword;
-    static mut pdfdestlist: halfword;
-    static mut pdfbeadlist: halfword;
-    static mut pdfobjcount: integer;
-    static mut pdfxformcount: integer;
-    static mut pdfximagecount: integer;
-    static mut pdfcurform: integer;
-    static mut pdflastoutline: integer;
-    static mut pdfparentoutline: integer;
-    static mut pdffirstoutline: integer;
-    static mut pdfxformdepth: scaled;
-    static mut pdfxformwidth: scaled;
-    static mut pdfxformheight: scaled;
-    static mut pdfinfotoks: halfword;
-    static mut pdfcatalogtoks: halfword;
-    static mut pdfcatalogopenaction: integer;
-    static mut pdfnamestoks: halfword;
-    static mut pdfdestnamesptr: integer;
-    static mut destnamessize: integer;
-    static mut destnames: *mut destnameentry;
-    static mut pkdpi: integer;
-    static mut pdftrailertoks: halfword;
-    static mut pdftraileridtoks: halfword;
-    static mut genfakedinterwordspace: boolean;
-    static mut genrunninglink: boolean;
-    static mut pdfspacefontname: strnumber;
-    static mut pdflinkstack: [pdflinkstackrecord; 11];
-    static mut pdflinkstackptr: smallnumber;
-    static mut isshippingpage: boolean;
-    static mut eTeXmode: ::core::ffi::c_uchar;
-    static mut eofseen: *mut boolean;
-    static mut LRptr: halfword;
-    static mut LRproblems: integer;
-    static mut curdir: smallnumber;
-    static mut pseudofiles: halfword;
-    static mut grpstack: *mut savepointer;
-    static mut ifstack: *mut halfword;
-    static mut maxregnum: halfword;
-    static mut maxreghelpline: strnumber;
-    static mut saroot: [halfword; 7];
-    static mut curptr: halfword;
-    static mut sanull: memoryword;
-    static mut sachain: halfword;
-    static mut salevel: quarterword;
-    static mut dolastlinefit: boolean;
-    static mut activenodesize: smallnumber;
-    static mut fillwidth: [scaled; 3];
-    static mut bestplshort: [scaled; 4];
-    static mut bestplglue: [scaled; 4];
-    static mut discptr: [halfword; 4];
-    static mut editnamestart: poolpointer;
-    static mut editnamelength: integer;
-    static mut editline: integer;
-    static mut ipcon: ::core::ffi::c_int;
-    static mut stopatspace: boolean;
-    static mut shellenabledp: ::core::ffi::c_int;
-    static mut restrictedshell: ::core::ffi::c_int;
-    static mut outputcomment: *mut ::core::ffi::c_char;
-    static mut l: ::core::ffi::c_uchar;
-    static mut expanddepthcount: integer;
-    static mut mltexenabledp: boolean;
-    static mut accentc: integer;
-    static mut basec: integer;
-    static mut iac: fourquarters;
-    static mut ibc: fourquarters;
-    static mut baseslant: real;
-    static mut accentslant: real;
-    static mut basexheight: scaled;
-    static mut baseheight: scaled;
-    static mut basewidth: scaled;
-    static mut accentwidth: scaled;
-    static mut accentheight: scaled;
-    static mut delta: scaled;
-    static mut enctexenabledp: boolean;
     fn synctexabort(log_opened: boolean);
     fn synctexstartinput();
     fn synctexterminate(log_opened: boolean);
@@ -672,9 +169,6 @@ extern "C" {
     fn synctexhorizontalruleorglue(p: halfword, this_box: halfword);
     fn synctexkern(p: halfword, this_box: halfword);
     fn synctexcurrent();
-    fn zlinebreak(d: boolean);
-    fn zdomarks(a: smallnumber, l_0: smallnumber, q: halfword) -> boolean;
-    fn prefixedcommand();
     fn getjobname(_: strnumber) -> strnumber;
     fn calledit(_: *mut packedASCIIcode, _: poolpointer, _: integer, _: integer);
     fn makefullnamestring() -> strnumber;
@@ -784,7 +278,6 @@ pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
 pub use crate::stdio::Stream as FILE;
 pub type off_t = __darwin_off_t;
-pub type boolean = ::core::ffi::c_int;
 pub type string = *mut ::core::ffi::c_char;
 pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
@@ -959,160 +452,10 @@ pub struct kpathsea_instance {
     pub saved_count: ::core::ffi::c_int,
 }
 pub type kpathsea = *mut kpathsea_instance;
-pub type schar = ::core::ffi::c_schar;
-pub type integer = ::core::ffi::c_int;
-pub type longinteger = off_t;
-pub type real = ::core::ffi::c_double;
-pub type text = *mut FILE;
-pub type glueratio = ::core::ffi::c_double;
 pub use crate::stdio::Stream as gzFile_s;
 pub type gzFile = *mut gzFile_s;
-pub type ASCIIcode = ::core::ffi::c_uchar;
-pub type eightbits = ::core::ffi::c_uchar;
 pub type alphafile = text;
 pub type bytefile = text;
-pub type poolpointer = integer;
-pub type strnumber = integer;
-pub type packedASCIIcode = ::core::ffi::c_uchar;
-pub type scaled = integer;
-pub type nonnegativeinteger = integer;
-pub type smallnumber = ::core::ffi::c_uchar;
-pub type quarterword = ::core::ffi::c_uchar;
-pub type halfword = integer;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union twohalves {
-    pub v: C2RustUnnamed_0,
-    pub u: C2RustUnnamed,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed {
-    pub B1: ::core::ffi::c_short,
-    pub B0: ::core::ffi::c_short,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_0 {
-    pub LH: halfword,
-    pub RH: halfword,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fourquarters {
-    pub u: C2RustUnnamed_1,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_1 {
-    pub B3: quarterword,
-    pub B2: quarterword,
-    pub B1: quarterword,
-    pub B0: quarterword,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union memoryword {
-    pub gr: glueratio,
-    pub hh: twohalves,
-    pub u: C2RustUnnamed_3,
-    pub v: C2RustUnnamed_2,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_2 {
-    pub junk: halfword,
-    pub QQQQ: fourquarters,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_3 {
-    pub junk: halfword,
-    pub CINT: integer,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union fmemoryword {
-    pub u: C2RustUnnamed_5,
-    pub v: C2RustUnnamed_4,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_4 {
-    pub QQQQ: fourquarters,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct C2RustUnnamed_5 {
-    pub CINT: integer,
-}
-pub type wordfile = gzFile;
-pub type glueord = ::core::ffi::c_uchar;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct liststaterecord {
-    pub modefield: ::core::ffi::c_short,
-    pub headfield: halfword,
-    pub tailfield: halfword,
-    pub eTeXauxfield: halfword,
-    pub pgfield: integer,
-    pub mlfield: integer,
-    pub auxfield: memoryword,
-}
-pub type groupcode = ::core::ffi::c_uchar;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct instaterecord {
-    pub statefield: quarterword,
-    pub indexfield: quarterword,
-    pub startfield: halfword,
-    pub locfield: halfword,
-    pub limitfield: halfword,
-    pub namefield: halfword,
-    pub synctextagfield: integer,
-}
-pub type internalfontnumber = integer;
-pub type fontindex = integer;
-pub type ninebits = ::core::ffi::c_short;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct objentry {
-    pub int0: integer,
-    pub int1: integer,
-    pub int2: longinteger,
-    pub int3: integer,
-    pub int4: integer,
-}
-pub type charusedarray = [eightbits; 32];
-pub type fmentryptr = *mut integer;
-pub type vfstackindex = integer;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct vfstackrecord {
-    pub stackh: scaled,
-    pub stackv: scaled,
-    pub stackw: scaled,
-    pub stackx: scaled,
-    pub stacky: scaled,
-    pub stackz: scaled,
-}
-pub type triepointer = integer;
-pub type trieopcode = ::core::ffi::c_ushort;
-pub type hyphpointer = ::core::ffi::c_ushort;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct destnameentry {
-    pub objname: strnumber,
-    pub objnum: integer,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct pdflinkstackrecord {
-    pub nestinglevel: integer,
-    pub linknode: halfword,
-    pub reflinknode: halfword,
-}
-pub type savepointer = integer;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const INT_MAX: ::core::ffi::c_int = 2147483647 as ::core::ffi::c_int;
 pub const EOF: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
