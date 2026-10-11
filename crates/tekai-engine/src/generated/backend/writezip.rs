@@ -1,3 +1,6 @@
+use crate::allocation::free;
+use crate::openclose::xmalloc;
+
 #[repr(C)]
 pub struct __sFILEX {
     _unused: [u8; 0],
@@ -9,15 +12,12 @@ pub struct internal_state {
 }
 
 extern "C" {
-    fn free(_: *mut ::core::ffi::c_void);
     fn __assert_rtn(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
     fn deflate(strm: z_streamp, flush: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn deflateEnd(strm: z_streamp) -> ::core::ffi::c_int;
     fn deflateReset(strm: z_streamp) -> ::core::ffi::c_int;

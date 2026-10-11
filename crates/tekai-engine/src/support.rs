@@ -230,7 +230,7 @@ pub unsafe extern "C" fn read_line(f: *mut FILE) -> *mut c_char {
             ch = fast_fgetc(f);
         }
         if loc == 0 && ch == libc::EOF {
-            libc::free(line as *mut c_void);
+            crate::allocation::free(line as *mut c_void);
             return ptr::null_mut();
         }
         *line.add(loc) = 0;
@@ -436,15 +436,16 @@ pub unsafe extern "C" fn printversionandexit(
 
 #[cfg(test)]
 mod tests {
-    use super::{basenamechangesuffix, chartostring};
+    use super::{basenamechangesuffix, chartostring, read_line, xgetcwd};
     use libc::c_void;
+    use proptest::prelude::*;
     use std::ffi::{CStr, CString};
 
     #[test]
     fn chartostring_allocates_single_character_c_string() {
         let s = unsafe { chartostring(b'X' as i8) };
         assert_eq!(unsafe { CStr::from_ptr(s) }.to_bytes(), b"X");
-        unsafe { libc::free(s as *mut c_void) };
+        unsafe { crate::allocation::free(s as *mut c_void) };
     }
 
     #[test]
@@ -459,6 +460,53 @@ mod tests {
             unsafe { CStr::from_ptr(changed) }.to_str().unwrap(),
             "cmr10.300gf"
         );
-        unsafe { libc::free(changed as *mut c_void) };
+        unsafe { crate::allocation::free(changed as *mut c_void) };
+    }
+
+    #[test]
+    fn current_directory_returns_an_owned_copy() {
+        let expected = std::env::current_dir().unwrap();
+        let directory = unsafe { xgetcwd() };
+        let actual = unsafe { CStr::from_ptr(directory) }.to_bytes().to_vec();
+        unsafe { crate::allocation::free(directory.cast()) };
+        assert_eq!(actual, expected.to_string_lossy().as_bytes());
+    }
+
+    proptest! {
+        #[test]
+        fn line_buffers_grow_and_preserve_legacy_nul_and_crlf_handling(
+            payload in prop::collection::vec(any::<u8>().prop_filter("line byte", |b| *b != b'\r' && *b != b'\n'), 0..4096),
+            crlf in any::<bool>(),
+        ) {
+            struct File(*mut libc::FILE);
+            impl Drop for File {
+                fn drop(&mut self) {
+                    unsafe { libc::fclose(self.0) };
+                }
+            }
+
+            let file = File(unsafe { libc::tmpfile() });
+            assert!(!file.0.is_null());
+            let mut input = payload.clone();
+            input.extend_from_slice(if crlf { b"\r\n" } else { b"\n" });
+            input.extend_from_slice(b"tail\n");
+            assert_eq!(unsafe { libc::fwrite(input.as_ptr().cast(), 1, input.len(), file.0) }, input.len());
+            unsafe { libc::rewind(file.0) };
+            let line = unsafe { read_line(file.0) };
+            assert!(!line.is_null());
+            let actual = unsafe { CStr::from_ptr(line) }.to_bytes().to_vec();
+            unsafe { crate::allocation::free(line.cast()) };
+            let tail = unsafe { read_line(file.0) };
+            assert!(!tail.is_null());
+            let actual_tail = unsafe { CStr::from_ptr(tail) }.to_bytes().to_vec();
+            unsafe { crate::allocation::free(tail.cast()) };
+            let eof = unsafe { read_line(file.0) };
+            let at_eof = eof.is_null();
+            unsafe { crate::allocation::free(eof.cast()) };
+            let expected = payload.into_iter().filter(|byte| *byte != 0).collect::<Vec<_>>();
+            prop_assert_eq!(actual, expected);
+            prop_assert_eq!(actual_tail, b"tail");
+            prop_assert!(at_eof);
+        }
     }
 }

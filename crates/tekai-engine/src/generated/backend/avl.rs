@@ -1,3 +1,5 @@
+use crate::allocation::{free, malloc};
+
 extern "C" {
     fn __assert_rtn(
         _: *const ::core::ffi::c_char,
@@ -5,8 +7,6 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
-    fn malloc(__size: size_t) -> *mut ::core::ffi::c_void;
-    fn free(_: *mut ::core::ffi::c_void);
     fn memcpy(
         __dst: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,

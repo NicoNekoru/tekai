@@ -1,3 +1,6 @@
+use crate::allocation::free;
+use crate::openclose::{xmalloc, xrealloc, xstrdup};
+
 #[repr(C)]
 pub struct __sFILEX {
     _unused: [u8; 0],
@@ -20,7 +23,6 @@ extern "C" {
         ...
     ) -> ::core::ffi::c_int;
     fn ungetc(_: ::core::ffi::c_int, _: *mut FILE) -> ::core::ffi::c_int;
-    fn free(_: *mut ::core::ffi::c_void);
     fn memcpy(
         __dst: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -61,14 +63,8 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
-    #[link_name = "tekai_xstrdup"]
-    fn xstrdup(s: const_string) -> string;
     fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
     fn xfclose(fp: *mut FILE, filename: const_string);
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
-    #[link_name = "tekai_xrealloc"]
-    fn xrealloc(old_address: address, new_size: size_t) -> address;
     fn open_input(_: *mut *mut FILE, _: ::core::ffi::c_int, fopen_mode: const_string) -> boolean;
     fn recorder_record_input(_: const_string);
     fn zround(_: ::core::ffi::c_double) -> integer;
@@ -4239,11 +4235,11 @@ mod tests {
         fn add_owned(&mut self, index: usize, with_name: bool) {
             let entry = &mut self.0[index];
             unsafe {
-                entry.data = libc::malloc(1) as *mut super::byte;
+                entry.data = crate::allocation::malloc(1) as *mut super::byte;
                 assert!(!entry.data.is_null());
                 *entry.data = index as super::byte;
                 if with_name {
-                    entry.name = libc::malloc(2) as *mut libc::c_char;
+                    entry.name = crate::allocation::malloc(2) as *mut libc::c_char;
                     assert!(!entry.name.is_null());
                     *entry.name = b'a' as libc::c_char;
                     *entry.name.add(1) = 0;
@@ -4392,7 +4388,7 @@ mod tests {
     #[test]
     fn subroutine_cleanup_releases_name_only_entry() {
         let mut entries = OwnedEntries::new(1);
-        entries.0[0].name = unsafe { libc::malloc(1) as *mut libc::c_char };
+        entries.0[0].name = unsafe { crate::allocation::malloc(1) as *mut libc::c_char };
         assert!(!entries.0[0].name.is_null());
         reset_release_calls();
 

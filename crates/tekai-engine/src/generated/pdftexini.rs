@@ -1,3 +1,6 @@
+use crate::allocation::free;
+use crate::openclose::{xmalloc, xrealloc};
+
 #[repr(C)]
 pub struct __sFILEX {
     _unused: [u8; 0],
@@ -11,7 +14,6 @@ extern "C" {
     fn fputs(_: *const ::core::ffi::c_char, _: *mut FILE) -> ::core::ffi::c_int;
     fn putc(_: ::core::ffi::c_int, _: *mut FILE) -> ::core::ffi::c_int;
     fn fileno(_: *mut FILE) -> ::core::ffi::c_int;
-    fn free(_: *mut ::core::ffi::c_void);
     fn exit(_: ::core::ffi::c_int) -> !;
     fn strcmp(
         __s1: *const ::core::ffi::c_char,
@@ -23,10 +25,6 @@ extern "C" {
     ) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     static mut kpse_def: kpathsea;
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
-    #[link_name = "tekai_xrealloc"]
-    fn xrealloc(old_address: address, new_size: size_t) -> address;
     fn uexit(status: ::core::ffi::c_int) -> !;
     fn open_output(_: *mut *mut FILE, fopen_mode: const_string) -> boolean;
     fn setupboundvariable(_: *mut integer, _: const_string, _: integer);

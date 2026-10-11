@@ -375,7 +375,7 @@ unsafe fn print_tex_bytes(bytes: &[u8]) {
 }
 
 unsafe fn xmalloc_bytes(size: usize) -> *mut c_void {
-    let ptr = unsafe { libc::malloc(size) };
+    let ptr = unsafe { crate::allocation::malloc(size) };
     if ptr.is_null() {
         unsafe { pdftex_fail_args(c"out of memory".as_ptr(), &[]) }
     }
@@ -1293,19 +1293,14 @@ pub unsafe extern "C" fn fb_seek(offset: Integer) {
 
 unsafe fn ensure_fb_room(n: usize) {
     unsafe {
-        if fb_array.is_null() {
-            fb_limit = SMALL_ARRAY_SIZE.max(n);
-            fb_array = xmalloc_bytes(fb_limit) as *mut c_char;
-            fb_ptr = fb_array;
-        } else if fb_ptr.offset_from(fb_array) as usize + n > fb_limit {
-            last_ptr_index = fb_ptr.offset_from(fb_array) as usize;
-            fb_limit = (fb_limit * 2).max(last_ptr_index + n);
-            fb_array = libc::realloc(fb_array as *mut c_void, fb_limit) as *mut c_char;
-            if fb_array.is_null() {
-                pdftex_fail_args(c"fb_array exceeds size limit".as_ptr(), &[]);
-            }
-            fb_ptr = fb_array.add(last_ptr_index);
-        }
+        grow_array(
+            &mut fb_array,
+            &mut fb_ptr,
+            &mut fb_limit,
+            n,
+            SMALL_ARRAY_SIZE,
+            c"fb_array exceeds size limit".as_ptr(),
+        );
     }
 }
 
@@ -1339,56 +1334,53 @@ pub unsafe extern "C" fn fb_flush() {
     }
 }
 
-unsafe fn grow_i32_array(
-    array: &mut *mut Integer,
-    ptr_value: &mut *mut Integer,
-    limit: &mut SizeT,
-    n: usize,
-    initial: usize,
-) {
-    unsafe {
-        if (*array).is_null() {
-            *limit = initial.max(n);
-            *array = xmalloc_bytes(*limit * mem::size_of::<Integer>()) as *mut Integer;
-            *ptr_value = *array;
-        } else if (*ptr_value).offset_from(*array) as usize + n > *limit {
-            last_ptr_index = (*ptr_value).offset_from(*array) as usize;
-            *limit = (*limit * 2).max(last_ptr_index + n);
-            *array = libc::realloc(*array as *mut c_void, *limit * mem::size_of::<Integer>())
-                as *mut Integer;
-            if (*array).is_null() {
-                pdftex_fail_args(c"vf_e_fnts_array exceeds size limit".as_ptr(), &[]);
-            }
-            *ptr_value = (*array).add(last_ptr_index);
-        }
+fn growth_capacity(limit: usize, used: usize, extra: usize, initial: usize) -> Option<usize> {
+    let required = used.checked_add(extra)?;
+    if limit == 0 {
+        Some(initial.max(required))
+    } else if required <= limit {
+        Some(limit)
+    } else {
+        Some(limit.checked_mul(2)?.max(required))
     }
 }
 
-unsafe fn grow_internal_font_array(
-    array: &mut *mut InternalFontNumber,
-    ptr_value: &mut *mut InternalFontNumber,
+unsafe fn grow_array<T>(
+    array: &mut *mut T,
+    ptr_value: &mut *mut T,
     limit: &mut SizeT,
     n: usize,
     initial: usize,
+    error_message: *const c_char,
 ) {
     unsafe {
-        if (*array).is_null() {
-            *limit = initial.max(n);
-            *array = xmalloc_bytes(*limit * mem::size_of::<InternalFontNumber>())
-                as *mut InternalFontNumber;
-            *ptr_value = *array;
-        } else if (*ptr_value).offset_from(*array) as usize + n > *limit {
-            last_ptr_index = (*ptr_value).offset_from(*array) as usize;
-            *limit = (*limit * 2).max(last_ptr_index + n);
-            *array = libc::realloc(
-                *array as *mut c_void,
-                *limit * mem::size_of::<InternalFontNumber>(),
-            ) as *mut InternalFontNumber;
-            if (*array).is_null() {
-                pdftex_fail_args(c"vf_i_fnts_array exceeds size limit".as_ptr(), &[]);
-            }
-            *ptr_value = (*array).add(last_ptr_index);
+        let was_null = (*array).is_null();
+        let used = if was_null {
+            0
+        } else {
+            (*ptr_value).offset_from(*array) as usize
+        };
+        let old_limit = if was_null { 0 } else { *limit };
+        let Some(new_limit) = growth_capacity(old_limit, used, n, initial) else {
+            pdftex_fail_args(error_message, &[]);
+        };
+        if !was_null && new_limit == old_limit {
+            return;
         }
+        let Some(bytes) = new_limit.checked_mul(mem::size_of::<T>()) else {
+            pdftex_fail_args(error_message, &[]);
+        };
+        let resized = if was_null {
+            xmalloc_bytes(bytes).cast::<T>()
+        } else {
+            crate::allocation::realloc((*array).cast(), bytes).cast::<T>()
+        };
+        if resized.is_null() {
+            pdftex_fail_args(error_message, &[]);
+        }
+        *array = resized;
+        *ptr_value = resized.add(used);
+        *limit = new_limit;
     }
 }
 
@@ -1403,20 +1395,22 @@ pub unsafe extern "C" fn allocvffnts() {
             VF_I_FNTS_LIMIT = fontmax as SizeT;
             VF_I_FNTS_PTR = VF_I_FNTS_ARRAY;
         }
-        grow_i32_array(
+        grow_array(
             &mut VF_E_FNTS_ARRAY,
             &mut VF_E_FNTS_PTR,
             &mut VF_E_FNTS_LIMIT,
             1,
             fontmax as usize,
+            c"vf_e_fnts_array exceeds size limit".as_ptr(),
         );
         VF_E_FNTS_PTR = VF_E_FNTS_PTR.add(1);
-        grow_internal_font_array(
+        grow_array(
             &mut VF_I_FNTS_ARRAY,
             &mut VF_I_FNTS_PTR,
             &mut VF_I_FNTS_LIMIT,
             1,
             fontmax as usize,
+            c"vf_i_fnts_array exceeds size limit".as_ptr(),
         );
         VF_I_FNTS_PTR = VF_I_FNTS_PTR.add(1);
         if VF_E_FNTS_ARRAY != vfefnts {
@@ -1429,10 +1423,10 @@ pub unsafe extern "C" fn allocvffnts() {
 #[no_mangle]
 pub unsafe extern "C" fn libpdffinish() {
     unsafe {
-        libc::free(fb_array as *mut c_void);
+        crate::allocation::free(fb_array as *mut c_void);
         fb_array = ptr::null_mut();
         fb_ptr = ptr::null_mut();
-        libc::free(JOB_ID_STRING as *mut c_void);
+        crate::allocation::free(JOB_ID_STRING as *mut c_void);
         JOB_ID_STRING = ptr::null_mut();
         fm_free();
         t1_free();
@@ -2001,7 +1995,55 @@ pub unsafe extern "C" fn stripzeros(a: *mut c_char) -> *mut c_char {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_printf, PrintfArg};
+    use super::{format_printf, grow_array, growth_capacity, PrintfArg};
+    use proptest::prelude::*;
+    use std::ptr;
+
+    #[test]
+    fn growth_rejects_capacity_overflow_before_allocating() {
+        assert_eq!(growth_capacity(8, 3, 2, 4), Some(8));
+        assert_eq!(growth_capacity(8, 8, 1, 4), Some(16));
+        assert_eq!(growth_capacity(8, 8, 30, 4), Some(38));
+        assert_eq!(growth_capacity(0, 0, 0, 4), Some(4));
+        assert_eq!(growth_capacity(8, usize::MAX, 1, 4), None);
+        assert_eq!(growth_capacity(usize::MAX - 1, usize::MAX - 1, 1, 4), None);
+    }
+
+    proptest! {
+        #[test]
+        fn typed_growth_preserves_elements_and_cursor(
+            operations in prop::collection::vec((0usize..65, any::<i32>()), 1..64),
+        ) {
+            struct OwnedArray(*mut i32);
+            impl Drop for OwnedArray {
+                fn drop(&mut self) {
+                    unsafe { crate::allocation::free(self.0.cast()) };
+                }
+            }
+
+            let mut array = OwnedArray(ptr::null_mut());
+            let mut cursor = ptr::null_mut();
+            let mut capacity = 0;
+            let mut expected = Vec::new();
+            for (extra, value) in operations {
+                unsafe {
+                    grow_array(&mut array.0, &mut cursor, &mut capacity, extra, 2,
+                        c"test array exceeds size limit".as_ptr());
+                }
+                prop_assert!(capacity >= expected.len() + extra);
+                prop_assert_eq!(unsafe { cursor.offset_from(array.0) } as usize, expected.len());
+                let prefix = unsafe { std::slice::from_raw_parts(array.0, expected.len()) };
+                prop_assert_eq!(prefix, expected.as_slice());
+                for _ in 0..extra {
+                    unsafe {
+                        cursor.write(value);
+                        cursor = cursor.add(1);
+                    }
+                    expected.push(value);
+                }
+            }
+        }
+    }
 
     #[test]
     fn printf_helper_formats_mixed_pdf_fragments() {

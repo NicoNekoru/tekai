@@ -1,14 +1,12 @@
+use crate::allocation::free;
+use crate::openclose::{xmalloc, xrealloc};
+
 extern "C" {
-    fn free(_: *mut ::core::ffi::c_void);
     fn memcpy(
         __dst: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
-    #[link_name = "tekai_xrealloc"]
-    fn xrealloc(old_address: address, new_size: size_t) -> address;
     static mut strpool: *mut packedASCIIcode;
     static mut strstart: *mut poolpointer;
     static mut fontbc: *mut eightbits;

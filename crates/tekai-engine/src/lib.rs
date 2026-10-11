@@ -53,6 +53,7 @@ pub mod generated {
     pub mod pdftexini;
 }
 
+mod allocation;
 mod cache;
 mod directory_graph;
 mod embedded;

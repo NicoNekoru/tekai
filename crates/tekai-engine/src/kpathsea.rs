@@ -10,17 +10,20 @@ use crate::generated::pdftexextra::{
     kpse_file_format_type, kpse_format_info_type, kpse_src_type, p_record_input, p_record_output,
     str_list_type, string, FILE,
 };
-use libc::{c_char, c_double, c_int, c_uint, c_void, size_t};
+use crate::openclose::{xmalloc, xstrdup};
+use libc::{c_char, c_double, c_int, c_uint};
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::ffi::{CStr, OsStr, OsString};
-use std::fs::File;
-use std::io::{self, Read, Write};
+use std::ffi::{CStr, CString, OsStr};
+use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
+
+#[path = "format_cache.rs"]
+mod format_cache;
 
 const TRUE: c_int = 1;
 const FALSE: c_int = 0;
@@ -126,17 +129,8 @@ pub struct KpseGlyphFileType {
     source: c_uint,
 }
 
-extern "C" {
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> *mut c_void;
-    #[link_name = "tekai_xstrdup"]
-    fn xstrdup(s: const_string) -> string;
-}
-
 static CNF_OVERRIDES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static FILE_INDEX: OnceLock<FileIndex> = OnceLock::new();
-static FORMAT_SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
-static EMBEDDED_PDFLATEX_FORMAT_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 thread_local! {
     static INDEX_READABLE_CACHE: RefCell<HashMap<PathBuf, bool>> = RefCell::new(HashMap::new());
@@ -345,45 +339,21 @@ fn check_direct_path(path: &Path) -> Option<PathBuf> {
     None
 }
 
-fn raw_format_companion(path: &Path) -> PathBuf {
-    let mut raw = OsString::from(path.as_os_str());
-    raw.push(".raw");
-    PathBuf::from(raw)
-}
-
 fn check_format_path(path: &Path) -> Option<PathBuf> {
     if path.extension() == Some(OsStr::new("fmt")) {
-        let raw = raw_format_companion(path);
-        if let Some(found) = check_direct_path(&raw) {
-            return Some(found);
-        }
-        if materialize_raw_format_companion(path, &raw).is_ok() {
-            if let Some(found) = check_direct_path(&raw) {
-                return Some(found);
+        if let Ok(raw) = format_cache::materialize_file(path, &embedded_engine_cache_root()) {
+            if raw != path {
+                // The immutable raw entry remains readable after a source
+                // replacement. Keep the original format in the recorder so
+                // build-cache freshness still follows that source.
+                if let Ok(source) = CString::new(path.as_os_str().as_bytes()) {
+                    unsafe { crate::openclose::recorder_record_input(source.as_ptr()) };
+                }
             }
+            return Some(raw);
         }
     }
     check_direct_path(path)
-}
-
-fn materialize_raw_format_companion(path: &Path, raw: &Path) -> io::Result<()> {
-    if !path_is_readable(path) || !format_file_is_gzip(path)? {
-        return Ok(());
-    }
-    let tmp = raw_format_temp(raw);
-    let result = (|| {
-        let input = File::open(path)?;
-        let mut decoder = flate2::read::GzDecoder::new(input);
-        let mut output = File::create(&tmp)?;
-        io::copy(&mut decoder, &mut output)?;
-        output.flush()?;
-        drop(output);
-        std::fs::rename(&tmp, raw)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
 }
 
 fn embedded_pdflatex_format(name: &str) -> Option<PathBuf> {
@@ -391,37 +361,15 @@ fn embedded_pdflatex_format(name: &str) -> Option<PathBuf> {
     if basename != "pdflatex" && basename != "pdflatex.fmt" {
         return None;
     }
-    EMBEDDED_PDFLATEX_FORMAT_PATH
-        .get_or_init(|| materialize_embedded_pdflatex_format().ok())
-        .clone()
+    materialize_embedded_pdflatex_format().ok()
 }
 
 fn materialize_embedded_pdflatex_format() -> io::Result<PathBuf> {
-    let format_id = crate::runtime::FORMAT_ID.trim();
-    let root = embedded_engine_cache_root();
-    std::fs::create_dir_all(&root)?;
-    let raw = root.join(format!("pdflatex-{format_id}.fmt.raw"));
-    if path_is_readable(&raw) {
-        return Ok(raw);
-    }
-
-    let tmp = root.join(format!(".pdflatex-{format_id}-{}.tmp", std::process::id()));
-    let result = (|| {
-        let mut decoder = flate2::read::GzDecoder::new(crate::embedded::pdflatex_format_bytes());
-        let mut output = File::create(&tmp)?;
-        io::copy(&mut decoder, &mut output)?;
-        output.flush()?;
-        drop(output);
-        std::fs::rename(&tmp, &raw)?;
-        Ok(raw.clone())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        if path_is_readable(&raw) {
-            return Ok(raw);
-        }
-    }
-    result
+    format_cache::materialize_embedded(
+        crate::embedded::pdflatex_format_bytes(),
+        crate::runtime::FORMAT_ID.trim(),
+        &embedded_engine_cache_root(),
+    )
 }
 
 fn embedded_engine_cache_root() -> PathBuf {
@@ -449,23 +397,24 @@ fn embedded_engine_cache_root() -> PathBuf {
     std::env::temp_dir().join("tekai").join("engine")
 }
 
-fn raw_format_temp(raw: &Path) -> PathBuf {
-    let mut tmp = OsString::from(raw.as_os_str());
-    tmp.push(".tmp");
-    PathBuf::from(tmp)
-}
-
-fn format_file_is_gzip(path: &Path) -> io::Result<bool> {
-    let mut header = [0u8; 2];
-    let mut file = File::open(path)?;
-    let bytes = file.read(&mut header)?;
-    Ok(bytes == 2 && header == [0x1f, 0x8b])
-}
-
-fn format_search_dirs() -> &'static [PathBuf] {
-    FORMAT_SEARCH_DIRS
-        .get_or_init(build_format_search_dirs)
-        .as_slice()
+/// Directories whose additions can change the format selected by the engine.
+/// Rebuild the policy each time so build-cache validation follows current
+/// environment overrides when the engine library is reused in one process.
+pub fn format_search_paths() -> Vec<crate::search::SearchPath> {
+    build_format_search_dirs()
+        .into_iter()
+        .map(|path| crate::search::SearchPath {
+            // Format lookup joins literal directories rather than interpreting
+            // kpathsea's recursive // syntax. Preserve that policy here.
+            path: path
+                .components()
+                .collect::<PathBuf>()
+                .to_string_lossy()
+                .into_owned(),
+            source: "format-search",
+            bundled: false,
+        })
+        .collect()
 }
 
 fn build_format_search_dirs() -> Vec<PathBuf> {
@@ -682,7 +631,7 @@ fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
     }
 
     if format == KPSE_FMT_FORMAT {
-        for dir in format_search_dirs() {
+        for dir in build_format_search_dirs() {
             if let Some(found) = with_candidate_names(name, format, |candidate| {
                 check_format_path(&dir.join(candidate))
             }) {
@@ -788,6 +737,25 @@ pub fn input_search_paths(extension: &str) -> Vec<crate::search::SearchPath> {
     } else {
         search_paths(input_format(extension))
     }
+}
+
+/// Exact mutable path families used by the engine and scheduler.
+///
+/// Compiler cache coverage must not infer resolver formats from file suffixes.
+/// In particular, WEB2C has a typed route but `cnf` is not a scheduler input
+/// suffix. Keep all ABI format slots here so a new typed policy is covered
+/// automatically, together with the scheduler's makeindex and format routes.
+pub fn cache_dependency_search_paths() -> Vec<crate::search::SearchPath> {
+    let mut paths = (0..59).flat_map(search_paths).collect::<Vec<_>>();
+    paths.extend(input_search_paths("ist"));
+    paths.extend(format_search_paths());
+    paths.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then_with(|| left.bundled.cmp(&right.bundled))
+    });
+    paths.dedup_by(|left, right| left.path == right.path && left.bundled == right.bundled);
+    paths
 }
 
 /// Resolve a scheduler input using the same search paths as the engine.
@@ -1046,8 +1014,29 @@ pub unsafe extern "C" fn kpse_magstep_fix(dpi: c_int, _: c_int, _: const_string)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::Compression;
-    use std::fs;
+
+    #[test]
+    fn cache_dependency_paths_cover_web2c_and_scheduler_routes() {
+        let paths = cache_dependency_search_paths();
+        for required in search_paths(KPSE_WEB2C_FORMAT)
+            .into_iter()
+            .chain(search_paths(KPSE_PDFTEX_CONFIG_FORMAT))
+            .chain(input_search_paths("ist"))
+            .chain(format_search_paths())
+        {
+            assert!(
+                paths
+                    .iter()
+                    .any(|path| { path.path == required.path && path.bundled == required.bundled }),
+                "missing typed dependency route {}",
+                required.path
+            );
+        }
+        assert_eq!(
+            format_search_variables(KPSE_WEB2C_FORMAT),
+            &["WEB2C", "TEXINPUTS"]
+        );
+    }
 
     #[test]
     fn compact_file_index_preserves_match_order_and_skips_nonruntime_trees() {
@@ -1076,51 +1065,15 @@ mod tests {
     }
 
     #[test]
-    fn format_lookup_prefers_raw_companion() {
-        let root = std::env::temp_dir().join(format!("tekai-engine-format-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).expect("failed to create test format dir");
-        let fmt = root.join("pdflatex.fmt");
-        let raw = root.join("pdflatex.fmt.raw");
-        fs::write(&fmt, b"gzip-compatible").expect("failed to write fmt");
-        fs::write(&raw, b"raw").expect("failed to write raw fmt");
-
-        assert_eq!(check_format_path(&fmt), Some(raw));
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn format_lookup_materializes_raw_companion_from_gzip() {
-        let root = std::env::temp_dir().join(format!(
-            "tekai-engine-format-materialize-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).expect("failed to create test format dir");
-        let fmt = root.join("pdflatex.fmt");
-        let raw = root.join("pdflatex.fmt.raw");
-
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), Compression::fast());
-        encoder
-            .write_all(b"raw-format-bytes")
-            .expect("failed to encode test fmt");
-        fs::write(&fmt, encoder.finish().expect("failed to finish gzip"))
-            .expect("failed to write fmt");
-
-        assert_eq!(check_format_path(&fmt), Some(raw.clone()));
-        assert_eq!(
-            fs::read(&raw).expect("failed to read materialized raw fmt"),
-            b"raw-format-bytes"
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn embedded_pdflatex_format_is_gzip_data() {
+        use sha2::Digest;
         let bytes = crate::embedded::pdflatex_format_bytes();
         assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
         assert!(bytes.len() > 1_000_000);
+        let source_id = sha2::Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(source_id, crate::runtime::FORMAT_ID.trim());
     }
 }

@@ -1,3 +1,6 @@
+use crate::allocation::free;
+use crate::openclose::{xmalloc, xrealloc, xstrdup};
+
 #[repr(C)]
 pub struct __sFILEX {
     _unused: [u8; 0],
@@ -15,7 +18,6 @@ pub struct png_info_def {
 
 extern "C" {
     fn feof(_: *mut FILE) -> ::core::ffi::c_int;
-    fn free(_: *mut ::core::ffi::c_void);
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn strncmp(
         __s1: *const ::core::ffi::c_char,
@@ -30,14 +32,8 @@ extern "C" {
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
-    #[link_name = "tekai_xstrdup"]
-    fn xstrdup(s: const_string) -> string;
     fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
     fn xfclose(fp: *mut FILE, filename: const_string);
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
-    #[link_name = "tekai_xrealloc"]
-    fn xrealloc(old_address: address, new_size: size_t) -> address;
     fn kpse_find_file(
         name: const_string,
         format: kpse_file_format_type,

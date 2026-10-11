@@ -102,7 +102,7 @@ unsafe fn concat3_ptr(a: *const c_char, b: *const c_char, c: *const c_char) -> *
 unsafe fn set_nameoffile_from_c_str(src: *const c_char) {
     let len = c_strlen(src);
     unsafe {
-        libc::free(nameoffile as *mut c_void);
+        crate::allocation::free(nameoffile as *mut c_void);
         nameoffile = xmalloc(len + 2) as *mut u8;
         ptr::copy_nonoverlapping(src as *const u8, nameoffile.add(1), len + 1);
         namelength = len as c_int;
@@ -150,7 +150,7 @@ unsafe fn recorder_start() {
 
         if !output_directory.is_null() {
             let joined = concat3_ptr(output_directory, c"/".as_ptr(), RECORDER_NAME);
-            libc::free(RECORDER_NAME as *mut c_void);
+            crate::allocation::free(RECORDER_NAME as *mut c_void);
             RECORDER_NAME = joined;
         }
 
@@ -158,7 +158,7 @@ unsafe fn recorder_start() {
         let cwd = xgetcwd();
         if !cwd.is_null() {
             libc::fprintf(RECORDER_FILE, c"PWD %s\n".as_ptr(), cwd);
-            libc::free(cwd as *mut c_void);
+            crate::allocation::free(cwd as *mut c_void);
         }
     }
 }
@@ -178,11 +178,11 @@ pub unsafe extern "C" fn recorder_change_filename(new_name: *mut c_char) {
         }
 
         libc::rename(RECORDER_NAME, final_name);
-        libc::free(RECORDER_NAME as *mut c_void);
+        crate::allocation::free(RECORDER_NAME as *mut c_void);
         RECORDER_NAME = xstrdup_ptr(final_name);
 
         if allocated {
-            libc::free(final_name as *mut c_void);
+            crate::allocation::free(final_name as *mut c_void);
         }
     }
 }
@@ -206,7 +206,7 @@ pub unsafe extern "C" fn open_input(
     unsafe {
         *f_ptr = ptr::null_mut();
         if !fullnameoffile.is_null() {
-            libc::free(fullnameoffile as *mut c_void);
+            crate::allocation::free(fullnameoffile as *mut c_void);
             fullnameoffile = ptr::null_mut();
         }
 
@@ -222,7 +222,7 @@ pub unsafe extern "C" fn open_input(
                 set_nameoffile_from_c_str(fname);
                 fullnameoffile = fname;
             } else {
-                libc::free(fname as *mut c_void);
+                crate::allocation::free(fname as *mut c_void);
             }
         }
 
@@ -243,7 +243,7 @@ pub unsafe extern "C" fn open_input(
                     }
                     *f_ptr = xfopen(fname, fopen_mode);
                     set_nameoffile_from_c_str(fname);
-                    libc::free(fname as *mut c_void);
+                    crate::allocation::free(fname as *mut c_void);
                 }
             }
         }
@@ -280,9 +280,9 @@ pub unsafe extern "C" fn open_input_with_dirname(
             let newname = concat3_ptr(top_dir, c"/".as_ptr(), nameoffile_body());
             set_nameoffile_from_c_str(newname);
             ret = open_input(f_ptr, filefmt, c"rb".as_ptr());
-            libc::free(newname as *mut c_void);
+            crate::allocation::free(newname as *mut c_void);
         }
-        libc::free(top_dir as *mut c_void);
+        crate::allocation::free(top_dir as *mut c_void);
         ret
     }
 }
@@ -305,13 +305,13 @@ pub unsafe extern "C" fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c
             let texmfoutput = kpse_var_value(c"TEXMFOUTPUT".as_ptr());
             if !texmfoutput.is_null() && *texmfoutput != 0 && !absolute {
                 if allocated {
-                    libc::free(fname as *mut c_void);
+                    crate::allocation::free(fname as *mut c_void);
                 }
                 fname = concat3_ptr(texmfoutput, c"/".as_ptr(), original);
                 allocated = true;
                 *f_ptr = libc::fopen(fname, fopen_mode);
             }
-            libc::free(texmfoutput as *mut c_void);
+            crate::allocation::free(texmfoutput as *mut c_void);
         }
 
         if !(*f_ptr).is_null() {
@@ -324,7 +324,7 @@ pub unsafe extern "C" fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c
             recorder_record_output(fname);
         }
         if allocated {
-            libc::free(fname as *mut c_void);
+            crate::allocation::free(fname as *mut c_void);
         }
         (!(*f_ptr).is_null()) as c_int
     }
@@ -364,15 +364,19 @@ pub unsafe extern "C" fn setupboundvariable(var: *mut c_int, var_name: *const c_
                 dflt as libc::c_long,
             );
         }
-        libc::free(expansion as *mut c_void);
+        crate::allocation::free(expansion as *mut c_void);
     }
 }
 
-#[export_name = "tekai_xmalloc"]
-pub unsafe extern "C" fn xmalloc(size: size_t) -> *mut c_void {
+/// Allocate an engine-owned buffer, terminating with the existing diagnostic on
+/// overflow or allocation failure.
+///
+/// # Safety
+/// Initialize bytes before reading them. Release storage through
+/// `crate::allocation::free`, never a foreign deallocator.
+pub(crate) unsafe fn xmalloc(size: size_t) -> *mut c_void {
     unsafe {
-        let actual = if size == 0 { 1 } else { size };
-        let mem = libc::malloc(actual);
+        let mem = crate::allocation::malloc(size);
         if mem.is_null() {
             let msg = format!("fatal: memory exhausted (xmalloc of {size} bytes).\n");
             libc::write(2, msg.as_ptr() as *const c_void, msg.len());
@@ -382,14 +386,17 @@ pub unsafe extern "C" fn xmalloc(size: size_t) -> *mut c_void {
     }
 }
 
-#[export_name = "tekai_xrealloc"]
-pub unsafe extern "C" fn xrealloc(old_ptr: *mut c_void, size: size_t) -> *mut c_void {
+/// Resize engine-owned storage, terminating on overflow or allocation failure.
+///
+/// # Safety
+/// A non-null pointer must be the exact live pointer produced by the engine's
+/// Rust allocator. No references may be used during the resize.
+pub(crate) unsafe fn xrealloc(old_ptr: *mut c_void, size: size_t) -> *mut c_void {
     unsafe {
         if old_ptr.is_null() {
             return xmalloc(size);
         }
-        let actual = if size == 0 { 1 } else { size };
-        let mem = libc::realloc(old_ptr, actual);
+        let mem = crate::allocation::realloc(old_ptr, size);
         if mem.is_null() {
             let msg = format!("fatal: memory exhausted (realloc of {size} bytes).\n");
             libc::write(2, msg.as_ptr() as *const c_void, msg.len());
@@ -399,8 +406,12 @@ pub unsafe extern "C" fn xrealloc(old_ptr: *mut c_void, size: size_t) -> *mut c_
     }
 }
 
-#[export_name = "tekai_xstrdup"]
-pub unsafe extern "C" fn xstrdup(s: *const c_char) -> *mut c_char {
+/// Copy a NUL-terminated string into engine-owned Rust storage.
+///
+/// # Safety
+/// The input must remain valid through the copy. Release the returned pointer
+/// through `crate::allocation::free`.
+pub(crate) unsafe fn xstrdup(s: *const c_char) -> *mut c_char {
     unsafe { xstrdup_ptr(s) }
 }
 
@@ -408,14 +419,15 @@ pub unsafe extern "C" fn xstrdup(s: *const c_char) -> *mut c_char {
 mod tests {
     use super::{xmalloc, xrealloc, xstrdup};
     use libc::c_void;
+    use proptest::prelude::*;
     use std::ffi::{CStr, CString};
 
     #[test]
-    fn xstrdup_returns_malloc_owned_copy() {
+    fn xstrdup_returns_rust_allocated_copy() {
         let source = CString::new("hello").unwrap();
         let dup = unsafe { xstrdup(source.as_ptr()) };
         assert_eq!(unsafe { CStr::from_ptr(dup) }.to_str().unwrap(), "hello");
-        unsafe { libc::free(dup as *mut c_void) };
+        unsafe { crate::allocation::free(dup as *mut c_void) };
     }
 
     #[test]
@@ -424,6 +436,23 @@ mod tests {
         assert!(!ptr.is_null());
         let ptr = unsafe { xrealloc(ptr, 0) };
         assert!(!ptr.is_null());
-        unsafe { libc::free(ptr) };
+        unsafe { crate::allocation::free(ptr) };
+    }
+
+    proptest! {
+        #[test]
+        fn duplicated_strings_resize_and_release_with_rust_allocator(
+            bytes in prop::collection::vec(1u8..=255, 0..4096),
+            extra in 1usize..129,
+        ) {
+            let source = CString::new(bytes.clone()).unwrap();
+            let duplicate = unsafe { xstrdup(source.as_ptr()) };
+            let resized = unsafe { xrealloc(duplicate.cast(), bytes.len() + extra + 1) };
+            assert!(!resized.is_null());
+            let preserved = unsafe { CStr::from_ptr(resized.cast()) }.to_bytes();
+            let matches = preserved == bytes.as_slice();
+            unsafe { crate::allocation::free(resized) };
+            prop_assert!(matches);
+        }
     }
 }

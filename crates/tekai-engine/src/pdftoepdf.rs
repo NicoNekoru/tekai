@@ -126,7 +126,7 @@ unsafe fn c_bytes(ptr: *const c_char) -> &'static [u8] {
 
 unsafe fn c_string_dup(ptr: *const c_char) -> *mut c_char {
     let bytes = unsafe { c_bytes(ptr) };
-    let out = unsafe { libc::malloc(bytes.len() + 1) as *mut c_char };
+    let out = unsafe { crate::allocation::malloc(bytes.len() + 1) as *mut c_char };
     if out.is_null() {
         unsafe { pdftex_fail_args(c"out of memory".as_ptr(), &[]) };
     }
@@ -191,7 +191,7 @@ unsafe fn delete_document(pdf_doc: *mut PdfDocument) {
         free_inobj_list((*pdf_doc).in_obj_list);
         XREF = (*pdf_doc).xref;
         xpdf_doc_delete((*pdf_doc).doc);
-        libc::free((*pdf_doc).file_name as *mut c_void);
+        crate::allocation::free((*pdf_doc).file_name as *mut c_void);
         drop(Box::from_raw(pdf_doc));
     }
 }

@@ -1,3 +1,6 @@
+use crate::allocation::free;
+use crate::openclose::{xmalloc, xrealloc, xstrdup};
+
 #[repr(C)]
 pub struct __sFILEX {
     _unused: [u8; 0],
@@ -57,7 +60,6 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()>,
     ) -> Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()>;
-    fn free(_: *mut ::core::ffi::c_void);
     fn abort() -> !;
     fn atoi(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn exit(_: ::core::ffi::c_int) -> !;
@@ -118,18 +120,12 @@ extern "C" {
     static mut kpse_def: kpathsea;
     fn concat(s1: const_string, s2: const_string) -> string;
     fn concat3(_: const_string, _: const_string, _: const_string) -> string;
-    #[link_name = "tekai_xstrdup"]
-    fn xstrdup(s: const_string) -> string;
     fn find_suffix(name: const_string) -> const_string;
     fn xputenv(var: const_string, value: const_string);
     fn xgetcwd() -> string;
     fn dir_p(fn_0: string) -> boolean;
     fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
     fn xfclose(fp: *mut FILE, filename: const_string);
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
-    #[link_name = "tekai_xrealloc"]
-    fn xrealloc(old_address: address, new_size: size_t) -> address;
     fn kpse_set_program_name(argv0: const_string, progname: const_string);
     fn fcntl(_: ::core::ffi::c_int, _: ::core::ffi::c_int, ...) -> ::core::ffi::c_int;
     fn uexit(status: ::core::ffi::c_int) -> !;

@@ -1,3 +1,6 @@
+use crate::allocation::free;
+use crate::openclose::{xmalloc, xstrdup};
+
 #[repr(C)]
 pub struct __sFILEX {
     _unused: [u8; 0],
@@ -14,7 +17,6 @@ extern "C" {
         _: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn free(_: *mut ::core::ffi::c_void);
     fn memcpy(
         __dst: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -47,8 +49,6 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
-    #[link_name = "tekai_xstrdup"]
-    fn xstrdup(s: const_string) -> string;
     fn xfclose(fp: *mut FILE, filename: const_string);
     fn xfseek(
         fp: *mut FILE,
@@ -57,8 +57,6 @@ extern "C" {
         filename: const_string,
     );
     fn xftell(fp: *mut FILE, filename: const_string) -> ::core::ffi::c_long;
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
     fn open_input(_: *mut *mut FILE, _: ::core::ffi::c_int, fopen_mode: const_string) -> boolean;
     static mut _DefaultRuneLocale: _RuneLocale;
     fn __maskrune(_: __darwin_ct_rune_t, _: ::core::ffi::c_ulong) -> ::core::ffi::c_int;

@@ -1,3 +1,6 @@
+use crate::allocation::free;
+use crate::openclose::{xmalloc, xstrdup};
+
 extern "C" {
     fn sprintf(
         _: *mut ::core::ffi::c_char,
@@ -15,7 +18,6 @@ extern "C" {
         __format: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn free(_: *mut ::core::ffi::c_void);
     fn strtol(
         __str: *const ::core::ffi::c_char,
         __endptr: *mut *mut ::core::ffi::c_char,
@@ -56,10 +58,6 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
-    #[link_name = "tekai_xstrdup"]
-    fn xstrdup(s: const_string) -> string;
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
     static mut _DefaultRuneLocale: _RuneLocale;
     fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
     fn do_dump(

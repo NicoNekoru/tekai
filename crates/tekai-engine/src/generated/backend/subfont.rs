@@ -1,3 +1,6 @@
+use crate::allocation::free;
+use crate::openclose::{xmalloc, xstrdup};
+
 #[repr(C)]
 pub struct __sFILEX {
     _unused: [u8; 0],
@@ -13,7 +16,6 @@ extern "C" {
         _: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn free(_: *mut ::core::ffi::c_void);
     fn strcat(
         __s1: *mut ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
@@ -36,11 +38,7 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
-    #[link_name = "tekai_xstrdup"]
-    fn xstrdup(s: const_string) -> string;
     fn xfclose(fp: *mut FILE, filename: const_string);
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
     fn open_input(_: *mut *mut FILE, _: ::core::ffi::c_int, fopen_mode: const_string) -> boolean;
     fn zpackfilename(n: strnumber, a: strnumber, e: strnumber);
     fn getnullstr() -> strnumber;

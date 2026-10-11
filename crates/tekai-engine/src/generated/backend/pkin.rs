@@ -1,12 +1,12 @@
+use crate::allocation::free;
+use crate::openclose::xmalloc;
+
 #[repr(C)]
 pub struct __sFILEX {
     _unused: [u8; 0],
 }
 
 extern "C" {
-    fn free(_: *mut ::core::ffi::c_void);
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
     static mut t3_file: *mut FILE;
     fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
     fn xgetc(_: *mut FILE) -> ::core::ffi::c_int;

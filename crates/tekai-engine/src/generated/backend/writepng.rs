@@ -1,3 +1,6 @@
+use crate::allocation::free;
+use crate::openclose::xmalloc;
+
 #[repr(C)]
 pub struct __sFILEX {
     _unused: [u8; 0],
@@ -21,15 +24,12 @@ extern "C" {
         __stream: *mut FILE,
     ) -> ::core::ffi::c_ulong;
     fn fseek(_: *mut FILE, _: ::core::ffi::c_long, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn free(_: *mut ::core::ffi::c_void);
     fn getenv(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn strcmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
     fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
-    #[link_name = "tekai_xmalloc"]
-    fn xmalloc(size: size_t) -> address;
     fn zround(_: ::core::ffi::c_double) -> integer;
     static mut pdfbuf: *mut eightbits;
     static mut pdfbufsize: integer;
