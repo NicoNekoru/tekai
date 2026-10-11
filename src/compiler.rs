@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
-use std::io::{ErrorKind, Write as _};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -1926,14 +1926,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
                 .generated_output_observations
                 .lock()
                 .expect("generated output observation mutex poisoned");
-            for output in recorded_outputs(&fls_path, &doc_dir)? {
-                if !is_settled_aux_cache_sidecar(&output)
-                    && !path_extension_is_any(&output, &["fmt"])
-                    && output.starts_with(&out_dir)
-                {
-                    observations.insert(canonical_or_original(&output));
-                }
-            }
+            record_generated_output_observations(&fls_path, &doc_dir, &out_dir, &mut observations)?;
         }
         let tex_elapsed = tex_started.elapsed();
         preamble_format_used |= tex_invocation.preamble_format_used;
@@ -12307,8 +12300,6 @@ fn recorded_inputs_with_owned_outputs(
     root_mode: RawTexMode,
     owned_outputs: &HashSet<PathBuf>,
 ) -> Result<Vec<FileFingerprint>> {
-    let source = fs::read_to_string(fls_path)
-        .with_context(|| format!("failed to read recorder file {}", fls_path.display()))?;
     let mut inputs = Vec::new();
     let mut seen_paths = HashSet::new();
     let mut aliases = HashSet::new();
@@ -12324,13 +12315,13 @@ fn recorded_inputs_with_owned_outputs(
         .filter(|path| is_settled_aux_cache_sidecar(path) || path_extension_is_any(path, &["fmt"]))
         .map(|path| canonical_or_original(&path))
         .collect::<HashSet<_>>();
-    for line in source.lines() {
+    visit_recorded_lines(fls_path, |line| {
         let Some(raw_path) = line.strip_prefix("INPUT ") else {
-            continue;
+            return Ok(());
         };
         let path = resolve_recorded_path(raw_path, doc_dir);
         if !seen_paths.insert(path.clone()) {
-            continue;
+            return Ok(());
         }
         let canonical = canonical_or_original(&path);
         if !main
@@ -12340,7 +12331,7 @@ fn recorded_inputs_with_owned_outputs(
                 || (path_is_under_cached_directory(&path, out_dir, out_dir_canonical.as_deref())
                     && recorded_owned.contains(&canonical)))
         {
-            continue;
+            return Ok(());
         }
         append_input_alias_dependencies(&mut inputs, &path, &mut aliases)?;
         let fingerprint = if main
@@ -12372,40 +12363,89 @@ fn recorded_inputs_with_owned_outputs(
             fingerprint.metadata = None;
         }
         inputs.push(fingerprint);
-    }
+        Ok(())
+    })?;
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
     Ok(inputs)
 }
 
 fn recorded_outputs(fls_path: &Path, doc_dir: &Path) -> Result<Vec<PathBuf>> {
-    let source = fs::read_to_string(fls_path)
-        .with_context(|| format!("failed to read recorder file {}", fls_path.display()))?;
-    let mut outputs = Vec::new();
-    for line in source.lines() {
-        let Some(raw_path) = line.strip_prefix("OUTPUT ") else {
-            continue;
-        };
-        outputs.push(resolve_recorded_path(raw_path, doc_dir));
-    }
-    outputs.sort();
-    outputs.dedup();
-    Ok(outputs)
+    recorded_paths(fls_path, doc_dir, "OUTPUT ")
 }
 
 fn recorded_input_paths(fls_path: &Path, doc_dir: &Path) -> Result<Vec<PathBuf>> {
-    let source = fs::read_to_string(fls_path)
+    recorded_paths(fls_path, doc_dir, "INPUT ")
+}
+
+fn recorded_paths(fls_path: &Path, doc_dir: &Path, prefix: &str) -> Result<Vec<PathBuf>> {
+    let mut paths = HashSet::new();
+    visit_recorded_lines(fls_path, |line| {
+        if let Some(raw_path) = line.strip_prefix(prefix) {
+            paths.insert(resolve_recorded_path(raw_path, doc_dir));
+        }
+        Ok(())
+    })?;
+    let mut paths = paths.into_iter().collect::<Vec<_>>();
+    paths.sort();
+    Ok(paths)
+}
+
+fn visit_recorded_lines(fls_path: &Path, visit: impl FnMut(&str) -> Result<()>) -> Result<()> {
+    let file = fs::File::open(fls_path)
         .with_context(|| format!("failed to read recorder file {}", fls_path.display()))?;
-    let mut inputs = Vec::new();
-    for line in source.lines() {
-        let Some(raw_path) = line.strip_prefix("INPUT ") else {
-            continue;
-        };
-        inputs.push(resolve_recorded_path(raw_path, doc_dir));
+    visit_recorder_lines(&mut BufReader::new(file), fls_path, visit)
+}
+
+fn visit_recorder_lines(
+    reader: &mut impl BufRead,
+    fls_path: &Path,
+    mut visit: impl FnMut(&str) -> Result<()>,
+) -> Result<()> {
+    // Reuse one line rather than retain the complete recorder. The longest
+    // record can still grow this buffer; arbitrary row lengths are not capped.
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader
+            .read_line(&mut line)
+            .with_context(|| format!("failed to read recorder file {}", fls_path.display()))?
+            == 0
+        {
+            return Ok(());
+        }
+        let record = line
+            .strip_suffix('\n')
+            .map(|line| line.strip_suffix('\r').unwrap_or(line))
+            .unwrap_or(&line);
+        visit(record)?;
     }
-    inputs.sort();
-    inputs.dedup();
-    Ok(inputs)
+}
+
+fn record_generated_output_observations(
+    fls_path: &Path,
+    doc_dir: &Path,
+    out_dir: &Path,
+    observations: &mut GeneratedOutputObservations,
+) -> Result<()> {
+    visit_recorded_lines(fls_path, |line| {
+        // Overflow stops retention, not validation. Consume every row so an
+        // invalid UTF-8 suffix remains an error even without cache coverage.
+        if observations.overflowed {
+            return Ok(());
+        }
+        let Some(raw_path) = line.strip_prefix("OUTPUT ") else {
+            return Ok(());
+        };
+        let output = resolve_recorded_path(raw_path, doc_dir);
+        if !is_settled_aux_cache_sidecar(&output)
+            && !path_extension_is_any(&output, &["fmt"])
+            && output.starts_with(out_dir)
+        {
+            observations.insert(canonical_or_original(&output));
+        }
+        Ok(())
+    })
 }
 
 fn aux_output_snapshot(
@@ -12532,11 +12572,19 @@ where
     Ok(fingerprints)
 }
 
+const OUTPUT_SNAPSHOT_MAX_WORKERS: usize = 8;
+
+fn output_snapshot_worker_count(path_count: usize, available_workers: usize) -> usize {
+    available_workers
+        .clamp(1, OUTPUT_SNAPSHOT_MAX_WORKERS)
+        .min(path_count)
+}
+
 fn parallel_output_file_snapshot(paths: &[PathBuf]) -> Result<Vec<GeneratedOutputFingerprint>> {
-    let worker_count = thread::available_parallelism()
+    let available_workers = thread::available_parallelism()
         .map(|parallelism| parallelism.get())
-        .unwrap_or(1)
-        .min(paths.len());
+        .unwrap_or(1);
+    let worker_count = output_snapshot_worker_count(paths.len(), available_workers);
     if worker_count <= 1 {
         let mut fingerprints = Vec::new();
         for path in paths {
@@ -12578,12 +12626,12 @@ fn generated_output_fingerprint(path: &Path) -> Result<Option<GeneratedOutputFin
     if !path.is_file() {
         return Ok(None);
     }
-    let bytes = fs::read(path)
+    let (len, hash) = hash_file_contents(path)
         .with_context(|| format!("failed to read generated output {}", path.display()))?;
     Ok(Some(GeneratedOutputFingerprint {
         path: canonical_or_original(path).display().to_string(),
-        len: bytes.len() as u64,
-        hash: content_hash(&bytes),
+        len,
+        hash,
     }))
 }
 
@@ -12678,23 +12726,22 @@ fn minted_hashes_from_latest_run(
     if !fls_path.exists() {
         return Ok(Vec::new());
     }
-    let source = fs::read_to_string(&fls_path)
-        .with_context(|| format!("failed to read recorder file {}", fls_path.display()))?;
-    let mut hashes = Vec::new();
-    for line in source.lines() {
+    let mut hashes = HashSet::new();
+    visit_recorded_lines(&fls_path, |line| {
         let Some(raw_path) = line
             .strip_prefix("INPUT ")
             .or_else(|| line.strip_prefix("OUTPUT "))
         else {
-            continue;
+            return Ok(());
         };
         let path = resolve_recorded_path(raw_path, doc_dir);
         if let Some(hash) = minted_hash_from_path(&path) {
-            hashes.push(hash);
+            hashes.insert(hash);
         }
-    }
+        Ok(())
+    })?;
+    let mut hashes = hashes.into_iter().collect::<Vec<_>>();
     hashes.sort();
-    hashes.dedup();
     Ok(hashes)
 }
 
@@ -12784,12 +12831,40 @@ fn path_matches_canonical(path: &Path, canonical_other: &Path) -> bool {
 }
 
 fn content_hash(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
+    update_content_hash(CONTENT_HASH_OFFSET, bytes)
+}
+
+const CONTENT_HASH_OFFSET: u64 = 0xcbf29ce484222325;
+const CONTENT_HASH_BUFFER_SIZE: usize = 64 * 1024;
+
+fn update_content_hash(mut hash: u64, bytes: &[u8]) -> u64 {
     for byte in bytes {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+fn hash_reader_contents(reader: &mut impl Read) -> std::io::Result<(u64, u64)> {
+    let mut buffer = [0_u8; CONTENT_HASH_BUFFER_SIZE];
+    let mut len = 0_u64;
+    let mut hash = CONTENT_HASH_OFFSET;
+    loop {
+        let count = match reader.read(&mut buffer) {
+            Ok(0) => return Ok((len, hash)),
+            Ok(count) => count,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        len = len.checked_add(count as u64).ok_or_else(|| {
+            std::io::Error::new(ErrorKind::InvalidData, "file length exceeds u64")
+        })?;
+        hash = update_content_hash(hash, &buffer[..count]);
+    }
+}
+
+fn hash_file_contents(path: &Path) -> std::io::Result<(u64, u64)> {
+    hash_reader_contents(&mut fs::File::open(path)?)
 }
 
 fn resolve_recorded_path(raw_path: &str, doc_dir: &Path) -> PathBuf {
@@ -12904,10 +12979,9 @@ fn fingerprint_raw_tex_path_reusing(
     {
         return Ok(Some(fingerprint.clone()));
     }
-    let bytes = fs::read(&canonical)
+    let (len, content_hash) = hash_file_contents(&canonical)
         .with_context(|| format!("failed to read TeX source {}", canonical.display()))?;
-    let len = bytes.len() as u64;
-    let hash = format!("{hash_prefix}{:016x}", content_hash(&bytes));
+    let hash = format!("{hash_prefix}{content_hash:016x}");
     Ok(Some(FileFingerprint {
         path,
         len,
@@ -13014,13 +13088,13 @@ fn input_fingerprint_is_fresh(input: &FileFingerprint) -> Result<bool> {
         }
         diagnostic_profile::count(Counter::EffectiveHashFallbacks, 1);
         let _profile = diagnostic_profile::span(Phase::InputEffectiveHash);
-        let bytes =
-            fs::read(path).with_context(|| format!("failed to read input {}", path.display()))?;
+        let (len, hash) = hash_file_contents(path)
+            .with_context(|| format!("failed to read input {}", path.display()))?;
         let _ = mode;
-        if bytes.len() as u64 != input.len {
+        if len != input.len {
             return Ok(false);
         }
-        return Ok(format!("{:016x}", content_hash(&bytes)) == expected_hash);
+        return Ok(format!("{hash:016x}") == expected_hash);
     }
     if let Some(encoded) = input.hash.strip_prefix(BIB_CITED_EFFECTIVE_HASH_PREFIX) {
         let Some((encoded_keys, expected_hash)) = encoded.rsplit_once(':') else {
@@ -13355,9 +13429,9 @@ fn file_metadata_fingerprint(path: &Path) -> Result<Option<FileMetadataFingerpri
 
 fn file_content_hash_hex(path: &Path) -> Result<String> {
     let _profile = diagnostic_profile::span(Phase::InputContentHash);
-    let bytes =
-        fs::read(path).with_context(|| format!("failed to read input {}", path.display()))?;
-    Ok(format!("{:016x}", content_hash(&bytes)))
+    let (_, hash) = hash_file_contents(path)
+        .with_context(|| format!("failed to read input {}", path.display()))?;
+    Ok(format!("{hash:016x}"))
 }
 
 fn kpathsea_env(var: &str, doc_dir: &Path) -> OsString {
@@ -13624,6 +13698,345 @@ mod tests {
     use super::*;
 
     static TEXINPUTS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    struct ChunkedHashReader<'a> {
+        bytes: &'a [u8],
+        chunk_size: usize,
+        interrupt: bool,
+        max_requested: usize,
+        completed_reads: usize,
+    }
+
+    impl Read for ChunkedHashReader<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.max_requested = self.max_requested.max(buffer.len());
+            if self.interrupt {
+                self.interrupt = false;
+                return Err(ErrorKind::Interrupted.into());
+            }
+            let count = self.bytes.len().min(buffer.len()).min(self.chunk_size);
+            buffer[..count].copy_from_slice(&self.bytes[..count]);
+            self.bytes = &self.bytes[count..];
+            self.completed_reads += 1;
+            Ok(count)
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn streaming_hash_matches_bytes_with_bounded_scratch_and_short_reads(
+            bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..16_384),
+            chunk_size in 1_usize..1024,
+            interrupt in proptest::prelude::any::<bool>(),
+        ) {
+            let mut reader = ChunkedHashReader {
+                bytes: &bytes,
+                chunk_size,
+                interrupt,
+                max_requested: 0,
+                completed_reads: 0,
+            };
+            proptest::prop_assert_eq!(
+                hash_reader_contents(&mut reader).unwrap(),
+                (bytes.len() as u64, content_hash(&bytes)),
+            );
+            proptest::prop_assert_eq!(reader.max_requested, CONTENT_HASH_BUFFER_SIZE);
+            proptest::prop_assert_eq!(reader.completed_reads, bytes.len().div_ceil(chunk_size) + 1);
+        }
+
+        #[test]
+        fn output_snapshot_chunk_plans_bound_workers_and_cover_every_path(
+            path_count in proptest::prelude::any::<usize>(),
+            available_workers in proptest::prelude::any::<usize>(),
+        ) {
+            let workers = output_snapshot_worker_count(path_count, available_workers);
+            proptest::prop_assert!(workers <= OUTPUT_SNAPSHOT_MAX_WORKERS);
+            proptest::prop_assert!(workers <= path_count);
+            proptest::prop_assert!(workers <= available_workers.max(1));
+            if path_count == 0 {
+                proptest::prop_assert_eq!(workers, 0);
+            } else {
+                proptest::prop_assert!(workers >= 1);
+                let chunk_size = path_count.div_ceil(workers);
+                let chunks = path_count.div_ceil(chunk_size);
+                proptest::prop_assert!(chunks <= workers);
+                let final_chunk = path_count - (chunks - 1) * chunk_size;
+                proptest::prop_assert!(final_chunk > 0 && final_chunk <= chunk_size);
+                proptest::prop_assert_eq!((chunks - 1) * chunk_size + final_chunk, path_count);
+                proptest::prop_assert!(chunks * CONTENT_HASH_BUFFER_SIZE <= 512 * 1024);
+            }
+        }
+
+        #[test]
+        fn streaming_recorder_lines_match_string_lines(
+            characters in proptest::collection::vec(proptest::prelude::any::<char>(), 0..2048),
+        ) {
+            let source = characters.into_iter().collect::<String>();
+            let mut reader = std::io::Cursor::new(source.as_bytes());
+            let mut lines = Vec::new();
+            visit_recorder_lines(&mut reader, Path::new("test.fls"), |line| {
+                lines.push(line.to_string());
+                Ok(())
+            }).unwrap();
+            proptest::prop_assert_eq!(lines, source.lines().collect::<Vec<_>>());
+        }
+
+        #[test]
+        fn streaming_recorder_paths_match_sorted_lexical_facts(
+            records in proptest::collection::vec(
+                (0_u8..4, "[a-zA-Z0-9 ./_é\\r]{0,40}", proptest::prelude::any::<bool>()),
+                0..32,
+            ),
+            final_newline in proptest::prelude::any::<bool>(),
+        ) {
+            let root = unique_temp_dir("tekai-streaming-recorder-facts");
+            fs::create_dir_all(&root).unwrap();
+            let fls_path = root.join("main.fls");
+            let mut source = String::new();
+            for (index, (kind, path, crlf)) in records.iter().enumerate() {
+                source.push_str(["INPUT ", "OUTPUT ", "PWD ", "input "][usize::from(*kind)]);
+                source.push_str(path);
+                if index + 1 < records.len() || final_newline {
+                    source.push_str(if *crlf { "\r\n" } else { "\n" });
+                }
+            }
+            fs::write(&fls_path, &source).unwrap();
+            let expected = |prefix| {
+                let mut paths = source.lines()
+                    .filter_map(|line| line.strip_prefix(prefix))
+                    .map(|path| resolve_recorded_path(path, &root))
+                    .collect::<Vec<_>>();
+                paths.sort();
+                paths.dedup();
+                paths
+            };
+            proptest::prop_assert_eq!(recorded_outputs(&fls_path, &root).unwrap(), expected("OUTPUT "));
+            proptest::prop_assert_eq!(recorded_input_paths(&fls_path, &root).unwrap(), expected("INPUT "));
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn streaming_recorder_preserves_crlf_spaces_and_unterminated_rows() {
+        for source in [
+            "",
+            "\n",
+            "\r",
+            "\r\n",
+            "\n\n",
+            "INPUT source with spaces.tex\r\nOUTPUT output with spaces.data\nINPUT final.tex",
+            "INPUT final.tex\r",
+            "INPUT embedded\rreturn.tex\n",
+        ] {
+            let mut reader = std::io::Cursor::new(source.as_bytes());
+            let mut lines = Vec::new();
+            visit_recorder_lines(&mut reader, Path::new("test.fls"), |line| {
+                lines.push(line.to_string());
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(lines, source.lines().collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn duplicate_recorder_rows_do_not_grow_retained_path_vectors() {
+        let root = unique_temp_dir("tekai-duplicate-recorder-rows");
+        let out_dir = root.join("out");
+        fs::create_dir_all(&out_dir).unwrap();
+        let fls_path = out_dir.join("main.fls");
+        let rows = "INPUT source with spaces.tex\r\n\
+                    OUTPUT out/generated with spaces.data\r\n\
+                    INPUT _00112233445566778899aabbccddeeff.config.minted\r\n\
+                    OUTPUT out/_00112233445566778899AABBCCDDEEFF.data.minted\r\n";
+        let mut source = rows.repeat(8192);
+        source.push_str("OUTPUT out/main.aux\nOUTPUT out/main.fmt\nOUTPUT outside.data\n");
+        fs::write(&fls_path, source).unwrap();
+        let outputs = recorded_outputs(&fls_path, &root).unwrap();
+        let inputs = recorded_input_paths(&fls_path, &root).unwrap();
+        let hashes = minted_hashes_from_latest_run(&root, &out_dir, "main").unwrap();
+        assert_eq!(outputs.len(), 5);
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(hashes, ["00112233445566778899AABBCCDDEEFF"]);
+        // A collect-then-dedup vector would retain capacity for 16,384 rows.
+        assert!(outputs.capacity() < 128);
+        assert!(inputs.capacity() < 128);
+        assert!(hashes.capacity() < 128);
+        let mut observations = GeneratedOutputObservations::default();
+        record_generated_output_observations(&fls_path, &root, &out_dir, &mut observations)
+            .unwrap();
+        assert_eq!(observations.paths.len(), 2);
+        assert!(!observations.overflowed);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recorder_utf8_errors_survive_ignored_rows_and_output_coverage_overflow() {
+        let root = unique_temp_dir("tekai-recorder-invalid-utf8");
+        let out_dir = root.join("out");
+        fs::create_dir_all(&out_dir).unwrap();
+        let main = root.join("main.tex");
+        fs::write(&main, "main source").unwrap();
+        let fls_path = out_dir.join("main.fls");
+        let mut bytes = b"INPUT missing.tex\nOUTPUT out/result.data\nPWD ".to_vec();
+        bytes.push(0xff);
+        fs::write(&fls_path, &bytes).unwrap();
+        for error in [
+            recorded_outputs(&fls_path, &root).unwrap_err(),
+            recorded_input_paths(&fls_path, &root).unwrap_err(),
+            minted_hashes_from_latest_run(&root, &out_dir, "main").unwrap_err(),
+            recorded_inputs(&fls_path, &root, &out_dir, &main, &HashMap::new()).unwrap_err(),
+        ] {
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                ErrorKind::InvalidData,
+            );
+            assert!(error.to_string().contains("failed to read recorder file"));
+        }
+
+        let mut bytes = format!(
+            "OUTPUT {}/{}\nPWD ",
+            out_dir.display(),
+            "x".repeat(GeneratedOutputObservations::BUDGET),
+        )
+        .into_bytes();
+        bytes.push(0xff);
+        fs::write(&fls_path, &bytes).unwrap();
+        let mut observations = GeneratedOutputObservations::default();
+        let error =
+            record_generated_output_observations(&fls_path, &root, &out_dir, &mut observations)
+                .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            ErrorKind::InvalidData,
+        );
+        assert!(observations.overflowed);
+        assert!(observations.paths.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recorder_input_classification_includes_later_output_rows() {
+        let root = unique_temp_dir("tekai-recorder-input-before-output");
+        let out_dir = root.join("out");
+        fs::create_dir_all(&out_dir).unwrap();
+        let main = root.join("main.tex");
+        fs::write(&main, "main source").unwrap();
+        let generated = out_dir.join("generated source.tex");
+        fs::write(&generated, "generated source").unwrap();
+        let owned = out_dir.join("trusted.tex");
+        fs::write(&owned, "trusted source").unwrap();
+        fs::write(out_dir.join("main.aux"), "auxiliary state").unwrap();
+        fs::write(out_dir.join("main.fmt"), "format state").unwrap();
+        let fls_path = out_dir.join("main.fls");
+        fs::write(
+            &fls_path,
+            "INPUT main.tex\n\
+             INPUT out/generated source.tex\n\
+             INPUT out/generated source.tex\n\
+             INPUT out/trusted.tex\n\
+             INPUT out/main.aux\n\
+             INPUT out/main.fmt\n\
+             OUTPUT out/generated source.tex\n\
+             OUTPUT out/main.aux\n\
+             OUTPUT out/main.fmt\n\
+             OUTPUT main.tex",
+        )
+        .unwrap();
+        let owned_outputs = HashSet::from([owned.canonicalize().unwrap()]);
+        let inputs = recorded_inputs_with_owned_outputs(
+            &fls_path,
+            &root,
+            &out_dir,
+            &main,
+            &HashMap::new(),
+            RawTexMode::Root,
+            &owned_outputs,
+        )
+        .unwrap();
+        let physical = inputs
+            .iter()
+            .filter(|input| !is_virtual_fingerprint_path(&input.path))
+            .collect::<Vec<_>>();
+        assert_eq!(physical.len(), 2);
+        let main_path = main.canonicalize().unwrap().display().to_string();
+        let generated_path = generated.canonicalize().unwrap().display().to_string();
+        let root_input = physical
+            .iter()
+            .find(|input| input.path == main_path)
+            .unwrap();
+        assert!(root_input.metadata.is_some());
+        assert!(root_input.hash.starts_with(TEX_ROOT_RAW_HASH_PREFIX));
+        let generated_input = physical
+            .iter()
+            .find(|input| input.path == generated_path)
+            .unwrap();
+        assert!(generated_input.metadata.is_none());
+        let generation = BuildGeneration {
+            started_ns: 0,
+            lookup_inputs: Some(Vec::new()),
+            owned_format_directories: Vec::new(),
+        };
+        assert!(!generation_can_publish(&inputs, &generation));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn streaming_hash_never_returns_partial_fingerprints_after_read_errors() {
+        struct FailedReader(bool);
+        impl Read for FailedReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 {
+                    return Err(ErrorKind::PermissionDenied.into());
+                }
+                self.0 = true;
+                buffer[..3].copy_from_slice(b"abc");
+                Ok(3)
+            }
+        }
+        assert_eq!(
+            hash_reader_contents(&mut FailedReader(false))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::PermissionDenied,
+        );
+    }
+
+    #[test]
+    fn file_fingerprints_share_the_same_full_byte_stream_hash() {
+        assert_eq!(content_hash(b""), 0xcbf29ce484222325);
+        assert_eq!(content_hash(b"foobar"), 0x85944171f73967e8);
+        let root = unique_temp_dir("tekai-streaming-fingerprints");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("main.tex");
+        let bytes = (0..CONTENT_HASH_BUFFER_SIZE * 2 + 17)
+            .map(|index| index as u8)
+            .collect::<Vec<_>>();
+        fs::write(&path, &bytes).unwrap();
+        let expected = content_hash(&bytes);
+        assert_eq!(
+            hash_file_contents(&path).unwrap(),
+            (bytes.len() as u64, expected)
+        );
+        assert_eq!(
+            file_content_hash_hex(&path).unwrap(),
+            format!("{expected:016x}")
+        );
+        let generated = generated_output_fingerprint(&path).unwrap().unwrap();
+        assert_eq!(generated.len, bytes.len() as u64);
+        assert_eq!(generated.hash, expected);
+        for mode in [RawTexMode::Root, RawTexMode::Preamble, RawTexMode::Input] {
+            let input = fingerprint_raw_tex_path_reusing(&path, None, mode)
+                .unwrap()
+                .unwrap();
+            assert_eq!(input.len, bytes.len() as u64);
+            assert_eq!(input.hash, format!("{}{expected:016x}", mode.hash_prefix()));
+            let mut changed_metadata = input.clone();
+            changed_metadata.metadata = None;
+            assert!(input_fingerprint_is_fresh(&changed_metadata).unwrap());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn preamble_workers_are_joined_before_early_errors_or_unwinds_return() {
