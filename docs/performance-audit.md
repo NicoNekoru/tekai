@@ -73,15 +73,28 @@ have explicit bounds. EOF, write failures and retries cannot replay old input or
 grow retained output without limit. Compatibility properties use native
 formatting and stream implementations as test-only oracles.
 
+Integer prefix conversion also uses Rust byte slices, with constant storage,
+linear digit work, explicit overflow and consumed offsets. The replaced native
+integer functions remain test-only oracles. Actual CLI cases cover SyncTeX base selection and
+epoch success and failure paths.
+
+TrueType glyph selection and composite references check their array domains.
+Reserved glyphs own their output slots once. Unsigned optional indices replace
+the signed sentinel. An owned four-glyph font fixture verifies actual embedded
+outlines, metrics and every byte-code mapping. This is not a complete hostile
+font parser. Post-table custom-name counts still wrap after 256, and malformed
+post/name string records need a rewrite.
+
 Initialization now uses ordinary Rust calls. The core modules share one type
 family and checked state imports instead of duplicated external declarations.
 Layout tests pin field offsets and union-byte views to preserve existing format
 files. Rounding and termination also use checked Rust calls. Backend ABI
 connections and global ownership remain unfinished.
 
-The combined local checkpoint passed 649 workspace unit tests, including 183
-engine tests, with 512 property cases. It also passed 14 no-system-TeX lookup
-tests, 11 compiler cache tests, 12 self-contained CLI tests and all required
+The combined local checkpoint through `0b794ae` passed 681 workspace unit tests,
+including 205 engine tests, with 512 property cases. It also passed 14 no-system-TeX lookup
+tests, 11 compiler cache tests, 13 self-contained CLI tests, two SyncTeX/epoch
+tests, 364 Python policy tests and all required
 runtime regression probes. Fresh format generation and loading passed. All 99
 pages matched pinned reference pixels and extracted text. Strict Clippy,
 Rust 1.89 checks and the standalone engine build passed with C and C++ compilers
@@ -89,11 +102,19 @@ disabled. The final candidate must repeat the required gates in CI.
 
 The exact engine still contains substantial pdfTeX-derived algorithms,
 raw-pointer callers, internal ABI connections and mutable global state. Native
-scanning, string utilities, option parsing and regex remain to be replaced.
+formatted scanning, string utilities, option parsing and regex remain to be
+replaced.
 The Rust regex prototype is not production-ready. The remaining backend families
 need shared types and invocation-owned state. Necessary OS interfaces remain.
 Repeated in-process execution and leak freedom are not established. Remote
 timing for the new implementation is pending.
+
+The next backend checkpoint must fix reproduced source-level bounds faults in
+Type1 interval copies, normalized ToUnicode sequences and SFD cursor/index
+handling. Invocation ownership also remains a blocker. Core pointers are
+overwritten before the repeat-entry check, fatal exits bypass Rust drops, and
+several destructors leave stale global roots. Catching a panic across existing
+non-unwinding internal calls is not a safe replacement for process termination.
 
 Cache generation checks use filesystem metadata, including change times, to
 detect concurrent edits. They are not a snapshot filesystem. Cold dependency
@@ -125,6 +146,19 @@ open unless a dedicated operation-count test proves otherwise.
 - Loading unrelated sidecars from settled auxiliary caches.
 - Cloning shared PDF resources per page.
 - Cloning expansion state for mutable local groups.
+- Re-reading the same recorder during auxiliary phases. Streaming removes full
+  file copies and duplicate retained paths, but the longest row and unique
+  dependency sets remain uncapped.
+
+Full-byte hashing now uses 64 KiB of scratch per active call. An output snapshot
+has at most eight hash workers, so its hash scratch is at most 512 KiB. This
+does not bound total process memory or concurrent independent builds.
+
+The warm-cache benchmark searches project inputs without redundantly making
+generated output a recursive source tree. Such explicit output searches
+intentionally decline cache publication. The corrected workload still verifies
+all 1024 genuine inputs, a real cache hit and unchanged state identity. Post-exit
+oracle failures retain bounded command IDs, arguments and captured output.
 
 The active experimental renderer remains research code. Its general page parity
 is not established. Retired proposal-only modules and the redundant manual

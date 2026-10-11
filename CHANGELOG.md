@@ -43,6 +43,15 @@ versioning.
   internal C-style calls with Rust calls while preserving format-file layout.
 - Use checked Rust calls for engine rounding and termination, with property
   tests for rounding boundaries and saturation.
+- Replace native integer prefixes with allocation-free Rust parsers. Preserve
+  base selection, consumed offsets and epoch validation, and define overflow
+  behavior without native locale or error state.
+- Check TrueType character, glyph and metric indices before array access.
+  Reserve subset glyphs once and preserve unsigned output indices.
+- Stream recorder rows and complete file hashes rather than retaining full
+  files or duplicate path lists. Limit output snapshots to eight hash workers.
+- Benchmark verified warm cache hits with all referenced inputs intact, and
+  retain bounded command evidence when post-exit cache checks fail.
 - Add deterministic scan-count, eviction and watcher-retention CI tests,
   a repeatable runtime benchmark, and transparent-image PDF parity coverage.
 
