@@ -123,18 +123,37 @@ Unchanged warm checks do not recursively enumerate directories.
 
 ## Last completed remote result
 
-[Run 38108239876](https://github.com/NicoNekoru/tekai/actions/runs/38108239876)
-tested `d305dab`, before these fixes. Intel passed all four timing cases. ARM
-image timing was inconclusive because candidate relative MAD was 10.734%.
-The estimated ratio was 0.9951, so the result did not demonstrate a regression.
-Both binaries slowed during the run. Missing CPU, memory and swap telemetry
-prevented a reliable explanation. Stable parent RSS and thread counts did not
-establish leak freedom in engine children.
+[Run 38132366060](https://github.com/NicoNekoru/tekai/actions/runs/38132366060)
+tested `9ae3878` against actual `main` at `0b6e92e`. Both architectures passed
+170 deterministic assertions and all 99 reference pages. Both core jobs failed
+the same generated-input lookup assertion, since fixed in `a27fe55`.
 
-Both architectures passed their core tests and 99-page parity checks, but each
-reported seven reproduced known failures. Those historical results do not
-validate the new fixes. Build times varied with runner conditions, so the
-observed rlib-only build improvement is not a causal speedup estimate.
+| Case | Intel | ARM |
+| --- | --- | --- |
+| CLI startup | Pass, ratio 1.0761, interval 1.0483 to 1.0972 | Inconclusive, relative MAD 12.10% and 13.98%, ratio 1.0003 |
+| Nested lookup | Inconclusive, relative MAD 12.02% and 12.30%, ratio 0.1788 | Pass, ratio 0.1629 |
+| Image compilation | Pass, ratio 1.0132 | Pass, ratio 0.9934 |
+| Warm build cache | Initialization error, no scored samples | Initialization error, no scored samples |
+
+The first three cases each completed 128 pairs and 32 crossover units.
+Warm-cache initialization incorrectly searched generated output recursively,
+which intentionally prevents cache publication. The fixture correction in
+`9f78fe0` preserves that compiler guard and verifies genuine cache hits. Neither
+inconclusive result demonstrates a regression, but both remain blocking.
+
+ARM launch times drifted upward for both binaries, while parent memory and
+thread counts stayed nearly constant. Recorded host load fell during that drift,
+so it does not explain the slowdown. These measurements do not establish child
+leak freedom or isolate loader time. This run did not execute same-binary controls.
+
+Fresh Cargo release elapsed was 321.8 to 208.9 seconds on Intel and 145.3 to
+122.3 seconds on ARM. These are observed whole-candidate comparisons on shared
+runners, not a causal estimate for removing the C archive.
+
+[Run 38137192590](https://github.com/NicoNekoru/tekai/actions/runs/38137192590)
+now tests the verified `83156ff` checkpoint against the same actual `main` on both
+free runner architectures. It includes the lookup and benchmark-fixture fixes.
+Newer uncommitted parser and invocation work is outside that comparison.
 
 ## Remaining performance work
 
