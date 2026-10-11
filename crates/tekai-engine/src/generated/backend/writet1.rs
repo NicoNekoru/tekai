@@ -1,4 +1,7 @@
-use crate::backend_parse::checked_span;
+use crate::backend_grammar::{
+    charstring_count, encoding_assignment, encoding_copy, encoding_interval, predefined_encoding,
+};
+use crate::backend_parse::{checked_span, FieldError};
 use crate::openclose::open_input;
 use crate::stdio::{feof, ungetc};
 use crate::support::{xfclose, xfopen};
@@ -2083,6 +2086,38 @@ unsafe extern "C" fn copy_glyph_names(
             xstrdup(*glyph_names.offset(a as isize) as const_string) as *mut ::core::ffi::c_char;
     }
 }
+unsafe fn t1_written_suffix<'a>(start: *const ::core::ffi::c_char) -> &'a [u8] {
+    let written = t1_line_ptr.addr().checked_sub(t1_line_array.addr());
+    let offset = start.addr().checked_sub(t1_line_array.addr());
+    let (Some(written), Some(offset)) = (written, offset) else {
+        crate::utils::pdftex_fail_args(c"invalid pfb, invalid initialized line span".as_ptr(), &[]);
+    };
+    if t1_line_array.is_null() || written >= t1_line_limit || offset > written {
+        crate::utils::pdftex_fail_args(c"invalid pfb, invalid initialized line span".as_ptr(), &[]);
+    }
+    // The line reader initializes this exact span, including during assembly.
+    // Never scan allocation capacity or require a terminator beyond its end.
+    &std::slice::from_raw_parts(t1_line_array.cast::<u8>(), written)[offset..]
+}
+
+unsafe fn t1_scan_field<T>(result: Result<T, FieldError>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(FieldError::NoMatch) => None,
+        Err(FieldError::Overflow) => {
+            crate::utils::pdftex_fail_args(c"invalid pfb, integer field out of range".as_ptr(), &[])
+        }
+    }
+}
+
+unsafe fn t1_copy_scan_word(bytes: &[u8]) {
+    if t1_buf_array.is_null() || bytes.len() >= t1_buf_limit {
+        crate::utils::pdftex_fail_args(c"invalid pfb, encoding word exceeds buffer".as_ptr(), &[]);
+    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), t1_buf_array.cast::<u8>(), bytes.len());
+    *t1_buf_array.add(bytes.len()) = 0;
+}
+
 unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
     let mut i: ::core::ffi::c_int = 0;
     let mut a: ::core::ffi::c_int = 0;
@@ -2108,12 +2143,11 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
         b"def\0" as *const u8 as *const ::core::ffi::c_char,
     ) != 0
     {
-        if sscanf(
-            t1_line_array
-                .offset(strlen(b"/Encoding\0" as *const u8 as *const ::core::ffi::c_char) as isize),
-            b"%255s\0" as *const u8 as *const ::core::ffi::c_char,
-            t1_buf_array,
-        ) == 1 as ::core::ffi::c_int
+        let encoding = t1_scan_field(predefined_encoding(t1_written_suffix(
+            t1_line_array.add(b"/Encoding".len()),
+        )));
+        t1_copy_scan_word(encoding.unwrap_or_default());
+        if encoding.is_some()
             && strcmp(
                 t1_buf_array,
                 b"StandardEncoding\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2227,15 +2261,29 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
                 t1_getline();
                 p = t1_line_array as *mut ::core::ffi::c_char;
             }
-            if sscanf(
-                p,
-                b"dup %i%255s put\0" as *const u8 as *const ::core::ffi::c_char,
-                &raw mut i,
-                t1_buf_array,
-            ) == 2 as ::core::ffi::c_int
-                && *t1_buf_array as ::core::ffi::c_int == '/' as i32
-                && (i >= 0 as ::core::ffi::c_int && i < 256 as ::core::ffi::c_int)
-            {
+            let bytes = t1_written_suffix(p);
+            let assignment = t1_scan_field(encoding_assignment(bytes)).filter(|parsed| {
+                parsed.name.first() == Some(&b'/') && (0..256).contains(&parsed.index)
+            });
+            let copy = if assignment.is_none() {
+                t1_scan_field(encoding_copy(bytes)).filter(|parsed| {
+                    (0..256).contains(&parsed.source) && (0..256).contains(&parsed.target)
+                })
+            } else {
+                None
+            };
+            let interval = if assignment.is_none() && copy.is_none() {
+                t1_scan_field(encoding_interval(bytes)).filter(|parsed| {
+                    (0..256).contains(&parsed.source)
+                        && (0..256).contains(&parsed.target)
+                        && (0..256).contains(&parsed.count)
+                })
+            } else {
+                None
+            };
+            if let Some(assignment) = assignment {
+                i = assignment.index;
+                t1_copy_scan_word(assignment.name);
                 if strcmp(
                     t1_buf_array.offset(1 as ::core::ffi::c_int as isize),
                     &raw mut notdef as *mut ::core::ffi::c_char,
@@ -2258,15 +2306,9 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
                 if *p as ::core::ffi::c_int == ' ' as i32 {
                     p = p.offset(1);
                 }
-            } else if sscanf(
-                p,
-                b"dup dup %i exch %i get put\0" as *const u8 as *const ::core::ffi::c_char,
-                &raw mut b,
-                &raw mut a,
-            ) == 2 as ::core::ffi::c_int
-                && (a >= 0 as ::core::ffi::c_int && a < 256 as ::core::ffi::c_int)
-                && (b >= 0 as ::core::ffi::c_int && b < 256 as ::core::ffi::c_int)
-            {
+            } else if let Some(copy) = copy {
+                a = copy.source;
+                b = copy.target;
                 copy_glyph_names(glyph_names, a, b);
                 p = strstr(p, b" get put\0" as *const u8 as *const ::core::ffi::c_char);
                 if p.is_null() {
@@ -2282,18 +2324,10 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
                 if *p as ::core::ffi::c_int == ' ' as i32 {
                     p = p.offset(1);
                 }
-            } else if sscanf(
-                p,
-                b"dup dup %i %i getinterval %i exch putinterval\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &raw mut a,
-                &raw mut c,
-                &raw mut b,
-            ) == 3 as ::core::ffi::c_int
-                && (a >= 0 as ::core::ffi::c_int && a < 256 as ::core::ffi::c_int)
-                && (b >= 0 as ::core::ffi::c_int && b < 256 as ::core::ffi::c_int)
-                && (c >= 0 as ::core::ffi::c_int && c < 256 as ::core::ffi::c_int)
-            {
+            } else if let Some(interval) = interval {
+                a = interval.source;
+                c = interval.count;
+                b = interval.target;
                 if checked_span(i64::from(a), i64::from(c), 256).is_none()
                     || checked_span(i64::from(b), i64::from(c), 256).is_none()
                 {
@@ -3897,18 +3931,15 @@ unsafe extern "C" fn t1_mark_glyphs() {
     }
 }
 unsafe extern "C" fn t1_check_unusual_charstring() {
-    let mut p: *mut ::core::ffi::c_char = strstr(
+    let marker = strstr(
         t1_line_array,
         &raw mut charstringname as *mut ::core::ffi::c_char,
-    )
-    .offset(strlen(&raw mut charstringname as *mut ::core::ffi::c_char) as isize);
-    let mut i: ::core::ffi::c_int = 0;
-    if sscanf(
-        p,
-        b"%i\0" as *const u8 as *const ::core::ffi::c_char,
-        &raw mut i,
-    ) != 1 as ::core::ffi::c_int
-    {
+    );
+    if marker.is_null() {
+        crate::utils::pdftex_fail_args(c"invalid pfb, CharStrings marker missing".as_ptr(), &[]);
+    }
+    let mut p = marker.add(strlen(&raw mut charstringname as *mut ::core::ffi::c_char));
+    if t1_scan_field(charstring_count(t1_written_suffix(p))).is_none() {
         strcpy(t1_buf_array as *mut ::core::ffi::c_char, t1_line_array);
         *strchr(t1_buf_array, 0 as ::core::ffi::c_int)
             .offset(-(1 as ::core::ffi::c_int as isize)) = ' ' as i32 as ::core::ffi::c_char;

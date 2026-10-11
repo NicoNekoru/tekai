@@ -87,8 +87,14 @@ names. One pass reads the referenced string prefix, and glyph lookups do not
 repeat string walks. Output indices preserve the full unsigned range. An owned
 304-glyph font verifies all 302 custom names across the old 256-name wrap, and
 malformed records fail through ordinary diagnostics. Legacy non-NUL name bytes
-through 255 bytes remain accepted. Other name-table records and font-table
-readers still need checked ownership and bounds.
+through 255 bytes remain accepted. Name tables now retain only the union of
+referenced strings, at most 131070 bytes, and check actual storage offsets,
+format-1 language tags, UTF-16 lengths and output fields. The subset fallback
+uses exact suffix ranks and common-prefix queries rather than repeatedly walking
+long overlapping names. Other font-table readers still need checked ownership
+and bounds. The compact planner has bounded work but is not a globally optimal
+packing solver. It may reject a layout that requires a different shared-string
+assignment to fit the format's 16-bit offsets.
 
 Initialization now uses ordinary Rust calls. The core modules share one type
 family and checked state imports instead of duplicated external declarations.
@@ -96,19 +102,22 @@ Layout tests pin field offsets and union-byte views to preserve existing format
 files. Rounding and termination also use checked Rust calls. Backend ABI
 connections and global ownership remain unfinished.
 
-The combined local checkpoint through `3dc1ef2` passed 709 workspace unit tests,
-including 233 engine tests, with 512 property cases. It also passed 14 no-system-TeX lookup
-tests, 11 compiler cache tests, 17 self-contained CLI tests, two SyncTeX/epoch
-tests, 364 Python policy tests and all required
-runtime regression probes. Fresh format generation and loading passed. All 99
-pages matched pinned reference pixels and extracted text. Strict Clippy,
-Rust 1.89 checks and the standalone engine build passed with C and C++ compilers
-disabled. The final candidate must repeat the required gates in CI.
+The local name-table and backend-grammar checkpoint passed 742 workspace unit
+tests, including 266 engine tests, with 512 property cases. One unrelated unit
+test remains ignored. It also passed 14 no-system-TeX lookup tests, 11 compiler
+cache tests, 17 self-contained CLI tests, six diagnostic-profile tests, two
+SyncTeX/epoch tests, 366 Python policy tests and all 11 required runtime regression
+probes. Fresh format generation and loading passed. All 99 pages matched pinned
+reference pixels and extracted text. Strict Clippy, Rust 1.89 checks and the
+standalone engine build passed with C and C++ compilers disabled. The final
+candidate must repeat the required gates in CI.
 
 The exact engine still contains substantial pdfTeX-derived algorithms,
-raw-pointer callers, internal ABI connections and mutable global state. Native
-formatted scanning, string utilities, option parsing and regex remain to be
-replaced.
+raw-pointer callers, internal ABI connections and mutable global state. Three
+native floating-point scans, string utilities, option parsing and regex remain
+to be replaced. Fixed backend integer scans now use borrowed Rust grammars.
+Regex result storage is bounded by the pattern's possible captures, while its
+native compiler and matcher still require replacement.
 The Rust regex prototype is not production-ready. The remaining backend families
 need shared types and invocation-owned state. Necessary OS interfaces remain.
 Repeated in-process execution and leak freedom are not established. Remote
@@ -166,7 +175,10 @@ runners, not a causal estimate for removing the C archive.
 [Run 38137192590](https://github.com/NicoNekoru/tekai/actions/runs/38137192590)
 now tests the verified `83156ff` checkpoint against the same actual `main` on both
 free runner architectures. It includes the lookup and benchmark-fixture fixes.
-Newer uncommitted parser and invocation work is outside that comparison.
+Later Rust ownership checkpoints are outside that comparison. Both core jobs
+passed real installed-TeX lookup, then failed two outdated diagnostic-profile
+expectations. The current test changes distinguish early root validation,
+recoverable malformed cache metadata and fatal cache I/O errors.
 
 ## Remaining performance work
 

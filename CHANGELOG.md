@@ -50,8 +50,16 @@ versioning.
   Reserve subset glyphs once and preserve unsigned output indices.
 - Own indexed TrueType post names in Rust, check table and Pascal-string bounds,
   and preserve custom output names beyond the former 256-name counter wrap.
+- Own OpenType name records and referenced strings, honor actual storage offsets
+  and format-1 language tags, and validate subset fields before output. Use exact
+  indexed comparisons for compact shared-string layouts.
 - Parse SFD and ToUnicode fields with checked Rust cursors. Validate map-name
   assembly, Type1 encoding intervals and sequence capacity before writes.
+- Replace fixed backend integer scans with checked Rust grammars. Preserve base
+  selection and assignment-count rules, and reject overflowing map IDs and
+  numeric glyph names instead of narrowing them.
+- Bound regex result slots by the pattern's possible captures rather than the
+  requested count. Nonexistent captures still report `-1->`.
 - Own exact-engine arguments, reject repeat entry before global mutation, and
   return typed normal completion while retaining process-isolated fatal exits.
 - Stream recorder rows and complete file hashes rather than retaining full

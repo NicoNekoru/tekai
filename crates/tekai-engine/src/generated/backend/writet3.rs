@@ -1,3 +1,4 @@
+use crate::backend_grammar::glyph_preamble;
 use crate::openclose::open_input;
 use crate::stdio::feof;
 use crate::support::{xfclose, xfopen};
@@ -620,21 +621,18 @@ unsafe extern "C" fn t3_write_glyph(mut f: internalfontnumber) {
         strlen(&raw mut t3_begin_glyph_str as *mut ::core::ffi::c_char),
     ) == 0 as ::core::ffi::c_int
     {
-        if sscanf(
-            t3_line_array
-                .offset(strlen(&raw mut t3_begin_glyph_str as *mut ::core::ffi::c_char) as isize)
-                .offset(1 as ::core::ffi::c_int as isize),
-            b"%i %i %i %i %i %i %i %i =\0" as *const u8 as *const ::core::ffi::c_char,
-            &raw mut glyph_index,
-            &raw mut width,
-            &raw mut height,
-            &raw mut depth,
-            &raw mut llx,
-            &raw mut lly,
-            &raw mut urx,
-            &raw mut ury,
-        ) != 8 as ::core::ffi::c_int
-        {
+        let written = t3_line_ptr
+            .addr()
+            .checked_sub(t3_line_array.addr())
+            .filter(|&written| !t3_line_array.is_null() && written < t3_line_limit)
+            .unwrap_or_else(|| {
+                crate::utils::pdftex_fail_args(c"invalid glyph initialized line span".as_ptr(), &[])
+            });
+        let line = std::slice::from_raw_parts(t3_line_array.cast::<u8>(), written);
+        let preamble = line
+            .get(b"\\pdfglyph".len() + 1..)
+            .and_then(|bytes| glyph_preamble(bytes).ok());
+        let Some(preamble) = preamble else {
             p = strchr(t3_line_array, 0 as ::core::ffi::c_int)
                 .offset(-(1 as ::core::ffi::c_int as isize));
             if *p as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
@@ -644,7 +642,15 @@ unsafe extern "C" fn t3_write_glyph(mut f: internalfontnumber) {
                 b"invalid glyph preamble: `%s'\0" as *const u8 as *const ::core::ffi::c_char,
                 &[crate::utils::PrintfArg::from(t3_line_array)],
             );
-        }
+        };
+        glyph_index = preamble.index;
+        width = preamble.width;
+        height = preamble.height;
+        depth = preamble.depth;
+        llx = preamble.llx;
+        lly = preamble.lly;
+        urx = preamble.urx;
+        ury = preamble.ury;
         if glyph_index < *fontbc.offset(f as isize) as ::core::ffi::c_int
             || glyph_index > *fontec.offset(f as isize) as ::core::ffi::c_int
         {

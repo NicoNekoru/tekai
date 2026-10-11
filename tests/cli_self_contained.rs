@@ -120,6 +120,66 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
     fn table<'a>(font: &'a [u8], tag: &[u8; 4]) -> &'a [u8] {
         &font[table_range(font, tag)]
     }
+    fn replace_table(font: &[u8], tag: &[u8; 4], replacement: &[u8]) -> Vec<u8> {
+        let tables = font[12..12 + usize::from(read16(font, 4)) * 16]
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|record| {
+                let current: [u8; 4] = record[..4].try_into().unwrap();
+                (
+                    current,
+                    if &current == tag {
+                        replacement.to_vec()
+                    } else {
+                        table(font, &current).to_vec()
+                    },
+                )
+            })
+            .collect();
+        assemble(tables)
+    }
+    fn owned_name_table(
+        version: u16,
+        records: &[[u16; 6]],
+        languages: &[[u16; 2]],
+        gap: usize,
+        strings: &[u8],
+    ) -> Vec<u8> {
+        let storage = 6
+            + records.len() * 12
+            + if version == 1 {
+                2 + languages.len() * 4
+            } else {
+                0
+            }
+            + gap;
+        let mut bytes = Vec::new();
+        for word in [version, records.len() as u16, storage as u16] {
+            bytes.extend_from_slice(&word.to_be_bytes());
+        }
+        for record in records {
+            for word in record {
+                bytes.extend_from_slice(&word.to_be_bytes());
+            }
+        }
+        if version == 1 {
+            bytes.extend_from_slice(&(languages.len() as u16).to_be_bytes());
+            for language in languages {
+                for word in language {
+                    bytes.extend_from_slice(&word.to_be_bytes());
+                }
+            }
+        }
+        bytes.resize(storage, 0xdd);
+        bytes.extend_from_slice(strings);
+        bytes
+    }
+    fn name_string(names: &[u8], index: usize) -> &[u8] {
+        let record = 6 + index * 12;
+        let start = usize::from(read16(names, 4)) + usize::from(read16(names, record + 10));
+        &names[start..start + usize::from(read16(names, record + 8))]
+    }
     fn rectangle(width: i16, height: i16) -> Vec<u8> {
         let mut glyph = Vec::new();
         for word in [1_i16, 0, 0, width, height, 3, 0] {
@@ -419,6 +479,12 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
             70 => "uni10000",
             71 => "uni0042",
             72 => "uni0041",
+            73 => "index2147483648",
+            74 => "uni100000000",
+            75 => "index2tail",
+            76 => "uni0041tail",
+            77 => "index02",
+            78 => "index0x2",
             _ => ".notdef",
         };
         encoding.push_str(&format!("/{name}\n"));
@@ -430,11 +496,13 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
         r#"\pdfcompresslevel=0
 \pdfobjcompresslevel=0
 \pdfmapline{=cmr10 SyntheticGlyphs <synthetic.enc <synthetic.ttf}
+\pdfmapline{=cmr10 MustNotReplace PidEid=32768,1 <synthetic.ttf}
+\pdfmapline{=cmr10 MustNotReplace PidEid=3,-32769 <synthetic.ttf}
 \documentclass{article}
 \pagestyle{empty}
 \begin{document}
 \font\probe=cmr10 at 10pt
-\probe ABCDEFGH
+\probe ABCDEFGHIJKLMN
 \end{document}
 "#,
     );
@@ -446,12 +514,21 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
         "`index-1' out of valid range [1..4)",
         "`uni10000' out of valid unicode range [0..65536)",
         "`uni0042' is mapped to index 0 which is out of valid range [1..4)",
+        "numeric glyph `index2147483648' out of range",
+        "numeric glyph `uni100000000' out of range",
+        "glyph `index2tail' not found",
+        "glyph `uni0041tail' not found",
     ] {
         assert!(
             diagnostic.contains(&warning.split_ascii_whitespace().collect::<String>()),
             "{log}"
         );
     }
+    assert_eq!(
+        diagnostic.matches("PidEidvalueoutofrange").count(),
+        2,
+        "both overflowing ID fields must reject the replacement map entry: {log}"
+    );
     let pdf = fs::read(project.0.join("build/main.pdf")).unwrap();
     let embedded = embedded_font(&pdf);
     assert_eq!(read16(table(embedded, b"maxp"), 4), 4);
@@ -496,6 +573,12 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
         (70, 0),
         (71, 0),
         (72, 2),
+        (73, 0),
+        (74, 0),
+        (75, 0),
+        (76, 0),
+        (77, 2),
+        (78, 2),
     ] {
         expected_encoding[code] = expected;
     }
@@ -612,6 +695,217 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
             "case {case}: {diagnostics}"
         );
     }
+
+    // Real format-1 storage has its own header offset, language-tag records and
+    // UTF-16 strings. Long license text and unused padding must not enter a
+    // fixed sanitizing buffer or be duplicated in the subset.
+    let utf16 = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .copied()
+            .flat_map(|byte| [0, byte])
+            .collect::<Vec<_>>()
+    };
+    let windows_family = utf16(b"Owned Windows Family");
+    let windows_name = utf16(b"SyntheticGlyphs");
+    let license = utf16(&vec![b'L'; 2048]);
+    let language = utf16(b"en");
+    let windows_strings = [
+        windows_family.as_slice(),
+        windows_name.as_slice(),
+        license.as_slice(),
+        language.as_slice(),
+        &vec![0xcc; 8192],
+    ]
+    .concat();
+    let windows_records = [
+        [3, 1, 0x8000, 4, windows_family.len() as u16, 0],
+        [
+            3,
+            1,
+            0x8000,
+            6,
+            windows_name.len() as u16,
+            windows_family.len() as u16,
+        ],
+        [
+            3,
+            1,
+            0x8000,
+            13,
+            license.len() as u16,
+            (windows_family.len() + windows_name.len()) as u16,
+        ],
+    ];
+    let windows_language_offset = windows_family.len() + windows_name.len() + license.len();
+    let windows_table = owned_name_table(
+        1,
+        &windows_records,
+        &[[language.len() as u16, windows_language_offset as u16]],
+        17,
+        &windows_strings,
+    );
+    let windows_font = replace_table(&named, b"name", &windows_table);
+    let windows_project = Project::new();
+    write_named_project(&windows_project, &windows_font);
+    windows_project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+    let windows_pdf = fs::read(windows_project.0.join("build/main.pdf")).unwrap();
+    let output_names = table(embedded_font(&windows_pdf), b"name");
+    assert_eq!(read16(output_names, 0), 1);
+    assert_eq!(read16(output_names, 2), 3);
+    assert_eq!(read16(output_names, 4), 48);
+    let prefix = &name_string(output_names, 1)[..14];
+    assert!(
+        prefix
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .take(6)
+            .all(|pair| pair[0] == 0 && pair[1].is_ascii_uppercase())
+    );
+    assert_eq!(&prefix[12..], &[0, b'+']);
+    assert_eq!(
+        name_string(output_names, 0),
+        [prefix, &windows_family].concat()
+    );
+    assert_eq!(
+        name_string(output_names, 1),
+        [prefix, &windows_name].concat()
+    );
+    assert_eq!(name_string(output_names, 2), license);
+    assert_eq!(read16(output_names, 42), 1);
+    assert_eq!(read16(output_names, 44), language.len() as u16);
+    let language_start =
+        usize::from(read16(output_names, 4)) + usize::from(read16(output_names, 46));
+    assert_eq!(&output_names[language_start..], &language);
+    assert_eq!(
+        output_names.len(),
+        48 + 28 + windows_family.len() + windows_name.len() + license.len() + language.len()
+    );
+
+    // Full embedding still copies the original valid table byte-for-byte,
+    // including its format-1 layout and padding.
+    let copy_project = Project::new();
+    write_named_project(&copy_project, &windows_font);
+    let source = fs::read_to_string(copy_project.0.join("main.tex")).unwrap();
+    copy_project.write(
+        "main.tex",
+        &source
+            .replace("<synthetic.enc ", "")
+            .replace("<synthetic.ttf", "<<synthetic.ttf"),
+    );
+    copy_project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+    let copy_pdf = fs::read(copy_project.0.join("build/main.pdf")).unwrap();
+    assert_eq!(table(embedded_font(&copy_pdf), b"name"), &windows_table);
+
+    // A valid source may share long strings. When naive subset concatenation
+    // exceeds u16 offsets, the checked planner retains that sharing.
+    let mut shared_records = vec![[1, 0, 0, 6, 15, 0]];
+    shared_records.extend((0..8).map(|language| [1, 0, language, 4, 32000, 15]));
+    shared_records.sort_by_key(|record| (record[0], record[1], record[2], record[3]));
+    let shared_table = owned_name_table(
+        0,
+        &shared_records,
+        &[],
+        23,
+        &[b"SyntheticGlyphs".as_slice(), &vec![b'A'; 32000]].concat(),
+    );
+    let shared_font = replace_table(&named, b"name", &shared_table);
+    let shared_project = Project::new();
+    write_named_project(&shared_project, &shared_font);
+    shared_project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+    let shared_pdf = fs::read(shared_project.0.join("build/main.pdf")).unwrap();
+    let shared_output = table(embedded_font(&shared_pdf), b"name");
+    assert_eq!(read16(shared_output, 2), 9);
+    assert_eq!(shared_output.len(), 6 + 9 * 12 + 22 + 32007);
+    let postscript = shared_records
+        .iter()
+        .position(|record| record[3] == 6)
+        .unwrap();
+    let prefix = &name_string(shared_output, postscript)[..7];
+    assert!(prefix[..6].iter().all(u8::is_ascii_uppercase));
+    assert_eq!(prefix[6], b'+');
+    for (index, record) in shared_records.iter().enumerate() {
+        let source = if record[3] == 6 {
+            b"SyntheticGlyphs".to_vec()
+        } else {
+            vec![b'A'; 32000]
+        };
+        assert_eq!(
+            name_string(shared_output, index),
+            [prefix, &source].concat()
+        );
+    }
+
+    let mut too_long = vec![b'A'; usize::from(u16::MAX)];
+    too_long[..15].copy_from_slice(b"SyntheticGlyphs");
+    let too_long_table = owned_name_table(
+        0,
+        &[[1, 0, 0, 4, u16::MAX, 0], [1, 0, 0, 6, 15, 0]],
+        &[],
+        0,
+        &too_long,
+    );
+    for (case, expected) in [
+        (0, "name: table extent exceeds font file"),
+        (1, "name: string storage overlaps records or exceeds table"),
+        (2, "name: string span exceeds table storage"),
+        (3, "name: UTF-16 string has an odd byte length"),
+        (4, "name: unsupported table version"),
+        (5, "name: string storage overlaps records or exceeds table"),
+        (6, "name: subset string exceeds unsigned 16-bit length"),
+    ] {
+        let mut malformed = if case == 6 {
+            replace_table(&named, b"name", &too_long_table)
+        } else {
+            named.clone()
+        };
+        let name_range = table_range(&malformed, b"name");
+        match case {
+            0 => {
+                let record = (0..usize::from(read16(&malformed, 4)))
+                    .map(|index| 12 + index * 16)
+                    .find(|&record| &malformed[record..record + 4] == b"name")
+                    .unwrap();
+                put32(&mut malformed, record + 12, u32::MAX);
+            }
+            1 => put16(&mut malformed, name_range.start + 4, 5),
+            2 => put16(&mut malformed, name_range.start + 14, u16::MAX),
+            3 => {
+                put16(&mut malformed, name_range.start + 6, 3);
+                put16(&mut malformed, name_range.start + 8, 1);
+            }
+            4 => put16(&mut malformed, name_range.start, 2),
+            5 => put16(&mut malformed, name_range.start, 1),
+            6 => {}
+            _ => unreachable!(),
+        }
+        let malformed_project = Project::new();
+        write_named_project(&malformed_project, &malformed);
+        let output =
+            malformed_project.run(&["build", "main.tex", "--report-json", "--once", "--force"]);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "malformed name case {case}: {output:?}"
+        );
+        let diagnostics = format!(
+            "{}\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+            fs::read_to_string(malformed_project.0.join("build/main.log")).unwrap_or_default()
+        );
+        let normalized: String = diagnostics.split_ascii_whitespace().collect();
+        let expected: String = expected.split_ascii_whitespace().collect();
+        assert!(
+            normalized.contains(&expected),
+            "name case {case}: {diagnostics}"
+        );
+        assert!(
+            !diagnostics.contains("panicked"),
+            "name case {case}: {diagnostics}"
+        );
+    }
 }
 
 #[test]
@@ -669,8 +963,14 @@ fn bundled_engine_rejects_out_of_bounds_type1_encoding_intervals() {
 ",
     );
     for interval in [
-        "dup dup 255 2 getinterval 0 exch putinterval",
-        "dup dup 0 2 getinterval 255 exch putinterval",
+        "dup dup 255 2 getinterval 0 exch putinterval".to_owned(),
+        "dup dup 0 2 getinterval 255 exch putinterval".to_owned(),
+        // A long initialized numeric field crosses the former native scanner's
+        // 512-byte limit. Leading zero selects octal, so 377 still means 255.
+        format!(
+            "dup dup {}377 2 getinterval 0 exch putinterval",
+            "0".repeat(1024)
+        ),
     ] {
         // The invalid encoding is in the plaintext portion, before eexec.
         // An exact interval diagnostic proves rejection before any glyph copy.
@@ -827,7 +1127,7 @@ fn diagnostic_cache_routes_are_stable_and_profiling_preserves_outputs() {
         assert!(stderr.len() <= 16 * 1024);
         let profile: Value =
             serde_json::from_str(stderr.strip_prefix("TEKAI_PROFILE ").unwrap()).unwrap();
-        assert_eq!(profile["schema_version"], 2);
+        assert_eq!(profile["schema_version"], 3);
         assert_eq!(profile["untrusted"], true);
         assert_eq!(profile["status"], "success");
         assert!(profile["phases"].as_array().unwrap().iter().all(|phase| {
@@ -1005,6 +1305,13 @@ fn check_builds_and_caches_without_external_tools_or_tex_installation() {
         r"\documentclass{article}
 \usepackage{amsmath,amsthm,graphicx,hyperref}
 \begin{document}
+\typeout{BOUND-MATCH=\pdfmatch subcount 2147483647{(a)}{a}}
+\typeout{BOUND-CAPTURE-0=\pdflastmatch0}
+\typeout{BOUND-CAPTURE-1=\pdflastmatch1}
+\typeout{BOUND-CAPTURE-2=\pdflastmatch2}
+\typeout{BOUND-CAPTURE-LAST=\pdflastmatch2147483646}
+\typeout{BOUND-ZERO=\pdfmatch subcount 0{(a)}{a}}
+\typeout{BOUND-ZERO-CAPTURE=\pdflastmatch0}
 \section{Test}\label{sec:test}
 \input{sections/body}
 \end{document}
@@ -1019,6 +1326,18 @@ fn check_builds_and_caches_without_external_tools_or_tex_installation() {
     assert_eq!(report["warning_count"], 0);
     assert!(report["tex_runs"].as_u64().unwrap() > 0);
     assert!(Path::new(report["pdf_path"].as_str().unwrap()).is_file());
+    let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+    for result in [
+        "BOUND-MATCH=1",
+        "BOUND-CAPTURE-0=0->a",
+        "BOUND-CAPTURE-1=0->a",
+        "BOUND-CAPTURE-2=-1->",
+        "BOUND-CAPTURE-LAST=-1->",
+        "BOUND-ZERO=1",
+        "BOUND-ZERO-CAPTURE=-1->",
+    ] {
+        assert!(log.contains(result), "{log}");
+    }
     assert!(
         fs::read(project.0.join("build/main.pdf"))
             .unwrap()

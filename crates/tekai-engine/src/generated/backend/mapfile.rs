@@ -1,3 +1,5 @@
+use crate::backend_grammar::platform_encoding;
+use crate::backend_parse::FieldError;
 use crate::integer_parse::{decimal_i32_legacy, signed_prefix, IntegerBase};
 use crate::openclose::open_input;
 use crate::stdio::feof;
@@ -1158,6 +1160,7 @@ unsafe extern "C" fn fm_scan_line() {
     let mut q: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut r: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut s: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let mut initialized_line_end: Option<*mut ::core::ffi::c_char> = None;
     match (*mitem).type_0 as ::core::ffi::c_uint {
         0 => {
             p = &raw mut fm_line as *mut ::core::ffi::c_char;
@@ -1453,18 +1456,35 @@ unsafe extern "C" fn fm_scan_line() {
                             }
                         }
                         80 => {
-                            if sscanf(
-                                r,
-                                b"PidEid=%i, %i %n\0" as *const u8 as *const ::core::ffi::c_char,
-                                &raw mut a,
-                                &raw mut b,
-                                &raw mut c,
-                            ) >= 2 as ::core::ffi::c_int
-                            {
-                                (*fm).pid = a as ::core::ffi::c_short;
-                                (*fm).eid = b as ::core::ffi::c_short;
-                                r = r.offset(c as isize);
-                                continue;
+                            // The input line stays fixed for this scan. Find its
+                            // terminator once, even for repeated PidEid fields.
+                            let end = initialized_line_end
+                                .get_or_insert_with(|| r.add(CStr::from_ptr(r).to_bytes().len()));
+                            let remaining = end.addr().checked_sub(r.addr()).unwrap_or_else(|| {
+                                crate::utils::pdftex_fail_args(
+                                    c"invalid map line cursor".as_ptr(),
+                                    &[],
+                                )
+                            });
+                            let bytes = std::slice::from_raw_parts(r.cast::<u8>(), remaining);
+                            match platform_encoding(bytes) {
+                                Ok(ids) => {
+                                    (*fm).pid = ids.platform;
+                                    (*fm).eid = ids.encoding;
+                                    r = r.add(ids.consumed);
+                                    continue;
+                                }
+                                Err(FieldError::Overflow) => {
+                                    crate::utils::pdftex_warn_args(
+                                        b"invalid entry for `%s': PidEid value out of range\0"
+                                            as *const u8
+                                            as *const ::core::ffi::c_char,
+                                        &[crate::utils::PrintfArg::from((*fm).tfm_name)],
+                                    );
+                                    current_block = 17162251379607524254;
+                                    break;
+                                }
+                                Err(FieldError::NoMatch) => {}
                             }
                         }
                         _ => {}

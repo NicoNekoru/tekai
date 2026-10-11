@@ -982,6 +982,13 @@ pub unsafe extern "C" fn extxnoverd(x: Scaled, n: Scaled, d: Scaled) -> Scaled {
     r as Scaled
 }
 
+fn regex_match_slots(requested: usize, pattern: &[u8]) -> usize {
+    // Every ERE capture requires an opening parenthesis byte. Counting escaped
+    // and bracketed parentheses too is a safe upper bound without a second
+    // syntax parser. Nonexistent requested captures need no stored slot.
+    requested.min(pattern.iter().filter(|&&byte| byte == b'(').count() + 1)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn matchstrings(s: StrNumber, t: StrNumber, subcount: c_int, icase: Boolean) {
     unsafe {
@@ -1011,19 +1018,17 @@ pub unsafe extern "C" fn matchstrings(s: StrNumber, t: StrNumber, subcount: c_in
             *strpool.add(poolptr as usize) = b'1';
             poolptr += 1;
         } else {
-            let text = makecstring(t);
             SUB_MATCH_COUNT = if subcount < 0 { 10 } else { subcount };
+            let slots = regex_match_slots(SUB_MATCH_COUNT as usize, c_string_bytes(pattern));
+            let text = makecstring(t);
             PMATCH.clear();
-            if SUB_MATCH_COUNT > 0 {
-                PMATCH.resize(
-                    SUB_MATCH_COUNT as usize,
-                    libc::regmatch_t { rm_so: 0, rm_eo: 0 },
-                );
+            if slots > 0 {
+                PMATCH.resize(slots, libc::regmatch_t { rm_so: 0, rm_eo: 0 });
             }
             let exec_ret = libc::regexec(
                 &preg,
                 text,
-                SUB_MATCH_COUNT as usize,
+                slots,
                 if PMATCH.is_empty() {
                     ptr::null_mut()
                 } else {
@@ -1047,7 +1052,7 @@ pub unsafe extern "C" fn getmatch(i: c_int) {
             && i < SUB_MATCH_COUNT
             && MATCH_STRING.is_some()
             && LAST_MATCH_SUCCEEDED != 0
-            && !PMATCH.is_empty()
+            && (i as usize) < PMATCH.len()
             && PMATCH[i as usize].rm_so >= 0
             && PMATCH[i as usize].rm_eo >= PMATCH[i as usize].rm_so;
         if found {
@@ -1798,7 +1803,8 @@ pub unsafe extern "C" fn stripzeros(a: *mut c_char) -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_printf, grow_array, growth_capacity, snprintf_args, sprintf_args, PrintfArg,
+        format_printf, grow_array, growth_capacity, regex_match_slots, snprintf_args, sprintf_args,
+        PrintfArg,
     };
     use proptest::prelude::*;
     use std::ptr;
@@ -1813,7 +1819,27 @@ mod tests {
         assert_eq!(growth_capacity(usize::MAX - 1, usize::MAX - 1, 1, 4), None);
     }
 
+    #[test]
+    fn capture_slots_follow_pattern_bytes_instead_of_unbounded_request() {
+        assert_eq!(regex_match_slots(i32::MAX as usize, b"(a)"), 2);
+        assert_eq!(regex_match_slots(0, b"(a)"), 0);
+        assert_eq!(regex_match_slots(1, b"((a))"), 1);
+        assert_eq!(regex_match_slots(10, b"literal"), 1);
+        assert_eq!(regex_match_slots(10, br"\([()]"), 3);
+    }
+
     proptest! {
+        #[test]
+        fn capture_slot_storage_is_bounded_by_requested_and_pattern_size(
+            requested in any::<usize>(),
+            pattern in prop::collection::vec(any::<u8>(), 0..4096),
+        ) {
+            let slots = regex_match_slots(requested, &pattern);
+            prop_assert!(slots <= requested);
+            prop_assert!(slots <= pattern.len() + 1);
+            prop_assert_eq!(slots, requested.min(1 + pattern.iter().filter(|&&byte| byte == b'(').count()));
+        }
+
         #[test]
         fn typed_growth_preserves_elements_and_cursor(
             operations in prop::collection::vec((0usize..65, any::<i32>()), 1..64),

@@ -1,18 +1,15 @@
 use crate::allocation::free;
+use crate::backend_grammar::{numeric_glyph_name, NumericGlyphName};
 use crate::openclose::open_input;
 use crate::openclose::{xmalloc, xstrdup};
 use crate::support::{xfclose, xfseek, xftell};
+use crate::ttf_name::{self, NameError, NameTable};
 use crate::ttf_post::{self, OutputGlyphName, PostError, PostNames};
 use crate::utils::xgetc;
 use std::ffi::CStr;
 use std::io::Read;
 
 extern "C" {
-    fn sscanf(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn memcpy(
         __dst: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -30,11 +27,6 @@ extern "C" {
         __s2: *const ::core::ffi::c_char,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strncpy(
-        __dst: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_char;
     fn strcasecmp(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -45,8 +37,6 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
-    static mut _DefaultRuneLocale: _RuneLocale;
-    fn __maskrune(_: __darwin_ct_rune_t, _: ::core::ffi::c_ulong) -> ::core::ffi::c_int;
     static mut nameoffile: *mut ASCIIcode;
     static mut pdfptr: integer;
     static mut pdfgone: longinteger;
@@ -77,12 +67,8 @@ extern "C" {
     fn fb_seek(_: integer);
     fn make_subset_tag(_: *mut fd_entry);
 }
-pub type __uint32_t = u32;
 pub type __int64_t = i64;
-pub type __darwin_ct_rune_t = ::core::ffi::c_int;
 pub type __darwin_size_t = usize;
-pub type __darwin_wchar_t = ::libc::wchar_t;
-pub type __darwin_rune_t = __darwin_wchar_t;
 pub type __darwin_off_t = __int64_t;
 pub type int32_t = i32;
 pub type size_t = __darwin_size_t;
@@ -157,58 +143,7 @@ pub const kpse_pk_format: C2RustUnnamed = 1;
 pub const kpse_gf_format: C2RustUnnamed = 0;
 pub type integer = ::core::ffi::c_int;
 pub type longinteger = off_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneEntry {
-    pub __min: __darwin_rune_t,
-    pub __max: __darwin_rune_t,
-    pub __map: __darwin_rune_t,
-    pub __types: *mut __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneRange {
-    pub __nranges: ::core::ffi::c_int,
-    pub __ranges: *mut _RuneEntry,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneCharClass {
-    pub __name: [::core::ffi::c_char; 14],
-    pub __mask: __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneLocale {
-    pub __magic: [::core::ffi::c_char; 8],
-    pub __encoding: [::core::ffi::c_char; 32],
-    pub __sgetrune: Option<
-        unsafe extern "C" fn(
-            *const ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *const ::core::ffi::c_char,
-        ) -> __darwin_rune_t,
-    >,
-    pub __sputrune: Option<
-        unsafe extern "C" fn(
-            __darwin_rune_t,
-            *mut ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *mut ::core::ffi::c_char,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub __invalid_rune: __darwin_rune_t,
-    pub __runetype: [__uint32_t; 256],
-    pub __maplower: [__darwin_rune_t; 256],
-    pub __mapupper: [__darwin_rune_t; 256],
-    pub __runetype_ext: _RuneRange,
-    pub __maplower_ext: _RuneRange,
-    pub __mapupper_ext: _RuneRange,
-    pub __variable: *mut ::core::ffi::c_void,
-    pub __variable_len: ::core::ffi::c_int,
-    pub __ncharclasses: ::core::ffi::c_int,
-    pub __charclasses: *mut _RuneCharClass,
-}
+
 pub type ASCIIcode = ::core::ffi::c_uchar;
 pub type eightbits = ::core::ffi::c_uchar;
 pub type strnumber = integer;
@@ -312,18 +247,6 @@ pub struct fd_entry_ {
     pub gl_tree: *mut avl_table,
 }
 pub type fd_entry = fd_entry_;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct name_record {
-    pub platform_id: TTF_USHORT,
-    pub encoding_id: TTF_USHORT,
-    pub language_id: TTF_USHORT,
-    pub name_id: TTF_USHORT,
-    pub length: TTF_USHORT,
-    pub offset: TTF_USHORT,
-    pub new_offset: TTF_USHORT,
-    pub new_length: TTF_USHORT,
-}
 pub type TTF_USHORT = ::core::ffi::c_ushort;
 #[derive(Copy, Clone)]
 // Runtime-only metadata, never serialized or passed across FFI.
@@ -401,21 +324,7 @@ pub const FONTBBOX4_CODE: ::core::ffi::c_int = 9 as ::core::ffi::c_int;
 pub const FONTNAME_CODE: ::core::ffi::c_int = 10 as ::core::ffi::c_int;
 pub const F_SUBSETTED: ::core::ffi::c_int = 0x2 as ::core::ffi::c_int;
 pub const F_SUBFONT: ::core::ffi::c_int = 0x8 as ::core::ffi::c_int;
-pub const _CTYPE_S: ::core::ffi::c_long = 0x4000 as ::core::ffi::c_long;
-unsafe fn isascii(mut _c: ::core::ffi::c_int) -> ::core::ffi::c_int {
-    return (_c & !(0x7f as ::core::ffi::c_int) == 0 as ::core::ffi::c_int) as ::core::ffi::c_int;
-}
-unsafe fn __istype(mut _c: __darwin_ct_rune_t, mut _f: ::core::ffi::c_ulong) -> ::core::ffi::c_int {
-    return if isascii(_c as ::core::ffi::c_int) != 0 {
-        (_DefaultRuneLocale.__runetype[_c as usize] as ::core::ffi::c_ulong & _f != 0)
-            as ::core::ffi::c_int
-    } else {
-        (__maskrune(_c, _f) != 0) as ::core::ffi::c_int
-    };
-}
-unsafe fn isspace(mut _c: ::core::ffi::c_int) -> ::core::ffi::c_int {
-    return __istype(_c as __darwin_ct_rune_t, _CTYPE_S as ::core::ffi::c_ulong);
-}
+
 pub const TTF_CHAR_SIZE: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const TTF_BYTE_SIZE: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const TTF_SHORT_SIZE: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
@@ -542,11 +451,6 @@ static mut new_cmap_tab: [cmap_entry; 2] = [cmap_entry {
     offset: 0,
     format: 0,
 }; 2];
-static mut name_tab: *mut name_record = ::core::ptr::null::<name_record>() as *mut name_record;
-static mut name_record_num: ::core::ffi::c_int = 0;
-static mut name_buf: *mut ::core::ffi::c_char =
-    ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-static mut name_buf_size: ::core::ffi::c_int = 0;
 static mut dir_tab: *mut dirtab_entry = ::core::ptr::null::<dirtab_entry>() as *mut dirtab_entry;
 static mut checksum: TTF_ULONG = 0;
 static mut tab_length: TTF_ULONG = 0;
@@ -1228,165 +1132,36 @@ unsafe extern "C" fn ttf_copy_encoding() {
         };
     };
 }
-unsafe extern "C" fn strip_spaces_and_delims(
-    mut s: *mut ::core::ffi::c_char,
-    mut l: ::core::ffi::c_int,
-) -> *mut ::core::ffi::c_char {
-    static mut buf: [::core::ffi::c_char; 256] = [0; 256];
-    let mut p: *mut ::core::ffi::c_char = &raw mut buf as *mut ::core::ffi::c_char;
-    let mut i: ::core::ffi::c_int = 0;
-    if !(l >= 0 as ::core::ffi::c_int
-        && l < ::core::mem::size_of::<[::core::ffi::c_char; 256]>() as ::core::ffi::c_int)
-        as ::core::ffi::c_int as ::core::ffi::c_long
-        != 0
-    {
-        __assert_rtn(
-            b"strip_spaces_and_delims\0" as *const u8 as *const ::core::ffi::c_char,
-            b"writettf.c\0" as *const u8 as *const ::core::ffi::c_char,
-            326 as ::core::ffi::c_int,
-            b"l >= 0 && l < (int) sizeof(buf)\0" as *const u8 as *const ::core::ffi::c_char,
-        );
-    } else {
-    };
-    i = 0 as ::core::ffi::c_int;
-    while i < l {
-        if !(*s as ::core::ffi::c_int == '(' as i32
-            || *s as ::core::ffi::c_int == ')' as i32
-            || *s as ::core::ffi::c_int == '<' as i32
-            || *s as ::core::ffi::c_int == '>' as i32
-            || *s as ::core::ffi::c_int == '[' as i32
-            || *s as ::core::ffi::c_int == ']' as i32
-            || *s as ::core::ffi::c_int == '{' as i32
-            || *s as ::core::ffi::c_int == '}' as i32
-            || *s as ::core::ffi::c_int == '/' as i32
-            || *s as ::core::ffi::c_int == '%' as i32
-            || isspace(*s as ::core::ffi::c_uchar as ::core::ffi::c_int) != 0)
-        {
-            let fresh15 = p;
-            p = p.offset(1);
-            *fresh15 = *s;
-        }
-        s = s.offset(1);
-        i += 1;
-    }
-    *p = 0 as ::core::ffi::c_char;
-    return &raw mut buf as *mut ::core::ffi::c_char;
+unsafe fn name_failure(error: NameError) -> ! {
+    crate::utils::pdftex_fail_args(error.message().as_ptr(), &[])
 }
-unsafe extern "C" fn ttf_read_name() {
-    let mut i: ::core::ffi::c_int = 0;
-    let mut j: ::core::ffi::c_int = 0;
-    let mut tab: *mut dirtab_entry = ttf_seek_tab(
-        b"name\0" as *const u8 as *const ::core::ffi::c_char,
-        TTF_USHORT_SIZE as TTF_LONG,
+
+unsafe fn ttf_read_name() -> NameTable {
+    let tab = ttf_name_lookup(c"name".as_ptr(), true_0);
+    xfseek(ttf_file, 0, libc::SEEK_END, cur_file_name as const_string);
+    let file_length = xftell(ttf_file, cur_file_name as const_string) as u64;
+    let extent = ttf_name::checked_table_extent((*tab).offset, (*tab).length, file_length)
+        .unwrap_or_else(|error| name_failure(error));
+    xfseek(
+        ttf_file,
+        extent.start as ::core::ffi::c_long,
+        SEEK_SET,
+        cur_file_name as const_string,
     );
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut buf: [::core::ffi::c_char; 256] = [0; 256];
-    name_record_num = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT as ::core::ffi::c_int;
-    name_tab = xmalloc(
-        (name_record_num as size_t).wrapping_mul(::core::mem::size_of::<name_record>() as size_t),
-    ) as *mut name_record;
-    name_buf_size = (*tab).length.wrapping_sub(
-        (3 as ::core::ffi::c_int * TTF_USHORT_SIZE
-            + name_record_num * 6 as ::core::ffi::c_int * TTF_USHORT_SIZE) as TTF_ULONG,
-    ) as ::core::ffi::c_int;
-    name_buf = xmalloc(
-        (name_buf_size as size_t)
-            .wrapping_mul(::core::mem::size_of::<::core::ffi::c_char>() as size_t),
-    ) as *mut ::core::ffi::c_char;
-    ttf_getnum(2 as ::core::ffi::c_int);
-    i = 0 as ::core::ffi::c_int;
-    while i < name_record_num {
-        (*name_tab.offset(i as isize)).platform_id = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
-        (*name_tab.offset(i as isize)).encoding_id = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
-        (*name_tab.offset(i as isize)).language_id = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
-        (*name_tab.offset(i as isize)).name_id = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
-        (*name_tab.offset(i as isize)).length = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
-        (*name_tab.offset(i as isize)).offset = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
-        i += 1;
-    }
-    p = name_buf;
-    while (p.offset_from(name_buf) as ::core::ffi::c_long) < name_buf_size as ::core::ffi::c_long {
-        *p = ttf_getnum(TTF_CHAR_SIZE) as TTF_CHAR as ::core::ffi::c_char;
-        p = p.offset(1);
-    }
-    i = 0 as ::core::ffi::c_int;
-    while i < name_record_num {
-        if (*name_tab.offset(i as isize)).platform_id as ::core::ffi::c_int
-            == 1 as ::core::ffi::c_int
-            && (*name_tab.offset(i as isize)).encoding_id as ::core::ffi::c_int
-                == 0 as ::core::ffi::c_int
-            && (*name_tab.offset(i as isize)).name_id as ::core::ffi::c_int
-                == 6 as ::core::ffi::c_int
-        {
-            if !(*fd_cur).fontname.is_null() {
-                free((*fd_cur).fontname as *mut ::core::ffi::c_void);
-            }
-            (*fd_cur).fontname = ::core::ptr::null_mut::<::core::ffi::c_char>();
-            (*fd_cur).fontname = xstrdup(strip_spaces_and_delims(
-                name_buf
-                    .offset((*name_tab.offset(i as isize)).offset as ::core::ffi::c_int as isize),
-                (*name_tab.offset(i as isize)).length as ::core::ffi::c_int,
-            ) as const_string) as *mut ::core::ffi::c_char;
-            (*fd_cur).font_dim[FONTNAME_CODE as usize].set = true_0 as boolean;
-            break;
-        } else {
-            i += 1;
+    let names = ttf_name::read_table(PostReader(ttf_file), extent.end - extent.start)
+        .unwrap_or_else(|error| name_failure(error));
+    let font_name = names
+        .font_name((*fd_cur).font_dim[FONTNAME_CODE as usize].set == 0)
+        .unwrap_or_else(|error| name_failure(error));
+    if let Some(font_name) = font_name {
+        if !(*fd_cur).fontname.is_null() {
+            free((*fd_cur).fontname.cast());
         }
+        // fd_cur owns this legacy allocation beyond the stack-owned table.
+        (*fd_cur).fontname = xstrdup(font_name.as_ptr());
+        (*fd_cur).font_dim[FONTNAME_CODE as usize].set = true_0;
     }
-    if (*fd_cur).font_dim[FONTNAME_CODE as usize].set == 0 {
-        i = 0 as ::core::ffi::c_int;
-        while i < name_record_num {
-            if (*name_tab.offset(i as isize)).platform_id as ::core::ffi::c_int
-                == 3 as ::core::ffi::c_int
-                && ((*name_tab.offset(i as isize)).encoding_id as ::core::ffi::c_int
-                    == 0 as ::core::ffi::c_int
-                    || (*name_tab.offset(i as isize)).encoding_id as ::core::ffi::c_int
-                        == 1 as ::core::ffi::c_int)
-                && (*name_tab.offset(i as isize)).name_id as ::core::ffi::c_int
-                    == 6 as ::core::ffi::c_int
-            {
-                if !(*fd_cur).fontname.is_null() {
-                    free((*fd_cur).fontname as *mut ::core::ffi::c_void);
-                }
-                (*fd_cur).fontname = ::core::ptr::null_mut::<::core::ffi::c_char>();
-                if !(((*name_tab.offset(i as isize)).length as usize)
-                    < ::core::mem::size_of::<[::core::ffi::c_char; 256]>() as usize)
-                    as ::core::ffi::c_int as ::core::ffi::c_long
-                    != 0
-                {
-                    __assert_rtn(
-                        b"ttf_read_name\0" as *const u8 as *const ::core::ffi::c_char,
-                        b"writettf.c\0" as *const u8 as *const ::core::ffi::c_char,
-                        378 as ::core::ffi::c_int,
-                        b"name_tab[i].length < sizeof(buf)\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
-                } else {
-                };
-                j = 0 as ::core::ffi::c_int;
-                p = &raw mut buf as *mut ::core::ffi::c_char;
-                while j < (*name_tab.offset(i as isize)).length as ::core::ffi::c_int {
-                    let fresh14 = p;
-                    p = p.offset(1);
-                    *fresh14 = *name_buf.offset(
-                        ((*name_tab.offset(i as isize)).offset as ::core::ffi::c_int
-                            + j
-                            + 1 as ::core::ffi::c_int) as isize,
-                    );
-                    j += 2 as ::core::ffi::c_int;
-                }
-                *p = 0 as ::core::ffi::c_char;
-                (*fd_cur).fontname = xstrdup(strip_spaces_and_delims(
-                    &raw mut buf as *mut ::core::ffi::c_char,
-                    strlen(&raw mut buf as *mut ::core::ffi::c_char) as ::core::ffi::c_int,
-                ) as const_string) as *mut ::core::ffi::c_char;
-                (*fd_cur).font_dim[FONTNAME_CODE as usize].set = true_0 as boolean;
-                break;
-            } else {
-                i += 1;
-            }
-        }
-    }
+    names
 }
 unsafe extern "C" fn ttf_read_mapx() {
     let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
@@ -1946,7 +1721,7 @@ unsafe extern "C" fn ttf_read_cmap(
         }
     };
 }
-unsafe fn ttf_read_font() -> Option<PostNames> {
+unsafe fn ttf_read_font() -> (Option<PostNames>, NameTable) {
     ttf_read_tabdir();
     if ttf_name_lookup(
         b"PCLT\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1987,8 +1762,8 @@ unsafe fn ttf_read_font() -> Option<PostNames> {
     ttf_read_hmtx();
     let glyph_names = ttf_read_post();
     ttf_read_loca();
-    ttf_read_name();
-    glyph_names
+    let names = ttf_read_name();
+    (glyph_names, names)
 }
 unsafe extern "C" fn ttf_reset_chksm(mut tab: *mut dirtab_entry) {
     checksum = 0 as TTF_ULONG;
@@ -2202,163 +1977,28 @@ unsafe extern "C" fn ttf_write_cmap() {
     }
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn prepend_subset_tags(
-    mut index: ::core::ffi::c_int,
-    mut p: *mut ::core::ffi::c_char,
-) -> ::core::ffi::c_int {
-    let mut is_unicode: boolean = 0;
-    let mut i: ::core::ffi::c_int = 0;
-    if !(index >= 0 as ::core::ffi::c_int
-        && index < name_record_num
-        && !(*fd_cur).subset_tag.is_null()) as ::core::ffi::c_int as ::core::ffi::c_long
-        != 0
-    {
-        __assert_rtn(
-            b"prepend_subset_tags\0" as *const u8 as *const ::core::ffi::c_char,
-            b"writettf.c\0" as *const u8 as *const ::core::ffi::c_char,
-            844 as ::core::ffi::c_int,
-            b"index >= 0 && index < name_record_num && fd_cur->subset_tag != NULL\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+unsafe fn ttf_write_name(names: &NameTable) {
+    let tab = ttf_name_lookup(c"name".as_ptr(), true_0);
+    let subset_tag = if (*(*fd_cur).fm).type_0 as ::core::ffi::c_int & F_SUBSETTED != 0 {
+        if (*fd_cur).subset_tag.is_null() {
+            crate::utils::pdftex_fail_args(c"name: missing subset tag".as_ptr(), &[]);
+        }
+        let bytes = CStr::from_ptr((*fd_cur).subset_tag).to_bytes();
+        Some(<[u8; 6]>::try_from(bytes).unwrap_or_else(|_| {
+            crate::utils::pdftex_fail_args(c"name: subset tag must contain six bytes".as_ptr(), &[])
+        }))
     } else {
+        None
     };
-    is_unicode = ((*name_tab.offset(index as isize)).platform_id as ::core::ffi::c_int
-        == 3 as ::core::ffi::c_int) as ::core::ffi::c_int as boolean;
-    if is_unicode != 0 {
-        i = 0 as ::core::ffi::c_int;
-        while i < 6 as ::core::ffi::c_int {
-            let fresh8 = p;
-            p = p.offset(1);
-            *fresh8 = 0 as ::core::ffi::c_char;
-            let fresh9 = p;
-            p = p.offset(1);
-            *fresh9 = *(*fd_cur).subset_tag.offset(i as isize);
-            i += 1;
-        }
-        let fresh10 = p;
-        p = p.offset(1);
-        *fresh10 = 0 as ::core::ffi::c_char;
-        let fresh11 = p;
-        p = p.offset(1);
-        *fresh11 = '+' as i32 as ::core::ffi::c_char;
-        return 14 as ::core::ffi::c_int;
-    } else {
-        strncpy(p, (*fd_cur).subset_tag, 6 as size_t);
-        p = p.offset(6 as ::core::ffi::c_int as isize);
-        let fresh12 = p;
-        p = p.offset(1);
-        *fresh12 = '+' as i32 as ::core::ffi::c_char;
-        return 7 as ::core::ffi::c_int;
-    };
-}
-unsafe extern "C" fn ttf_write_name() {
-    let mut i: ::core::ffi::c_int = 0;
-    let mut l: ::core::ffi::c_int = 0;
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut new_name_buf_size: ::core::ffi::c_int = 0;
-    let mut new_name_buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut n: *mut name_record = ::core::ptr::null_mut::<name_record>();
-    let mut tab: *mut dirtab_entry =
-        ttf_name_lookup(b"name\0" as *const u8 as *const ::core::ffi::c_char, true_0);
-    if (*(*fd_cur).fm).type_0 as ::core::ffi::c_int & F_SUBSETTED != 0 as ::core::ffi::c_int {
-        l = 0 as ::core::ffi::c_int;
-        i = 0 as ::core::ffi::c_int;
-        while i < name_record_num {
-            l += (*name_tab.offset(i as isize)).length as ::core::ffi::c_int
-                + 14 as ::core::ffi::c_int;
-            i += 1;
-        }
-        new_name_buf = xmalloc(
-            (l as size_t).wrapping_mul(::core::mem::size_of::<::core::ffi::c_char>() as size_t),
-        ) as *mut ::core::ffi::c_char;
-        p = new_name_buf;
-        i = 0 as ::core::ffi::c_int;
-        while i < name_record_num {
-            n = name_tab.offset(i as isize);
-            (*n).new_offset = p.offset_from(new_name_buf) as ::core::ffi::c_long as TTF_USHORT;
-            if ((*n).name_id as ::core::ffi::c_int == 1 as ::core::ffi::c_int
-                || (*n).name_id as ::core::ffi::c_int == 3 as ::core::ffi::c_int
-                || (*n).name_id as ::core::ffi::c_int == 4 as ::core::ffi::c_int
-                || (*n).name_id as ::core::ffi::c_int == 6 as ::core::ffi::c_int)
-                && ((*n).platform_id as ::core::ffi::c_int == 1 as ::core::ffi::c_int
-                    && (*n).encoding_id as ::core::ffi::c_int == 0 as ::core::ffi::c_int
-                    || (*n).platform_id as ::core::ffi::c_int == 3 as ::core::ffi::c_int
-                        && (*n).encoding_id as ::core::ffi::c_int == 0 as ::core::ffi::c_int
-                    || (*n).platform_id as ::core::ffi::c_int == 3 as ::core::ffi::c_int
-                        && (*n).encoding_id as ::core::ffi::c_int == 1 as ::core::ffi::c_int)
-            {
-                l = prepend_subset_tags(i, p);
-                p = p.offset(l as isize);
-            } else {
-                l = 0 as ::core::ffi::c_int;
-            }
-            memcpy(
-                p as *mut ::core::ffi::c_void,
-                name_buf.offset((*n).offset as ::core::ffi::c_int as isize)
-                    as *const ::core::ffi::c_void,
-                (*n).length as size_t,
-            );
-            p = p.offset((*n).length as ::core::ffi::c_int as isize);
-            (*n).new_length = ((*n).length as ::core::ffi::c_int + l) as TTF_USHORT;
-            i += 1;
-        }
-        new_name_buf_size =
-            p.offset_from(new_name_buf) as ::core::ffi::c_long as ::core::ffi::c_int;
-    } else {
-        new_name_buf = name_buf;
-        new_name_buf_size = name_buf_size;
-    }
+    // Plan and validate every u16 field before mutating the PDF font stream.
+    let output = names
+        .output(subset_tag)
+        .unwrap_or_else(|error| name_failure(error));
     ttf_reset_chksm(tab);
-    ttf_putnum(TTF_USHORT_SIZE, 0 as ::core::ffi::c_long);
-    ttf_putnum(TTF_USHORT_SIZE, name_record_num as ::core::ffi::c_long);
-    ttf_putnum(
-        TTF_USHORT_SIZE,
-        (3 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-            + name_record_num * 6 as ::core::ffi::c_int * 2 as ::core::ffi::c_int)
-            as ::core::ffi::c_long,
-    );
-    i = 0 as ::core::ffi::c_int;
-    while i < name_record_num {
-        ttf_putnum(
-            TTF_USHORT_SIZE,
-            (*name_tab.offset(i as isize)).platform_id as ::core::ffi::c_long,
-        );
-        ttf_putnum(
-            TTF_USHORT_SIZE,
-            (*name_tab.offset(i as isize)).encoding_id as ::core::ffi::c_long,
-        );
-        ttf_putnum(
-            TTF_USHORT_SIZE,
-            (*name_tab.offset(i as isize)).language_id as ::core::ffi::c_long,
-        );
-        ttf_putnum(
-            TTF_USHORT_SIZE,
-            (*name_tab.offset(i as isize)).name_id as ::core::ffi::c_long,
-        );
-        ttf_putnum(
-            TTF_USHORT_SIZE,
-            (*name_tab.offset(i as isize)).new_length as ::core::ffi::c_long,
-        );
-        ttf_putnum(
-            TTF_USHORT_SIZE,
-            (*name_tab.offset(i as isize)).new_offset as ::core::ffi::c_long,
-        );
-        i += 1;
-    }
-    p = new_name_buf;
-    while (p.offset_from(new_name_buf) as ::core::ffi::c_long)
-        < new_name_buf_size as ::core::ffi::c_long
-    {
-        ttf_putnum(TTF_CHAR_SIZE, *p as ::core::ffi::c_long);
-        p = p.offset(1);
-    }
+    output.emit(|byte| {
+        ttf_putnum(TTF_CHAR_SIZE, ::core::ffi::c_long::from(byte));
+    });
     ttf_set_chksm(tab);
-    if new_name_buf != name_buf {
-        if !new_name_buf.is_null() {
-            free(new_name_buf as *mut ::core::ffi::c_void);
-        }
-        new_name_buf = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    }
 }
 unsafe extern "C" fn ttf_write_dirtab() {
     let mut tab: *mut dirtab_entry = ::core::ptr::null_mut::<dirtab_entry>();
@@ -2526,7 +2166,6 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
     let mut e: *mut ttfenc_entry = ::core::ptr::null_mut::<ttfenc_entry>();
     let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
     let mut index: ::core::ffi::c_int = 0;
-    let mut n: ::core::ffi::c_int = 0;
     let mut t: *mut ::core::ffi::c_long = ::core::ptr::null_mut::<::core::ffi::c_long>();
     let mut cmap: *mut ttf_cmap_entry = ::core::ptr::null_mut::<ttf_cmap_entry>();
     let mut cmap_not_found: boolean = false_0;
@@ -2625,14 +2264,21 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
             match current_block {
                 9772907965827425793 => {}
                 _ => {
-                    n = -(1 as ::core::ffi::c_int);
-                    sscanf(
-                        (*e).name,
-                        b"uni%X%n\0" as *const u8 as *const ::core::ffi::c_char,
-                        &raw mut index,
-                        &raw mut n,
-                    );
-                    if n as size_t == strlen((*e).name) {
+                    let numeric_name =
+                        match numeric_glyph_name(CStr::from_ptr((*e).name).to_bytes()) {
+                            Ok(name) => name,
+                            Err(_) => {
+                                crate::utils::pdftex_warn_args(
+                                    b"numeric glyph `%s' out of range\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                    &[crate::utils::PrintfArg::from((*e).name)],
+                                );
+                                e = e.offset(1);
+                                continue;
+                            }
+                        };
+                    if let Some(NumericGlyphName::Unicode(value)) = numeric_name {
+                        index = value as ::core::ffi::c_int;
                         if cmap.is_null() && cmap_not_found == 0 {
                             cmap = ttf_read_cmap(
                                 (*(*fd_cur).fm).ff_name,
@@ -2704,14 +2350,8 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                             }
                         }
                     } else {
-                        n = -(1 as ::core::ffi::c_int);
-                        sscanf(
-                            (*e).name,
-                            b"index%i%n\0" as *const u8 as *const ::core::ffi::c_char,
-                            &raw mut index,
-                            &raw mut n,
-                        );
-                        if n as size_t == strlen((*e).name) {
+                        if let Some(NumericGlyphName::Index(value)) = numeric_name {
+                            index = value;
                             if let Some(index) = checked_selected_glyph_index(
                                 index as ::core::ffi::c_long,
                                 glyphs_count,
@@ -3025,7 +2665,7 @@ unsafe extern "C" fn ttf_init_font(mut n: ::core::ffi::c_int) {
     );
     fb_seek(TABDIR_OFF + n as integer * 4 as integer * TTF_ULONG_SIZE);
 }
-unsafe extern "C" fn ttf_subset_font() {
+unsafe fn ttf_subset_font(names: &NameTable) {
     ttf_init_font(new_ntabs as ::core::ffi::c_int);
     if !ttf_name_lookup(
         b"PCLT\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3067,7 +2707,7 @@ unsafe extern "C" fn ttf_subset_font() {
     ttf_write_hhea();
     ttf_write_htmx();
     ttf_write_mapx();
-    ttf_write_name();
+    ttf_write_name(names);
     ttf_write_post();
     ttf_write_cmap();
     ttf_write_dirtab();
@@ -3193,16 +2833,14 @@ pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
     dir_tab = ::core::ptr::null_mut::<dirtab_entry>();
     glyph_tab = ::core::ptr::null_mut::<glyph_entry>();
     glyph_index = ::core::ptr::null_mut::<::core::ffi::c_long>();
-    name_tab = ::core::ptr::null_mut::<name_record>();
-    name_buf = ::core::ptr::null_mut::<::core::ffi::c_char>();
     // Custom glyph pointers borrow this stack-owned name table. Keep it alive
     // through encoding, subset emission and every other font consumer.
-    let glyph_names = ttf_read_font();
+    let (glyph_names, names) = ttf_read_font();
     pdfsaveoffset = pdfgone + pdfptr as longinteger;
     pdfflush();
     if (*(*fd_cur).fm).type_0 as ::core::ffi::c_int & F_SUBSETTED != 0 as ::core::ffi::c_int {
         ttf_copy_encoding();
-        ttf_subset_font();
+        ttf_subset_font(&names);
     } else {
         ttf_copy_font();
     }
@@ -3221,14 +2859,6 @@ pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
     glyph_index = ::core::ptr::null_mut::<::core::ffi::c_long>();
     // Drop Rust-owned strings only after glyph_tab and all font consumers.
     drop(glyph_names);
-    if !name_tab.is_null() {
-        free(name_tab as *mut ::core::ffi::c_void);
-    }
-    name_tab = ::core::ptr::null_mut::<name_record>();
-    if !name_buf.is_null() {
-        free(name_buf as *mut ::core::ffi::c_void);
-    }
-    name_buf = ::core::ptr::null_mut::<::core::ffi::c_char>();
     xfclose(ttf_file, cur_file_name as const_string);
     if (*(*fd_cur).fm).type_0 as ::core::ffi::c_int & F_SUBSETTED != 0 as ::core::ffi::c_int {
         crate::utils::tex_printf_args(b">\0" as *const u8 as *const ::core::ffi::c_char, &[]);
