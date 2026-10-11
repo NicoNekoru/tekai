@@ -1,13 +1,12 @@
+use crate::openclose::open_input;
+use crate::stdio::feof;
+use crate::support::xfclose;
+use crate::utils::xgetc;
+
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xstrdup};
 
-#[repr(C)]
-pub struct __sFILEX {
-    _unused: [u8; 0],
-}
-
 extern "C" {
-    fn feof(_: *mut FILE) -> ::core::ffi::c_int;
     fn sscanf(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -45,13 +44,11 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
-    fn xfclose(fp: *mut FILE, filename: const_string);
     fn kpse_find_file(
         name: const_string,
         format: kpse_file_format_type,
         must_exist: boolean,
     ) -> string;
-    fn open_input(_: *mut *mut FILE, _: ::core::ffi::c_int, fopen_mode: const_string) -> boolean;
     static mut _DefaultRuneLocale: _RuneLocale;
     fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
     static mut nameoffile: *mut ASCIIcode;
@@ -85,7 +82,6 @@ extern "C" {
     fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
     fn tex_printf(_: *const ::core::ffi::c_char, ...);
     fn handle_subfont_fm(_: *mut fm_entry, _: ::core::ffi::c_int) -> boolean;
-    fn xgetc(_: *mut FILE) -> ::core::ffi::c_int;
     fn maketexstring(_: *const ::core::ffi::c_char) -> strnumber;
     fn get_fe_entry(_: *mut ::core::ffi::c_char) -> *mut fe_entry;
     fn comp_string_entry(
@@ -103,51 +99,7 @@ pub type __darwin_rune_t = __darwin_wchar_t;
 pub type __darwin_off_t = __int64_t;
 pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sbuf {
-    pub _base: *mut ::core::ffi::c_uchar,
-    pub _size: ::core::ffi::c_int,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sFILE {
-    pub _p: *mut ::core::ffi::c_uchar,
-    pub _r: ::core::ffi::c_int,
-    pub _w: ::core::ffi::c_int,
-    pub _flags: ::core::ffi::c_short,
-    pub _file: ::core::ffi::c_short,
-    pub _bf: __sbuf,
-    pub _lbfsize: ::core::ffi::c_int,
-    pub _cookie: *mut ::core::ffi::c_void,
-    pub _close: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> ::core::ffi::c_int>,
-    pub _read: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *mut ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _seek: Option<
-        unsafe extern "C" fn(*mut ::core::ffi::c_void, fpos_t, ::core::ffi::c_int) -> fpos_t,
-    >,
-    pub _write: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *const ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _ub: __sbuf,
-    pub _extra: *mut __sFILEX,
-    pub _ur: ::core::ffi::c_int,
-    pub _ubuf: [::core::ffi::c_uchar; 3],
-    pub _nbuf: [::core::ffi::c_uchar; 1],
-    pub _lb: __sbuf,
-    pub _blksize: ::core::ffi::c_int,
-    pub _offset: fpos_t,
-}
-pub type FILE = __sFILE;
+pub use crate::stdio::Stream as FILE;
 pub type boolean = ::core::ffi::c_int;
 pub type string = *mut ::core::ffi::c_char;
 pub type const_string = *const ::core::ffi::c_char;

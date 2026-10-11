@@ -1,7 +1,8 @@
 //! Cold web2c support routines owned by Rust.
 
 use crate::openclose::{xmalloc, xrealloc};
-use libc::{c_char, c_double, c_int, c_long, c_void, off_t, size_t, FILE};
+use crate::stdio::Stream as FILE;
+use libc::{c_char, c_double, c_int, c_long, c_void, off_t, size_t};
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -9,28 +10,14 @@ use std::ptr;
 pub static mut versionstring: *const c_char = c" (TeX Live 2027/dev)".as_ptr();
 
 extern "C" {
-    static mut __stderrp: *mut FILE;
-    static mut __stdoutp: *mut FILE;
     static kpathsea_version_string: *const c_char;
 
     fn uexit(unix_code: c_int);
 }
 
-#[cfg(unix)]
-extern "C" {
-    fn getc_unlocked(stream: *mut FILE) -> c_int;
-}
-
+#[inline]
 unsafe fn fast_fgetc(stream: *mut FILE) -> c_int {
-    #[cfg(unix)]
-    {
-        unsafe { getc_unlocked(stream) }
-    }
-
-    #[cfg(not(unix))]
-    {
-        unsafe { libc::fgetc(stream) }
-    }
+    unsafe { crate::stdio::fgetc(stream) }
 }
 
 unsafe fn copy_bytes_with_nul(bytes: &[u8]) -> *mut c_char {
@@ -134,15 +121,14 @@ pub unsafe extern "C" fn find_suffix(name: *const c_char) -> *const c_char {
 
 unsafe fn fatal_perror(filename: *const c_char) -> ! {
     unsafe {
-        libc::perror(filename);
-        libc::exit(libc::EXIT_FAILURE);
+        crate::stdio::perror(filename);
+        crate::stdio::exit(libc::EXIT_FAILURE);
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xfopen(filename: *const c_char, mode: *const c_char) -> *mut FILE {
+pub(crate) unsafe fn xfopen(filename: *const c_char, mode: *const c_char) -> *mut FILE {
     unsafe {
-        let file = libc::fopen(filename, mode);
+        let file = crate::stdio::fopen(filename, mode);
         if file.is_null() {
             fatal_perror(filename);
         }
@@ -150,47 +136,43 @@ pub unsafe extern "C" fn xfopen(filename: *const c_char, mode: *const c_char) ->
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xfclose(fp: *mut FILE, filename: *const c_char) {
+pub(crate) unsafe fn xfclose(fp: *mut FILE, filename: *const c_char) {
     unsafe {
-        if libc::fclose(fp) == libc::EOF {
+        if crate::stdio::fclose(fp) == libc::EOF {
             fatal_perror(filename);
         }
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xfseek(
+pub(crate) unsafe fn xfseek(
     fp: *mut FILE,
     offset: c_long,
     wherefrom: c_int,
     filename: *const c_char,
 ) {
     unsafe {
-        if libc::fseek(fp, offset, wherefrom) < 0 {
+        if crate::stdio::fseek(fp, offset, wherefrom) < 0 {
             fatal_perror(filename);
         }
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xfseeko(
+pub(crate) unsafe fn xfseeko(
     fp: *mut FILE,
     offset: off_t,
     wherefrom: c_int,
     filename: *const c_char,
 ) {
     unsafe {
-        if libc::fseeko(fp, offset, wherefrom) < 0 {
+        if crate::stdio::fseeko(fp, offset, wherefrom) < 0 {
             fatal_perror(filename);
         }
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xftell(fp: *mut FILE, filename: *const c_char) -> c_long {
+pub(crate) unsafe fn xftell(fp: *mut FILE, filename: *const c_char) -> c_long {
     unsafe {
-        let offset = libc::ftell(fp);
+        let offset = crate::stdio::ftell(fp);
         if offset < 0 {
             fatal_perror(filename);
         }
@@ -198,10 +180,9 @@ pub unsafe extern "C" fn xftell(fp: *mut FILE, filename: *const c_char) -> c_lon
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xftello(fp: *mut FILE, filename: *const c_char) -> off_t {
+pub(crate) unsafe fn xftello(fp: *mut FILE, filename: *const c_char) -> off_t {
     unsafe {
-        let offset = libc::ftello(fp);
+        let offset = crate::stdio::ftello(fp);
         if offset < 0 {
             fatal_perror(filename);
         }
@@ -209,8 +190,7 @@ pub unsafe extern "C" fn xftello(fp: *mut FILE, filename: *const c_char) -> off_
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn read_line(f: *mut FILE) -> *mut c_char {
+pub(crate) unsafe fn read_line(f: *mut FILE) -> *mut c_char {
     const BLOCK_SIZE: usize = 75;
     let mut limit = BLOCK_SIZE;
     let mut loc = 0usize;
@@ -237,7 +217,7 @@ pub unsafe extern "C" fn read_line(f: *mut FILE) -> *mut c_char {
         if ch == b'\r' as c_int {
             let next = fast_fgetc(f);
             if next != b'\n' as c_int && next != libc::EOF {
-                libc::ungetc(next, f);
+                crate::stdio::ungetc(next, f);
             }
         }
     }
@@ -290,19 +270,17 @@ pub unsafe extern "C" fn chartostring(ch: c_char) -> *mut c_char {
     unsafe { copy_bytes_with_nul(&[ch as u8]) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn fprintreal(f: *mut FILE, r: c_double, n: c_int, m: c_int) {
+pub(crate) unsafe fn fprintreal(f: *mut FILE, r: c_double, n: c_int, m: c_int) {
     let fmt = CString::new(format!("%{n}.{m}lf")).expect("numeric printf format");
     unsafe {
-        libc::fprintf(f, fmt.as_ptr(), r);
+        crate::stdio::fprintf_args(f, fmt.as_ptr(), &[crate::utils::PrintfArg::from(r)]);
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn inputint(f: *mut FILE) -> c_int {
+pub(crate) unsafe fn inputint(f: *mut FILE) -> c_int {
     let mut buffer = [0 as c_char; 64];
     unsafe {
-        if libc::fgets(buffer.as_mut_ptr(), buffer.len() as c_int, f).is_null() {
+        if crate::stdio::fgets(buffer.as_mut_ptr(), buffer.len() as c_int, f).is_null() {
             0
         } else {
             libc::atoi(buffer.as_ptr())
@@ -312,22 +290,38 @@ pub unsafe extern "C" fn inputint(f: *mut FILE) -> c_int {
 
 unsafe fn discard_stdin_line() -> c_int {
     unsafe {
-        let mut ch = libc::getchar();
+        let mut ch = crate::stdio::fgetc(crate::stdio::stdin());
         while ch != libc::EOF && ch != b'\n' as c_int {
-            ch = libc::getchar();
+            ch = crate::stdio::fgetc(crate::stdio::stdin());
         }
         ch
     }
 }
 
+unsafe fn scan_integers(destinations: &[*mut c_int]) -> usize {
+    for (index, &destination) in destinations.iter().enumerate() {
+        let Some(value) = (unsafe { crate::stdio::scan_integer(crate::stdio::stdin()) }) else {
+            return index;
+        };
+        unsafe {
+            *destination = value;
+        }
+    }
+    destinations.len()
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn zinput2ints(a: *mut c_int, b: *mut c_int) {
     unsafe {
-        while libc::scanf(c"%d %d".as_ptr(), a, b) != 2 {
+        while scan_integers(&[a, b]) != 2 {
             if discard_stdin_line() == libc::EOF {
                 return;
             }
-            libc::fprintf(__stderrp, c"Please enter two integers.\n".as_ptr());
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
+                c"Please enter two integers.\n".as_ptr(),
+                &[],
+            );
         }
         discard_stdin_line();
     }
@@ -336,11 +330,15 @@ pub unsafe extern "C" fn zinput2ints(a: *mut c_int, b: *mut c_int) {
 #[no_mangle]
 pub unsafe extern "C" fn zinput3ints(a: *mut c_int, b: *mut c_int, c: *mut c_int) {
     unsafe {
-        while libc::scanf(c"%d %d %d".as_ptr(), a, b, c) != 3 {
+        while scan_integers(&[a, b, c]) != 3 {
             if discard_stdin_line() == libc::EOF {
                 return;
             }
-            libc::fprintf(__stderrp, c"Please enter three integers.\n".as_ptr());
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
+                c"Please enter three integers.\n".as_ptr(),
+                &[],
+            );
         }
         discard_stdin_line();
     }
@@ -349,10 +347,10 @@ pub unsafe extern "C" fn zinput3ints(a: *mut c_int, b: *mut c_int, c: *mut c_int
 #[no_mangle]
 pub unsafe extern "C" fn usage(str_: *const c_char) {
     unsafe {
-        libc::fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             c"Try `%s --help' for more information.\n".as_ptr(),
-            str_,
+            &[crate::utils::PrintfArg::from(str_)],
         );
         uexit(1);
     }
@@ -366,24 +364,27 @@ pub unsafe extern "C" fn usagehelp(mut message: *mut *const c_char, mut bug_emai
         }
 
         while !(*message).is_null() {
-            libc::printf(c"%s\n".as_ptr(), *message);
+            crate::stdio::printf_args(c"%s\n".as_ptr(), &[crate::utils::PrintfArg::from(*message)]);
             message = message.add(1);
         }
 
-        libc::printf(c"\nEmail bug reports to %s".as_ptr(), bug_email);
+        crate::stdio::printf_args(
+            c"\nEmail bug reports to %s".as_ptr(),
+            &[crate::utils::PrintfArg::from(bug_email)],
+        );
         if libc::strlen(bug_email) > 9 {
             let domain = libc::strchr(bug_email, b'@' as c_int);
             if !domain.is_null() && libc::strcmp(domain, c"@tug.org".as_ptr()) == 0 {
-                libc::printf(c" (https://lists.tug.org/".as_ptr());
+                crate::stdio::printf_args(c" (https://lists.tug.org/".as_ptr(), &[]);
                 let mut ptr = bug_email;
                 while ptr < domain {
-                    libc::putchar(*ptr as c_int);
+                    crate::stdio::putc(*ptr as c_int, crate::stdio::stdout());
                     ptr = ptr.add(1);
                 }
-                libc::printf(c")".as_ptr());
+                crate::stdio::printf_args(c")".as_ptr(), &[]);
             }
         }
-        libc::puts(c".".as_ptr());
+        crate::stdio::puts(c".".as_ptr());
         uexit(0);
     }
 }
@@ -414,20 +415,22 @@ pub unsafe extern "C" fn printversionandexit(
         let prog_name_start = prog_name_start.add(1);
         let prog_version = prog_version.add(1);
 
-        libc::printf(
+        crate::stdio::printf_args(
             c"%s %s%s\n".as_ptr(),
-            prog_name_start,
-            prog_version,
-            versionstring,
+            &[
+                crate::utils::PrintfArg::from(prog_name_start),
+                crate::utils::PrintfArg::from(prog_version),
+                crate::utils::PrintfArg::from(versionstring),
+            ],
         );
-        libc::puts(kpathsea_version_string);
+        crate::stdio::puts(kpathsea_version_string);
 
-        libc::puts(c"Copyright 2026 Tekai contributors.".as_ptr());
-        libc::puts(c"Licensed under the MIT License.".as_ptr());
-        libc::puts(c"https://github.com/NicoNekoru/tekai".as_ptr());
+        crate::stdio::puts(c"Copyright 2026 Tekai contributors.".as_ptr());
+        crate::stdio::puts(c"Licensed under the MIT License.".as_ptr());
+        crate::stdio::puts(c"https://github.com/NicoNekoru/tekai".as_ptr());
 
         if !extra_info.is_null() {
-            libc::fputs(extra_info, __stdoutp);
+            crate::stdio::fputs(extra_info, crate::stdio::stdout());
         }
 
         uexit(0);
@@ -478,20 +481,20 @@ mod tests {
             payload in prop::collection::vec(any::<u8>().prop_filter("line byte", |b| *b != b'\r' && *b != b'\n'), 0..4096),
             crlf in any::<bool>(),
         ) {
-            struct File(*mut libc::FILE);
+            struct File(*mut crate::stdio::Stream);
             impl Drop for File {
                 fn drop(&mut self) {
-                    unsafe { libc::fclose(self.0) };
+                    unsafe { crate::stdio::fclose(self.0) };
                 }
             }
 
-            let file = File(unsafe { libc::tmpfile() });
+            let file = File(unsafe { crate::stdio::tmpfile() });
             assert!(!file.0.is_null());
             let mut input = payload.clone();
             input.extend_from_slice(if crlf { b"\r\n" } else { b"\n" });
             input.extend_from_slice(b"tail\n");
-            assert_eq!(unsafe { libc::fwrite(input.as_ptr().cast(), 1, input.len(), file.0) }, input.len());
-            unsafe { libc::rewind(file.0) };
+            assert_eq!(unsafe { crate::stdio::fwrite(input.as_ptr().cast(), 1, input.len(), file.0) }, input.len());
+            unsafe { crate::stdio::rewind(file.0) };
             let line = unsafe { read_line(file.0) };
             assert!(!line.is_null());
             let actual = unsafe { CStr::from_ptr(line) }.to_bytes().to_vec();

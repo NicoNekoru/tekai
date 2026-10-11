@@ -1,10 +1,8 @@
+use crate::stdio::fread;
+use crate::support::xfopen;
+
 use crate::allocation::free;
 use crate::openclose::xmalloc;
-
-#[repr(C)]
-pub struct __sFILEX {
-    _unused: [u8; 0],
-}
 
 #[repr(C)]
 pub struct png_struct_def {
@@ -17,19 +15,11 @@ pub struct png_info_def {
 }
 
 extern "C" {
-    fn fread(
-        __ptr: *mut ::core::ffi::c_void,
-        __size: size_t,
-        __nitems: size_t,
-        __stream: *mut FILE,
-    ) -> ::core::ffi::c_ulong;
-    fn fseek(_: *mut FILE, _: ::core::ffi::c_long, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn getenv(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn strcmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
-    fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
     fn zround(_: ::core::ffi::c_double) -> integer;
     static mut pdfbuf: *mut eightbits;
     static mut pdfbufsize: integer;
@@ -78,7 +68,6 @@ extern "C" {
     fn png_read_update_info(png_ptr: png_structrp, info_ptr: png_inforp);
     fn png_read_row(png_ptr: png_structrp, row: png_bytep, display_row: png_bytep);
     fn png_read_image(png_ptr: png_structrp, image: png_bytepp);
-    fn png_init_io(png_ptr: png_structrp, fp: *mut FILE);
     fn png_get_io_ptr(png_ptr: png_const_structrp) -> png_voidp;
     fn png_get_valid(
         png_ptr: png_const_structrp,
@@ -128,51 +117,7 @@ pub type __darwin_size_t = usize;
 pub type __darwin_off_t = __int64_t;
 pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sbuf {
-    pub _base: *mut ::core::ffi::c_uchar,
-    pub _size: ::core::ffi::c_int,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sFILE {
-    pub _p: *mut ::core::ffi::c_uchar,
-    pub _r: ::core::ffi::c_int,
-    pub _w: ::core::ffi::c_int,
-    pub _flags: ::core::ffi::c_short,
-    pub _file: ::core::ffi::c_short,
-    pub _bf: __sbuf,
-    pub _lbfsize: ::core::ffi::c_int,
-    pub _cookie: *mut ::core::ffi::c_void,
-    pub _close: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> ::core::ffi::c_int>,
-    pub _read: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *mut ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _seek: Option<
-        unsafe extern "C" fn(*mut ::core::ffi::c_void, fpos_t, ::core::ffi::c_int) -> fpos_t,
-    >,
-    pub _write: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *const ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _ub: __sbuf,
-    pub _extra: *mut __sFILEX,
-    pub _ur: ::core::ffi::c_int,
-    pub _ubuf: [::core::ffi::c_uchar; 3],
-    pub _nbuf: [::core::ffi::c_uchar; 1],
-    pub _lb: __sbuf,
-    pub _blksize: ::core::ffi::c_int,
-    pub _offset: fpos_t,
-}
-pub type FILE = __sFILE;
+pub use crate::stdio::Stream as FILE;
 pub type boolean = ::core::ffi::c_int;
 pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
@@ -333,8 +278,12 @@ pub unsafe extern "C" fn read_png_info(mut img: integer) {
         PNG_MAXIMUM_INFLATE_WINDOW,
         PNG_OPTION_ON,
     );
-    png_init_io(
-        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_structrp,
+    crate::pngshim::png_init_io(
+        (*image_array.offset(img as isize))
+            .image_struct
+            .png
+            .png_ptr
+            .cast(),
         png_file,
     );
     png_read_info(
@@ -2388,9 +2337,7 @@ unsafe fn read_copy_png_chunk(
     file_extent: u64,
 ) -> (usize, u32, u64) {
     let mut header = [0u8; 8];
-    if fread(header.as_mut_ptr().cast(), 1, header.len(), fp)
-        != header.len() as ::core::ffi::c_ulong
-    {
+    if fread(header.as_mut_ptr().cast(), 1, header.len(), fp) != header.len() {
         png_copy_fail("short PNG read");
     }
     let raw_length = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
@@ -2483,7 +2430,7 @@ unsafe extern "C" fn copy_png(mut img: integer) {
                     1,
                     count as size_t,
                     fp,
-                ) != count as ::core::ffi::c_ulong
+                ) != count as usize
                 {
                     png_copy_fail("short PNG read");
                 }

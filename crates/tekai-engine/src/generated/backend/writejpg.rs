@@ -1,7 +1,6 @@
-#[repr(C)]
-pub struct __sFILEX {
-    _unused: [u8; 0],
-}
+use crate::stdio::{feof, fread};
+use crate::support::{xfopen, xfseek, xftell};
+use crate::utils::xgetc;
 
 #[repr(C)]
 pub struct png_struct_def {
@@ -14,24 +13,6 @@ pub struct png_info_def {
 }
 
 extern "C" {
-    fn feof(_: *mut FILE) -> ::core::ffi::c_int;
-    fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
-    #[cfg(unix)]
-    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
-    fn fread(
-        __ptr: *mut ::core::ffi::c_void,
-        __size: size_t,
-        __nitems: size_t,
-        __stream: *mut FILE,
-    ) -> ::core::ffi::c_ulong;
-    fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
-    fn xfseek(
-        fp: *mut FILE,
-        offset: ::core::ffi::c_long,
-        wherefrom: ::core::ffi::c_int,
-        filename: const_string,
-    );
-    fn xftell(fp: *mut FILE, filename: const_string) -> ::core::ffi::c_long;
     static mut pdfbuf: *mut eightbits;
     static mut pdfbufsize: integer;
     static mut pdfptr: integer;
@@ -45,71 +26,18 @@ extern "C" {
     fn pdf_printf(_: *const ::core::ffi::c_char, ...);
     fn pdf_puts(_: *const ::core::ffi::c_char);
     fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn xgetc(_: *mut FILE) -> ::core::ffi::c_int;
     static mut image_array: *mut image_entry;
 }
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
-    #[cfg(unix)]
-    {
-        unsafe { getc_unlocked(stream) }
-    }
-
-    #[cfg(not(unix))]
-    {
-        unsafe { fgetc(stream) }
-    }
+    unsafe { crate::stdio::fgetc(stream) }
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
 pub type __darwin_off_t = __int64_t;
 pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sbuf {
-    pub _base: *mut ::core::ffi::c_uchar,
-    pub _size: ::core::ffi::c_int,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sFILE {
-    pub _p: *mut ::core::ffi::c_uchar,
-    pub _r: ::core::ffi::c_int,
-    pub _w: ::core::ffi::c_int,
-    pub _flags: ::core::ffi::c_short,
-    pub _file: ::core::ffi::c_short,
-    pub _bf: __sbuf,
-    pub _lbfsize: ::core::ffi::c_int,
-    pub _cookie: *mut ::core::ffi::c_void,
-    pub _close: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> ::core::ffi::c_int>,
-    pub _read: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *mut ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _seek: Option<
-        unsafe extern "C" fn(*mut ::core::ffi::c_void, fpos_t, ::core::ffi::c_int) -> fpos_t,
-    >,
-    pub _write: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *const ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _ub: __sbuf,
-    pub _extra: *mut __sFILEX,
-    pub _ur: ::core::ffi::c_int,
-    pub _ubuf: [::core::ffi::c_uchar; 3],
-    pub _nbuf: [::core::ffi::c_uchar; 1],
-    pub _lb: __sbuf,
-    pub _blksize: ::core::ffi::c_int,
-    pub _offset: fpos_t,
-}
-pub type FILE = __sFILE;
+pub use crate::stdio::Stream as FILE;
 pub type boolean = ::core::ffi::c_int;
 pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
@@ -347,7 +275,7 @@ pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
             1 as size_t,
             payload_length as size_t,
             fp,
-        ) != payload_length as ::core::ffi::c_ulong
+        ) != payload_length as usize
         {
             crate::utils::pdftex_fail_args(
                 b"reading JPEG image failed (premature file end)\0" as *const u8

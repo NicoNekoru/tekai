@@ -8,6 +8,8 @@
 //! Rounding is nearest with ties to even, independent of process locale or
 //! native floating-environment rounding mode, as required by stable PDF bytes.
 
+#![warn(clippy::all)]
+
 use libc::{c_char, c_void};
 use std::ffi::CStr;
 use std::fmt;
@@ -299,7 +301,8 @@ fn signed(value: i64, length: Length) -> i64 {
         Length::Char => value as i8 as i64,
         Length::Short => value as i16 as i64,
         Length::Int => value as i32 as i64,
-        Length::Long => value as libc::c_long as i64,
+        Length::Long if std::mem::size_of::<libc::c_long>() == 4 => i64::from(value as i32),
+        Length::Long => value,
         Length::Size | Length::PtrDiff => value as isize as i64,
         Length::LongLong | Length::IntMax => value,
     }
@@ -310,7 +313,8 @@ fn unsigned(value: u64, length: Length) -> u64 {
         Length::Char => value as u8 as u64,
         Length::Short => value as u16 as u64,
         Length::Int => value as u32 as u64,
-        Length::Long => value as libc::c_ulong as u64,
+        Length::Long if std::mem::size_of::<libc::c_ulong>() == 4 => u64::from(value as u32),
+        Length::Long => value,
         Length::Size | Length::PtrDiff => value as usize as u64,
         Length::LongLong | Length::IntMax => value,
     }

@@ -1,10 +1,10 @@
+use crate::generated::pdftexextra::{do_dump, do_undump};
+use crate::stdio::feof;
+use crate::support::{xfclose, xfopen};
+use crate::utils::xgetc;
+
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc, xstrdup};
-
-#[repr(C)]
-pub struct __sFILEX {
-    _unused: [u8; 0],
-}
 
 #[repr(C)]
 pub struct png_struct_def {
@@ -17,7 +17,6 @@ pub struct png_info_def {
 }
 
 extern "C" {
-    fn feof(_: *mut FILE) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn strncmp(
         __s1: *const ::core::ffi::c_char,
@@ -32,8 +31,6 @@ extern "C" {
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
-    fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
-    fn xfclose(fp: *mut FILE, filename: const_string);
     fn kpse_find_file(
         name: const_string,
         format: kpse_file_format_type,
@@ -43,18 +40,6 @@ extern "C" {
     fn zround(_: ::core::ffi::c_double) -> integer;
     fn find_input_file(s: integer) -> string;
     fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
-    fn do_dump(
-        _: *mut ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: gzFile,
-    );
-    fn do_undump(
-        _: *mut ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: gzFile,
-    );
     static mut iniversion: boolean;
     static mut onehundredbp: scaled;
     static mut pdfimageprocset: integer;
@@ -74,7 +59,6 @@ extern "C" {
     fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
     fn tex_printf(_: *const ::core::ffi::c_char, ...);
     fn write_epdf();
-    fn xgetc(_: *mut FILE) -> ::core::ffi::c_int;
     fn png_destroy_read_struct(
         png_ptr_ptr: png_structpp,
         info_ptr_ptr: png_infopp,
@@ -94,51 +78,7 @@ pub type __darwin_size_t = usize;
 pub type __darwin_off_t = __int64_t;
 pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sbuf {
-    pub _base: *mut ::core::ffi::c_uchar,
-    pub _size: ::core::ffi::c_int,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sFILE {
-    pub _p: *mut ::core::ffi::c_uchar,
-    pub _r: ::core::ffi::c_int,
-    pub _w: ::core::ffi::c_int,
-    pub _flags: ::core::ffi::c_short,
-    pub _file: ::core::ffi::c_short,
-    pub _bf: __sbuf,
-    pub _lbfsize: ::core::ffi::c_int,
-    pub _cookie: *mut ::core::ffi::c_void,
-    pub _close: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> ::core::ffi::c_int>,
-    pub _read: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *mut ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _seek: Option<
-        unsafe extern "C" fn(*mut ::core::ffi::c_void, fpos_t, ::core::ffi::c_int) -> fpos_t,
-    >,
-    pub _write: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *const ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _ub: __sbuf,
-    pub _extra: *mut __sFILEX,
-    pub _ur: ::core::ffi::c_int,
-    pub _ubuf: [::core::ffi::c_uchar; 3],
-    pub _nbuf: [::core::ffi::c_uchar; 1],
-    pub _lb: __sbuf,
-    pub _blksize: ::core::ffi::c_int,
-    pub _offset: fpos_t,
-}
-pub type FILE = __sFILE;
+pub use crate::stdio::Stream as FILE;
 pub type off_t = __darwin_off_t;
 pub type boolean = ::core::ffi::c_int;
 pub type string = *mut ::core::ffi::c_char;
@@ -206,13 +146,7 @@ pub const kpse_any_glyph_format: kpse_file_format_type = 2;
 pub const kpse_pk_format: kpse_file_format_type = 1;
 pub const kpse_gf_format: kpse_file_format_type = 0;
 pub type integer = ::core::ffi::c_int;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct gzFile_s {
-    pub have: ::core::ffi::c_uint,
-    pub next: *mut ::core::ffi::c_uchar,
-    pub pos: off_t,
-}
+pub use crate::stdio::Stream as gzFile_s;
 pub type gzFile = *mut gzFile_s;
 pub type strnumber = integer;
 pub type scaled = integer;

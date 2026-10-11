@@ -1,6 +1,8 @@
 //! Rust-owned web2c file opening and configuration shims.
 
-use libc::{c_char, c_int, c_uint, c_void, size_t, FILE};
+use crate::stdio::Stream as FILE;
+use crate::support::xfopen;
+use libc::{c_char, c_int, c_uint, c_void, size_t};
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -29,7 +31,6 @@ static mut RECORDER_NAME: *mut c_char = ptr::null_mut();
 static mut RECORDER_FILE: *mut FILE = ptr::null_mut();
 
 extern "C" {
-    static mut __stderrp: *mut FILE;
     static mut nameoffile: *mut u8;
     static mut namelength: c_int;
 
@@ -37,26 +38,13 @@ extern "C" {
     fn kpse_absolute_p(filename: *const c_char, relative_ok: c_int) -> c_int;
     fn kpse_find_file(name: *const c_char, format: c_uint, must_exist: c_int) -> *mut c_char;
     fn kpse_var_value(var: *const c_char) -> *mut c_char;
-    fn xfopen(filename: *const c_char, mode: *const c_char) -> *mut FILE;
     fn xgetcwd() -> *mut c_char;
     fn xdirname(name: *const c_char) -> *mut c_char;
 }
 
-#[cfg(unix)]
-extern "C" {
-    fn getc_unlocked(stream: *mut FILE) -> c_int;
-}
-
+#[inline]
 unsafe fn fast_fgetc(stream: *mut FILE) -> c_int {
-    #[cfg(unix)]
-    {
-        unsafe { getc_unlocked(stream) }
-    }
-
-    #[cfg(not(unix))]
-    {
-        unsafe { libc::fgetc(stream) }
-    }
+    unsafe { crate::stdio::fgetc(stream) }
 }
 
 fn c_strlen(s: *const c_char) -> usize {
@@ -137,7 +125,14 @@ unsafe fn record_name(prefix: *const c_char, name: *const c_char) {
             recorder_start();
         }
         if !RECORDER_FILE.is_null() {
-            libc::fprintf(RECORDER_FILE, c"%s %s\n".as_ptr(), prefix, name);
+            crate::stdio::fprintf_args(
+                RECORDER_FILE,
+                c"%s %s\n".as_ptr(),
+                &[
+                    crate::utils::PrintfArg::from(prefix),
+                    crate::utils::PrintfArg::from(name),
+                ],
+            );
         }
     }
 }
@@ -157,7 +152,11 @@ unsafe fn recorder_start() {
         RECORDER_FILE = xfopen(RECORDER_NAME, c"wb".as_ptr());
         let cwd = xgetcwd();
         if !cwd.is_null() {
-            libc::fprintf(RECORDER_FILE, c"PWD %s\n".as_ptr(), cwd);
+            crate::stdio::fprintf_args(
+                RECORDER_FILE,
+                c"PWD %s\n".as_ptr(),
+                &[crate::utils::PrintfArg::from(cwd)],
+            );
             crate::allocation::free(cwd as *mut c_void);
         }
     }
@@ -197,8 +196,7 @@ pub unsafe extern "C" fn recorder_record_output(name: *const c_char) {
     unsafe { record_name(c"OUTPUT".as_ptr(), name) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn open_input(
+pub(crate) unsafe fn open_input(
     f_ptr: *mut *mut FILE,
     filefmt: c_int,
     fopen_mode: *const c_char,
@@ -213,9 +211,9 @@ pub unsafe extern "C" fn open_input(
         let input_name = nameoffile_body();
         if !output_directory.is_null() && kpse_absolute_p(input_name, FALSE) == 0 {
             let fname = concat3_ptr(output_directory, c"/".as_ptr(), input_name);
-            *f_ptr = libc::fopen(fname, fopen_mode);
+            *f_ptr = crate::stdio::fopen(fname, fopen_mode);
             if !(*f_ptr).is_null() && dir_p(fname) != 0 {
-                libc::fclose(*f_ptr);
+                crate::stdio::fclose(*f_ptr);
                 *f_ptr = ptr::null_mut();
             }
             if !(*f_ptr).is_null() {
@@ -228,7 +226,7 @@ pub unsafe extern "C" fn open_input(
 
         if (*f_ptr).is_null() {
             if filefmt < 0 {
-                *f_ptr = libc::fopen(nameoffile_body(), fopen_mode);
+                *f_ptr = crate::stdio::fopen(nameoffile_body(), fopen_mode);
             } else {
                 let must_exist = ((filefmt != KPSE_TEX_FORMAT || texinputtype != 0)
                     && filefmt != KPSE_VF_FORMAT) as c_int;
@@ -263,8 +261,7 @@ pub unsafe extern "C" fn open_input(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn open_input_with_dirname(
+pub(crate) unsafe fn open_input_with_dirname(
     f_ptr: *mut *mut FILE,
     filefmt: c_int,
     fname: *const c_char,
@@ -287,8 +284,7 @@ pub unsafe extern "C" fn open_input_with_dirname(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c_char) -> c_int {
+pub(crate) unsafe fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c_char) -> c_int {
     unsafe {
         let original = nameoffile_body();
         let absolute = kpse_absolute_p(original, FALSE) != 0;
@@ -300,7 +296,7 @@ pub unsafe extern "C" fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c
             allocated = true;
         }
 
-        *f_ptr = libc::fopen(fname, fopen_mode);
+        *f_ptr = crate::stdio::fopen(fname, fopen_mode);
         if (*f_ptr).is_null() {
             let texmfoutput = kpse_var_value(c"TEXMFOUTPUT".as_ptr());
             if !texmfoutput.is_null() && *texmfoutput != 0 && !absolute {
@@ -309,7 +305,7 @@ pub unsafe extern "C" fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c
                 }
                 fname = concat3_ptr(texmfoutput, c"/".as_ptr(), original);
                 allocated = true;
-                *f_ptr = libc::fopen(fname, fopen_mode);
+                *f_ptr = crate::stdio::fopen(fname, fopen_mode);
             }
             crate::allocation::free(texmfoutput as *mut c_void);
         }
@@ -330,14 +326,13 @@ pub unsafe extern "C" fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn close_file(f: *mut FILE) {
+pub(crate) unsafe fn close_file(f: *mut FILE) {
     unsafe {
         if f.is_null() {
             return;
         }
-        if libc::fclose(f) == libc::EOF {
-            libc::perror(c"fclose".as_ptr());
+        if crate::stdio::fclose(f) == libc::EOF {
+            crate::stdio::perror(c"fclose".as_ptr());
         }
     }
 }
@@ -355,13 +350,15 @@ pub unsafe extern "C" fn setupboundvariable(var: *mut c_int, var_name: *const c_
         if conf_val >= 0 && (conf_val != 0 || dflt <= 0) {
             *var = conf_val;
         } else {
-            libc::fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 c"pdftex: Bad value (%ld) in environment or texmf.cnf for %s, keeping %ld.\n"
                     .as_ptr(),
-                conf_val as libc::c_long,
-                var_name,
-                dflt as libc::c_long,
+                &[
+                    crate::utils::PrintfArg::from(conf_val as libc::c_long),
+                    crate::utils::PrintfArg::from(var_name),
+                    crate::utils::PrintfArg::from(dflt as libc::c_long),
+                ],
             );
         }
         crate::allocation::free(expansion as *mut c_void);
@@ -380,7 +377,7 @@ pub(crate) unsafe fn xmalloc(size: size_t) -> *mut c_void {
         if mem.is_null() {
             let msg = format!("fatal: memory exhausted (xmalloc of {size} bytes).\n");
             libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-            libc::exit(libc::EXIT_FAILURE);
+            crate::stdio::exit(libc::EXIT_FAILURE);
         }
         mem
     }
@@ -400,7 +397,7 @@ pub(crate) unsafe fn xrealloc(old_ptr: *mut c_void, size: size_t) -> *mut c_void
         if mem.is_null() {
             let msg = format!("fatal: memory exhausted (realloc of {size} bytes).\n");
             libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-            libc::exit(libc::EXIT_FAILURE);
+            crate::stdio::exit(libc::EXIT_FAILURE);
         }
         mem
     }

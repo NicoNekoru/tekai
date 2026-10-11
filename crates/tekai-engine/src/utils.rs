@@ -1,15 +1,13 @@
 //! Typed printf helpers for generated pdfTeX Rust.
 
-use libc::{c_char, c_int, c_longlong, c_uchar, c_uint, c_ulong, c_void, FILE};
+use crate::stdio::exit;
+use crate::stdio::Stream as FILE;
+use crate::support::xfclose;
+use libc::{c_char, c_int, c_longlong, c_uchar, c_uint, c_ulong, c_void};
 use std::ffi::{CStr, CString};
 use std::{mem, ptr, slice};
 
 use crate::md5::{md5_append, md5_finish, md5_init, Md5State};
-
-#[cfg(unix)]
-extern "C" {
-    fn getc_unlocked(stream: *mut FILE) -> c_int;
-}
 
 const MAX_PSTRING_LEN: usize = 1024;
 const SMALL_ARRAY_SIZE: usize = 256;
@@ -37,11 +35,9 @@ mod printf;
 pub use printf::PrintfArg;
 
 extern "C" {
-    static mut __stdoutp: *mut FILE;
     static kpse_def_inst: KpathseaInstancePrefix;
 
     fn abort() -> !;
-    fn exit(_: c_int) -> !;
     fn println();
     fn zflushstr(_: c_int);
     fn zprint(_: c_int);
@@ -74,12 +70,10 @@ extern "C" {
     static kpathsea_version_string: *const c_char;
 
     fn makecstring(_: StrNumber) -> *mut c_char;
-    fn xfclose(_: *mut FILE, _: *const c_char);
     fn makestring() -> StrNumber;
     fn getnullstr() -> StrNumber;
     fn ztokenstostring(_: Integer) -> StrNumber;
     fn initstarttime();
-    fn close_file_or_pipe(_: *mut FILE);
 
     fn fm_free();
     fn t1_free();
@@ -535,7 +529,7 @@ pub unsafe fn tex_printf_args(fmt: *const c_char, args: &[PrintfArg]) {
     let bytes = unsafe { format_printf(fmt, args) };
     unsafe {
         safe_print_bytes(&bytes);
-        xfflush(__stdoutp);
+        xfflush(crate::stdio::stdout());
     }
 }
 
@@ -606,25 +600,23 @@ pub unsafe extern "C" fn garbagewarning() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xfwrite(
+pub(crate) unsafe fn xfwrite(
     ptr: *mut c_void,
     size: SizeT,
     nmemb: SizeT,
     stream: *mut FILE,
 ) -> SizeT {
     unsafe {
-        if libc::fwrite(ptr, size, nmemb, stream) != nmemb {
+        if crate::stdio::fwrite(ptr, size, nmemb, stream) != nmemb {
             pdftex_fail_args(c"fwrite() failed".as_ptr(), &[]);
         }
     }
     nmemb
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xfflush(stream: *mut FILE) -> c_int {
+pub(crate) unsafe fn xfflush(stream: *mut FILE) -> c_int {
     unsafe {
-        if libc::fflush(stream) != 0 {
+        if crate::stdio::fflush(stream) != 0 {
             let err = std::io::Error::last_os_error()
                 .raw_os_error()
                 .unwrap_or(libc::EIO);
@@ -637,17 +629,8 @@ pub unsafe extern "C" fn xfflush(stream: *mut FILE) -> c_int {
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xgetc(stream: *mut FILE) -> c_int {
-    #[cfg(unix)]
-    unsafe {
-        getc_unlocked(stream)
-    }
-
-    #[cfg(not(unix))]
-    unsafe {
-        libc::fgetc(stream)
-    }
+pub(crate) unsafe fn xgetc(stream: *mut FILE) -> c_int {
+    unsafe { crate::stdio::fgetc(stream) }
 }
 
 #[no_mangle]
@@ -657,11 +640,15 @@ pub unsafe extern "C" fn writestreamlength(length: LongInteger, offset: LongInte
             JOBNAME_CSTR = c_strdup(makecstring(jobname));
         }
         if fixedpdfdraftmode == 0 {
-            if libc::fseeko(pdffile, offset, libc::SEEK_SET) != 0 {
+            if crate::stdio::fseeko(pdffile, offset, libc::SEEK_SET) != 0 {
                 pdftex_fail_args(c"fseeko() failed".as_ptr(), &[]);
             }
-            libc::fprintf(pdffile, c"%lli".as_ptr(), length as c_longlong);
-            if libc::fseeko(pdffile, pdfgone + pdfptr as LongInteger, libc::SEEK_SET) != 0 {
+            crate::stdio::fprintf_args(
+                pdffile,
+                c"%lli".as_ptr(),
+                &[crate::utils::PrintfArg::from(length as c_longlong)],
+            );
+            if crate::stdio::fseeko(pdffile, pdfgone + pdfptr as LongInteger, libc::SEEK_SET) != 0 {
                 pdftex_fail_args(c"fseeko() failed".as_ptr(), &[]);
             }
         }

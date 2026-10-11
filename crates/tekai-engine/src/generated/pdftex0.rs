@@ -1,32 +1,14 @@
+use crate::generated::pdftexextra::{
+    close_file_or_pipe, input_line, open_in_or_pipe, open_out_or_pipe,
+};
+use crate::openclose::{open_input, open_output};
+use crate::stdio::{exit, feof, fflush, fputs, fwrite, perror, putc};
+use crate::web2c::eof;
+
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
 
-#[repr(C)]
-pub struct __sFILEX {
-    _unused: [u8; 0],
-}
-
 extern "C" {
-    static mut __stdinp: *mut FILE;
-    static mut __stdoutp: *mut FILE;
-    static mut __stderrp: *mut FILE;
-    fn feof(_: *mut FILE) -> ::core::ffi::c_int;
-    fn fflush(_: *mut FILE) -> ::core::ffi::c_int;
-    fn fprintf(_: *mut FILE, _: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn fputs(_: *const ::core::ffi::c_char, _: *mut FILE) -> ::core::ffi::c_int;
-    fn fwrite(
-        __ptr: *const ::core::ffi::c_void,
-        __size: size_t,
-        __nitems: size_t,
-        __stream: *mut FILE,
-    ) -> ::core::ffi::c_ulong;
-    fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
-    #[cfg(unix)]
-    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
-    fn perror(_: *const ::core::ffi::c_char);
-    fn putc(_: ::core::ffi::c_int, _: *mut FILE) -> ::core::ffi::c_int;
-    fn fileno(_: *mut FILE) -> ::core::ffi::c_int;
-    fn exit(_: ::core::ffi::c_int) -> !;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn __assert_rtn(
         _: *const ::core::ffi::c_char,
@@ -46,9 +28,6 @@ extern "C" {
     fn kpse_set_program_enabled(fmt: kpse_file_format_type, value: boolean, level: kpse_src_type);
     fn kpse_in_name_ok(fname: const_string) -> boolean;
     fn kpse_out_name_ok(fname: const_string) -> boolean;
-    fn eof(_: *mut FILE) -> boolean;
-    fn open_input(_: *mut *mut FILE, _: ::core::ffi::c_int, fopen_mode: const_string) -> boolean;
-    fn open_output(_: *mut *mut FILE, fopen_mode: const_string) -> boolean;
     fn recorder_change_filename(_: string);
     fn texmf_yesno(_: const_string) -> boolean;
     static mut versionstring: *const ::core::ffi::c_char;
@@ -61,21 +40,12 @@ extern "C" {
     fn getfilesize(s: integer);
     fn getfiledump(s: integer, offset: ::core::ffi::c_int, length: ::core::ffi::c_int);
     fn getmd5sum(s: integer, file: ::core::ffi::c_int);
-    fn open_in_or_pipe(
-        _: *mut *mut FILE,
-        _: ::core::ffi::c_int,
-        fopen_mode: const_string,
-    ) -> boolean;
-    fn open_out_or_pipe(_: *mut *mut FILE, fopen_mode: const_string) -> boolean;
-    fn close_file_or_pipe(_: *mut FILE);
     fn runsystem(cmd: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     static mut translate_filename: string;
     fn ipcpage(_: ::core::ffi::c_int);
-    fn input_line(_: *mut FILE) -> boolean;
     fn get_date_and_time(_: *mut integer, _: *mut integer, _: *mut integer, _: *mut integer);
     fn get_seconds_and_micros(_: *mut integer, _: *mut integer);
     fn topenin();
-    fn gzdopen(fd: ::core::ffi::c_int, mode: *const ::core::ffi::c_char) -> gzFile;
     static mut xord: [ASCIIcode; 256];
     static mut xchr: [ASCIIcode; 256];
     static mut xprn: [ASCIIcode; 256];
@@ -805,66 +775,14 @@ extern "C" {
 }
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
-    #[cfg(unix)]
-    {
-        unsafe { getc_unlocked(stream) }
-    }
-
-    #[cfg(not(unix))]
-    {
-        unsafe { fgetc(stream) }
-    }
+    unsafe { crate::stdio::fgetc(stream) }
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
 pub type __darwin_off_t = __int64_t;
 pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sbuf {
-    pub _base: *mut ::core::ffi::c_uchar,
-    pub _size: ::core::ffi::c_int,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sFILE {
-    pub _p: *mut ::core::ffi::c_uchar,
-    pub _r: ::core::ffi::c_int,
-    pub _w: ::core::ffi::c_int,
-    pub _flags: ::core::ffi::c_short,
-    pub _file: ::core::ffi::c_short,
-    pub _bf: __sbuf,
-    pub _lbfsize: ::core::ffi::c_int,
-    pub _cookie: *mut ::core::ffi::c_void,
-    pub _close: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> ::core::ffi::c_int>,
-    pub _read: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *mut ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _seek: Option<
-        unsafe extern "C" fn(*mut ::core::ffi::c_void, fpos_t, ::core::ffi::c_int) -> fpos_t,
-    >,
-    pub _write: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *const ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _ub: __sbuf,
-    pub _extra: *mut __sFILEX,
-    pub _ur: ::core::ffi::c_int,
-    pub _ubuf: [::core::ffi::c_uchar; 3],
-    pub _nbuf: [::core::ffi::c_uchar; 1],
-    pub _lb: __sbuf,
-    pub _blksize: ::core::ffi::c_int,
-    pub _offset: fpos_t,
-}
-pub type FILE = __sFILE;
+pub use crate::stdio::Stream as FILE;
 pub type off_t = __darwin_off_t;
 pub type boolean = ::core::ffi::c_int;
 pub type string = *mut ::core::ffi::c_char;
@@ -1047,13 +965,7 @@ pub type longinteger = off_t;
 pub type real = ::core::ffi::c_double;
 pub type text = *mut FILE;
 pub type glueratio = ::core::ffi::c_double;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct gzFile_s {
-    pub have: ::core::ffi::c_uint,
-    pub next: *mut ::core::ffi::c_uchar,
-    pub pos: off_t,
-}
+pub use crate::stdio::Stream as gzFile_s;
 pub type gzFile = *mut gzFile_s;
 pub type ASCIIcode = ::core::ffi::c_uchar;
 pub type eightbits = ::core::ffi::c_uchar;
@@ -1231,7 +1143,7 @@ pub const pdfmaxlinklevel: ::core::ffi::c_int = 10 as ::core::ffi::c_int;
 pub unsafe extern "C" fn println() {
     match selector as ::core::ffi::c_int {
         19 => {
-            putc('\n' as i32, __stdoutp);
+            putc('\n' as i32, crate::stdio::stdout());
             putc('\n' as i32, logfile as *mut FILE);
             termoffset = 0 as ::core::ffi::c_int as integer;
             fileoffset = 0 as ::core::ffi::c_int as integer;
@@ -1241,7 +1153,7 @@ pub unsafe extern "C" fn println() {
             fileoffset = 0 as ::core::ffi::c_int as integer;
         }
         17 => {
-            putc('\n' as i32, __stdoutp);
+            putc('\n' as i32, crate::stdio::stdout());
             termoffset = 0 as ::core::ffi::c_int as integer;
         }
         16 | 20 | 21 => {}
@@ -1261,12 +1173,15 @@ pub unsafe extern "C" fn zprintchar(mut s: ASCIIcode) {
     }
     match selector as ::core::ffi::c_int {
         19 => {
-            putc(xchr[s as usize] as ::core::ffi::c_int, __stdoutp);
+            putc(
+                xchr[s as usize] as ::core::ffi::c_int,
+                crate::stdio::stdout(),
+            );
             putc(xchr[s as usize] as ::core::ffi::c_int, logfile as *mut FILE);
             termoffset += 1;
             fileoffset += 1;
             if termoffset == maxprintline {
-                putc('\n' as i32, __stdoutp);
+                putc('\n' as i32, crate::stdio::stdout());
                 termoffset = 0 as ::core::ffi::c_int as integer;
             }
             if fileoffset == maxprintline {
@@ -1282,7 +1197,10 @@ pub unsafe extern "C" fn zprintchar(mut s: ASCIIcode) {
             }
         }
         17 => {
-            putc(xchr[s as usize] as ::core::ffi::c_int, __stdoutp);
+            putc(
+                xchr[s as usize] as ::core::ffi::c_int,
+                crate::stdio::stdout(),
+            );
             termoffset += 1;
             if termoffset == maxprintline {
                 println();
@@ -1739,14 +1657,18 @@ pub unsafe extern "C" fn zprintsanum(mut q: halfword) {
 pub unsafe extern "C" fn zprintcsnames(mut hstart: integer, mut hfinish: integer) {
     let mut c_0: integer = 0;
     let mut h: integer = 0;
-    fprintf(
-        __stderrp,
+    crate::stdio::fprintf_args(
+        crate::stdio::stderr(),
         b"%s%ld%s%ld%c\n\0" as *const u8 as *const ::core::ffi::c_char,
-        b"fmtdebug:csnames from \0" as *const u8 as *const ::core::ffi::c_char,
-        hstart as ::core::ffi::c_long,
-        b" to \0" as *const u8 as *const ::core::ffi::c_char,
-        hfinish as ::core::ffi::c_long,
-        ':' as i32,
+        &[
+            crate::utils::PrintfArg::from(
+                b"fmtdebug:csnames from \0" as *const u8 as *const ::core::ffi::c_char,
+            ),
+            crate::utils::PrintfArg::from(hstart as ::core::ffi::c_long),
+            crate::utils::PrintfArg::from(b" to \0" as *const u8 as *const ::core::ffi::c_char),
+            crate::utils::PrintfArg::from(hfinish as ::core::ffi::c_long),
+            crate::utils::PrintfArg::from(':' as i32),
+        ],
     );
     let mut for_end: integer = 0;
     h = hstart;
@@ -1767,23 +1689,25 @@ pub unsafe extern "C" fn zprintcsnames(mut hstart: integer, mut hfinish: integer
                             *strpool.offset(c_0 as isize) as ::core::ffi::c_char
                                 as ::core::ffi::c_int
                                 & 255 as ::core::ffi::c_int,
-                            __stderrp,
+                            crate::stdio::stderr(),
                         ) == EOF
                         {
-                            fprintf(
-                                __stderrp,
+                            crate::stdio::fprintf_args(
+                                crate::stdio::stderr(),
                                 b"%s: fatal: (kpathsea) \0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                (*kpse_def).invocation_name,
+                                &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
                             );
-                            fprintf(
-                                __stderrp,
+                            crate::stdio::fprintf_args(
+                                crate::stdio::stderr(),
                                 b"putbyte(%ld) failed\0" as *const u8 as *const ::core::ffi::c_char,
-                                *strpool.offset(c_0 as isize) as ::core::ffi::c_long,
+                                &[crate::utils::PrintfArg::from(
+                                    *strpool.offset(c_0 as isize) as ::core::ffi::c_long
+                                )],
                             );
                             fputs(
                                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                __stderrp,
+                                crate::stdio::stderr(),
                             );
                             exit(1 as ::core::ffi::c_int);
                         }
@@ -1794,8 +1718,8 @@ pub unsafe extern "C" fn zprintcsnames(mut hstart: integer, mut hfinish: integer
                         }
                     }
                 }
-                putc('|' as i32, __stderrp);
-                putc('\n' as i32, __stderrp);
+                putc('|' as i32, crate::stdio::stderr());
+                putc('\n' as i32, crate::stdio::stderr());
             }
             let fresh4 = h;
             h = h + 1;
@@ -2019,7 +1943,7 @@ pub unsafe extern "C" fn zzprintbuffer(mut i: *mut integer) {
 #[no_mangle]
 pub unsafe extern "C" fn jumpout() -> ! {
     closefilesandterminate();
-    fflush(__stdoutp);
+    fflush(crate::stdio::stdout());
     readyalready = 0 as ::core::ffi::c_int as integer;
     if history as ::core::ffi::c_int != 0 as ::core::ffi::c_int
         && history as ::core::ffi::c_int != 1 as ::core::ffi::c_int
@@ -2043,7 +1967,7 @@ pub unsafe extern "C" fn error() {
     showcontext();
     if haltonerrorp != 0 {
         if haltingonerrorp != 0 {
-            fflush(__stdoutp);
+            fflush(crate::stdio::stdout());
             readyalready = 0 as ::core::ffi::c_int as integer;
             if history as ::core::ffi::c_int != 0 as ::core::ffi::c_int
                 && history as ::core::ffi::c_int != 1 as ::core::ffi::c_int
@@ -2226,7 +2150,7 @@ pub unsafe extern "C" fn error() {
                     }
                     zprint(277 as ::core::ffi::c_int);
                     println();
-                    fflush(__stdoutp);
+                    fflush(crate::stdio::stdout());
                     return;
                 }
                 88 => {
@@ -2377,16 +2301,18 @@ pub unsafe extern "C" fn initterminal() -> boolean {
     loop {
         fputs(
             b"**\0" as *const u8 as *const ::core::ffi::c_char,
-            __stdoutp,
+            crate::stdio::stdout(),
         );
-        fflush(__stdoutp);
-        if input_line(__stdinp) == 0 {
-            putc('\n' as i32, __stdoutp);
-            fprintf(
-                __stdoutp,
+        fflush(crate::stdio::stdout());
+        if input_line(crate::stdio::stdin()) == 0 {
+            putc('\n' as i32, crate::stdio::stdout());
+            crate::stdio::fprintf_args(
+                crate::stdio::stdout(),
                 b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                b"! End of file on the terminal... why?\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(
+                    b"! End of file on the terminal... why?\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                )],
             );
             Result = false_0 as boolean;
             return Result;
@@ -2402,11 +2328,13 @@ pub unsafe extern "C" fn initterminal() -> boolean {
             Result = true_0 as boolean;
             return Result;
         }
-        fprintf(
-            __stdoutp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stdout(),
             b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            b"Please type the name of your input file.\0" as *const u8
-                as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                b"Please type the name of your input file.\0" as *const u8
+                    as *const ::core::ffi::c_char,
+            )],
         );
     }
 }
@@ -2693,8 +2621,8 @@ pub unsafe extern "C" fn printcurrentstring() {
 #[no_mangle]
 pub unsafe extern "C" fn terminput() {
     let mut k: integer = 0;
-    fflush(__stdoutp);
-    if input_line(__stdinp) == 0 {
+    fflush(crate::stdio::stdout());
+    if input_line(crate::stdio::stdin()) == 0 {
         curinput.limitfield = 0 as ::core::ffi::c_int as halfword;
         zfatalerror(263 as ::core::ffi::c_int);
     }
@@ -13289,7 +13217,7 @@ pub unsafe extern "C" fn getnext() {
                             if curinput.namefield >= 19 as ::core::ffi::c_int {
                                 zprintchar(41 as ::core::ffi::c_int as ASCIIcode);
                                 openparens -= 1;
-                                fflush(__stdoutp);
+                                fflush(crate::stdio::stdout());
                             }
                             forceeof = false_0 as boolean;
                             endfilereading();
@@ -18491,7 +18419,7 @@ pub unsafe extern "C" fn pseudostart() {
         curinput.namefield = 19 as ::core::ffi::c_int as halfword;
         zprint(2060 as ::core::ffi::c_int);
         openparens += 1;
-        fflush(__stdoutp);
+        fflush(crate::stdio::stdout());
     } else {
         curinput.namefield = 18 as ::core::ffi::c_int as halfword;
         curinput.synctextagfield = 0 as ::core::ffi::c_int as integer;
@@ -21240,20 +21168,34 @@ pub unsafe extern "C" fn openlogfile() {
     selector = 18 as ::core::ffi::c_uchar;
     logopened = true_0 as boolean;
     if srcspecialsp != 0 || filelineerrorstylep != 0 || parsefirstlinep != 0 {
-        fprintf(
+        crate::stdio::fprintf_args(
             logfile as *mut FILE,
             b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-            b"This is pdfTeX, Version 3.141592653\0" as *const u8 as *const ::core::ffi::c_char,
-            b"-2.6\0" as *const u8 as *const ::core::ffi::c_char,
-            b"-1.40.29\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(
+                    b"This is pdfTeX, Version 3.141592653\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                ),
+                crate::utils::PrintfArg::from(b"-2.6\0" as *const u8 as *const ::core::ffi::c_char),
+                crate::utils::PrintfArg::from(
+                    b"-1.40.29\0" as *const u8 as *const ::core::ffi::c_char,
+                ),
+            ],
         );
     } else {
-        fprintf(
+        crate::stdio::fprintf_args(
             logfile as *mut FILE,
             b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-            b"This is pdfTeX, Version 3.141592653\0" as *const u8 as *const ::core::ffi::c_char,
-            b"-2.6\0" as *const u8 as *const ::core::ffi::c_char,
-            b"-1.40.29\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(
+                    b"This is pdfTeX, Version 3.141592653\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                ),
+                crate::utils::PrintfArg::from(b"-2.6\0" as *const u8 as *const ::core::ffi::c_char),
+                crate::utils::PrintfArg::from(
+                    b"-1.40.29\0" as *const u8 as *const ::core::ffi::c_char,
+                ),
+            ],
         );
     }
     fputs(versionstring, logfile as *mut FILE);
@@ -21446,7 +21388,7 @@ pub unsafe extern "C" fn startinput() {
     zprintchar(40 as ::core::ffi::c_int as ASCIIcode);
     openparens += 1;
     zslowprint(*fullsourcefilenamestack.offset(inopen as isize));
-    fflush(__stdoutp);
+    fflush(crate::stdio::stdout());
     if (*eqtb.offset(29335 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int {
         begindiagnostic();
         println();
@@ -22869,10 +22811,10 @@ pub unsafe extern "C" fn dviswap() {
                 .wrapping_sub(0 as ::core::ffi::c_int as size_t)
                 .wrapping_add(1 as size_t)
         {
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"%s: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                (*kpse_def).invocation_name,
+                &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
             );
             perror(b"fwrite\0" as *const u8 as *const ::core::ffi::c_char);
             exit(EXIT_FAILURE);
@@ -22894,10 +22836,10 @@ pub unsafe extern "C" fn dviswap() {
                 .wrapping_sub(halfbuf as size_t)
                 .wrapping_add(1 as size_t)
         {
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"%s: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                (*kpse_def).invocation_name,
+                &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
             );
             perror(b"fwrite\0" as *const u8 as *const ::core::ffi::c_char);
             exit(EXIT_FAILURE);
@@ -25868,7 +25810,7 @@ pub unsafe extern "C" fn zdvishipout(mut p: halfword) {
             }
         }
     }
-    fflush(__stdoutp);
+    fflush(crate::stdio::stdout());
     if (*eqtb.offset(29311 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int {
         zprintchar(93 as ::core::ffi::c_int as ASCIIcode);
         begindiagnostic();
@@ -26135,10 +26077,10 @@ pub unsafe extern "C" fn zdvishipout(mut p: halfword) {
                         .wrapping_sub(halfbuf as size_t)
                         .wrapping_add(1 as size_t)
                 {
-                    fprintf(
-                        __stderrp,
+                    crate::stdio::fprintf_args(
+                        crate::stdio::stderr(),
                         b"%s: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                        (*kpse_def).invocation_name,
+                        &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
                     );
                     perror(b"fwrite\0" as *const u8 as *const ::core::ffi::c_char);
                     exit(EXIT_FAILURE);
@@ -26167,10 +26109,10 @@ pub unsafe extern "C" fn zdvishipout(mut p: halfword) {
                         .wrapping_sub(0 as ::core::ffi::c_int as size_t)
                         .wrapping_add(1 as size_t)
                 {
-                    fprintf(
-                        __stderrp,
+                    crate::stdio::fprintf_args(
+                        crate::stdio::stderr(),
                         b"%s: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                        (*kpse_def).invocation_name,
+                        &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
                     );
                     perror(b"fwrite\0" as *const u8 as *const ::core::ffi::c_char);
                     exit(EXIT_FAILURE);
@@ -26210,7 +26152,7 @@ pub unsafe extern "C" fn zdvishipout(mut p: halfword) {
         zprintchar(93 as ::core::ffi::c_int as ASCIIcode);
     }
     deadcycles = 0 as ::core::ffi::c_int as integer;
-    fflush(__stdoutp);
+    fflush(crate::stdio::stdout());
     if (*eqtb.offset(29308 as ::core::ffi::c_int as isize)).u.CINT > 1 as ::core::ffi::c_int {
         zprintnl(1004 as ::core::ffi::c_int);
         zprintint(varused as longinteger);
@@ -26584,7 +26526,7 @@ pub unsafe extern "C" fn zshortdisplayn(mut p: integer, mut m: integer) {
             return;
         }
     }
-    fflush(__stdoutp);
+    fflush(crate::stdio::stdout());
 }
 #[no_mangle]
 pub unsafe extern "C" fn zpdfgetmem(mut s: integer) -> integer {
@@ -29971,7 +29913,7 @@ pub unsafe extern "C" fn zdovf(mut f_0: internalfontnumber) {
         zprint(*fontname.offset(f_0 as isize));
         zprint(1125 as ::core::ffi::c_int);
     }
-    fflush(__stdoutp);
+    fflush(crate::stdio::stdout());
     cmd = vfbyte() as integer;
     savevfnf = vfnf;
     while cmd >= 243 as ::core::ffi::c_int && cmd <= 246 as ::core::ffi::c_int {
@@ -34726,7 +34668,7 @@ pub unsafe extern "C" fn zpdfshipout(mut p: halfword, mut shippingpage: boolean)
                 }
             }
         }
-        fflush(__stdoutp);
+        fflush(crate::stdio::stdout());
     }
     if (*eqtb.offset(29311 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int {
         if shippingpage != 0 {
@@ -35861,7 +35803,7 @@ pub unsafe extern "C" fn zpdfshipout(mut p: halfword, mut shippingpage: boolean)
         zprintchar(93 as ::core::ffi::c_int as ASCIIcode);
     }
     deadcycles = 0 as ::core::ffi::c_int as integer;
-    fflush(__stdoutp);
+    fflush(crate::stdio::stdout());
     if (*eqtb.offset(29308 as ::core::ffi::c_int as isize)).u.CINT > 1 as ::core::ffi::c_int {
         zprintnl(1004 as ::core::ffi::c_int);
         zprintint(varused as longinteger);
@@ -58414,7 +58356,7 @@ pub unsafe extern "C" fn issuemessage() {
             zprintchar(32 as ::core::ffi::c_int as ASCIIcode);
         }
         zprint(s);
-        fflush(__stdoutp);
+        fflush(crate::stdio::stdout());
     } else {
         interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
         if filelineerrorstylep != 0 {
@@ -63521,8 +63463,8 @@ pub unsafe extern "C" fn openfmtfile() -> boolean {
             FOPEN_RBIN_MODE.as_ptr(),
         ) != 0
             && {
-                fmtfile =
-                    gzdopen(fileno(fmtfile as *mut FILE), FOPEN_RBIN_MODE.as_ptr()) as wordfile;
+                fmtfile = crate::stdio::gzip_open(fmtfile as *mut FILE, FOPEN_RBIN_MODE.as_ptr())
+                    as wordfile;
                 !fmtfile.is_null()
             }
         {
@@ -63530,28 +63472,30 @@ pub unsafe extern "C" fn openfmtfile() -> boolean {
         } else {
             fputs(
                 b"Sorry, I can't find the format `\0" as *const u8 as *const ::core::ffi::c_char,
-                __stdoutp,
+                crate::stdio::stdout(),
             );
             fputs(
                 nameoffile.offset(1 as ::core::ffi::c_int as isize) as string
                     as *const ::core::ffi::c_char,
-                __stdoutp,
+                crate::stdio::stdout(),
             );
             fputs(
                 b"'; will try `\0" as *const u8 as *const ::core::ffi::c_char,
-                __stdoutp,
+                crate::stdio::stdout(),
             );
             fputs(
                 TEXformatdefault.offset(1 as ::core::ffi::c_int as isize)
                     as *const ::core::ffi::c_char,
-                __stdoutp,
+                crate::stdio::stdout(),
             );
-            fprintf(
-                __stdoutp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stdout(),
                 b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                b"'.\0" as *const u8 as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(
+                    b"'.\0" as *const u8 as *const ::core::ffi::c_char,
+                )],
             );
-            fflush(__stdoutp);
+            fflush(crate::stdio::stdout());
             current_block = 7746791466490516765;
         }
     } else {
@@ -63572,23 +63516,26 @@ pub unsafe extern "C" fn openfmtfile() -> boolean {
             ) != 0
                 && {
                     fmtfile =
-                        gzdopen(fileno(fmtfile as *mut FILE), FOPEN_RBIN_MODE.as_ptr()) as wordfile;
+                        crate::stdio::gzip_open(fmtfile as *mut FILE, FOPEN_RBIN_MODE.as_ptr())
+                            as wordfile;
                     !fmtfile.is_null()
                 })
             {
                 fputs(
                     b"I can't find the format file `\0" as *const u8 as *const ::core::ffi::c_char,
-                    __stdoutp,
+                    crate::stdio::stdout(),
                 );
                 fputs(
                     TEXformatdefault.offset(1 as ::core::ffi::c_int as isize)
                         as *const ::core::ffi::c_char,
-                    __stdoutp,
+                    crate::stdio::stdout(),
                 );
-                fprintf(
-                    __stdoutp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stdout(),
                     b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    b"'!\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(
+                        b"'!\0" as *const u8 as *const ::core::ffi::c_char,
+                    )],
                 );
                 Result = false_0 as boolean;
                 return Result;
@@ -63641,120 +63588,209 @@ pub unsafe extern "C" fn closefilesandterminate() {
         if logopened != 0 {
             putc(' ' as i32, logfile as *mut FILE);
             putc('\n' as i32, logfile as *mut FILE);
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                b"Here is how much of TeX's memory\0" as *const u8 as *const ::core::ffi::c_char,
-                b" you used:\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b"Here is how much of TeX's memory\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        b" you used:\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                ],
             );
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%c%ld%s\0" as *const u8 as *const ::core::ffi::c_char,
-                ' ' as i32,
-                strptr as ::core::ffi::c_long - initstrptr as ::core::ffi::c_long,
-                b" string\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(' ' as i32),
+                    crate::utils::PrintfArg::from(
+                        strptr as ::core::ffi::c_long - initstrptr as ::core::ffi::c_long,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        b" string\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                ],
             );
             if strptr != initstrptr as ::core::ffi::c_int + 1 as ::core::ffi::c_int {
                 putc('s' as i32, logfile as *mut FILE);
             }
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                b" out of \0" as *const u8 as *const ::core::ffi::c_char,
-                maxstrings as ::core::ffi::c_long - initstrptr as ::core::ffi::c_long,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b" out of \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        maxstrings as ::core::ffi::c_long - initstrptr as ::core::ffi::c_long,
+                    ),
+                ],
             );
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%c%ld%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                ' ' as i32,
-                poolptr as ::core::ffi::c_long - initpoolptr as ::core::ffi::c_long,
-                b" string characters out of \0" as *const u8 as *const ::core::ffi::c_char,
-                poolsize as ::core::ffi::c_long - initpoolptr as ::core::ffi::c_long,
+                &[
+                    crate::utils::PrintfArg::from(' ' as i32),
+                    crate::utils::PrintfArg::from(
+                        poolptr as ::core::ffi::c_long - initpoolptr as ::core::ffi::c_long,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        b" string characters out of \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        poolsize as ::core::ffi::c_long - initpoolptr as ::core::ffi::c_long,
+                    ),
+                ],
             );
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%c%ld%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                ' ' as i32,
-                lomemmax as ::core::ffi::c_long - memmin as ::core::ffi::c_long
-                    + memend as ::core::ffi::c_long
-                    - himemmin as ::core::ffi::c_long
-                    + 2 as ::core::ffi::c_long,
-                b" words of memory out of \0" as *const u8 as *const ::core::ffi::c_char,
-                memend as ::core::ffi::c_long + 1 as ::core::ffi::c_long
-                    - memmin as ::core::ffi::c_long,
+                &[
+                    crate::utils::PrintfArg::from(' ' as i32),
+                    crate::utils::PrintfArg::from(
+                        lomemmax as ::core::ffi::c_long - memmin as ::core::ffi::c_long
+                            + memend as ::core::ffi::c_long
+                            - himemmin as ::core::ffi::c_long
+                            + 2 as ::core::ffi::c_long,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        b" words of memory out of \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        memend as ::core::ffi::c_long + 1 as ::core::ffi::c_long
+                            - memmin as ::core::ffi::c_long,
+                    ),
+                ],
             );
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%c%ld%s%ld%c%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                ' ' as i32,
-                cscount as ::core::ffi::c_long,
-                b" multiletter control sequences out of \0" as *const u8
-                    as *const ::core::ffi::c_char,
-                15000 as ::core::ffi::c_int as ::core::ffi::c_long,
-                '+' as i32,
-                hashextra as ::core::ffi::c_long,
+                &[
+                    crate::utils::PrintfArg::from(' ' as i32),
+                    crate::utils::PrintfArg::from(cscount as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b" multiletter control sequences out of \0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        15000 as ::core::ffi::c_int as ::core::ffi::c_long,
+                    ),
+                    crate::utils::PrintfArg::from('+' as i32),
+                    crate::utils::PrintfArg::from(hashextra as ::core::ffi::c_long),
+                ],
             );
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%c%ld%s%ld%s\0" as *const u8 as *const ::core::ffi::c_char,
-                ' ' as i32,
-                fmemptr as ::core::ffi::c_long,
-                b" words of font info for \0" as *const u8 as *const ::core::ffi::c_char,
-                fontptr as ::core::ffi::c_long - 0 as ::core::ffi::c_long,
-                b" font\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(' ' as i32),
+                    crate::utils::PrintfArg::from(fmemptr as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b" words of font info for \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        fontptr as ::core::ffi::c_long - 0 as ::core::ffi::c_long,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        b" font\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                ],
             );
             if fontptr != 1 as ::core::ffi::c_int {
                 putc('s' as i32, logfile as *mut FILE);
             }
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%s%ld%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                b", out of \0" as *const u8 as *const ::core::ffi::c_char,
-                fontmemsize as ::core::ffi::c_long,
-                b" for \0" as *const u8 as *const ::core::ffi::c_char,
-                fontmax as ::core::ffi::c_long - 0 as ::core::ffi::c_long,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b", out of \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(fontmemsize as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b" for \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        fontmax as ::core::ffi::c_long - 0 as ::core::ffi::c_long,
+                    ),
+                ],
             );
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%c%ld%s\0" as *const u8 as *const ::core::ffi::c_char,
-                ' ' as i32,
-                hyphcount as ::core::ffi::c_long,
-                b" hyphenation exception\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(' ' as i32),
+                    crate::utils::PrintfArg::from(hyphcount as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b" hyphenation exception\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                ],
             );
             if hyphcount != 1 as ::core::ffi::c_int {
                 putc('s' as i32, logfile as *mut FILE);
             }
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                b" out of \0" as *const u8 as *const ::core::ffi::c_char,
-                hyphsize as ::core::ffi::c_long,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b" out of \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(hyphsize as ::core::ffi::c_long),
+                ],
             );
-            fprintf(
+            crate::stdio::fprintf_args(
                 logfile as *mut FILE,
                 b"%c%ld%s%ld%s%ld%s%ld%s%ld%s%ld%s%ld%s%ld%s%ld%s%ld%c\n\0" as *const u8
                     as *const ::core::ffi::c_char,
-                ' ' as i32,
-                maxinstack as ::core::ffi::c_long,
-                b"i,\0" as *const u8 as *const ::core::ffi::c_char,
-                maxneststack as ::core::ffi::c_long,
-                b"n,\0" as *const u8 as *const ::core::ffi::c_char,
-                maxparamstack as ::core::ffi::c_long,
-                b"p,\0" as *const u8 as *const ::core::ffi::c_char,
-                maxbufstack as ::core::ffi::c_long + 1 as ::core::ffi::c_long,
-                b"b,\0" as *const u8 as *const ::core::ffi::c_char,
-                maxsavestack as ::core::ffi::c_long + 6 as ::core::ffi::c_long,
-                b"s stack positions out of \0" as *const u8 as *const ::core::ffi::c_char,
-                stacksize as ::core::ffi::c_long,
-                b"i,\0" as *const u8 as *const ::core::ffi::c_char,
-                nestsize as ::core::ffi::c_long,
-                b"n,\0" as *const u8 as *const ::core::ffi::c_char,
-                paramsize as ::core::ffi::c_long,
-                b"p,\0" as *const u8 as *const ::core::ffi::c_char,
-                bufsize as ::core::ffi::c_long,
-                b"b,\0" as *const u8 as *const ::core::ffi::c_char,
-                savesize as ::core::ffi::c_long,
-                's' as i32,
+                &[
+                    crate::utils::PrintfArg::from(' ' as i32),
+                    crate::utils::PrintfArg::from(maxinstack as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b"i,\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(maxneststack as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b"n,\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(maxparamstack as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b"p,\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        maxbufstack as ::core::ffi::c_long + 1 as ::core::ffi::c_long,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        b"b,\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        maxsavestack as ::core::ffi::c_long + 6 as ::core::ffi::c_long,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        b"s stack positions out of \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(stacksize as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b"i,\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(nestsize as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b"n,\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(paramsize as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b"p,\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(bufsize as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from(
+                        b"b,\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(savesize as ::core::ffi::c_long),
+                    crate::utils::PrintfArg::from('s' as i32),
+                ],
             );
         }
     }
@@ -65026,62 +65062,93 @@ pub unsafe extern "C" fn closefilesandterminate() {
             }
             if logopened != 0 {
                 putc('\n' as i32, logfile as *mut FILE);
-                fprintf(
+                crate::stdio::fprintf_args(
                     logfile as *mut FILE,
                     b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    b"PDF statistics:\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(
+                        b"PDF statistics:\0" as *const u8 as *const ::core::ffi::c_char,
+                    )],
                 );
-                fprintf(
+                crate::stdio::fprintf_args(
                     logfile as *mut FILE,
                     b"%c%ld%s%ld%s%ld%c\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    ' ' as i32,
-                    objptr as ::core::ffi::c_long,
-                    b" PDF objects out of \0" as *const u8 as *const ::core::ffi::c_char,
-                    objtabsize as ::core::ffi::c_long,
-                    b" (max. \0" as *const u8 as *const ::core::ffi::c_char,
-                    supobjtabsize,
-                    ')' as i32,
+                    &[
+                        crate::utils::PrintfArg::from(' ' as i32),
+                        crate::utils::PrintfArg::from(objptr as ::core::ffi::c_long),
+                        crate::utils::PrintfArg::from(
+                            b" PDF objects out of \0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(objtabsize as ::core::ffi::c_long),
+                        crate::utils::PrintfArg::from(
+                            b" (max. \0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(supobjtabsize),
+                        crate::utils::PrintfArg::from(')' as i32),
+                    ],
                 );
                 if pdfoscntr > 0 as ::core::ffi::c_int {
-                    fprintf(
+                    crate::stdio::fprintf_args(
                         logfile as *mut FILE,
                         b"%c%ld%s%ld%s\0" as *const u8 as *const ::core::ffi::c_char,
-                        ' ' as i32,
-                        ((pdfoscntr as ::core::ffi::c_int - 1 as ::core::ffi::c_int) * pdfosmaxobjs
-                            + pdfosobjidx as ::core::ffi::c_int
-                            + 1 as ::core::ffi::c_int)
-                            as ::core::ffi::c_long,
-                        b" compressed objects within \0" as *const u8 as *const ::core::ffi::c_char,
-                        pdfoscntr as ::core::ffi::c_long,
-                        b" object stream\0" as *const u8 as *const ::core::ffi::c_char,
+                        &[
+                            crate::utils::PrintfArg::from(' ' as i32),
+                            crate::utils::PrintfArg::from(
+                                ((pdfoscntr as ::core::ffi::c_int - 1 as ::core::ffi::c_int)
+                                    * pdfosmaxobjs
+                                    + pdfosobjidx as ::core::ffi::c_int
+                                    + 1 as ::core::ffi::c_int)
+                                    as ::core::ffi::c_long,
+                            ),
+                            crate::utils::PrintfArg::from(
+                                b" compressed objects within \0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                            ),
+                            crate::utils::PrintfArg::from(pdfoscntr as ::core::ffi::c_long),
+                            crate::utils::PrintfArg::from(
+                                b" object stream\0" as *const u8 as *const ::core::ffi::c_char,
+                            ),
+                        ],
                     );
                     if pdfoscntr > 1 as ::core::ffi::c_int {
                         putc('s' as i32, logfile as *mut FILE);
                     }
                     putc('\n' as i32, logfile as *mut FILE);
                 }
-                fprintf(
+                crate::stdio::fprintf_args(
                     logfile as *mut FILE,
                     b"%c%ld%s%ld%s%ld%c\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    ' ' as i32,
-                    pdfdestnamesptr as ::core::ffi::c_long,
-                    b" named destinations out of \0" as *const u8 as *const ::core::ffi::c_char,
-                    destnamessize as ::core::ffi::c_long,
-                    b" (max. \0" as *const u8 as *const ::core::ffi::c_char,
-                    supdestnamessize,
-                    ')' as i32,
+                    &[
+                        crate::utils::PrintfArg::from(' ' as i32),
+                        crate::utils::PrintfArg::from(pdfdestnamesptr as ::core::ffi::c_long),
+                        crate::utils::PrintfArg::from(
+                            b" named destinations out of \0" as *const u8
+                                as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(destnamessize as ::core::ffi::c_long),
+                        crate::utils::PrintfArg::from(
+                            b" (max. \0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(supdestnamessize),
+                        crate::utils::PrintfArg::from(')' as i32),
+                    ],
                 );
-                fprintf(
+                crate::stdio::fprintf_args(
                     logfile as *mut FILE,
                     b"%c%ld%s%ld%s%ld%c\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    ' ' as i32,
-                    pdfmemptr as ::core::ffi::c_long,
-                    b" words of extra memory for PDF output out of \0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    pdfmemsize as ::core::ffi::c_long,
-                    b" (max. \0" as *const u8 as *const ::core::ffi::c_char,
-                    suppdfmemsize,
-                    ')' as i32,
+                    &[
+                        crate::utils::PrintfArg::from(' ' as i32),
+                        crate::utils::PrintfArg::from(pdfmemptr as ::core::ffi::c_long),
+                        crate::utils::PrintfArg::from(
+                            b" words of extra memory for PDF output out of \0" as *const u8
+                                as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(pdfmemsize as ::core::ffi::c_long),
+                        crate::utils::PrintfArg::from(
+                            b" (max. \0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(suppdfmemsize),
+                        crate::utils::PrintfArg::from(')' as i32),
+                    ],
                 );
             }
         }
@@ -65189,10 +65256,10 @@ pub unsafe extern "C" fn closefilesandterminate() {
                         .wrapping_sub(halfbuf as size_t)
                         .wrapping_add(1 as size_t)
                 {
-                    fprintf(
-                        __stderrp,
+                    crate::stdio::fprintf_args(
+                        crate::stdio::stderr(),
                         b"%s: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                        (*kpse_def).invocation_name,
+                        &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
                     );
                     perror(b"fwrite\0" as *const u8 as *const ::core::ffi::c_char);
                     exit(EXIT_FAILURE);
@@ -65219,10 +65286,10 @@ pub unsafe extern "C" fn closefilesandterminate() {
                         .wrapping_sub(0 as ::core::ffi::c_int as size_t)
                         .wrapping_add(1 as size_t)
                 {
-                    fprintf(
-                        __stderrp,
+                    crate::stdio::fprintf_args(
+                        crate::stdio::stderr(),
                         b"%s: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                        (*kpse_def).invocation_name,
+                        &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
                     );
                     perror(b"fwrite\0" as *const u8 as *const ::core::ffi::c_char);
                     exit(EXIT_FAILURE);

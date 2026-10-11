@@ -1,40 +1,15 @@
+use crate::openclose::{close_file, open_input, open_output};
+use crate::stdio::{gzread, gzwrite};
+use crate::support::{read_line, xfclose, xfopen};
+
+use crate::stdio::{
+    exit, fclose, fflush, fopen, fputs, fread, fseek, pclose, popen, setvbuf, ungetc,
+};
+
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc, xstrdup};
 
-#[repr(C)]
-pub struct __sFILEX {
-    _unused: [u8; 0],
-}
-
 extern "C" {
-    static mut __stderrp: *mut FILE;
-    fn fclose(_: *mut FILE) -> ::core::ffi::c_int;
-    fn fflush(_: *mut FILE) -> ::core::ffi::c_int;
-    fn fopen(
-        __filename: *const ::core::ffi::c_char,
-        __mode: *const ::core::ffi::c_char,
-    ) -> *mut FILE;
-    fn fprintf(_: *mut FILE, _: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn fputs(_: *const ::core::ffi::c_char, _: *mut FILE) -> ::core::ffi::c_int;
-    fn fread(
-        __ptr: *mut ::core::ffi::c_void,
-        __size: size_t,
-        __nitems: size_t,
-        __stream: *mut FILE,
-    ) -> ::core::ffi::c_ulong;
-    fn fseek(_: *mut FILE, _: ::core::ffi::c_long, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
-    #[cfg(unix)]
-    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
-    fn setvbuf(
-        _: *mut FILE,
-        _: *mut ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        __size: size_t,
-    ) -> ::core::ffi::c_int;
-    fn ungetc(_: ::core::ffi::c_int, _: *mut FILE) -> ::core::ffi::c_int;
-    fn pclose(_: *mut FILE) -> ::core::ffi::c_int;
-    fn popen(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char) -> *mut FILE;
     fn access(_: *const ::core::ffi::c_char, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn close(_: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn sleep(_: ::core::ffi::c_uint) -> ::core::ffi::c_uint;
@@ -51,7 +26,6 @@ extern "C" {
     ) -> Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()>;
     fn abort() -> !;
     fn atoi(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn exit(_: ::core::ffi::c_int) -> !;
     fn getenv(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn strtol(
         __str: *const ::core::ffi::c_char,
@@ -113,8 +87,6 @@ extern "C" {
     fn xputenv(var: const_string, value: const_string);
     fn xgetcwd() -> string;
     fn dir_p(fn_0: string) -> boolean;
-    fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
-    fn xfclose(fp: *mut FILE, filename: const_string);
     fn kpse_set_program_name(argv0: const_string, progname: const_string);
     fn fcntl(_: ::core::ffi::c_int, _: ::core::ffi::c_int, ...) -> ::core::ffi::c_int;
     fn uexit(status: ::core::ffi::c_int) -> !;
@@ -137,9 +109,6 @@ extern "C" {
     fn kpse_reset_program_name(progname: const_string);
     fn kpse_var_value(var: const_string) -> string;
     fn mainbody();
-    fn open_input(_: *mut *mut FILE, _: ::core::ffi::c_int, fopen_mode: const_string) -> boolean;
-    fn open_output(_: *mut *mut FILE, fopen_mode: const_string) -> boolean;
-    fn close_file(_: *mut FILE);
     fn recorder_record_input(_: const_string);
     fn recorder_record_output(_: const_string);
     static mut fullnameoffile: string;
@@ -148,13 +117,10 @@ extern "C" {
     fn printversionandexit(_: const_string, _: const_string, _: const_string, _: const_string);
     static mut _DefaultRuneLocale: _RuneLocale;
     fn __maskrune(_: __darwin_ct_rune_t, _: ::core::ffi::c_ulong) -> ::core::ffi::c_int;
-    fn gzread(file: gzFile, buf: voidp, len: ::core::ffi::c_uint) -> ::core::ffi::c_int;
-    fn gzwrite(file: gzFile, buf: voidpc, len: ::core::ffi::c_uint) -> ::core::ffi::c_int;
     fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
     fn maketexstring(_: *const ::core::ffi::c_char) -> strnumber;
     fn initversionstring(versions: *mut *mut ::core::ffi::c_char);
     fn kpathsea_cnf_line_env_progname(kpse: kpathsea, l_0: string);
-    fn read_line(f_0: *mut FILE) -> string;
     fn kpse_readable_file(name: string) -> string;
     fn kpse_absolute_p(filename: const_string, relative_ok: boolean) -> boolean;
     fn gmtime(_: *const time_t) -> *mut tm;
@@ -187,15 +153,7 @@ extern "C" {
 
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
-    #[cfg(unix)]
-    {
-        unsafe { getc_unlocked(stream) }
-    }
-
-    #[cfg(not(unix))]
-    {
-        unsafe { fgetc(stream) }
-    }
+    unsafe { crate::stdio::fgetc(stream) }
 }
 pub type __uint8_t = u8;
 pub type __uint16_t = u16;
@@ -221,51 +179,7 @@ pub type __darwin_suseconds_t = __int32_t;
 pub type __darwin_uid_t = __uint32_t;
 pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sbuf {
-    pub _base: *mut ::core::ffi::c_uchar,
-    pub _size: ::core::ffi::c_int,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sFILE {
-    pub _p: *mut ::core::ffi::c_uchar,
-    pub _r: ::core::ffi::c_int,
-    pub _w: ::core::ffi::c_int,
-    pub _flags: ::core::ffi::c_short,
-    pub _file: ::core::ffi::c_short,
-    pub _bf: __sbuf,
-    pub _lbfsize: ::core::ffi::c_int,
-    pub _cookie: *mut ::core::ffi::c_void,
-    pub _close: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> ::core::ffi::c_int>,
-    pub _read: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *mut ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _seek: Option<
-        unsafe extern "C" fn(*mut ::core::ffi::c_void, fpos_t, ::core::ffi::c_int) -> fpos_t,
-    >,
-    pub _write: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *const ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _ub: __sbuf,
-    pub _extra: *mut __sFILEX,
-    pub _ur: ::core::ffi::c_int,
-    pub _ubuf: [::core::ffi::c_uchar; 3],
-    pub _nbuf: [::core::ffi::c_uchar; 1],
-    pub _lb: __sbuf,
-    pub _blksize: ::core::ffi::c_int,
-    pub _offset: fpos_t,
-}
-pub type FILE = __sFILE;
+pub use crate::stdio::Stream as FILE;
 pub type off_t = __darwin_off_t;
 pub type ssize_t = __darwin_ssize_t;
 pub type dev_t = __darwin_dev_t;
@@ -603,13 +517,7 @@ pub struct msg {
 }
 pub type voidpc = *const ::core::ffi::c_void;
 pub type voidp = *mut ::core::ffi::c_void;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct gzFile_s {
-    pub have: ::core::ffi::c_uint,
-    pub next: *mut ::core::ffi::c_uchar,
-    pub pos: off_t,
-}
+pub use crate::stdio::Stream as gzFile_s;
 pub type gzFile = *mut gzFile_s;
 pub type eightbits = ::core::ffi::c_uchar;
 pub type alphafile = text;
@@ -2630,10 +2538,10 @@ pub unsafe extern "C" fn runsystem(mut cmd: *const ::core::ffi::c_char) -> ::cor
         crate::lookup::reset();
     }
     if status != 0 as ::core::ffi::c_int {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"system returned with code %d\n\0" as *const u8 as *const ::core::ffi::c_char,
-            status,
+            &[crate::utils::PrintfArg::from(status)],
         );
     }
     if !safecmd.is_null() {
@@ -2662,17 +2570,17 @@ unsafe extern "C" fn runpopen(
     } else if allow == 2 as ::core::ffi::c_int {
         f_0 = popen(safecmd, mode);
     } else if allow == -(1 as ::core::ffi::c_int) {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"\nrunpopen quotation error in command line: %s\n\0" as *const u8
                 as *const ::core::ffi::c_char,
-            cmd,
+            &[crate::utils::PrintfArg::from(cmd)],
         );
     } else {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"\nrunpopen command not allowed: %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            cmdname,
+            &[crate::utils::PrintfArg::from(cmdname)],
         );
     }
     if !safecmd.is_null() {
@@ -2826,21 +2734,24 @@ pub unsafe extern "C" fn maininit(mut ac: ::core::ffi::c_int, mut av: *mut strin
     }
     if iniversion == 0 {
         if mltexp != 0 {
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"-mltex only works with -ini\n\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
             );
         }
         if enctexp != 0 {
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"-enc only works with -ini\n\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
             );
         }
         if etexp != 0 {
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"-etex only works with -ini\n\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
             );
         }
     }
@@ -3087,25 +2998,29 @@ unsafe extern "C" fn tcx_get_num(
             p = p.offset(1);
         }
         if *p as ::core::ffi::c_int != 0 as ::core::ffi::c_int {
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"%s:%d: Expected numeric constant, not `%s'.\n\0" as *const u8
                     as *const ::core::ffi::c_char,
-                translate_filename,
-                line_count,
-                start,
+                &[
+                    crate::utils::PrintfArg::from(translate_filename),
+                    crate::utils::PrintfArg::from(line_count),
+                    crate::utils::PrintfArg::from(start),
+                ],
             );
         }
         num = -(1 as ::core::ffi::c_int);
     } else if num < 0 as ::core::ffi::c_int || num > upb {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"%s:%d: Destination charcode %d <0 or >%d.\n\0" as *const u8
                 as *const ::core::ffi::c_char,
-            translate_filename,
-            line_count,
-            num,
-            upb,
+            &[
+                crate::utils::PrintfArg::from(translate_filename),
+                crate::utils::PrintfArg::from(line_count),
+                crate::utils::PrintfArg::from(num),
+                crate::utils::PrintfArg::from(upb),
+            ],
         );
         num = -(1 as ::core::ffi::c_int);
     }
@@ -3184,19 +3099,19 @@ pub unsafe extern "C" fn readtcxfile() {
     } else {
         fputs(
             b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-            __stderrp,
+            crate::stdio::stderr(),
         );
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"Could not open char translation file `%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-            orig_filename,
+            &[crate::utils::PrintfArg::from(orig_filename)],
         );
         fputs(
             b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-            __stderrp,
+            crate::stdio::stderr(),
         );
-        fflush(__stderrp);
+        fflush(crate::stdio::stderr());
     };
 }
 unsafe extern "C" fn normalize_quotes(mut name: const_string, mut mesg: const_string) -> string {
@@ -3232,11 +3147,13 @@ unsafe extern "C" fn normalize_quotes(mut name: const_string, mut mesg: const_st
     }
     *p = '\0' as i32 as ::core::ffi::c_char;
     if quoted != 0 {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"! Unbalanced quotes in %s %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            mesg,
-            name,
+            &[
+                crate::utils::PrintfArg::from(mesg),
+                crate::utils::PrintfArg::from(name),
+            ],
         );
         uexit(1 as ::core::ffi::c_int);
     }
@@ -3641,20 +3558,22 @@ unsafe extern "C" fn parse_options(mut argc_0: ::core::ffi::c_int, mut argv_0: *
             } else {
                 fputs(
                     b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                    __stderrp,
+                    crate::stdio::stderr(),
                 );
-                fprintf(
-                    __stderrp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stderr(),
                     b"Comment truncated to 255 characters from %d. (%s)\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    len,
-                    optarg,
+                    &[
+                        crate::utils::PrintfArg::from(len),
+                        crate::utils::PrintfArg::from(optarg),
+                    ],
                 );
                 fputs(
                     b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    __stderrp,
+                    crate::stdio::stderr(),
                 );
-                fflush(__stderrp);
+                fflush(crate::stdio::stderr());
                 outputcomment = xmalloc(256 as size_t) as *mut ::core::ffi::c_char;
                 strncpy(outputcomment, optarg, 255 as size_t);
                 *outputcomment.offset(255 as ::core::ffi::c_int as isize) =
@@ -3724,19 +3643,19 @@ unsafe extern "C" fn parse_options(mut argc_0: ::core::ffi::c_int, mut argv_0: *
             } else {
                 fputs(
                     b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                    __stderrp,
+                    crate::stdio::stderr(),
                 );
-                fprintf(
-                    __stderrp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stderr(),
                     b"Ignoring unknown value `%s' for --output-format\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    optarg,
+                    &[crate::utils::PrintfArg::from(optarg)],
                 );
                 fputs(
                     b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    __stderrp,
+                    crate::stdio::stderr(),
                 );
-                fflush(__stderrp);
+                fflush(crate::stdio::stderr());
                 pdfoutputoption = 0 as ::core::ffi::c_int as integer;
             }
         } else if !long_options[option_index as usize].name.is_null()
@@ -3822,19 +3741,19 @@ unsafe extern "C" fn parse_options(mut argc_0: ::core::ffi::c_int, mut argv_0: *
             } else {
                 fputs(
                     b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                    __stderrp,
+                    crate::stdio::stderr(),
                 );
-                fprintf(
-                    __stderrp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stderr(),
                     b"Ignoring unknown argument `%s' to --interaction\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    optarg,
+                    &[crate::utils::PrintfArg::from(optarg)],
                 );
                 fputs(
                     b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    __stderrp,
+                    crate::stdio::stderr(),
                 );
-                fflush(__stderrp);
+                fflush(crate::stdio::stderr());
             }
         } else if !long_options[option_index as usize].name.is_null()
             && !(b"synctex\0" as *const u8 as *const ::core::ffi::c_char).is_null()
@@ -3967,19 +3886,19 @@ unsafe extern "C" fn parse_src_specials_option(mut opt_list: const_string) {
         } else {
             fputs(
                 b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                __stderrp,
+                crate::stdio::stderr(),
             );
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"Ignoring unknown argument `%s' to --src-specials\0" as *const u8
                     as *const ::core::ffi::c_char,
-                tok,
+                &[crate::utils::PrintfArg::from(tok)],
             );
             fputs(
                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                __stderrp,
+                crate::stdio::stderr(),
             );
-            fflush(__stderrp);
+            fflush(crate::stdio::stderr());
         }
         tok = strtok(
             ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -4117,8 +4036,7 @@ unsafe extern "C" fn parse_first_line(mut filename: const_string) {
 }
 pub const NUM_PIPES: ::core::ffi::c_int = 16 as ::core::ffi::c_int;
 static mut pipes: [*mut FILE; 16] = [::core::ptr::null::<FILE>() as *mut FILE; 16];
-#[no_mangle]
-pub unsafe extern "C" fn open_in_or_pipe(
+pub(crate) unsafe fn open_in_or_pipe(
     mut f_ptr: *mut *mut FILE,
     mut filefmt: ::core::ffi::c_int,
     mut fopen_mode: const_string,
@@ -4170,8 +4088,7 @@ pub unsafe extern "C" fn open_in_or_pipe(
     }
     return open_input(f_ptr, filefmt, fopen_mode);
 }
-#[no_mangle]
-pub unsafe extern "C" fn open_out_or_pipe(
+pub(crate) unsafe fn open_out_or_pipe(
     mut f_ptr: *mut *mut FILE,
     mut fopen_mode: const_string,
 ) -> boolean {
@@ -4245,8 +4162,7 @@ pub unsafe extern "C" fn open_out_or_pipe(
     }
     return open_output(f_ptr, fopen_mode);
 }
-#[no_mangle]
-pub unsafe extern "C" fn close_file_or_pipe(mut f_0: *mut FILE) {
+pub(crate) unsafe fn close_file_or_pipe(mut f_0: *mut FILE) {
     let mut i: ::core::ffi::c_int = 0;
     if shellenabledp != 0 {
         i = 0 as ::core::ffi::c_int;
@@ -4290,20 +4206,16 @@ pub unsafe extern "C" fn init_start_time() {
             epoch = strtoull(source_date_epoch, &raw mut endptr, 10 as ::core::ffi::c_int);
             if *endptr as ::core::ffi::c_int != '\0' as i32 || *__error() != 0 as ::core::ffi::c_int
             {
-                fprintf(
-                    __stderrp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stderr(),
                     b"%s: fatal: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                    (*kpse_def).invocation_name,
+                    &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
                 );
-                fprintf(
-                    __stderrp,
-                    b"invalid epoch-seconds-timezone value for environment variable $SOURCE_DATE_EPOCH: %s\0"
-                        as *const u8 as *const ::core::ffi::c_char,
-                    source_date_epoch,
-                );
+                crate::stdio::fprintf_args(crate::stdio::stderr(), b"invalid epoch-seconds-timezone value for environment variable $SOURCE_DATE_EPOCH: %s\0"
+                        as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(source_date_epoch)]);
                 fputs(
                     b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    __stderrp,
+                    crate::stdio::stderr(),
                 );
                 exit(1 as ::core::ffi::c_int);
             }
@@ -4349,19 +4261,19 @@ pub unsafe extern "C" fn get_date_and_time(
         {
             fputs(
                 b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                __stderrp,
+                crate::stdio::stderr(),
             );
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"invalid value (expected 0 or 1) for environment variable $FORCE_SOURCE_DATE: %s\0"
                     as *const u8 as *const ::core::ffi::c_char,
-                sde_texprim,
+                &[crate::utils::PrintfArg::from(sde_texprim)],
             );
             fputs(
                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                __stderrp,
+                crate::stdio::stderr(),
             );
-            fflush(__stderrp);
+            fflush(crate::stdio::stderr());
         }
     }
     *minutes = ((*tmptr).tm_hour * 60 as ::core::ffi::c_int + (*tmptr).tm_min) as integer;
@@ -4390,8 +4302,7 @@ pub unsafe extern "C" fn get_seconds_and_micros(
     *seconds = tv.tv_sec as integer;
     *micros = tv.tv_usec as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn input_line(mut f_0: *mut FILE) -> boolean {
+pub(crate) unsafe fn input_line(mut f_0: *mut FILE) -> boolean {
     let mut i: ::core::ffi::c_int = EOF;
     last = first;
     loop {
@@ -4416,16 +4327,18 @@ pub unsafe extern "C" fn input_line(mut f_0: *mut FILE) -> boolean {
         return false_0;
     }
     if i != EOF && i != '\n' as i32 && i != '\r' as i32 {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"! Unable to read an entire line---bufsize=%u.\n\0" as *const u8
                 as *const ::core::ffi::c_char,
-            bufsize as ::core::ffi::c_uint,
+            &[crate::utils::PrintfArg::from(
+                bufsize as ::core::ffi::c_uint,
+            )],
         );
         fputs(
             b"Please increase buf_size in texmf.cnf.\n\0" as *const u8
                 as *const ::core::ffi::c_char,
-            __stderrp,
+            crate::stdio::stderr(),
         );
         uexit(1 as ::core::ffi::c_int);
     }
@@ -4486,20 +4399,28 @@ pub unsafe extern "C" fn calledit(
             let mut if_ptr: ::core::ffi::c_int =
                 (*inputstack.offset(is_ptr as isize)).indexfield as ::core::ffi::c_int;
             if if_ptr < 1 as ::core::ffi::c_int || if_ptr > inopen {
-                fprintf(
-                    __stderrp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stderr(),
                     b"%s:calledit: unexpected if_ptr=%d not in range 1..%d,\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    *argv.offset(0 as ::core::ffi::c_int as isize),
-                    if_ptr,
-                    inopen,
+                    &[
+                        crate::utils::PrintfArg::from(
+                            *argv.offset(0 as ::core::ffi::c_int as isize),
+                        ),
+                        crate::utils::PrintfArg::from(if_ptr),
+                        crate::utils::PrintfArg::from(inopen),
+                    ],
                 );
-                fprintf(
-                    __stderrp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stderr(),
                     b"from input_stack[%d].namefield=%d\n\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    is_ptr,
-                    (*inputstack.offset(is_ptr as isize)).namefield,
+                    &[
+                        crate::utils::PrintfArg::from(is_ptr),
+                        crate::utils::PrintfArg::from(
+                            (*inputstack.offset(is_ptr as isize)).namefield,
+                        ),
+                    ],
                 );
                 exit(1 as ::core::ffi::c_int);
             }
@@ -4507,19 +4428,25 @@ pub unsafe extern "C" fn calledit(
             if !f_0.is_null() {
                 xfclose(f_0, b"inputfile\0" as *const u8 as const_string);
             } else {
-                fprintf(
-                    __stderrp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stderr(),
                     b"%s:calledit: not closing unexpected zero\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    *argv.offset(0 as ::core::ffi::c_int as isize),
+                    &[crate::utils::PrintfArg::from(
+                        *argv.offset(0 as ::core::ffi::c_int as isize),
+                    )],
                 );
-                fprintf(
-                    __stderrp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stderr(),
                     b" input_file[%d] from input_stack[%d].namefield=%d\n\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    if_ptr,
-                    is_ptr,
-                    (*inputstack.offset(is_ptr as isize)).namefield,
+                    &[
+                        crate::utils::PrintfArg::from(if_ptr),
+                        crate::utils::PrintfArg::from(is_ptr),
+                        crate::utils::PrintfArg::from(
+                            (*inputstack.offset(is_ptr as isize)).namefield,
+                        ),
+                    ],
                 );
             }
         }
@@ -4550,19 +4477,19 @@ pub unsafe extern "C" fn calledit(
             match c_0 as ::core::ffi::c_int {
                 100 => {
                     if ddone != 0 {
-                        fprintf(
-                            __stderrp,
+                        crate::stdio::fprintf_args(
+                            crate::stdio::stderr(),
                             b"%s: fatal: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                            (*kpse_def).invocation_name,
+                            &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
                         );
                         fputs(
                             b"call_edit: `%%d' appears twice in editor command\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                            __stderrp,
+                            crate::stdio::stderr(),
                         );
                         fputs(
                             b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                            __stderrp,
+                            crate::stdio::stderr(),
                         );
                         exit(1 as ::core::ffi::c_int);
                     }
@@ -4580,19 +4507,19 @@ pub unsafe extern "C" fn calledit(
                 }
                 115 => {
                     if sdone != 0 {
-                        fprintf(
-                            __stderrp,
+                        crate::stdio::fprintf_args(
+                            crate::stdio::stderr(),
                             b"%s: fatal: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                            (*kpse_def).invocation_name,
+                            &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
                         );
                         fputs(
                             b"call_edit: `%%s' appears twice in editor command\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                            __stderrp,
+                            crate::stdio::stderr(),
                         );
                         fputs(
                             b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                            __stderrp,
+                            crate::stdio::stderr(),
                         );
                         exit(1 as ::core::ffi::c_int);
                     }
@@ -4630,10 +4557,10 @@ pub unsafe extern "C" fn calledit(
     *temp = 0 as ::core::ffi::c_char;
     fullcmd = command;
     if system(fullcmd) != 0 as ::core::ffi::c_int {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"! Trouble executing `%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-            command,
+            &[crate::utils::PrintfArg::from(command)],
         );
     }
     uexit(1 as ::core::ffi::c_int);
@@ -4739,27 +4666,26 @@ unsafe extern "C" fn swap_items(
         },
         1 => {}
         _ => {
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"%s: fatal: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                (*kpse_def).invocation_name,
+                &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
             );
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"Can't swap a %d-byte item for (un)dumping\0" as *const u8
                     as *const ::core::ffi::c_char,
-                size,
+                &[crate::utils::PrintfArg::from(size)],
             );
             fputs(
                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                __stderrp,
+                crate::stdio::stderr(),
             );
             exit(1 as ::core::ffi::c_int);
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn do_dump(
+pub(crate) unsafe fn do_dump(
     mut p: *mut ::core::ffi::c_char,
     mut item_size: ::core::ffi::c_int,
     mut nitems: ::core::ffi::c_int,
@@ -4772,20 +4698,21 @@ pub unsafe extern "C" fn do_dump(
         (item_size * nitems) as ::core::ffi::c_uint,
     ) != item_size * nitems
     {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"! Could not write %d %d-byte item(s) to %s.\n\0" as *const u8
                 as *const ::core::ffi::c_char,
-            nitems,
-            item_size,
-            nameoffile.offset(1 as ::core::ffi::c_int as isize),
+            &[
+                crate::utils::PrintfArg::from(nitems),
+                crate::utils::PrintfArg::from(item_size),
+                crate::utils::PrintfArg::from(nameoffile.offset(1 as ::core::ffi::c_int as isize)),
+            ],
         );
         uexit(1 as ::core::ffi::c_int);
     }
     swap_items(p, nitems, item_size);
 }
-#[no_mangle]
-pub unsafe extern "C" fn do_undump(
+pub(crate) unsafe fn do_undump(
     mut p: *mut ::core::ffi::c_char,
     mut item_size: ::core::ffi::c_int,
     mut nitems: ::core::ffi::c_int,
@@ -4797,22 +4724,24 @@ pub unsafe extern "C" fn do_undump(
         (item_size * nitems) as ::core::ffi::c_uint,
     ) != item_size * nitems
     {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"%s: fatal: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-            (*kpse_def).invocation_name,
+            &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
         );
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"Could not undump %d %d-byte item(s) from %s\0" as *const u8
                 as *const ::core::ffi::c_char,
-            nitems,
-            item_size,
-            nameoffile.offset(1 as ::core::ffi::c_int as isize),
+            &[
+                crate::utils::PrintfArg::from(nitems),
+                crate::utils::PrintfArg::from(item_size),
+                crate::utils::PrintfArg::from(nameoffile.offset(1 as ::core::ffi::c_int as isize)),
+            ],
         );
         fputs(
             b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-            __stderrp,
+            crate::stdio::stderr(),
         );
         exit(1 as ::core::ffi::c_int);
     }
@@ -4914,9 +4843,10 @@ pub unsafe extern "C" fn makesrcspecial(
         .wrapping_add(strlen(filename))
         >= poolsize as size_t
     {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"\nstring pool overflow\n\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
         );
         exit(1 as ::core::ffi::c_int);
     }

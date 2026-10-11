@@ -91,7 +91,7 @@ pub(crate) fn reset_decode_cache() {
 
 struct PngState {
     info_ptr: *mut PngInfo,
-    file: *mut libc::FILE,
+    file: *mut crate::stdio::Stream,
     data: Vec<u8>,
     width: u32,
     height: u32,
@@ -340,8 +340,7 @@ pub unsafe extern "C" fn png_create_info_struct(
     info.cast()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_init_io(png_ptr: *mut png_struct_def, fp: *mut libc::FILE) {
+pub(crate) unsafe fn png_init_io(png_ptr: *mut png_struct_def, fp: *mut crate::stdio::Stream) {
     if let Some(state) = state(png_ptr) {
         state.file = fp;
     }
@@ -694,68 +693,50 @@ pub unsafe extern "C" fn png_set_option(
     0
 }
 
-unsafe fn read_file(fp: *mut libc::FILE) -> Result<Vec<u8>, String> {
+unsafe fn read_file(fp: *mut crate::stdio::Stream) -> Result<Vec<u8>, String> {
     if fp.is_null() {
         return Err("null FILE".to_string());
     }
-    if libc::fseeko(fp, 0, libc::SEEK_END) != 0 {
+    if crate::stdio::fseeko(fp, 0, libc::SEEK_END) != 0 {
         return Err("seek end failed".to_string());
     }
-    let len = libc::ftello(fp);
+    let len = crate::stdio::ftello(fp);
     if len < 0 {
         return Err("tell failed".to_string());
     }
-    if libc::fseeko(fp, 0, libc::SEEK_SET) != 0 {
+    if crate::stdio::fseeko(fp, 0, libc::SEEK_SET) != 0 {
         return Err("seek start failed".to_string());
     }
     let mut data = vec![0u8; len as usize];
     if !data.is_empty() {
-        let read = libc::fread(data.as_mut_ptr().cast(), 1, data.len(), fp);
+        let read = crate::stdio::fread(data.as_mut_ptr().cast(), 1, data.len(), fp);
         if read != data.len() {
             data.truncate(read);
         }
     }
-    let _ = libc::fseeko(fp, 0, libc::SEEK_SET);
+    let _ = crate::stdio::fseeko(fp, 0, libc::SEEK_SET);
     Ok(data)
 }
 
-fn file_identity(fp: *mut libc::FILE) -> Option<FileIdentity> {
-    if fp.is_null() {
-        return None;
-    }
-    let fd = unsafe { libc::fileno(fp) };
-    if fd < 0 {
-        return None;
-    }
-    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    let stat = unsafe { stat.assume_init() };
+fn file_identity(fp: *mut crate::stdio::Stream) -> Option<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = unsafe { fp.as_ref()? }.metadata().ok()?;
     Some(FileIdentity {
-        dev: stat.st_dev,
-        ino: stat.st_ino,
-        size: stat.st_size,
-        mtime_sec: stat_mtime_sec(&stat),
-        mtime_nsec: stat_mtime_nsec(&stat),
-        ctime_sec: stat.st_ctime,
-        ctime_nsec: stat.st_ctime_nsec,
+        dev: metadata.dev() as _,
+        ino: metadata.ino() as _,
+        size: metadata.size() as _,
+        mtime_sec: metadata.mtime() as _,
+        mtime_nsec: metadata.mtime_nsec() as _,
+        ctime_sec: metadata.ctime() as _,
+        ctime_nsec: metadata.ctime_nsec() as _,
     })
 }
 
-fn stat_mtime_sec(stat: &libc::stat) -> libc::time_t {
-    stat.st_mtime
-}
-
-fn stat_mtime_nsec(stat: &libc::stat) -> libc::c_long {
-    stat.st_mtime_nsec
-}
-
-unsafe fn read_exact_file(fp: *mut libc::FILE, buf: &mut [u8]) -> Result<(), String> {
+unsafe fn read_exact_file(fp: *mut crate::stdio::Stream, buf: &mut [u8]) -> Result<(), String> {
     if buf.is_empty() {
         return Ok(());
     }
-    let read = unsafe { libc::fread(buf.as_mut_ptr().cast(), 1, buf.len(), fp) };
+    let read = unsafe { crate::stdio::fread(buf.as_mut_ptr().cast(), 1, buf.len(), fp) };
     if read == buf.len() {
         Ok(())
     } else {
@@ -793,28 +774,28 @@ pub(crate) fn checked_png_idat_total(total: u64, length: usize) -> Result<u64, &
         .ok_or("PNG IDAT length overflow")
 }
 
-pub(crate) unsafe fn png_file_extent(fp: *mut libc::FILE) -> Result<u64, &'static str> {
+pub(crate) unsafe fn png_file_extent(fp: *mut crate::stdio::Stream) -> Result<u64, &'static str> {
     if fp.is_null() {
         return Err("null FILE");
     }
-    if unsafe { libc::fseeko(fp, 0, libc::SEEK_END) } != 0 {
+    if unsafe { crate::stdio::fseeko(fp, 0, libc::SEEK_END) } != 0 {
         return Err("PNG seek failed");
     }
-    u64::try_from(unsafe { libc::ftello(fp) }).map_err(|_| "PNG tell failed")
+    u64::try_from(unsafe { crate::stdio::ftello(fp) }).map_err(|_| "PNG tell failed")
 }
 
 pub(crate) unsafe fn seek_png_absolute(
-    fp: *mut libc::FILE,
+    fp: *mut crate::stdio::Stream,
     offset: u64,
 ) -> Result<(), &'static str> {
     let offset = libc::off_t::try_from(offset).map_err(|_| "PNG seek failed")?;
-    if unsafe { libc::fseeko(fp, offset, libc::SEEK_SET) } != 0 {
+    if unsafe { crate::stdio::fseeko(fp, offset, libc::SEEK_SET) } != 0 {
         return Err("PNG seek failed");
     }
     Ok(())
 }
 
-unsafe fn read_be_u32_file(fp: *mut libc::FILE) -> Result<u32, String> {
+unsafe fn read_be_u32_file(fp: *mut crate::stdio::Stream) -> Result<u32, String> {
     let mut buf = [0u8; 4];
     unsafe { read_exact_file(fp, &mut buf)? };
     Ok(u32::from_be_bytes(buf))
@@ -834,7 +815,7 @@ struct Metadata {
     trns: Option<Vec<u8>>,
 }
 
-unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, String> {
+unsafe fn parse_metadata_from_file(fp: *mut crate::stdio::Stream) -> Result<Metadata, String> {
     let file_extent = unsafe { png_file_extent(fp)? };
     unsafe { seek_png_absolute(fp, 0)? };
     let mut signature = [0u8; 8];
@@ -998,7 +979,7 @@ unsafe fn parse_metadata_from_file(fp: *mut libc::FILE) -> Result<Metadata, Stri
         unsafe { seek_png_absolute(fp, next_offset)? };
         header_offset = next_offset;
     }
-    let _ = unsafe { libc::fseeko(fp, 0, libc::SEEK_SET) };
+    let _ = unsafe { crate::stdio::fseeko(fp, 0, libc::SEEK_SET) };
     Ok(metadata)
 }
 
@@ -1051,12 +1032,12 @@ mod tests {
 
     // These fixtures exercise metadata reads, not IDAT decoding or CRC validation.
     fn read_metadata_fixture(png: &[u8]) -> Result<Metadata, String> {
-        let fp = unsafe { libc::tmpfile() };
+        let fp = unsafe { crate::stdio::tmpfile() };
         assert!(!fp.is_null());
-        let written = unsafe { libc::fwrite(png.as_ptr().cast(), 1, png.len(), fp) };
+        let written = unsafe { crate::stdio::fwrite(png.as_ptr().cast(), 1, png.len(), fp) };
         assert_eq!(written, png.len());
         let result = unsafe { parse_metadata_from_file(fp) };
-        unsafe { libc::fclose(fp) };
+        unsafe { crate::stdio::fclose(fp) };
         result
     }
 
@@ -1222,10 +1203,10 @@ mod tests {
                 ("short scanline", compressed_scanline(&[0]), false),
             ] {
                 let png = decode_fixture(color_type, &idat, invalid_crc);
-                let fp = unsafe { libc::tmpfile() };
+                let fp = unsafe { crate::stdio::tmpfile() };
                 assert!(!fp.is_null());
                 assert_eq!(
-                    unsafe { libc::fwrite(png.as_ptr().cast(), 1, png.len(), fp) },
+                    unsafe { crate::stdio::fwrite(png.as_ptr().cast(), 1, png.len(), fp) },
                     png.len()
                 );
                 let metadata = unsafe { parse_metadata_from_file(fp) }.unwrap();
@@ -1260,7 +1241,7 @@ mod tests {
                 assert!(state.decoded.is_none());
                 PNG_DECODE_CACHE.with(|cache| assert!(cache.borrow_mut().get(&key).is_none()));
                 assert_eq!(state.ensure_decoded().unwrap_err(), error);
-                unsafe { libc::fclose(fp) };
+                unsafe { crate::stdio::fclose(fp) };
             }
             let mut valid = PngState::new();
             valid.data = decode_fixture(color_type, &valid_idat, false);
@@ -1518,7 +1499,7 @@ mod tests {
         fs::write(&path, encoded(&[10, 20, 30, 128])).unwrap();
         let original_mtime = fs::metadata(&path).unwrap().modified().unwrap();
         let name = CString::new(path.as_os_str().as_bytes()).unwrap();
-        let file = unsafe { libc::fopen(name.as_ptr(), c"rb".as_ptr()) };
+        let file = unsafe { crate::stdio::fopen(name.as_ptr(), c"rb".as_ptr()) };
         assert!(!file.is_null());
         let decode = |strip_alpha| {
             let mut state = PngState::new();
@@ -1546,7 +1527,7 @@ mod tests {
         assert_ne!(file_identity(file).unwrap(), identity);
         assert_eq!(decode(true).data, [50, 60, 70]);
         unsafe {
-            libc::fclose(file);
+            crate::stdio::fclose(file);
         }
         fs::remove_file(path).unwrap();
         reset_decode_cache();
@@ -1600,10 +1581,10 @@ mod tests {
 
         let c_path = CString::new(path.as_os_str().as_bytes()).unwrap();
         let mode = CString::new("rb").unwrap();
-        let fp = unsafe { libc::fopen(c_path.as_ptr(), mode.as_ptr()) };
+        let fp = unsafe { crate::stdio::fopen(c_path.as_ptr(), mode.as_ptr()) };
         assert!(!fp.is_null());
         let metadata = unsafe { parse_metadata_from_file(fp) }.unwrap();
-        unsafe { libc::fclose(fp) };
+        unsafe { crate::stdio::fclose(fp) };
         fs::remove_file(path).unwrap();
 
         assert_eq!(metadata.width, 1);

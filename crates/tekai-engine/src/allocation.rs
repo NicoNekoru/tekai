@@ -21,6 +21,8 @@
 //! objects, PDF document records, SyncTeX and codec-internal storage remain
 //! owned Rust values and never use these raw destruction paths.
 
+#![warn(clippy::all)]
+
 use std::alloc::{alloc, dealloc, realloc as realloc_block, Layout};
 use std::ffi::c_void;
 use std::mem::{align_of, size_of};

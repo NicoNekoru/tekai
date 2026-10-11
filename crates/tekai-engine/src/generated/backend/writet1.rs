@@ -1,23 +1,17 @@
+use crate::openclose::open_input;
+use crate::stdio::{feof, ungetc};
+use crate::support::{xfclose, xfopen};
+
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc, xstrdup};
 
-#[repr(C)]
-pub struct __sFILEX {
-    _unused: [u8; 0],
-}
-
 extern "C" {
     fn atan(_: ::core::ffi::c_double) -> ::core::ffi::c_double;
-    fn feof(_: *mut FILE) -> ::core::ffi::c_int;
-    fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
-    #[cfg(unix)]
-    fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
     fn sscanf(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn ungetc(_: ::core::ffi::c_int, _: *mut FILE) -> ::core::ffi::c_int;
     fn memcpy(
         __dst: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -58,9 +52,6 @@ extern "C" {
         _: ::core::ffi::c_int,
         _: *const ::core::ffi::c_char,
     ) -> !;
-    fn xfopen(filename: const_string, mode: const_string) -> *mut FILE;
-    fn xfclose(fp: *mut FILE, filename: const_string);
-    fn open_input(_: *mut *mut FILE, _: ::core::ffi::c_int, fopen_mode: const_string) -> boolean;
     fn recorder_record_input(_: const_string);
     fn zround(_: ::core::ffi::c_double) -> integer;
     static mut _DefaultRuneLocale: _RuneLocale;
@@ -94,15 +85,7 @@ extern "C" {
 }
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
-    #[cfg(unix)]
-    {
-        unsafe { getc_unlocked(stream) }
-    }
-
-    #[cfg(not(unix))]
-    {
-        unsafe { fgetc(stream) }
-    }
+    unsafe { crate::stdio::fgetc(stream) }
 }
 pub type __builtin_va_list = *mut ::core::ffi::c_char;
 pub type __uint32_t = u32;
@@ -116,51 +99,7 @@ pub type __darwin_off_t = __int64_t;
 pub type va_list = __darwin_va_list;
 pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sbuf {
-    pub _base: *mut ::core::ffi::c_uchar,
-    pub _size: ::core::ffi::c_int,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sFILE {
-    pub _p: *mut ::core::ffi::c_uchar,
-    pub _r: ::core::ffi::c_int,
-    pub _w: ::core::ffi::c_int,
-    pub _flags: ::core::ffi::c_short,
-    pub _file: ::core::ffi::c_short,
-    pub _bf: __sbuf,
-    pub _lbfsize: ::core::ffi::c_int,
-    pub _cookie: *mut ::core::ffi::c_void,
-    pub _close: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> ::core::ffi::c_int>,
-    pub _read: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *mut ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _seek: Option<
-        unsafe extern "C" fn(*mut ::core::ffi::c_void, fpos_t, ::core::ffi::c_int) -> fpos_t,
-    >,
-    pub _write: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *const ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _ub: __sbuf,
-    pub _extra: *mut __sFILEX,
-    pub _ur: ::core::ffi::c_int,
-    pub _ubuf: [::core::ffi::c_uchar; 3],
-    pub _nbuf: [::core::ffi::c_uchar; 1],
-    pub _lb: __sbuf,
-    pub _blksize: ::core::ffi::c_int,
-    pub _offset: fpos_t,
-}
-pub type FILE = __sFILE;
+pub use crate::stdio::Stream as FILE;
 pub type boolean = ::core::ffi::c_int;
 pub type string = *mut ::core::ffi::c_char;
 pub type const_string = *const ::core::ffi::c_char;

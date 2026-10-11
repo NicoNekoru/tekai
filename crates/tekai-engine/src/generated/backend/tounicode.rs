@@ -1,4 +1,5 @@
 use crate::allocation::free;
+use crate::generated::pdftexextra::{do_dump, do_undump};
 use crate::openclose::{xmalloc, xstrdup};
 
 extern "C" {
@@ -49,18 +50,6 @@ extern "C" {
     ) -> !;
     static mut _DefaultRuneLocale: _RuneLocale;
     fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
-    fn do_dump(
-        _: *mut ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: gzFile,
-    );
-    fn do_undump(
-        _: *mut ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: gzFile,
-    );
     static mut fixedgentounicode: integer;
     static mut fmtfile: wordfile;
     fn pdfnewobjnum() -> integer;
@@ -149,13 +138,7 @@ pub struct _RuneLocale {
     pub __ncharclasses: ::core::ffi::c_int,
     pub __charclasses: *mut _RuneCharClass,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct gzFile_s {
-    pub have: ::core::ffi::c_uint,
-    pub next: *mut ::core::ffi::c_uchar,
-    pub pos: off_t,
-}
+pub use crate::stdio::Stream as gzFile_s;
 pub type gzFile = *mut gzFile_s;
 pub type strnumber = integer;
 pub type wordfile = gzFile;

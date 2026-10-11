@@ -1,20 +1,13 @@
+use crate::generated::pdftexextra::{do_dump, do_undump};
+use crate::openclose::open_output;
+use crate::stdio::{gzclose, gzsetparams};
+
+use crate::stdio::{exit, fflush, fputs, putc};
+
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
 
-#[repr(C)]
-pub struct __sFILEX {
-    _unused: [u8; 0],
-}
-
 extern "C" {
-    static mut __stdoutp: *mut FILE;
-    static mut __stderrp: *mut FILE;
-    fn fflush(_: *mut FILE) -> ::core::ffi::c_int;
-    fn fprintf(_: *mut FILE, _: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn fputs(_: *const ::core::ffi::c_char, _: *mut FILE) -> ::core::ffi::c_int;
-    fn putc(_: ::core::ffi::c_int, _: *mut FILE) -> ::core::ffi::c_int;
-    fn fileno(_: *mut FILE) -> ::core::ffi::c_int;
-    fn exit(_: ::core::ffi::c_int) -> !;
     fn strcmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
@@ -26,7 +19,6 @@ extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     static mut kpse_def: kpathsea;
     fn uexit(status: ::core::ffi::c_int) -> !;
-    fn open_output(_: *mut *mut FILE, fopen_mode: const_string) -> boolean;
     fn setupboundvariable(_: *mut integer, _: const_string, _: integer);
     static mut versionstring: *const ::core::ffi::c_char;
     fn loadpoolstrings(_: integer) -> ::core::ffi::c_int;
@@ -34,25 +26,6 @@ extern "C" {
     fn readtcxfile();
     static mut translate_filename: string;
     fn get_seconds_and_micros(_: *mut integer, _: *mut integer);
-    fn gzdopen(fd: ::core::ffi::c_int, mode: *const ::core::ffi::c_char) -> gzFile;
-    fn gzsetparams(
-        file: gzFile,
-        level: ::core::ffi::c_int,
-        strategy: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
-    fn gzclose(file: gzFile) -> ::core::ffi::c_int;
-    fn do_dump(
-        _: *mut ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: gzFile,
-    );
-    fn do_undump(
-        _: *mut ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: gzFile,
-    );
     static mut bad: integer;
     static mut xord: [ASCIIcode; 256];
     static mut xchr: [ASCIIcode; 256];
@@ -643,51 +616,7 @@ pub type __darwin_off_t = __int64_t;
 pub type uintptr_t = usize;
 pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sbuf {
-    pub _base: *mut ::core::ffi::c_uchar,
-    pub _size: ::core::ffi::c_int,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sFILE {
-    pub _p: *mut ::core::ffi::c_uchar,
-    pub _r: ::core::ffi::c_int,
-    pub _w: ::core::ffi::c_int,
-    pub _flags: ::core::ffi::c_short,
-    pub _file: ::core::ffi::c_short,
-    pub _bf: __sbuf,
-    pub _lbfsize: ::core::ffi::c_int,
-    pub _cookie: *mut ::core::ffi::c_void,
-    pub _close: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> ::core::ffi::c_int>,
-    pub _read: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *mut ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _seek: Option<
-        unsafe extern "C" fn(*mut ::core::ffi::c_void, fpos_t, ::core::ffi::c_int) -> fpos_t,
-    >,
-    pub _write: Option<
-        unsafe extern "C" fn(
-            *mut ::core::ffi::c_void,
-            *const ::core::ffi::c_char,
-            ::core::ffi::c_int,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub _ub: __sbuf,
-    pub _extra: *mut __sFILEX,
-    pub _ur: ::core::ffi::c_int,
-    pub _ubuf: [::core::ffi::c_uchar; 3],
-    pub _nbuf: [::core::ffi::c_uchar; 1],
-    pub _lb: __sbuf,
-    pub _blksize: ::core::ffi::c_int,
-    pub _offset: fpos_t,
-}
-pub type FILE = __sFILE;
+pub use crate::stdio::Stream as FILE;
 pub type off_t = __darwin_off_t;
 pub type boolean = ::core::ffi::c_int;
 pub type string = *mut ::core::ffi::c_char;
@@ -810,13 +739,7 @@ pub type text = *mut FILE;
 pub type strnumber = integer;
 pub type wordfile = gzFile;
 pub type gzFile = *mut gzFile_s;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct gzFile_s {
-    pub have: ::core::ffi::c_uint,
-    pub next: *mut ::core::ffi::c_uchar,
-    pub pos: off_t,
-}
+pub use crate::stdio::Stream as gzFile_s;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct C2RustUnnamed {
@@ -2138,10 +2061,12 @@ pub unsafe extern "C" fn getstringsstarted() -> boolean {
     }
     g = loadpoolstrings(poolsize - stringvacancies) as strnumber;
     if g == 0 as ::core::ffi::c_int {
-        fprintf(
-            __stdoutp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stdout(),
             b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            b"! You have to increase POOLSIZE.\0" as *const u8 as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                b"! You have to increase POOLSIZE.\0" as *const u8 as *const ::core::ffi::c_char,
+            )],
         );
         Result = false_0 as boolean;
         return Result;
@@ -6468,7 +6393,8 @@ pub unsafe extern "C" fn storefmtfile() {
     zpackjobname(951 as ::core::ffi::c_int);
     while !(open_output(&raw mut fmtfile as *mut *mut FILE, FOPEN_WBIN_MODE.as_ptr()) != 0
         && {
-            fmtfile = gzdopen(fileno(fmtfile as *mut FILE), FOPEN_WBIN_MODE.as_ptr()) as wordfile;
+            fmtfile =
+                crate::stdio::gzip_open(fmtfile as *mut FILE, FOPEN_WBIN_MODE.as_ptr()) as wordfile;
             !fmtfile.is_null()
         }
         && gzsetparams(
@@ -7708,17 +7634,25 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
         fmtfile as gzFile,
     );
     if debugformatfile != 0 {
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-            b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-            b"format magic number\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(
+                    b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
+                ),
+                crate::utils::PrintfArg::from(
+                    b"format magic number\0" as *const u8 as *const ::core::ffi::c_char,
+                ),
+            ],
         );
-        fprintf(
-            __stderrp,
+        crate::stdio::fprintf_args(
+            crate::stdio::stderr(),
             b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-            b" = \0" as *const u8 as *const ::core::ffi::c_char,
-            x as ::core::ffi::c_long,
+            &[
+                crate::utils::PrintfArg::from(b" = \0" as *const u8 as *const ::core::ffi::c_char),
+                crate::utils::PrintfArg::from(x as ::core::ffi::c_long),
+            ],
         );
     }
     if !(x as ::core::ffi::c_long != 1462916184 as ::core::ffi::c_long) {
@@ -7729,17 +7663,27 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
             fmtfile as gzFile,
         );
         if debugformatfile != 0 {
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                b"engine name size\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        b"engine name size\0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                ],
             );
-            fprintf(
-                __stderrp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stderr(),
                 b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                x as ::core::ffi::c_long,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b" = \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(x as ::core::ffi::c_long),
+                ],
             );
         }
         if !(x < 0 as ::core::ffi::c_int || x > 256 as ::core::ffi::c_int) {
@@ -7761,13 +7705,21 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                 formatengine as string as *const ::core::ffi::c_char,
             ) != 0
             {
-                fprintf(
-                    __stdoutp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stdout(),
                     b"%s%s%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    b"---! \0" as *const u8 as *const ::core::ffi::c_char,
-                    nameoffile.offset(1 as ::core::ffi::c_int as isize) as string,
-                    b" was written by \0" as *const u8 as *const ::core::ffi::c_char,
-                    formatengine,
+                    &[
+                        crate::utils::PrintfArg::from(
+                            b"---! \0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(
+                            nameoffile.offset(1 as ::core::ffi::c_int as isize) as string,
+                        ),
+                        crate::utils::PrintfArg::from(
+                            b" was written by \0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(formatengine),
+                    ],
                 );
                 free(formatengine as *mut ::core::ffi::c_void);
             } else {
@@ -7779,27 +7731,47 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                     fmtfile as gzFile,
                 );
                 if debugformatfile != 0 {
-                    fprintf(
-                        __stderrp,
+                    crate::stdio::fprintf_args(
+                        crate::stdio::stderr(),
                         b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                        b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                        b"string pool checksum\0" as *const u8 as *const ::core::ffi::c_char,
+                        &[
+                            crate::utils::PrintfArg::from(
+                                b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
+                            ),
+                            crate::utils::PrintfArg::from(
+                                b"string pool checksum\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                            ),
+                        ],
                     );
-                    fprintf(
-                        __stderrp,
+                    crate::stdio::fprintf_args(
+                        crate::stdio::stderr(),
                         b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                        b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                        x as ::core::ffi::c_long,
+                        &[
+                            crate::utils::PrintfArg::from(
+                                b" = \0" as *const u8 as *const ::core::ffi::c_char,
+                            ),
+                            crate::utils::PrintfArg::from(x as ::core::ffi::c_long),
+                        ],
                     );
                 }
                 if x as ::core::ffi::c_long != 312141437 as ::core::ffi::c_long {
-                    fprintf(
-                        __stdoutp,
+                    crate::stdio::fprintf_args(
+                        crate::stdio::stdout(),
                         b"%s%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                        b"---! \0" as *const u8 as *const ::core::ffi::c_char,
-                        nameoffile.offset(1 as ::core::ffi::c_int as isize) as string,
-                        b" made by different executable version, strings are different\0"
-                            as *const u8 as *const ::core::ffi::c_char,
+                        &[
+                            crate::utils::PrintfArg::from(
+                                b"---! \0" as *const u8 as *const ::core::ffi::c_char,
+                            ),
+                            crate::utils::PrintfArg::from(
+                                nameoffile.offset(1 as ::core::ffi::c_int as isize) as string,
+                            ),
+                            crate::utils::PrintfArg::from(
+                                b" made by different executable version, strings are different\0"
+                                    as *const u8
+                                    as *const ::core::ffi::c_char,
+                            ),
+                        ],
                     );
                 } else {
                     if !translate_filename.is_null() {
@@ -8002,17 +7974,29 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                     fmtfile as gzFile,
                                 );
                                 if debugformatfile != 0 {
-                                    fprintf(
-                                        __stderrp,
+                                    crate::stdio::fprintf_args(
+                                        crate::stdio::stderr(),
                                         b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                        b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                                        b"mem_bot\0" as *const u8 as *const ::core::ffi::c_char,
+                                        &[
+                                            crate::utils::PrintfArg::from(
+                                                b"fmtdebug:\0" as *const u8
+                                                    as *const ::core::ffi::c_char,
+                                            ),
+                                            crate::utils::PrintfArg::from(
+                                                b"mem_bot\0" as *const u8
+                                                    as *const ::core::ffi::c_char,
+                                            ),
+                                        ],
                                     );
-                                    fprintf(
-                                        __stderrp,
+                                    crate::stdio::fprintf_args(
+                                        crate::stdio::stderr(),
                                         b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                        b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                        x as ::core::ffi::c_long,
+                                        &[
+                                            crate::utils::PrintfArg::from(
+                                                b" = \0" as *const u8 as *const ::core::ffi::c_char,
+                                            ),
+                                            crate::utils::PrintfArg::from(x as ::core::ffi::c_long),
+                                        ],
                                     );
                                 }
                                 if !(x != membot) {
@@ -8023,18 +8007,32 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                         fmtfile as gzFile,
                                     );
                                     if debugformatfile != 0 {
-                                        fprintf(
-                                            __stderrp,
+                                        crate::stdio::fprintf_args(
+                                            crate::stdio::stderr(),
                                             b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                            b"fmtdebug:\0" as *const u8
-                                                as *const ::core::ffi::c_char,
-                                            b"mem_top\0" as *const u8 as *const ::core::ffi::c_char,
+                                            &[
+                                                crate::utils::PrintfArg::from(
+                                                    b"fmtdebug:\0" as *const u8
+                                                        as *const ::core::ffi::c_char,
+                                                ),
+                                                crate::utils::PrintfArg::from(
+                                                    b"mem_top\0" as *const u8
+                                                        as *const ::core::ffi::c_char,
+                                                ),
+                                            ],
                                         );
-                                        fprintf(
-                                            __stderrp,
+                                        crate::stdio::fprintf_args(
+                                            crate::stdio::stderr(),
                                             b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                            b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                            memtop as ::core::ffi::c_long,
+                                            &[
+                                                crate::utils::PrintfArg::from(
+                                                    b" = \0" as *const u8
+                                                        as *const ::core::ffi::c_char,
+                                                ),
+                                                crate::utils::PrintfArg::from(
+                                                    memtop as ::core::ffi::c_long,
+                                                ),
+                                            ],
                                         );
                                     }
                                     if !(membot as ::core::ffi::c_int + 1100 as ::core::ffi::c_int
@@ -8188,29 +8186,14 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                 if x as ::core::ffi::c_long
                                                                                     > suppoolsize - poolfree as ::core::ffi::c_long
                                                                                 {
-                                                                                    fprintf(
-                                                                                        __stdoutp,
-                                                                                        b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                        b"---! Must increase the \0" as *const u8
-                                                                                            as *const ::core::ffi::c_char,
-                                                                                        b"string pool size\0" as *const u8
-                                                                                            as *const ::core::ffi::c_char,
-                                                                                    );
+                                                                                    crate::stdio::fprintf_args(crate::stdio::stdout(), b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"---! Must increase the \0" as *const u8
+                                                                                            as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"string pool size\0" as *const u8
+                                                                                            as *const ::core::ffi::c_char)]);
                                                                                 } else {
                                                                                     if debugformatfile != 0 {
-                                                                                        fprintf(
-                                                                                            __stderrp,
-                                                                                            b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                            b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                            b"string pool size\0" as *const u8
-                                                                                                as *const ::core::ffi::c_char,
-                                                                                        );
-                                                                                        fprintf(
-                                                                                            __stderrp,
-                                                                                            b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                            b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                            x as ::core::ffi::c_long,
-                                                                                        );
+                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"string pool size\0" as *const u8
+                                                                                                as *const ::core::ffi::c_char)]);
+                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b" = \0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(x as ::core::ffi::c_long)]);
                                                                                     }
                                                                                     poolptr = x;
                                                                                     if poolsize < poolptr + poolfree {
@@ -8226,27 +8209,12 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                         if x as ::core::ffi::c_long
                                                                                             > supmaxstrings - stringsfree as ::core::ffi::c_long
                                                                                         {
-                                                                                            fprintf(
-                                                                                                __stdoutp,
-                                                                                                b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                b"---! Must increase the \0" as *const u8
-                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                b"sup strings\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                            );
+                                                                                            crate::stdio::fprintf_args(crate::stdio::stdout(), b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"---! Must increase the \0" as *const u8
+                                                                                                    as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"sup strings\0" as *const u8 as *const ::core::ffi::c_char)]);
                                                                                         } else {
                                                                                             if debugformatfile != 0 {
-                                                                                                fprintf(
-                                                                                                    __stderrp,
-                                                                                                    b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                    b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                    b"sup strings\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                );
-                                                                                                fprintf(
-                                                                                                    __stderrp,
-                                                                                                    b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                    b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                    x as ::core::ffi::c_long,
-                                                                                                );
+                                                                                                crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"sup strings\0" as *const u8 as *const ::core::ffi::c_char)]);
+                                                                                                crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b" = \0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(x as ::core::ffi::c_long)]);
                                                                                             }
                                                                                             strptr = x as strnumber;
                                                                                             if maxstrings < strptr as integer + stringsfree {
@@ -8279,28 +8247,16 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                         as *mut poolpointer)
                                                                                                         .offset(i as isize) > poolptr
                                                                                                 {
-                                                                                                    fprintf(
-                                                                                                        __stderrp,
-                                                                                                        b"%s: fatal: (kpathsea) \0" as *const u8
-                                                                                                            as *const ::core::ffi::c_char,
-                                                                                                        (*kpse_def).invocation_name,
-                                                                                                    );
-                                                                                                    fprintf(
-                                                                                                        __stderrp,
-                                                                                                        b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
-                                                                                                            as *const u8 as *const ::core::ffi::c_char,
-                                                                                                        i,
-                                                                                                        *(strstart.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                    crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s: fatal: (kpathsea) \0" as *const u8
+                                                                                                            as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)]);
+                                                                                                    crate::stdio::fprintf_args(crate::stdio::stderr(), b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
+                                                                                                            as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i), crate::utils::PrintfArg::from(*(strstart.offset(0 as ::core::ffi::c_int as isize)
                                                                                                             as *mut poolpointer)
-                                                                                                            .offset(i as isize) as uintptr_t,
-                                                                                                        strstart.offset(0 as ::core::ffi::c_int as isize)
-                                                                                                            as *mut poolpointer as uintptr_t,
-                                                                                                        0 as ::core::ffi::c_int as uintptr_t,
-                                                                                                        poolptr as uintptr_t,
-                                                                                                    );
+                                                                                                            .offset(i as isize) as uintptr_t), crate::utils::PrintfArg::from(strstart.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                            as *mut poolpointer as uintptr_t), crate::utils::PrintfArg::from(0 as ::core::ffi::c_int as uintptr_t), crate::utils::PrintfArg::from(poolptr as uintptr_t)]);
                                                                                                     fputs(
                                                                                                         b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                        __stderrp,
+                                                                                                        crate::stdio::stderr(),
                                                                                                     );
                                                                                                     exit(1 as ::core::ffi::c_int);
                                                                                                 }
@@ -8724,29 +8680,14 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                     );
                                                                                                                                                     if !(x < 7 as ::core::ffi::c_int) {
                                                                                                                                                         if x as ::core::ffi::c_long > supfontmemsize {
-                                                                                                                                                            fprintf(
-                                                                                                                                                                __stdoutp,
-                                                                                                                                                                b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                b"---! Must increase the \0" as *const u8
-                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                b"font mem size\0" as *const u8
-                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                            );
+                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stdout(), b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"---! Must increase the \0" as *const u8
+                                                                                                                                                                    as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"font mem size\0" as *const u8
+                                                                                                                                                                    as *const ::core::ffi::c_char)]);
                                                                                                                                                         } else {
                                                                                                                                                             if debugformatfile != 0 {
-                                                                                                                                                                fprintf(
-                                                                                                                                                                    __stderrp,
-                                                                                                                                                                    b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                    b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                    b"font mem size\0" as *const u8
-                                                                                                                                                                        as *const ::core::ffi::c_char,
-                                                                                                                                                                );
-                                                                                                                                                                fprintf(
-                                                                                                                                                                    __stderrp,
-                                                                                                                                                                    b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                    b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                    x as ::core::ffi::c_long,
-                                                                                                                                                                );
+                                                                                                                                                                crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"font mem size\0" as *const u8
+                                                                                                                                                                        as *const ::core::ffi::c_char)]);
+                                                                                                                                                                crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b" = \0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(x as ::core::ffi::c_long)]);
                                                                                                                                                             }
                                                                                                                                                             fmemptr = x as fontindex;
                                                                                                                                                             if fmemptr > fontmemsize {
@@ -8774,27 +8715,12 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                             );
                                                                                                                                                             if !(x < 0 as ::core::ffi::c_int) {
                                                                                                                                                                 if x > 9000 as ::core::ffi::c_int {
-                                                                                                                                                                    fprintf(
-                                                                                                                                                                        __stdoutp,
-                                                                                                                                                                        b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                        b"---! Must increase the \0" as *const u8
-                                                                                                                                                                            as *const ::core::ffi::c_char,
-                                                                                                                                                                        b"font max\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                    );
+                                                                                                                                                                    crate::stdio::fprintf_args(crate::stdio::stdout(), b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"---! Must increase the \0" as *const u8
+                                                                                                                                                                            as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"font max\0" as *const u8 as *const ::core::ffi::c_char)]);
                                                                                                                                                                 } else {
                                                                                                                                                                     if debugformatfile != 0 {
-                                                                                                                                                                        fprintf(
-                                                                                                                                                                            __stderrp,
-                                                                                                                                                                            b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                            b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                            b"font max\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                        );
-                                                                                                                                                                        fprintf(
-                                                                                                                                                                            __stderrp,
-                                                                                                                                                                            b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                            b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                            x as ::core::ffi::c_long,
-                                                                                                                                                                        );
+                                                                                                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"font max\0" as *const u8 as *const ::core::ffi::c_char)]);
+                                                                                                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b" = \0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(x as ::core::ffi::c_long)]);
                                                                                                                                                                     }
                                                                                                                                                                     fontptr = x as internalfontnumber;
                                                                                                                                                                     fontcheck = xmalloc(
@@ -9182,28 +9108,16 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                                 .offset(i_0 as isize) as ::core::ffi::c_long
                                                                                                                                                                                 > 268435455 as ::core::ffi::c_long
                                                                                                                                                                         {
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"%s: fatal: (kpathsea) \0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                (*kpse_def).invocation_name,
-                                                                                                                                                                            );
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
-                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                i_0,
-                                                                                                                                                                                *(fontparams.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s: fatal: (kpathsea) \0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)]);
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
+                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i_0), crate::utils::PrintfArg::from(*(fontparams.offset(0 as ::core::ffi::c_int as isize)
                                                                                                                                                                                     as *mut fontindex)
-                                                                                                                                                                                    .offset(i_0 as isize) as uintptr_t,
-                                                                                                                                                                                fontparams.offset(0 as ::core::ffi::c_int as isize)
-                                                                                                                                                                                    as *mut fontindex as uintptr_t,
-                                                                                                                                                                                -(268435455 as ::core::ffi::c_long) as uintptr_t,
-                                                                                                                                                                                268435455 as ::core::ffi::c_long as uintptr_t,
-                                                                                                                                                                            );
+                                                                                                                                                                                    .offset(i_0 as isize) as uintptr_t), crate::utils::PrintfArg::from(fontparams.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                                    as *mut fontindex as uintptr_t), crate::utils::PrintfArg::from(-(268435455 as ::core::ffi::c_long) as uintptr_t), crate::utils::PrintfArg::from(268435455 as ::core::ffi::c_long as uintptr_t)]);
                                                                                                                                                                             fputs(
                                                                                                                                                                                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                __stderrp,
+                                                                                                                                                                                crate::stdio::stderr(),
                                                                                                                                                                             );
                                                                                                                                                                             exit(1 as ::core::ffi::c_int);
                                                                                                                                                                         }
@@ -9240,27 +9154,16 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                             as *mut strnumber)
                                                                                                                                                                             .offset(i_1 as isize) > strptr
                                                                                                                                                                         {
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"%s: fatal: (kpathsea) \0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                (*kpse_def).invocation_name,
-                                                                                                                                                                            );
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"Item %u (=%ld) of .fmt array at %lx >%ld\0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                i_1,
-                                                                                                                                                                                *(fontname.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s: fatal: (kpathsea) \0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)]);
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"Item %u (=%ld) of .fmt array at %lx >%ld\0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i_1), crate::utils::PrintfArg::from(*(fontname.offset(0 as ::core::ffi::c_int as isize)
                                                                                                                                                                                     as *mut strnumber)
-                                                                                                                                                                                    .offset(i_1 as isize) as uintptr_t,
-                                                                                                                                                                                fontname.offset(0 as ::core::ffi::c_int as isize)
-                                                                                                                                                                                    as *mut strnumber as uintptr_t,
-                                                                                                                                                                                strptr as uintptr_t,
-                                                                                                                                                                            );
+                                                                                                                                                                                    .offset(i_1 as isize) as uintptr_t), crate::utils::PrintfArg::from(fontname.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                                    as *mut strnumber as uintptr_t), crate::utils::PrintfArg::from(strptr as uintptr_t)]);
                                                                                                                                                                             fputs(
                                                                                                                                                                                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                __stderrp,
+                                                                                                                                                                                crate::stdio::stderr(),
                                                                                                                                                                             );
                                                                                                                                                                             exit(1 as ::core::ffi::c_int);
                                                                                                                                                                         }
@@ -9283,27 +9186,16 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                             as *mut strnumber)
                                                                                                                                                                             .offset(i_2 as isize) > strptr
                                                                                                                                                                         {
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"%s: fatal: (kpathsea) \0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                (*kpse_def).invocation_name,
-                                                                                                                                                                            );
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"Item %u (=%ld) of .fmt array at %lx >%ld\0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                i_2,
-                                                                                                                                                                                *(fontarea.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s: fatal: (kpathsea) \0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)]);
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"Item %u (=%ld) of .fmt array at %lx >%ld\0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i_2), crate::utils::PrintfArg::from(*(fontarea.offset(0 as ::core::ffi::c_int as isize)
                                                                                                                                                                                     as *mut strnumber)
-                                                                                                                                                                                    .offset(i_2 as isize) as uintptr_t,
-                                                                                                                                                                                fontarea.offset(0 as ::core::ffi::c_int as isize)
-                                                                                                                                                                                    as *mut strnumber as uintptr_t,
-                                                                                                                                                                                strptr as uintptr_t,
-                                                                                                                                                                            );
+                                                                                                                                                                                    .offset(i_2 as isize) as uintptr_t), crate::utils::PrintfArg::from(fontarea.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                                    as *mut strnumber as uintptr_t), crate::utils::PrintfArg::from(strptr as uintptr_t)]);
                                                                                                                                                                             fputs(
                                                                                                                                                                                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                __stderrp,
+                                                                                                                                                                                crate::stdio::stderr(),
                                                                                                                                                                             );
                                                                                                                                                                             exit(1 as ::core::ffi::c_int);
                                                                                                                                                                         }
@@ -9407,28 +9299,16 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                                 as *mut halfword)
                                                                                                                                                                                 .offset(i_3 as isize) > lomemmax
                                                                                                                                                                         {
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"%s: fatal: (kpathsea) \0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                (*kpse_def).invocation_name,
-                                                                                                                                                                            );
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
-                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                i_3,
-                                                                                                                                                                                *(fontglue.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s: fatal: (kpathsea) \0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)]);
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
+                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i_3), crate::utils::PrintfArg::from(*(fontglue.offset(0 as ::core::ffi::c_int as isize)
                                                                                                                                                                                     as *mut halfword)
-                                                                                                                                                                                    .offset(i_3 as isize) as uintptr_t,
-                                                                                                                                                                                fontglue.offset(0 as ::core::ffi::c_int as isize)
-                                                                                                                                                                                    as *mut halfword as uintptr_t,
-                                                                                                                                                                                -(268435455 as ::core::ffi::c_long) as uintptr_t,
-                                                                                                                                                                                lomemmax as uintptr_t,
-                                                                                                                                                                            );
+                                                                                                                                                                                    .offset(i_3 as isize) as uintptr_t), crate::utils::PrintfArg::from(fontglue.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                                    as *mut halfword as uintptr_t), crate::utils::PrintfArg::from(-(268435455 as ::core::ffi::c_long) as uintptr_t), crate::utils::PrintfArg::from(lomemmax as uintptr_t)]);
                                                                                                                                                                             fputs(
                                                                                                                                                                                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                __stderrp,
+                                                                                                                                                                                crate::stdio::stderr(),
                                                                                                                                                                             );
                                                                                                                                                                             exit(1 as ::core::ffi::c_int);
                                                                                                                                                                         }
@@ -9455,29 +9335,17 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                                 .offset(i_4 as isize)
                                                                                                                                                                                 > fmemptr as ::core::ffi::c_int - 1 as ::core::ffi::c_int
                                                                                                                                                                         {
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"%s: fatal: (kpathsea) \0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                (*kpse_def).invocation_name,
-                                                                                                                                                                            );
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
-                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                i_4,
-                                                                                                                                                                                *(bcharlabel.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s: fatal: (kpathsea) \0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)]);
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
+                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i_4), crate::utils::PrintfArg::from(*(bcharlabel.offset(0 as ::core::ffi::c_int as isize)
                                                                                                                                                                                     as *mut fontindex)
-                                                                                                                                                                                    .offset(i_4 as isize) as uintptr_t,
-                                                                                                                                                                                bcharlabel.offset(0 as ::core::ffi::c_int as isize)
-                                                                                                                                                                                    as *mut fontindex as uintptr_t,
-                                                                                                                                                                                0 as ::core::ffi::c_int as uintptr_t,
-                                                                                                                                                                                (fmemptr as uintptr_t)
-                                                                                                                                                                                    .wrapping_sub(1 as ::core::ffi::c_int as uintptr_t),
-                                                                                                                                                                            );
+                                                                                                                                                                                    .offset(i_4 as isize) as uintptr_t), crate::utils::PrintfArg::from(bcharlabel.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                                    as *mut fontindex as uintptr_t), crate::utils::PrintfArg::from(0 as ::core::ffi::c_int as uintptr_t), crate::utils::PrintfArg::from((fmemptr as uintptr_t)
+                                                                                                                                                                                    .wrapping_sub(1 as ::core::ffi::c_int as uintptr_t))]);
                                                                                                                                                                             fputs(
                                                                                                                                                                                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                __stderrp,
+                                                                                                                                                                                crate::stdio::stderr(),
                                                                                                                                                                             );
                                                                                                                                                                             exit(1 as ::core::ffi::c_int);
                                                                                                                                                                         }
@@ -9505,28 +9373,16 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                                 .offset(i_5 as isize) as ::core::ffi::c_int
                                                                                                                                                                                 > 256 as ::core::ffi::c_int
                                                                                                                                                                         {
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"%s: fatal: (kpathsea) \0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                (*kpse_def).invocation_name,
-                                                                                                                                                                            );
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
-                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                i_5,
-                                                                                                                                                                                *(fontbchar.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s: fatal: (kpathsea) \0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)]);
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
+                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i_5), crate::utils::PrintfArg::from(*(fontbchar.offset(0 as ::core::ffi::c_int as isize)
                                                                                                                                                                                     as *mut ninebits)
-                                                                                                                                                                                    .offset(i_5 as isize) as uintptr_t,
-                                                                                                                                                                                fontbchar.offset(0 as ::core::ffi::c_int as isize)
-                                                                                                                                                                                    as *mut ninebits as uintptr_t,
-                                                                                                                                                                                0 as ::core::ffi::c_int as uintptr_t,
-                                                                                                                                                                                256 as ::core::ffi::c_int as uintptr_t,
-                                                                                                                                                                            );
+                                                                                                                                                                                    .offset(i_5 as isize) as uintptr_t), crate::utils::PrintfArg::from(fontbchar.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                                    as *mut ninebits as uintptr_t), crate::utils::PrintfArg::from(0 as ::core::ffi::c_int as uintptr_t), crate::utils::PrintfArg::from(256 as ::core::ffi::c_int as uintptr_t)]);
                                                                                                                                                                             fputs(
                                                                                                                                                                                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                __stderrp,
+                                                                                                                                                                                crate::stdio::stderr(),
                                                                                                                                                                             );
                                                                                                                                                                             exit(1 as ::core::ffi::c_int);
                                                                                                                                                                         }
@@ -9554,28 +9410,16 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                                 .offset(i_6 as isize) as ::core::ffi::c_int
                                                                                                                                                                                 > 256 as ::core::ffi::c_int
                                                                                                                                                                         {
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"%s: fatal: (kpathsea) \0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                (*kpse_def).invocation_name,
-                                                                                                                                                                            );
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stderrp,
-                                                                                                                                                                                b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
-                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                i_6,
-                                                                                                                                                                                *(fontfalsebchar.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s: fatal: (kpathsea) \0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)]);
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stderr(), b"Item %u (=%ld) of .fmt array at %lx <%ld or >%ld\0"
+                                                                                                                                                                                    as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i_6), crate::utils::PrintfArg::from(*(fontfalsebchar.offset(0 as ::core::ffi::c_int as isize)
                                                                                                                                                                                     as *mut ninebits)
-                                                                                                                                                                                    .offset(i_6 as isize) as uintptr_t,
-                                                                                                                                                                                fontfalsebchar.offset(0 as ::core::ffi::c_int as isize)
-                                                                                                                                                                                    as *mut ninebits as uintptr_t,
-                                                                                                                                                                                0 as ::core::ffi::c_int as uintptr_t,
-                                                                                                                                                                                256 as ::core::ffi::c_int as uintptr_t,
-                                                                                                                                                                            );
+                                                                                                                                                                                    .offset(i_6 as isize) as uintptr_t), crate::utils::PrintfArg::from(fontfalsebchar.offset(0 as ::core::ffi::c_int as isize)
+                                                                                                                                                                                    as *mut ninebits as uintptr_t), crate::utils::PrintfArg::from(0 as ::core::ffi::c_int as uintptr_t), crate::utils::PrintfArg::from(256 as ::core::ffi::c_int as uintptr_t)]);
                                                                                                                                                                             fputs(
                                                                                                                                                                                 b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                __stderrp,
+                                                                                                                                                                                crate::stdio::stderr(),
                                                                                                                                                                             );
                                                                                                                                                                             exit(1 as ::core::ffi::c_int);
                                                                                                                                                                         }
@@ -9589,27 +9433,12 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                     );
                                                                                                                                                                     if !(x < 0 as ::core::ffi::c_int) {
                                                                                                                                                                         if x > hyphsize {
-                                                                                                                                                                            fprintf(
-                                                                                                                                                                                __stdoutp,
-                                                                                                                                                                                b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                b"---! Must increase the \0" as *const u8
-                                                                                                                                                                                    as *const ::core::ffi::c_char,
-                                                                                                                                                                                b"hyph_size\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                            );
+                                                                                                                                                                            crate::stdio::fprintf_args(crate::stdio::stdout(), b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"---! Must increase the \0" as *const u8
+                                                                                                                                                                                    as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"hyph_size\0" as *const u8 as *const ::core::ffi::c_char)]);
                                                                                                                                                                         } else {
                                                                                                                                                                             if debugformatfile != 0 {
-                                                                                                                                                                                fprintf(
-                                                                                                                                                                                    __stderrp,
-                                                                                                                                                                                    b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                    b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                    b"hyph_size\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                );
-                                                                                                                                                                                fprintf(
-                                                                                                                                                                                    __stderrp,
-                                                                                                                                                                                    b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                    b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                    x as ::core::ffi::c_long,
-                                                                                                                                                                                );
+                                                                                                                                                                                crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"hyph_size\0" as *const u8 as *const ::core::ffi::c_char)]);
+                                                                                                                                                                                crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b" = \0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(x as ::core::ffi::c_long)]);
                                                                                                                                                                             }
                                                                                                                                                                             hyphcount = x;
                                                                                                                                                                             do_undump(
@@ -9620,27 +9449,12 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                             );
                                                                                                                                                                             if !(x < 607 as ::core::ffi::c_int) {
                                                                                                                                                                                 if x > hyphsize {
-                                                                                                                                                                                    fprintf(
-                                                                                                                                                                                        __stdoutp,
-                                                                                                                                                                                        b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                        b"---! Must increase the \0" as *const u8
-                                                                                                                                                                                            as *const ::core::ffi::c_char,
-                                                                                                                                                                                        b"hyph_size\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                    );
+                                                                                                                                                                                    crate::stdio::fprintf_args(crate::stdio::stdout(), b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"---! Must increase the \0" as *const u8
+                                                                                                                                                                                            as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"hyph_size\0" as *const u8 as *const ::core::ffi::c_char)]);
                                                                                                                                                                                 } else {
                                                                                                                                                                                     if debugformatfile != 0 {
-                                                                                                                                                                                        fprintf(
-                                                                                                                                                                                            __stderrp,
-                                                                                                                                                                                            b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                            b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                            b"hyph_size\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                        );
-                                                                                                                                                                                        fprintf(
-                                                                                                                                                                                            __stderrp,
-                                                                                                                                                                                            b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                            b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                            x as ::core::ffi::c_long,
-                                                                                                                                                                                        );
+                                                                                                                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"hyph_size\0" as *const u8 as *const ::core::ffi::c_char)]);
+                                                                                                                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b" = \0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(x as ::core::ffi::c_long)]);
                                                                                                                                                                                     }
                                                                                                                                                                                     hyphnext = x;
                                                                                                                                                                                     j = 0 as ::core::ffi::c_int as integer;
@@ -9730,27 +9544,12 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                                             );
                                                                                                                                                                                             if !(x < 0 as ::core::ffi::c_int) {
                                                                                                                                                                                                 if x > triesize {
-                                                                                                                                                                                                    fprintf(
-                                                                                                                                                                                                        __stdoutp,
-                                                                                                                                                                                                        b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                        b"---! Must increase the \0" as *const u8
-                                                                                                                                                                                                            as *const ::core::ffi::c_char,
-                                                                                                                                                                                                        b"trie size\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                    );
+                                                                                                                                                                                                    crate::stdio::fprintf_args(crate::stdio::stdout(), b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"---! Must increase the \0" as *const u8
+                                                                                                                                                                                                            as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"trie size\0" as *const u8 as *const ::core::ffi::c_char)]);
                                                                                                                                                                                                 } else {
                                                                                                                                                                                                     if debugformatfile != 0 {
-                                                                                                                                                                                                        fprintf(
-                                                                                                                                                                                                            __stderrp,
-                                                                                                                                                                                                            b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                            b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                            b"trie size\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                        );
-                                                                                                                                                                                                        fprintf(
-                                                                                                                                                                                                            __stderrp,
-                                                                                                                                                                                                            b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                            b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                            x as ::core::ffi::c_long,
-                                                                                                                                                                                                        );
+                                                                                                                                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"trie size\0" as *const u8 as *const ::core::ffi::c_char)]);
+                                                                                                                                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b" = \0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(x as ::core::ffi::c_long)]);
                                                                                                                                                                                                     }
                                                                                                                                                                                                     j = x;
                                                                                                                                                                                                     triemax = j as triepointer;
@@ -9818,27 +9617,12 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                                                         );
                                                                                                                                                                                                         if !(x < 0 as ::core::ffi::c_int) {
                                                                                                                                                                                                             if x as ::core::ffi::c_long > trieopsize {
-                                                                                                                                                                                                                fprintf(
-                                                                                                                                                                                                                    __stdoutp,
-                                                                                                                                                                                                                    b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                    b"---! Must increase the \0" as *const u8
-                                                                                                                                                                                                                        as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                    b"trie op size\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                );
+                                                                                                                                                                                                                crate::stdio::fprintf_args(crate::stdio::stdout(), b"%s%s\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"---! Must increase the \0" as *const u8
+                                                                                                                                                                                                                        as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"trie op size\0" as *const u8 as *const ::core::ffi::c_char)]);
                                                                                                                                                                                                             } else {
                                                                                                                                                                                                                 if debugformatfile != 0 {
-                                                                                                                                                                                                                    fprintf(
-                                                                                                                                                                                                                        __stderrp,
-                                                                                                                                                                                                                        b"%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                        b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                        b"trie op size\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                    );
-                                                                                                                                                                                                                    fprintf(
-                                                                                                                                                                                                                        __stderrp,
-                                                                                                                                                                                                                        b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                        b" = \0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                        x as ::core::ffi::c_long,
-                                                                                                                                                                                                                    );
+                                                                                                                                                                                                                    crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%s\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b"fmtdebug:\0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(b"trie op size\0" as *const u8 as *const ::core::ffi::c_char)]);
+                                                                                                                                                                                                                    crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(b" = \0" as *const u8 as *const ::core::ffi::c_char), crate::utils::PrintfArg::from(x as ::core::ffi::c_long)]);
                                                                                                                                                                                                                 }
                                                                                                                                                                                                                 j = x;
                                                                                                                                                                                                                 trieopptr = j;
@@ -9875,29 +9659,18 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
                                                                                                                                                                                                                         .offset(i_7 as isize) as ::core::ffi::c_long
                                                                                                                                                                                                                         > 65535 as ::core::ffi::c_long
                                                                                                                                                                                                                     {
-                                                                                                                                                                                                                        fprintf(
-                                                                                                                                                                                                                            __stderrp,
-                                                                                                                                                                                                                            b"%s: fatal: (kpathsea) \0" as *const u8
-                                                                                                                                                                                                                                as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                            (*kpse_def).invocation_name,
-                                                                                                                                                                                                                        );
-                                                                                                                                                                                                                        fprintf(
-                                                                                                                                                                                                                            __stderrp,
-                                                                                                                                                                                                                            b"Item %u (=%ld) of .fmt array at %lx >%ld\0" as *const u8
-                                                                                                                                                                                                                                as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                            i_7,
-                                                                                                                                                                                                                            *((&raw mut hyfnext as *mut trieopcode)
+                                                                                                                                                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"%s: fatal: (kpathsea) \0" as *const u8
+                                                                                                                                                                                                                                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)]);
+                                                                                                                                                                                                                        crate::stdio::fprintf_args(crate::stdio::stderr(), b"Item %u (=%ld) of .fmt array at %lx >%ld\0" as *const u8
+                                                                                                                                                                                                                                as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(i_7), crate::utils::PrintfArg::from(*((&raw mut hyfnext as *mut trieopcode)
                                                                                                                                                                                                                                 .offset(1 as ::core::ffi::c_int as isize)
                                                                                                                                                                                                                                 as *mut trieopcode)
-                                                                                                                                                                                                                                .offset(i_7 as isize) as uintptr_t,
-                                                                                                                                                                                                                            (&raw mut hyfnext as *mut trieopcode)
+                                                                                                                                                                                                                                .offset(i_7 as isize) as uintptr_t), crate::utils::PrintfArg::from((&raw mut hyfnext as *mut trieopcode)
                                                                                                                                                                                                                                 .offset(1 as ::core::ffi::c_int as isize) as *mut trieopcode
-                                                                                                                                                                                                                                as uintptr_t,
-                                                                                                                                                                                                                            65535 as ::core::ffi::c_long as uintptr_t,
-                                                                                                                                                                                                                        );
+                                                                                                                                                                                                                                as uintptr_t), crate::utils::PrintfArg::from(65535 as ::core::ffi::c_long as uintptr_t)]);
                                                                                                                                                                                                                         fputs(
                                                                                                                                                                                                                             b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                                                                                                                                                                                                            __stderrp,
+                                                                                                                                                                                                                            crate::stdio::stderr(),
                                                                                                                                                                                                                         );
                                                                                                                                                                                                                         exit(1 as ::core::ffi::c_int);
                                                                                                                                                                                                                     }
@@ -10212,10 +9985,12 @@ pub unsafe extern "C" fn loadfmtfile() -> boolean {
             }
         }
     }
-    fprintf(
-        __stdoutp,
+    crate::stdio::fprintf_args(
+        crate::stdio::stdout(),
         b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-        b"(Fatal format file error; I'm stymied)\0" as *const u8 as *const ::core::ffi::c_char,
+        &[crate::utils::PrintfArg::from(
+            b"(Fatal format file error; I'm stymied)\0" as *const u8 as *const ::core::ffi::c_char,
+        )],
     );
     Result = false_0 as boolean;
     return Result;
@@ -13330,13 +13105,19 @@ pub unsafe extern "C" fn mainbody() {
             bad = 41 as ::core::ffi::c_int as integer;
         }
         if bad > 0 as ::core::ffi::c_int {
-            fprintf(
-                __stdoutp,
+            crate::stdio::fprintf_args(
+                crate::stdio::stdout(),
                 b"%s%s%ld\n\0" as *const u8 as *const ::core::ffi::c_char,
-                b"Ouch---my internal constants have been clobbered!\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                b"---case \0" as *const u8 as *const ::core::ffi::c_char,
-                bad as ::core::ffi::c_long,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b"Ouch---my internal constants have been clobbered!\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(
+                        b"---case \0" as *const u8 as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(bad as ::core::ffi::c_long),
+                ],
             );
             current_block = 10212330169448209891;
         } else {
@@ -13370,68 +13151,95 @@ pub unsafe extern "C" fn mainbody() {
             termoffset = 0 as ::core::ffi::c_int as integer;
             fileoffset = 0 as ::core::ffi::c_int as integer;
             if srcspecialsp != 0 || filelineerrorstylep != 0 || parsefirstlinep != 0 {
-                fprintf(
-                    __stdoutp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stdout(),
                     b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    b"This is pdfTeX, Version 3.141592653\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    b"-2.6\0" as *const u8 as *const ::core::ffi::c_char,
-                    b"-1.40.29\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(
+                            b"This is pdfTeX, Version 3.141592653\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(
+                            b"-2.6\0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(
+                            b"-1.40.29\0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                    ],
                 );
             } else {
-                fprintf(
-                    __stdoutp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stdout(),
                     b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    b"This is pdfTeX, Version 3.141592653\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    b"-2.6\0" as *const u8 as *const ::core::ffi::c_char,
-                    b"-1.40.29\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(
+                            b"This is pdfTeX, Version 3.141592653\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(
+                            b"-2.6\0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(
+                            b"-1.40.29\0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                    ],
                 );
             }
-            fputs(versionstring, __stdoutp);
+            fputs(versionstring, crate::stdio::stdout());
             if formatident == 0 as ::core::ffi::c_int {
-                fprintf(
-                    __stdoutp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stdout(),
                     b"%s%s%c\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    b" (preloaded format=\0" as *const u8 as *const ::core::ffi::c_char,
-                    dump_name,
-                    ')' as i32,
+                    &[
+                        crate::utils::PrintfArg::from(
+                            b" (preloaded format=\0" as *const u8 as *const ::core::ffi::c_char,
+                        ),
+                        crate::utils::PrintfArg::from(dump_name),
+                        crate::utils::PrintfArg::from(')' as i32),
+                    ],
                 );
             } else {
                 zslowprint(formatident);
                 println();
             }
             if shellenabledp != 0 {
-                putc(' ' as i32, __stdoutp);
+                putc(' ' as i32, crate::stdio::stdout());
                 if restrictedshell != 0 {
                     fputs(
                         b"restricted \0" as *const u8 as *const ::core::ffi::c_char,
-                        __stdoutp,
+                        crate::stdio::stdout(),
                     );
                 }
-                fprintf(
-                    __stdoutp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stdout(),
                     b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    b"\\write18 enabled.\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(
+                        b"\\write18 enabled.\0" as *const u8 as *const ::core::ffi::c_char,
+                    )],
                 );
             }
             if srcspecialsp != 0 {
-                fprintf(
-                    __stdoutp,
+                crate::stdio::fprintf_args(
+                    crate::stdio::stdout(),
                     b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    b" Source specials enabled.\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(
+                        b" Source specials enabled.\0" as *const u8 as *const ::core::ffi::c_char,
+                    )],
                 );
             }
             if !translate_filename.is_null() {
                 fputs(
                     b" (\0" as *const u8 as *const ::core::ffi::c_char,
-                    __stdoutp,
+                    crate::stdio::stdout(),
                 );
-                fputs(translate_filename as *const ::core::ffi::c_char, __stdoutp);
-                putc(')' as i32, __stdoutp);
-                putc('\n' as i32, __stdoutp);
+                fputs(
+                    translate_filename as *const ::core::ffi::c_char,
+                    crate::stdio::stdout(),
+                );
+                putc(')' as i32, crate::stdio::stdout());
+                putc('\n' as i32, crate::stdio::stdout());
             }
-            fflush(__stdoutp);
+            fflush(crate::stdio::stdout());
             jobname = 0 as ::core::ffi::c_int as strnumber;
             nameinprogress = false_0 as boolean;
             logopened = false_0 as boolean;
@@ -13881,11 +13689,13 @@ pub unsafe extern "C" fn mainbody() {
                         }
                         pdfinitmapfile(b"pdftex.map\0" as *const u8 as const_string);
                         if eTeXmode as ::core::ffi::c_int == 1 as ::core::ffi::c_int {
-                            fprintf(
-                                __stdoutp,
+                            crate::stdio::fprintf_args(
+                                crate::stdio::stdout(),
                                 b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                b"entering extended mode\0" as *const u8
-                                    as *const ::core::ffi::c_char,
+                                &[crate::utils::PrintfArg::from(
+                                    b"entering extended mode\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                )],
                             );
                         }
                         if (*eqtb.offset(29325 as ::core::ffi::c_int as isize)).u.CINT
@@ -13900,31 +13710,38 @@ pub unsafe extern "C" fn mainbody() {
                                     as ASCIIcode;
                         }
                         if mltexenabledp != 0 {
-                            fprintf(
-                                __stdoutp,
+                            crate::stdio::fprintf_args(
+                                crate::stdio::stdout(),
                                 b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                b"MLTeX v2.2 enabled\0" as *const u8 as *const ::core::ffi::c_char,
+                                &[crate::utils::PrintfArg::from(
+                                    b"MLTeX v2.2 enabled\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                )],
                             );
                         }
                         if enctexenabledp != 0 {
                             fputs(
                                 b" encTeX v. Jun. 2004\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                __stdoutp,
+                                crate::stdio::stdout(),
                             );
-                            fprintf(
-                                __stdoutp,
+                            crate::stdio::fprintf_args(
+                                crate::stdio::stdout(),
                                 b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                b", reencoding enabled.\0" as *const u8
-                                    as *const ::core::ffi::c_char,
+                                &[crate::utils::PrintfArg::from(
+                                    b", reencoding enabled.\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                )],
                             );
                             if !translate_filename.is_null() {
-                                fprintf(
-                                    __stdoutp,
+                                crate::stdio::fprintf_args(
+                                    crate::stdio::stdout(),
                                     b"%s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                    b" (\\xordcode, \\xchrcode, \\xprncode overridden by TCX)\0"
-                                        as *const u8
-                                        as *const ::core::ffi::c_char,
+                                    &[crate::utils::PrintfArg::from(
+                                        b" (\\xordcode, \\xchrcode, \\xprncode overridden by TCX)\0"
+                                            as *const u8
+                                            as *const ::core::ffi::c_char,
+                                    )],
                                 );
                             }
                         }
@@ -14438,7 +14255,7 @@ pub unsafe extern "C" fn mainbody() {
         }
         _ => {}
     }
-    fflush(__stdoutp);
+    fflush(crate::stdio::stdout());
     readyalready = 0 as ::core::ffi::c_int as integer;
     if history as ::core::ffi::c_int != 0 as ::core::ffi::c_int
         && history as ::core::ffi::c_int != 1 as ::core::ffi::c_int

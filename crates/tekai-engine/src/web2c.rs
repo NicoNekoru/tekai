@@ -1,22 +1,11 @@
 //! Small Rust-owned web2c support shims.
 
-use libc::{c_double, c_int, FILE};
+use crate::stdio::Stream as FILE;
+use libc::{c_double, c_int};
 
-#[cfg(unix)]
-extern "C" {
-    fn getc_unlocked(stream: *mut FILE) -> c_int;
-}
-
+#[inline]
 unsafe fn fast_fgetc(stream: *mut FILE) -> c_int {
-    #[cfg(unix)]
-    {
-        unsafe { getc_unlocked(stream) }
-    }
-
-    #[cfg(not(unix))]
-    {
-        unsafe { libc::fgetc(stream) }
-    }
+    unsafe { crate::stdio::fgetc(stream) }
 }
 
 #[no_mangle]
@@ -39,12 +28,11 @@ pub extern "C" fn uexit(unix_code: c_int) {
         1 => libc::EXIT_FAILURE,
         other => other,
     };
-    unsafe { libc::exit(final_code) }
+    unsafe { crate::stdio::exit(final_code) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn eof(file: *mut FILE) -> c_int {
-    if file.is_null() || unsafe { libc::feof(file) } != 0 {
+pub(crate) unsafe fn eof(file: *mut FILE) -> c_int {
+    if file.is_null() || unsafe { crate::stdio::feof(file) } != 0 {
         return 1;
     }
 
@@ -53,7 +41,7 @@ pub unsafe extern "C" fn eof(file: *mut FILE) -> c_int {
         return 1;
     }
     unsafe {
-        libc::ungetc(c, file);
+        crate::stdio::ungetc(c, file);
     }
     0
 }
