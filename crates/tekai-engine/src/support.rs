@@ -283,7 +283,8 @@ pub(crate) unsafe fn inputint(f: *mut FILE) -> c_int {
         if crate::stdio::fgets(buffer.as_mut_ptr(), buffer.len() as c_int, f).is_null() {
             0
         } else {
-            libc::atoi(buffer.as_ptr())
+            crate::integer_parse::decimal_i32_legacy(CStr::from_ptr(buffer.as_ptr()).to_bytes())
+                .value
         }
     }
 }
@@ -439,10 +440,43 @@ pub unsafe extern "C" fn printversionandexit(
 
 #[cfg(test)]
 mod tests {
-    use super::{basenamechangesuffix, chartostring, read_line, xgetcwd};
+    use super::{basenamechangesuffix, chartostring, inputint, read_line, xgetcwd};
     use libc::c_void;
     use proptest::prelude::*;
     use std::ffi::{CStr, CString};
+
+    struct File(*mut crate::stdio::Stream);
+
+    impl File {
+        fn with_input(input: &[u8]) -> Self {
+            let file = Self(unsafe { crate::stdio::tmpfile() });
+            assert!(!file.0.is_null());
+            assert_eq!(
+                unsafe { crate::stdio::fwrite(input.as_ptr().cast(), 1, input.len(), file.0) },
+                input.len()
+            );
+            unsafe { crate::stdio::rewind(file.0) };
+            file
+        }
+    }
+
+    impl Drop for File {
+        fn drop(&mut self) {
+            unsafe { crate::stdio::fclose(self.0) };
+        }
+    }
+
+    #[test]
+    fn integer_input_preserves_c_whitespace_pushback_and_line_boundaries() {
+        let file = File::with_input(b"\x0b-42tail\n\x0b+17trailing\n2147483648\n8\n");
+        assert_eq!(unsafe { crate::stdio::scan_integer(file.0) }, Some(-42));
+        assert_eq!(unsafe { crate::stdio::fgetc(file.0) }, i32::from(b't'));
+        assert_eq!(unsafe { inputint(file.0) }, 0);
+        assert_eq!(unsafe { inputint(file.0) }, 17);
+        assert_eq!(unsafe { inputint(file.0) }, i32::MIN);
+        assert_eq!(unsafe { inputint(file.0) }, 8);
+        assert_eq!(unsafe { inputint(file.0) }, 0);
+    }
 
     #[test]
     fn chartostring_allocates_single_character_c_string() {
@@ -481,20 +515,10 @@ mod tests {
             payload in prop::collection::vec(any::<u8>().prop_filter("line byte", |b| *b != b'\r' && *b != b'\n'), 0..4096),
             crlf in any::<bool>(),
         ) {
-            struct File(*mut crate::stdio::Stream);
-            impl Drop for File {
-                fn drop(&mut self) {
-                    unsafe { crate::stdio::fclose(self.0) };
-                }
-            }
-
-            let file = File(unsafe { crate::stdio::tmpfile() });
-            assert!(!file.0.is_null());
             let mut input = payload.clone();
             input.extend_from_slice(if crlf { b"\r\n" } else { b"\n" });
             input.extend_from_slice(b"tail\n");
-            assert_eq!(unsafe { crate::stdio::fwrite(input.as_ptr().cast(), 1, input.len(), file.0) }, input.len());
-            unsafe { crate::stdio::rewind(file.0) };
+            let file = File::with_input(&input);
             let line = unsafe { read_line(file.0) };
             assert!(!line.is_null());
             let actual = unsafe { CStr::from_ptr(line) }.to_bytes().to_vec();

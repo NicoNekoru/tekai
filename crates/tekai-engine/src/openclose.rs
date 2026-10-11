@@ -375,7 +375,8 @@ pub unsafe extern "C" fn setupboundvariable(var: *mut c_int, var_name: *const c_
             return;
         }
 
-        let conf_val = libc::atoi(expansion);
+        let conf_val =
+            crate::integer_parse::decimal_i32_legacy(CStr::from_ptr(expansion).to_bytes()).value;
         if conf_val >= 0 && (conf_val != 0 || dflt <= 0) {
             *var = conf_val;
         } else {

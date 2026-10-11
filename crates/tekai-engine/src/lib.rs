@@ -60,6 +60,7 @@ mod core_types;
 mod directory_graph;
 mod embedded;
 pub mod file_identity;
+mod integer_parse;
 mod jpeg_exif;
 pub mod kpathsea;
 pub mod lookup;

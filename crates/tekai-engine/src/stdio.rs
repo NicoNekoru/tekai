@@ -592,7 +592,7 @@ pub(crate) unsafe fn fgetc(stream: *mut Stream) -> c_int {
 /// Decimal overflow clamps to signed-long bounds before the legacy i32 cast.
 pub(crate) unsafe fn scan_integer(stream: *mut Stream) -> Option<c_int> {
     let mut byte = unsafe { fgetc(stream) };
-    while byte >= 0 && (byte as u8).is_ascii_whitespace() {
+    while byte >= 0 && crate::integer_parse::is_c_whitespace(byte as u8) {
         byte = unsafe { fgetc(stream) };
     }
     let negative = byte == b'-' as c_int;

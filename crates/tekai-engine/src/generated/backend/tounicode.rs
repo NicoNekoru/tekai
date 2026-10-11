@@ -1,6 +1,8 @@
 use crate::allocation::free;
 use crate::generated::pdftexextra::{do_dump, do_undump};
+use crate::integer_parse::{signed_prefix, IntegerBase};
 use crate::openclose::{xmalloc, xstrdup};
+use std::ffi::CStr;
 
 extern "C" {
     fn sscanf(
@@ -8,11 +10,6 @@ extern "C" {
         _: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn strtol(
-        __str: *const ::core::ffi::c_char,
-        __endptr: *mut *mut ::core::ffi::c_char,
-        __base: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_long;
     fn strcat(
         __s1: *mut ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
@@ -772,11 +769,8 @@ unsafe extern "C" fn is_last_byte_valid(
 ) -> boolean {
     let mut s: *mut ::core::ffi::c_char = strchr(utf16be_str(code), 0 as ::core::ffi::c_int)
         .offset(-(2 as ::core::ffi::c_int as isize));
-    let mut l: ::core::ffi::c_long = strtol(
-        s,
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
-        16 as ::core::ffi::c_int,
-    );
+    let mut l: ::core::ffi::c_long =
+        signed_prefix(CStr::from_ptr(s).to_bytes(), IntegerBase::Hex).value;
     return (l < (255 as ::core::ffi::c_int - (srcCode2 - srcCode1)) as ::core::ffi::c_long)
         as ::core::ffi::c_int;
 }

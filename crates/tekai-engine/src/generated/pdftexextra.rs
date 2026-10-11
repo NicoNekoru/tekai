@@ -19,6 +19,10 @@ pub use crate::core_types::{
 };
 
 use crate::generated::pdftexini::mainbody;
+use crate::integer_parse::{
+    decimal_i32_legacy, signed_prefix, source_date_epoch as parse_source_date_epoch, IntegerBase,
+};
+use std::ffi::CStr;
 
 use crate::openclose::{close_file, open_input, open_output};
 use crate::stdio::{gzread, gzwrite};
@@ -48,18 +52,7 @@ extern "C" {
         _: Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()>,
     ) -> Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()>;
     fn abort() -> !;
-    fn atoi(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn getenv(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn strtol(
-        __str: *const ::core::ffi::c_char,
-        __endptr: *mut *mut ::core::ffi::c_char,
-        __base: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_long;
-    fn strtoull(
-        __str: *const ::core::ffi::c_char,
-        __endptr: *mut *mut ::core::ffi::c_char,
-        __base: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_ulonglong;
     fn system(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn memcpy(
         __dst: *mut ::core::ffi::c_void,
@@ -2846,11 +2839,11 @@ unsafe extern "C" fn tcx_get_num(
     mut start: string,
     mut post: *mut string,
 ) -> ::core::ffi::c_int {
-    let mut num: ::core::ffi::c_int = strtol(
-        start as *const ::core::ffi::c_char,
-        post as *mut *mut ::core::ffi::c_char,
-        0 as ::core::ffi::c_int,
-    ) as ::core::ffi::c_int;
+    let parsed = signed_prefix(CStr::from_ptr(start).to_bytes(), IntegerBase::Auto);
+    if !post.is_null() {
+        *post = start.add(parsed.consumed);
+    }
+    let mut num: ::core::ffi::c_int = parsed.value as ::core::ffi::c_int;
     if !(!post.is_null() && !(*post).is_null()) as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"tcx_get_num\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3348,7 +3341,8 @@ unsafe extern "C" fn parse_options(mut argc_0: ::core::ffi::c_int, mut argv_0: *
                 b"kpathsea-debug\0" as *const u8 as *const ::core::ffi::c_char,
             ) == 0 as ::core::ffi::c_int
         {
-            kpse_def_inst.debug |= atoi(optarg) as ::core::ffi::c_uint;
+            kpse_def_inst.debug |=
+                decimal_i32_legacy(CStr::from_ptr(optarg).to_bytes()).value as ::core::ffi::c_uint;
         } else if !long_options[option_index as usize].name.is_null()
             && !(b"progname\0" as *const u8 as *const ::core::ffi::c_char).is_null()
             && strcmp(
@@ -3633,11 +3627,8 @@ unsafe extern "C" fn parse_options(mut argc_0: ::core::ffi::c_int, mut argv_0: *
                 b"synctex\0" as *const u8 as *const ::core::ffi::c_char,
             ) == 0 as ::core::ffi::c_int
         {
-            synctexoption = strtol(
-                optarg,
-                ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
-                0 as ::core::ffi::c_int,
-            ) as integer;
+            synctexoption = signed_prefix(CStr::from_ptr(optarg).to_bytes(), IntegerBase::Auto)
+                .value as integer;
         } else if !long_options[option_index as usize].name.is_null()
             && !(b"help\0" as *const u8 as *const ::core::ffi::c_char).is_null()
             && strcmp(
@@ -4066,17 +4057,13 @@ static mut FORCE_SOURCE_DATE_set: boolean = false_0;
 pub unsafe extern "C" fn init_start_time() {
     let mut source_date_epoch: *mut ::core::ffi::c_char =
         ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut epoch: ::core::ffi::c_ulonglong = 0;
-    let mut endptr: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if start_time_set == 0 {
         start_time_set = true_0 as boolean;
         source_date_epoch =
             getenv(b"SOURCE_DATE_EPOCH\0" as *const u8 as *const ::core::ffi::c_char);
         if !source_date_epoch.is_null() {
-            *__error() = 0 as ::core::ffi::c_int;
-            epoch = strtoull(source_date_epoch, &raw mut endptr, 10 as ::core::ffi::c_int);
-            if *endptr as ::core::ffi::c_int != '\0' as i32 || *__error() != 0 as ::core::ffi::c_int
-            {
+            let Some(epoch) = parse_source_date_epoch(CStr::from_ptr(source_date_epoch).to_bytes())
+            else {
                 crate::stdio::fprintf_args(
                     crate::stdio::stderr(),
                     b"%s: fatal: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
@@ -4089,7 +4076,7 @@ pub unsafe extern "C" fn init_start_time() {
                     crate::stdio::stderr(),
                 );
                 exit(1 as ::core::ffi::c_int);
-            }
+            };
             start_time = epoch as time_t;
             SOURCE_DATE_EPOCH_set = true_0 as boolean;
         } else {

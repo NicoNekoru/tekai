@@ -1,7 +1,9 @@
+use crate::integer_parse::{decimal_i32_legacy, signed_prefix, IntegerBase};
 use crate::openclose::open_input;
 use crate::stdio::feof;
 use crate::support::xfclose;
 use crate::utils::xgetc;
+use std::ffi::CStr;
 
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xstrdup};
@@ -12,12 +14,6 @@ extern "C" {
         _: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn atoi(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn strtol(
-        __str: *const ::core::ffi::c_char,
-        __endptr: *mut *mut ::core::ffi::c_char,
-        __base: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_long;
     fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
         -> *mut ::core::ffi::c_char;
     fn strcmp(
@@ -1332,7 +1328,8 @@ unsafe extern "C" fn fm_scan_line() {
                         || *s as ::core::ffi::c_int == '<' as i32
                         || *s as ::core::ffi::c_int == '\0' as i32
                     {
-                        (*fm).fd_flags = atoi(r) as integer;
+                        (*fm).fd_flags =
+                            decimal_i32_legacy(CStr::from_ptr(r).to_bytes()).value as integer;
                         while isdigit(*r as ::core::ffi::c_uchar as ::core::ffi::c_int) != 0 {
                             r = r.offset(1);
                         }
@@ -1909,7 +1906,9 @@ pub unsafe extern "C" fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -
     a = strstr(s, b"-Slant_\0" as *const u8 as *const ::core::ffi::c_char);
     if !a.is_null() {
         b = a.offset(strlen(b"-Slant_\0" as *const u8 as *const ::core::ffi::c_char) as isize);
-        sl = strtol(b, &raw mut e, 10 as ::core::ffi::c_int) as ::core::ffi::c_int;
+        let parsed = signed_prefix(CStr::from_ptr(b).to_bytes(), IntegerBase::Decimal);
+        sl = parsed.value as ::core::ffi::c_int;
+        e = b.add(parsed.consumed);
         if e != b && e == strchr(b, 0 as ::core::ffi::c_int) {
             tmp.slant = sl as integer;
             *a = '\0' as i32 as ::core::ffi::c_char;
@@ -1919,7 +1918,9 @@ pub unsafe extern "C" fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -
                 d = c.offset(
                     strlen(b"-Extend_\0" as *const u8 as *const ::core::ffi::c_char) as isize,
                 );
-                ex = strtol(d, &raw mut e, 10 as ::core::ffi::c_int) as ::core::ffi::c_int;
+                let parsed = signed_prefix(CStr::from_ptr(d).to_bytes(), IntegerBase::Decimal);
+                ex = parsed.value as ::core::ffi::c_int;
+                e = d.add(parsed.consumed);
                 if e != d && e == strchr(d, 0 as ::core::ffi::c_int) {
                     tmp.slant = sl as integer;
                     tmp.extend = ex as integer;
@@ -1931,7 +1932,9 @@ pub unsafe extern "C" fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -
         a = strstr(s, b"-Extend_\0" as *const u8 as *const ::core::ffi::c_char);
         if !a.is_null() {
             b = a.offset(strlen(b"-Extend_\0" as *const u8 as *const ::core::ffi::c_char) as isize);
-            ex = strtol(b, &raw mut e, 10 as ::core::ffi::c_int) as ::core::ffi::c_int;
+            let parsed = signed_prefix(CStr::from_ptr(b).to_bytes(), IntegerBase::Decimal);
+            ex = parsed.value as ::core::ffi::c_int;
+            e = b.add(parsed.consumed);
             if e != b && e == strchr(b, 0 as ::core::ffi::c_int) {
                 tmp.extend = ex as integer;
                 *a = '\0' as i32 as ::core::ffi::c_char;
