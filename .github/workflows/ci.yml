@@ -29,6 +29,11 @@ on:
           - all
           - arm64
           - intel
+      startup_controls:
+        description: Run the separate startup-copy investigation after the strict gate
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -57,6 +62,9 @@ jobs:
       PROPTEST_CASES: '128'
       CARGO_INCREMENTAL: '0'
       HOMEBREW_NO_AUTO_UPDATE: '1'
+      # Candidate checks must not silently regain a native C build dependency.
+      CC: /usr/bin/false
+      CXX: /usr/bin/false
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -97,10 +105,10 @@ jobs:
           rustc -Vv | tee "$CI_REPORT_DIR/rustc.txt"
 
       - name: Verify self-contained checks before installing TeX
-        run: cargo test --locked --test cli_self_contained -- --include-ignored --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/self-contained-tests.log"
+        run: cargo test --locked --timings --test cli_self_contained -- --include-ignored --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/self-contained-tests.log"
 
       - name: Verify native shared-tree lookup without installed TeX
-        run: cargo test --locked --test cli_texmf -- --test-threads=1 --skip real_tex_installation_agrees_on_shared_paths_and_compiles_ctan_package 2>&1 | tee "$CI_REPORT_DIR/bundled-lookup-tests.log"
+        run: cargo test --locked --timings --test cli_texmf -- --test-threads=1 --skip real_tex_installation_agrees_on_shared_paths_and_compiles_ctan_package 2>&1 | tee "$CI_REPORT_DIR/bundled-lookup-tests.log"
 
       - name: Install TeX
         run: |
@@ -116,7 +124,7 @@ jobs:
           pdflatex --version
           mktexlsr --version
           test -n "$(kpsewhich --progname=pdflatex xspace.sty)"
-          cargo test --locked --test cli_texmf real_tex_installation_agrees_on_shared_paths_and_compiles_ctan_package -- --exact --nocapture --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/system-tex-tests.log"
+          cargo test --locked --timings --test cli_texmf real_tex_installation_agrees_on_shared_paths_and_compiles_ctan_package -- --exact --nocapture --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/system-tex-tests.log"
           # A renamed/missing reference test must not silently become a green
           # zero-test invocation. The required gate executes exactly one test.
           python3 -B -c 'from pathlib import Path; import sys; sys.exit(0 if "test result: ok. 1 passed;" in Path(sys.argv[1]).read_text() else "Required system TeX test did not execute exactly once")' "$CI_REPORT_DIR/system-tex-tests.log"
@@ -126,9 +134,9 @@ jobs:
           cargo fmt --all --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo clippy -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked -- -D warnings
-          cargo build -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked 2>&1 | tee "$CI_REPORT_DIR/standalone-build.log"
-          cargo test --workspace --locked --lib --bins -- --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/debug-unit-tests.log"
-          cargo test --workspace --locked --doc -- --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/doc-tests.log"
+          cargo build -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked --timings 2>&1 | tee "$CI_REPORT_DIR/standalone-build.log"
+          cargo test --workspace --locked --timings --lib --bins -- --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/debug-unit-tests.log"
+          cargo test --workspace --locked --timings --doc -- --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/doc-tests.log"
           # Cargo has no test-target exclusion switch. Discover integration
           # targets instead of maintaining an allowlist that could omit new tests.
           # These two targets already ran completely before TeX installation,
@@ -151,7 +159,7 @@ jobs:
               )
               if not targets:
                   continue
-              command = ["cargo", "test", "--locked", "-p", package["name"]]
+              command = ["cargo", "test", "--locked", "--timings", "-p", package["name"]]
               for target in targets:
                   command.extend(["--test", target])
               command.extend(["--", "--test-threads=1"])
@@ -166,6 +174,7 @@ jobs:
           name: core-tests-${{ matrix.os }}-${{ runner.arch }}
           path: |
             ${{ runner.temp }}/tekai-ci-reports/
+            ${{ runner.temp }}/tekai-ci-target/cargo-timings/
             **/proptest-regressions/**/*.txt
           if-no-files-found: warn
           retention-days: 14
@@ -182,3 +191,4 @@ jobs:
       profile: ${{ inputs.performance_profile || 'quick' }}
       baseline_sha: ${{ inputs.baseline_sha || '' }}
       runner_arch: ${{ inputs.runner_arch || 'all' }}
+      startup_controls: ${{ inputs.startup_controls || false }}

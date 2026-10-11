@@ -29,11 +29,13 @@ import time
 
 from performance_ci import PerformanceCI
 from performance_build import VERSION
+from host_telemetry import HostSampler
 from benchmark_sampling import (DEFAULT_PAIRS, MAX_PAIRS, DEFAULT_BUDGET, MAX_BUDGET,
                                 SCHEMA_VERSION, MAX_REPORT_BYTES, sign_interval_plan, prospective_power_study)
 from runtime_fixtures import dependency_document, document, pad, png  # Keep existing helper imports usable.
 
 REPO = Path(__file__).resolve().parent.parent
+HOST_SAMPLER = HostSampler()
 CASES = ('cli-startup', 'nested-lookup', 'image-compile', 'warm-build-cache')
 LABELS = ('baseline', 'candidate')
 SLOTS = ('s0', 's1')
@@ -910,11 +912,22 @@ def host_snapshot(case, unit_index):
            'load_average_status': 'unavailable', 'memory_status': 'unavailable',
            'swap_status': 'unavailable', 'cpu_utilization_status': 'unavailable'}
     try:
+        row.update(HOST_SAMPLER.snapshot())
+    except Exception as error:
+        # A diagnostic observer must not change the primary gate. Keep the
+        # unavailable cause explicit rather than manufacturing zero pressure.
+        reason = f'{type(error).__name__}: {error}'[:1024]
+        for category in ('cpu', 'memory', 'swap'):
+            row[category + '_status'] = 'unavailable'
+            row[category + '_unavailable_reason'] = reason
+    try:
         values = list(os.getloadavg())
         if len(values) == 3 and all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in values):
             row.update(load_average=values, load_average_status='reported')
-    except (AttributeError, OSError, ValueError, OverflowError):
-        pass
+        else:
+            row['load_average_unavailable_reason'] = 'Invalid finite nonnegative load-average counters'
+    except (AttributeError, OSError, ValueError, OverflowError) as error:
+        row['load_average_unavailable_reason'] = f'{type(error).__name__}: {error}'[:1024]
     return row
 
 

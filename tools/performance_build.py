@@ -9,7 +9,8 @@ from pathlib import Path
 import re
 import sys
 
-COMMAND = 'cargo build --release --locked --bin tekai --no-default-features'
+COMMAND = 'cargo build --release --locked --bin tekai --no-default-features --timings'
+NO_C_COMPILER = '/usr/bin/false'
 SETTINGS = {'codegen_units': 1, 'lto': 'fat', 'panic': 'abort'}
 BUILD_ENV = ('RUSTUP_TOOLCHAIN', 'CARGO_INCREMENTAL', 'CARGO_BUILD_JOBS',
              'CARGO_PROFILE_RELEASE_CODEGEN_UNITS', 'CARGO_PROFILE_RELEASE_LTO',
@@ -143,10 +144,17 @@ class Session:
                 and environment.get('CARGO_PROFILE_RELEASE_LTO') == 'fat'
                 and environment.get('CARGO_PROFILE_RELEASE_PANIC') == 'abort'
                 and environment.get('CARGO_INCREMENTAL') == '0', 'Release settings differ')
+        compiler_enforcement = {'required': role == 'candidate',
+                                'variables': {key: environment.get(key, '') for key in ('CC', 'CXX')}}
+        if role == 'candidate':
+            require(all(value == NO_C_COMPILER for value in compiler_enforcement['variables'].values()),
+                    'Candidate build must disable both C and C++ compilers')
         record = dict(revision=revision, build_command=COMMAND, build_workspace=str(self.workspace),
                       build_target_dir=str(self.target), toolchain=toolchain.strip(), release_settings=SETTINGS,
                       source_clean_before_build=True,
-                      build_environment={key: environment.get(key, '') for key in BUILD_ENV})
+                      build_environment={key: environment.get(key, '') for key in BUILD_ENV},
+                      compiler_enforcement=compiler_enforcement,
+                      cargo_timing_format='stable-html')
         record.update(package_identity(self.workspace))
         write(self.record(role, 'start'), record)
         return record
@@ -228,6 +236,7 @@ class Session:
                     and record.get('revision') == record.get('checkout_revision_after_build') == self.config[role]
                     and record.get('source_clean_before_build') is True and record.get('source_clean_after_build') is True
                     and record.get('build_command') == COMMAND and record.get('release_settings') == SETTINGS
+                    and record.get('compiler_enforcement', {}).get('required') is (role == 'candidate')
                     and record.get('build_workspace') == str(self.workspace)
                     and record.get('build_target_dir') == str(self.target)
                     and isinstance(record.get('expected_version'), str)
@@ -237,6 +246,10 @@ class Session:
                     and HASH.fullmatch(record['package_manifest_sha256']) is not None
                     and self.executable_hash(target) == record.get('artifact_sha256'),
                     'Current ' + role + ' artifact/provenance differs')
+            if role == 'candidate':
+                require(record['compiler_enforcement'].get('variables')
+                        == {'CC': NO_C_COMPILER, 'CXX': NO_C_COMPILER},
+                        'Candidate no-C build assertion differs')
             record['build_artifact_path'] = str(self.target / 'release' / 'tekai')
             record['artifact_path'] = str(target / 'release' / 'tekai')
         require(baseline['toolchain'] == candidate['toolchain']

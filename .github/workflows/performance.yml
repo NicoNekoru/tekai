@@ -18,6 +18,11 @@ on:
         required: false
         default: all
         type: string
+      startup_controls:
+        description: Run the separate startup-copy investigation
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       profile:
@@ -42,6 +47,11 @@ on:
           - all
           - arm64
           - intel
+      startup_controls:
+        description: Run the separate startup-copy investigation after the strict gate
+        required: false
+        default: false
+        type: boolean
   schedule:
     # Tuesday at 07:17 UTC, away from the busy start of the hour.
     - cron: '17 7 * * 2'
@@ -290,6 +300,11 @@ jobs:
             test_benchmark_runtime.SupervisionTests.test_whole_run_deadline_prevents_launch \
             2>&1 | tee "$PERFORMANCE_REPORT_DIR/native-supervision-tests.log"
 
+      - name: Verify native diagnostic host-counter layouts and port cleanup
+        run: |
+          PYTHONPATH=tools python3 -B -m unittest -v test_host_telemetry \
+            2>&1 | tee "$PERFORMANCE_REPORT_DIR/host-telemetry-tests.log"
+
       - name: Install Rust
         timeout-minutes: 5
         run: |
@@ -351,7 +366,7 @@ jobs:
           # Record normal pipeline completion even on a normal Cargo failure.
           # A timeout/signal without this record must not rotate an active target.
           set +e
-          cargo build --release --locked --bin tekai --no-default-features 2>&1 | tee "$PERFORMANCE_REPORT_DIR/baseline-release-build.log"
+          cargo build --release --locked --bin tekai --no-default-features --timings 2>&1 | tee "$PERFORMANCE_REPORT_DIR/baseline-release-build.log"
           pipeline_status=("${PIPESTATUS[@]}")
           set -e
           source_status="$(git status --porcelain=v1 --untracked-files=all --ignored=matching)"
@@ -381,6 +396,11 @@ jobs:
         id: build
         if: ${{ !cancelled() && steps.build_paths.outcome == 'success' && steps.restore_candidate.outcome == 'success' && steps.isolate_target.outcome == 'success' }}
         timeout-minutes: 20
+        env:
+          # The main baseline may still need C. Enforce this only on candidate
+          # builds and record the deliberate difference outside comparable flags.
+          CC: /usr/bin/false
+          CXX: /usr/bin/false
         run: |
           rustc -Vv | tee "$PERFORMANCE_REPORT_DIR/candidate-rustc.txt"
           source_status="$(git status --porcelain=v1 --untracked-files=all --ignored=matching)"
@@ -391,7 +411,7 @@ jobs:
             start --role candidate --revision "$(git rev-parse HEAD)" --source-clean "$source_clean" \
             --toolchain-file "$PERFORMANCE_REPORT_DIR/candidate-rustc.txt"
           set +e
-          cargo build --release --locked --bin tekai --no-default-features 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-build.log"
+          cargo build --release --locked --bin tekai --no-default-features --timings 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-build.log"
           pipeline_status=("${PIPESTATUS[@]}")
           set -e
           source_status="$(git status --porcelain=v1 --untracked-files=all --ignored=matching)"
@@ -430,7 +450,10 @@ jobs:
         id: expansion
         if: ${{ !cancelled() && steps.build.outcome == 'success' && env.PERFORMANCE_PROFILE == 'full' }}
         timeout-minutes: 10
-        run: cargo build --release --locked -p tekai-pdftex --example audit_expansion 2>&1 | tee "$PERFORMANCE_REPORT_DIR/expansion-build.log"
+        env:
+          CC: /usr/bin/false
+          CXX: /usr/bin/false
+        run: cargo build --release --locked -p tekai-pdftex --example audit_expansion --timings 2>&1 | tee "$PERFORMANCE_REPORT_DIR/expansion-build.log"
 
       - name: Enforce deterministic scan, cache, parser and retention regressions
         id: regressions
@@ -438,10 +461,12 @@ jobs:
         timeout-minutes: 15
         env:
           TEKAI_EMBEDDED_ENGINE_RUNNER: ${{ env.CARGO_TARGET_DIR }}/release/tekai
+          CC: /usr/bin/false
+          CXX: /usr/bin/false
         # The normal CI workflow owns the debug, installed-TeX and CLI gates.
         # This checks their operation-count and correctness invariants in release.
         # Keep the CLI's embedding feature selection and fixed release profile.
-        run: cargo test --workspace --release --locked --lib --no-default-features -- --test-threads=1 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-library-tests.log"
+        run: cargo test --workspace --release --locked --lib --no-default-features --timings -- --test-threads=1 2>&1 | tee "$PERFORMANCE_REPORT_DIR/release-library-tests.log"
 
       - name: Run bounded diagnostics and fixed regression checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' && (env.PERFORMANCE_PROFILE == 'quick' || steps.expansion.outcome == 'success') }}
@@ -454,12 +479,14 @@ jobs:
             --output "$PERFORMANCE_REPORT_DIR/performance.json"
             --require-pdftotext
             --fail-on-skip
+            --strict-known-failures
           )
           if [[ "$PERFORMANCE_PROFILE" == full ]]; then
             performance_args+=(--expansion-engine "$CARGO_TARGET_DIR/release/examples/audit_expansion" --require-expansion)
           fi
-          # Known open issues keep their explicit known_failure status. Timing
-          # and RSS samples are observations, never absolute speed thresholds.
+          # Reproduced correctness failures are required regression checks.
+          # Refuse any future known-failure exception. Timing and RSS remain
+          # observations, never absolute speed thresholds.
           python3 -B tools/performance_ci.py "${performance_args[@]}" 2>&1 | tee "$PERFORMANCE_REPORT_DIR/performance.log"
 
       - name: Compare all paper and transparent-image pages with pinned upstream pdfTeX
@@ -468,7 +495,7 @@ jobs:
         timeout-minutes: 15
         run: python3 -B tools/verify_bundled_papers.py --engine "$CARGO_TARGET_DIR/release/tekai" --images 2>&1 | tee "$PERFORMANCE_REPORT_DIR/pdf-parity.log"
 
-      - name: Publish diagnostic summary, including known failures
+      - name: Publish diagnostic summary and required regression outcomes
         if: always()
         env:
           PERFORMANCE_REPORT_DIR: ${{ runner.temp }}/tekai-performance-reports
@@ -502,6 +529,8 @@ jobs:
           name: performance-${{ env.PERFORMANCE_PROFILE }}-${{ matrix.os }}-${{ runner.arch }}
           path: |
             ${{ runner.temp }}/tekai-performance-reports/
+            ${{ runner.temp }}/tekai-performance-target/cargo-timings/
+            ${{ runner.temp }}/tekai-performance-baseline-target/cargo-timings/
             target/runtime-parity/report.json
             **/proptest-regressions/**/*.txt
           if-no-files-found: warn
@@ -509,7 +538,7 @@ jobs:
 
       - name: Profile phases and process resources separately from the timing gate
         id: profiling
-        if: ${{ !cancelled() && env.PERFORMANCE_PROFILE == 'full' && (steps.comparison.outcome == 'success' || steps.comparison.outcome == 'failure') && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
+        if: ${{ !cancelled() && env.PERFORMANCE_PROFILE == 'full' && steps.comparison.outcome == 'failure' && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
         timeout-minutes: 12
         continue-on-error: true
         # Instrumented commands have different costs. Their phase/resource
@@ -550,7 +579,7 @@ jobs:
 
       - name: Isolate startup with same-binary controls and rotated copy paths
         id: startup_control
-        if: ${{ !cancelled() && env.PERFORMANCE_PROFILE == 'full' && (steps.comparison.outcome == 'success' || steps.comparison.outcome == 'failure') && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.startup_controls && env.PERFORMANCE_PROFILE == 'full' && (steps.comparison.outcome == 'success' || steps.comparison.outcome == 'failure') && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
         timeout-minutes: 12
         continue-on-error: true
         # This experiment runs after the immutable primary evidence is uploaded.
@@ -605,6 +634,5 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # Same-artifact cross-slot launch controls now belong to the bounded
-      # profiler above. Do not repeat the full primary suite on failure.
-      # benchmark_attribution.py remains an explicit manual diagnostic tool.
+      # The strict comparison is never retried or rescored. The bounded
+      # failure profile and opt-in copy controls only explain its result.

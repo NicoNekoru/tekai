@@ -725,7 +725,9 @@ class FixtureTests(unittest.TestCase):
 
     def test_host_snapshot_is_outside_timing_and_handles_unavailable_values(self):
         for value in ([1.0, 2.0, 3.0], [math.nan, 2, 3], [True, 2, 3]):
-            with patch.object(bench.os, 'getloadavg', return_value=value), patch.object(bench.time, 'monotonic', return_value=7):
+            with patch.object(bench.os, 'getloadavg', return_value=value), \
+                    patch.object(bench.HOST_SAMPLER, 'snapshot', return_value={}), \
+                    patch.object(bench.time, 'monotonic', return_value=7):
                 row = bench.host_snapshot('nested-lookup', 0)
             self.assertEqual(row['monotonic_seconds'], 7)
             self.assertFalse(row['used_for_gate'])
@@ -733,6 +735,14 @@ class FixtureTests(unittest.TestCase):
             self.assertTrue(all(row[key] == 'unavailable' for key in ('memory_status', 'swap_status', 'cpu_utilization_status')))
         with patch.object(bench.os, 'getloadavg', side_effect=OSError('unsupported')):
             self.assertEqual(bench.host_snapshot('image-compile', 1)['load_average_status'], 'unavailable')
+
+    def test_host_observer_failure_cannot_rescore_or_abort_benchmark(self):
+        with patch.object(bench.HOST_SAMPLER, 'snapshot', side_effect=RuntimeError('observer unavailable')):
+            row = bench.host_snapshot('image-compile', 1)
+        self.assertFalse(row['used_for_gate'])
+        for category in ('cpu', 'memory', 'swap'):
+            self.assertEqual(row[category + '_status'], 'unavailable')
+            self.assertIn('observer unavailable', row[category + '_unavailable_reason'])
 
     def test_atomic_checkpoint_and_overflow_keep_prior_evidence(self):
         with tempfile.TemporaryDirectory(prefix='test-checkpoint-') as temporary:

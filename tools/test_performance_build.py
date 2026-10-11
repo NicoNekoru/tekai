@@ -47,8 +47,11 @@ class BuildTests(unittest.TestCase):
         return path
 
     def start(self, role='baseline', **overrides):
+        environment = dict(self.environment)
+        if role == 'candidate':
+            environment.update(CC=build.NO_C_COMPILER, CXX=build.NO_C_COMPILER)
         args = dict(role=role, revision=getattr(self, role), toolchain='actual synthetic toolchain',
-                    environment=self.environment)
+                    environment=environment)
         args.update(overrides)
         return self.session.start(**args)
 
@@ -101,6 +104,37 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(metadata['baseline']['artifact_path'], str(self.frozen / 'release' / 'tekai'))
         self.assertEqual(metadata['candidate']['artifact_path'], str(self.target / 'release' / 'tekai'))
         self.assertNotEqual(metadata['baseline']['artifact_sha256'], metadata['candidate']['artifact_sha256'])
+        self.assertTrue(metadata['candidate']['compiler_enforcement']['required'])
+        self.assertFalse(metadata['baseline']['compiler_enforcement']['required'])
+        self.assertEqual(metadata['candidate']['compiler_enforcement']['variables'],
+                         {'CC': '/usr/bin/false', 'CXX': '/usr/bin/false'})
+        self.assertEqual(metadata['baseline']['compiler_enforcement']['variables'], {'CC': '', 'CXX': ''})
+        self.assertTrue(build.COMMAND.endswith('--timings'))
+
+    def test_candidate_requires_both_compilers_disabled_but_baseline_can_compile_c(self):
+        baseline_env = dict(self.environment, CC='clang', CXX='clang++')
+        self.start(environment=baseline_env)
+        self.artifact()
+        self.finish()
+        self.session.isolate()
+        for compiler in ('CC', 'CXX'):
+            environment = dict(self.environment, CC='/usr/bin/false', CXX='/usr/bin/false')
+            environment[compiler] = 'clang'
+            with self.subTest(compiler=compiler), self.assertRaisesRegex(ValueError, 'disable both'):
+                self.start('candidate', environment=environment)
+        self.start('candidate')
+        self.artifact(b'candidate')
+        self.finish('candidate')
+        self.session.metadata()
+
+    def test_candidate_no_c_assertion_cannot_be_removed_from_metadata(self):
+        self.both_ready()
+        path = self.report / 'candidate-finished.json'
+        record = json.loads(path.read_text(encoding='utf-8'))
+        record['compiler_enforcement']['variables']['CXX'] = 'clang++'
+        path.write_text(json.dumps(record), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'no-C'):
+            self.session.metadata()
 
     def test_manifest_identity_changes_cannot_finish_a_successful_build(self):
         self.start()
