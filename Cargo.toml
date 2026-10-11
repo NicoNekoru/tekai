@@ -14,7 +14,12 @@ categories = ["command-line-utilities", "development-tools::build-utils"]
 publish = false
 
 [workspace]
-members = ["crates/tekai-pdftex", "crates/tekai-engine"]
+members = [
+    "crates/tekai-pdftex",
+    "crates/tekai-engine",
+    "vendor/tectonic_bridge_core",
+    "vendor/tectonic_io_base",
+]
 resolver = "3"
 
 [workspace.dependencies]
@@ -42,5 +47,13 @@ tectonic_io_base = "0.6"
 tectonic_status_base = "0.2"
 serde-pickle = "1.2"
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["process"] }
+signal-hook = "0.4"
+
 [dev-dependencies]
 proptest = { workspace = true }
+
+[patch.crates-io]
+tectonic_bridge_core = { path = "vendor/tectonic_bridge_core" }
+tectonic_io_base = { path = "vendor/tectonic_io_base" }

@@ -402,7 +402,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
- "libz-sys",
  "miniz_oxide",
 ]
 
@@ -613,12 +612,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lazy_static"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-
-[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -641,17 +634,6 @@ checksum = "5c12cd6e7e66c601f22d849241e2257b38b4685a34b41401f4aefdd9c431c1c6"
 dependencies = [
  "libc",
  "zlib-rs",
-]
-
-[[package]]
-name = "libz-sys"
-version = "1.1.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85bc9657773828b90eeb625adff10eeac83cc21bbfd8e23a03eaa8a33c9e28d9"
-dependencies = [
- "cc",
- "pkg-config",
- "vcpkg",
 ]
 
 [[package]]
@@ -679,7 +661,7 @@ dependencies = [
  "indexmap",
  "itoa",
  "log",
- "md-5 0.10.6",
+ "md-5",
  "nom",
  "nom_locate",
  "rangemap",
@@ -696,16 +678,6 @@ checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
 dependencies = [
  "cfg-if",
  "digest 0.10.7",
-]
-
-[[package]]
-name = "md-5"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
-dependencies = [
- "cfg-if",
- "digest 0.11.3",
 ]
 
 [[package]]
@@ -847,12 +819,6 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
-
-[[package]]
-name = "pkg-config"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "png"
@@ -1093,6 +1059,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "signal-hook"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a0c28ca5908dbdbcd52e6fdaa00358ab88637f8ab33e1f188dd510eb44b53d"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1135,14 +1121,9 @@ dependencies = [
 [[package]]
 name = "tectonic_bridge_core"
 version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "840f29beb938a4060bbcd4a8622e1837bf0abed0497b4452d1b3bcb922627b46"
 dependencies = [
- "cc",
  "flate2",
- "lazy_static",
- "libc",
- "md-5 0.11.0",
+ "proptest",
  "tectonic_errors",
  "tectonic_io_base",
  "tectonic_status_base",
@@ -1173,8 +1154,6 @@ dependencies = [
 [[package]]
 name = "tectonic_io_base"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "451fca0605ae34f1a58abc2d4d649158db72ad24fbc85966316089e797ea29e8"
 dependencies = [
  "directories",
  "flate2",
@@ -1203,9 +1182,11 @@ dependencies = [
  "glob",
  "notify",
  "proptest",
+ "rustix",
  "serde",
  "serde-pickle",
  "serde_json",
+ "signal-hook",
  "tectonic_bridge_core",
  "tectonic_engine_bibtex",
  "tectonic_io_base",
@@ -1226,6 +1207,7 @@ dependencies = [
  "lopdf",
  "png",
  "proptest",
+ "sha2",
  "tar",
  "walkdir",
 ]
@@ -1237,7 +1219,7 @@ dependencies = [
  "chrono",
  "flate2",
  "lopdf",
- "md-5 0.10.6",
+ "md-5",
  "png",
  "tekai-engine",
 ]
@@ -1356,12 +1338,6 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
-
-[[package]]
-name = "vcpkg"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"

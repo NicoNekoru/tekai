@@ -1,0 +1,28 @@
+[package]
+name = "tectonic_bridge_core"
+version = "0.5.3"
+edition = "2021"
+description = "Rust-only adaptation of Tectonic I/O contexts for Tekai's BibTeX engine"
+license = "MIT"
+repository = "https://github.com/tectonic-typesetting/tectonic/"
+publish = false
+
+[package.metadata.upstream]
+crate = "tectonic_bridge_core"
+version = "0.5.3"
+revision = "8c0126a9653239a2e6e0a5274af9b8510f643030"
+path = "crates/bridge_core"
+crate_sha256 = "840f29beb938a4060bbcd4a8622e1837bf0abed0497b4452d1b3bcb922627b46"
+
+[dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+tectonic_errors = ">=0.2.0,<1"
+tectonic_io_base = ">=0.3.0,<1"
+tectonic_status_base = ">=0.1.0,<1"
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_code = "forbid"
