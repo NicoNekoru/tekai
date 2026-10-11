@@ -844,10 +844,10 @@ and skips, and CI uploads them even after a failure. Release library tests
 enforce deterministic scan and retention assertions. The full profile also
 runs the separate all-page upstream PDF comparison.
 
-Release library tests disable the optional C entrypoint, matching the actual
-embedding dependency features. Without this setting, fat LTO collides with
-the Rust test harness entrypoint before any tests execute. The corrected
-command retains fat LTO and all workspace library tests.
+The engine now emits only a Rust library and has no optional C entrypoint.
+The former C entrypoint collided with the Rust test harness under fat LTO.
+Release library tests retain the CLI's embedding feature selection, fat LTO
+and all workspace library tests.
 
 The parity runner now isolates all four candidate caches and uses owned
 process groups with bounded output capture and deadlines. It rejects oversized

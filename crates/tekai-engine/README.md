@@ -5,6 +5,12 @@
 font handling, PDF inclusion and writing, compression, image decoding, and the
 runtime interfaces needed by the default `tekai-engine` build path.
 
+The crate produces a Rust library only. Both the CLI and standalone runner
+call its Rust entrypoint directly. It does not produce `libtekai_engine.a`
+or provide a C `main` entrypoint for external TeX Live linking. Internal
+C calling conventions remain where the translated engine modules and system
+interfaces require them.
+
 The engine is built entirely by Cargo and does not link a system TeX engine,
 Kpathsea, libpng, or PDF library. Packages, fonts, maps, encodings, and the
 filename index come from the pinned embedded data in `runtime/texmf.tar.gz`.

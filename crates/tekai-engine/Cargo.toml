@@ -8,14 +8,12 @@ repository = "https://github.com/NicoNekoru/tekai"
 publish = false
 
 [features]
-default = ["c-entrypoint"]
-c-entrypoint = []
 standalone-binary = []
 
 [lib]
 name = "tekai_engine"
 path = "src/lib.rs"
-crate-type = ["staticlib", "rlib"]
+crate-type = ["rlib"]
 
 [[bin]]
 name = "tekai-engine"

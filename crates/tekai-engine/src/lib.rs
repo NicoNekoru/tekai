@@ -1,9 +1,8 @@
 //! Self-contained exact typesetting engine for Tekai.
 //!
-//! This crate intentionally preserves the web2c ABI. It exports the same
-//! symbols as `pdftexini.o`, `pdftex0.o`, and `pdftex-pool.o`, so the archive
-//! can replace those generated C objects in TeX Live's normal `pdftex` link
-//! while its runtime boundaries are implemented directly in this crate.
+//! The CLI and standalone runner link this crate as a Rust library. The
+//! translated core keeps its internal web2c calling conventions, but this
+//! crate does not produce a C-linkable archive or export a C entrypoint.
 
 #![allow(
     clashing_extern_declarations,
@@ -88,17 +87,4 @@ pub unsafe fn run_from_c_args(
         generated::pdftexini::mainbody();
     }
     libc::EXIT_SUCCESS
-}
-
-#[cfg(all(
-    not(test),
-    feature = "c-entrypoint",
-    not(feature = "standalone-binary")
-))]
-#[no_mangle]
-pub unsafe extern "C" fn main(
-    argc: ::core::ffi::c_int,
-    argv: *mut *mut ::core::ffi::c_char,
-) -> ::core::ffi::c_int {
-    unsafe { run_from_c_args(argc, argv) }
 }
