@@ -54,7 +54,7 @@ class SamplingTests(unittest.TestCase):
 
     def test_finite_policy_and_invalid_counts(self):
         self.assertEqual((sampling.DEFAULT_PAIRS, sampling.MAX_PAIRS), (128, 128))
-        self.assertEqual((sampling.DEFAULT_BUDGET, sampling.MAX_BUDGET), (3600, 3600))
+        self.assertEqual((sampling.DEFAULT_BUDGET, sampling.MAX_BUDGET), (3600, 5400))
         self.assertEqual(sampling.SCHEMA_VERSION, 6)
         self.assertEqual(sampling.PREDECLARED_CASES, 4)
         for value in (False, 0, -1, 129, 10 ** 400, 10.0):

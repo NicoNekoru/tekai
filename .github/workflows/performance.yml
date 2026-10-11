@@ -217,7 +217,7 @@ jobs:
     name: Runtime diagnostics (${{ matrix.os }})
     needs: [runner-tests, revisions]
     runs-on: ${{ matrix.os }}
-    # Includes both fresh builds, the strict 60-minute comparison budget and
+    # Includes both fresh builds, the strict 90-minute comparison budget and
     # separately bounded correctness, profiling and startup-control steps.
     # No automatic suite reruns.
     timeout-minutes: 195
@@ -431,7 +431,7 @@ jobs:
       - name: Gate paired same-runner baseline and candidate performance
         id: comparison
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.baseline.outcome == 'success' && steps.metadata.outcome == 'success' }}
-        timeout-minutes: 62
+        timeout-minutes: 92
         # Equal-content per-side fixtures and caches belong to the supervisor.
         # --gate rejects demonstrated regressions and inconclusive measurements.
         # It never compares timings recorded by different hosted runners.
@@ -441,7 +441,7 @@ jobs:
             --candidate "$CARGO_TARGET_DIR/release/tekai" \
             --metadata "$PERFORMANCE_REPORT_DIR/comparison-metadata.json" \
             --output "$PERFORMANCE_REPORT_DIR/comparison.json" \
-            --pairs 128 --warmups 2 --timeout 30 --budget 3600 --threshold 0.10 \
+            --pairs 128 --warmups 2 --timeout 30 --budget 5400 --threshold 0.10 \
             --min-sample-seconds 1.0 --cli-startup-min-sample-seconds 0.25 \
             --warm-cache-min-sample-seconds 1.0 --max-iterations 512 --gate \
             2>&1 | tee "$PERFORMANCE_REPORT_DIR/comparison.log"

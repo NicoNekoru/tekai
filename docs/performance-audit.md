@@ -193,6 +193,9 @@ of its 3600-second budget. Scored compiler commands consumed 2687.570 seconds
 across the first three cases, including 1567.327 seconds for nested-lookup
 baseline commands. Checkpoints took 3.990 seconds. Reducing checkpoint work
 cannot resolve this deadline.
+The follow-up gives complete CI comparisons 5400 seconds and a 92-minute step
+limit. Local defaults remain 3600 seconds. All sample counts, matched iteration
+rules, intervals, thresholds and blocking exit decisions remain unchanged.
 
 All completed warm batches preserved state bytes and identity. Candidate
 opt-in profiles on both architectures recorded 3124 dependencies, 1031 metadata
@@ -211,8 +214,19 @@ Local verification passed 744 workspace unit tests with 512 property cases,
 369 Python tests, all 104 compiler integrations, six diagnostic CLI tests,
 16 self-contained CLI tests and 14 no-system-TeX lookup tests. One unit and the
 separate large-paper CLI fixture were not run by those commands. Strict workspace
-Clippy and Rust 1.89 checks passed with C and C++ compilers disabled. A release
-comparison and remote verification remain pending.
+Clippy and Rust 1.89 checks passed with C and C++ compilers disabled.
+
+A separate local ARM release diagnostic compared frozen `428f518` and `c3416d3`
+artifacts with 32 pairs, eight balanced units and 16 commands per batch. Source
+and executable hashes, all 1024 referenced inputs, PDF text, cache bytes and
+file identities remained verified. Eight opt-in measurements per artifact
+recorded identical route counts. Median state parsing changed from 8.846 to
+0.576 milliseconds, while freshness stayed at 2.882 and 2.824 milliseconds.
+The descriptive median unit ratio was 0.447. Builds and agent tests were idle
+during this measurement. An earlier overlapping Python-test trial remains
+recorded but excluded from timing evidence. This diagnostic uses the pre-JSON
+checkpoint rather than actual `main`, has fewer pairs than the required CI gate,
+and cannot replace remote verification.
 
 ## Remaining performance work
 

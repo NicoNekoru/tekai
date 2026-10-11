@@ -869,7 +869,13 @@ class FixtureTests(unittest.TestCase):
     def test_future_cli_defaults_and_finite_upper_bounds(self):
         args = bench.parser().parse_args(['--baseline', 'A', '--candidate', 'B', '--metadata', 'M'])
         self.assertEqual((args.pairs, args.budget), (128, 3600))
-        for flag, value in (('--pairs', '132'), ('--budget', '3601')):
+        with patch.object(bench, 'load_metadata', side_effect=ValueError('metadata validation reached')) as load, \
+                contextlib.redirect_stderr(io.StringIO()) as stderr:
+            with self.assertRaises(SystemExit):
+                bench.main(['--baseline', 'A', '--candidate', 'B', '--metadata', 'M', '--budget', '5400'])
+        load.assert_called_once_with(Path('M').resolve())
+        self.assertIn('metadata validation reached', stderr.getvalue())
+        for flag, value in (('--pairs', '132'), ('--budget', '5401')):
             with patch.object(bench, 'load_metadata') as load, contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     bench.main(['--baseline', 'A', '--candidate', 'B', '--metadata', 'M', flag, value])

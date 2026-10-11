@@ -292,7 +292,10 @@ inconclusive before inferential sampling. Iterations remain fixed afterward,
 and unexpectedly short measured batches remain inconclusive. There are no
 adaptive retries or replacement samples. CLI startup has its own predeclared
 0.25-second minimum. All other cases retain the one-second minimum.
-The whole-run deadline is 3600 seconds, with a 62-minute CI step limit.
+Local runs default to a 3600-second deadline. CI explicitly allows 5400 seconds,
+with a 92-minute step limit, because matched batches of a much slower baseline
+can consume the hour before the final case completes. Explicit local budgets
+are also capped at 5400 seconds.
 The prospective policy uses 128 baseline/candidate pairs and retains every
 raw command sample. Four pairs form
 one eight-batch comparison unit. For baseline A and candidate B, the slot
