@@ -7,11 +7,6 @@ pub struct __sFILEX {
 }
 
 extern "C" {
-    fn sprintf(
-        _: *mut ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn sscanf(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -1182,10 +1177,12 @@ unsafe extern "C" fn ttf_copy_encoding() {
                     );
                 } else {
                 };
-                sprintf(
+                crate::utils::sprintf_args(
                     &raw mut buf as *mut ::core::ffi::c_char,
                     b"/c%4.4X\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*e).code as ::core::ffi::c_int,
+                    &[crate::utils::PrintfArg::from(
+                        (*e).code as ::core::ffi::c_int,
+                    )],
                 );
                 aa = avl_probe(
                     (*fd_cur).gl_tree,

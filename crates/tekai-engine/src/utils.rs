@@ -1,9 +1,6 @@
 //! Typed printf helpers for generated pdfTeX Rust.
 
-use libc::{
-    c_char, c_double, c_int, c_long, c_longlong, c_uchar, c_uint, c_ulong, c_ulonglong, c_void,
-    FILE,
-};
+use libc::{c_char, c_int, c_longlong, c_uchar, c_uint, c_ulong, c_void, FILE};
 use std::ffi::{CStr, CString};
 use std::{mem, ptr, slice};
 
@@ -14,7 +11,6 @@ extern "C" {
     fn getc_unlocked(stream: *mut FILE) -> c_int;
 }
 
-const PRINTF_BUF_SIZE: usize = 1024;
 const MAX_PSTRING_LEN: usize = 1024;
 const SMALL_ARRAY_SIZE: usize = 256;
 const STACK_INCREMENT: usize = 8;
@@ -36,60 +32,9 @@ type SizeT = usize;
 type Address = *mut c_void;
 type AvlComparisonFunc = unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int;
 
-#[derive(Clone, Copy)]
-pub enum PrintfArg {
-    Signed(i64),
-    Unsigned(u64),
-    Float(f64),
-    Ptr(*const c_void),
-}
-
-macro_rules! signed_arg {
-    ($($ty:ty),* $(,)?) => {
-        $(impl From<$ty> for PrintfArg {
-            fn from(value: $ty) -> Self {
-                Self::Signed(value as i64)
-            }
-        })*
-    };
-}
-
-macro_rules! unsigned_arg {
-    ($($ty:ty),* $(,)?) => {
-        $(impl From<$ty> for PrintfArg {
-            fn from(value: $ty) -> Self {
-                Self::Unsigned(value as u64)
-            }
-        })*
-    };
-}
-
-signed_arg!(i8, i16, i32, i64, isize);
-unsigned_arg!(u8, u16, u32, u64, usize);
-
-impl From<f32> for PrintfArg {
-    fn from(value: f32) -> Self {
-        Self::Float(value as f64)
-    }
-}
-
-impl From<f64> for PrintfArg {
-    fn from(value: f64) -> Self {
-        Self::Float(value)
-    }
-}
-
-impl<T> From<*const T> for PrintfArg {
-    fn from(value: *const T) -> Self {
-        Self::Ptr(value.cast())
-    }
-}
-
-impl<T> From<*mut T> for PrintfArg {
-    fn from(value: *mut T) -> Self {
-        Self::Ptr(value.cast())
-    }
-}
+#[path = "printf.rs"]
+mod printf;
+pub use printf::PrintfArg;
 
 extern "C" {
     static mut __stdoutp: *mut FILE;
@@ -533,181 +478,51 @@ unsafe fn safe_print_bytes(bytes: &[u8]) {
     }
 }
 
-fn format_printf(fmt: *const c_char, args: &[PrintfArg]) -> Vec<u8> {
+/// # Safety
+/// `fmt` and every non-null `%s` argument must point to a valid C string.
+pub(crate) unsafe fn format_printf(fmt: *const c_char, args: &[PrintfArg]) -> Vec<u8> {
     let fmt = unsafe { c_string_bytes(fmt) };
-    let mut out = Vec::with_capacity(PRINTF_BUF_SIZE);
-    let mut arg_index = 0usize;
-    let mut i = 0usize;
-    while i < fmt.len() {
-        if fmt[i] != b'%' {
-            out.push(fmt[i]);
-            i += 1;
-            continue;
-        }
-        if i + 1 < fmt.len() && fmt[i + 1] == b'%' {
-            out.push(b'%');
-            i += 2;
-            continue;
-        }
-        let start = i;
-        i += 1;
-        while i < fmt.len() && matches!(fmt[i], b'#' | b'0' | b'-' | b'+' | b' ' | b'\'') {
-            i += 1;
-        }
-        while i < fmt.len() && fmt[i].is_ascii_digit() {
-            i += 1;
-        }
-        if i < fmt.len() && fmt[i] == b'.' {
-            i += 1;
-            while i < fmt.len() && fmt[i].is_ascii_digit() {
-                i += 1;
-            }
-        }
-        if i + 1 < fmt.len()
-            && ((fmt[i] == b'h' && fmt[i + 1] == b'h') || (fmt[i] == b'l' && fmt[i + 1] == b'l'))
-        {
-            i += 2;
-        } else if i < fmt.len() && matches!(fmt[i], b'h' | b'l' | b'j' | b'z' | b't' | b'L') {
-            i += 1;
-        }
-        if i >= fmt.len() {
-            out.extend_from_slice(&fmt[start..]);
-            break;
-        }
-        let conversion = fmt[i];
-        let spec = &fmt[start..=i];
-        i += 1;
-        let Some(arg) = args.get(arg_index).copied() else {
-            out.extend_from_slice(spec);
-            continue;
-        };
-        arg_index += 1;
-        out.extend_from_slice(&format_one(spec, conversion, arg));
-    }
-    out
+    unsafe { printf::format(fmt, args) }.unwrap_or_else(|error| panic!("{error}"))
 }
 
-fn format_one(spec: &[u8], conversion: u8, arg: PrintfArg) -> Vec<u8> {
-    let mut c_spec = Vec::with_capacity(spec.len() + 1);
-    c_spec.extend_from_slice(spec);
-    c_spec.push(0);
-    let long_spec = spec
-        .iter()
-        .any(|&b| b == b'l' || b == b'z' || b == b't' || b == b'j');
-    let long_long_spec = spec.windows(2).any(|w| w == b"ll");
+/// Rust-owned equivalent of snprintf with the original byte-count contract.
+///
+/// # Safety
+/// `output` must be writable for `capacity` bytes unless capacity is zero.
+/// `fmt` and every non-null `%s` argument must remain valid C strings.
+pub unsafe fn snprintf_args(
+    output: *mut c_char,
+    capacity: usize,
+    fmt: *const c_char,
+    args: &[PrintfArg],
+) -> c_int {
+    let bytes = unsafe { format_printf(fmt, args) };
+    if capacity != 0 {
+        let count = bytes.len().min(capacity - 1);
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), output.cast::<u8>(), count);
+            *output.add(count) = 0;
+        }
+    }
+    c_int::try_from(bytes.len()).unwrap_or(-1)
+}
+
+/// Rust-owned equivalent of sprintf for generated callers with known buffers.
+///
+/// # Safety
+/// `output` must hold the complete formatted bytes plus a trailing zero byte.
+/// `fmt` and every non-null `%s` argument must remain valid C strings.
+pub unsafe fn sprintf_args(output: *mut c_char, fmt: *const c_char, args: &[PrintfArg]) -> c_int {
+    let bytes = unsafe { format_printf(fmt, args) };
     unsafe {
-        match conversion {
-            b'd' | b'i' => {
-                let value = arg.as_i64();
-                if long_long_spec {
-                    snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                        libc::snprintf(buf, len, fmt, value as c_longlong)
-                    })
-                } else if long_spec {
-                    snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                        libc::snprintf(buf, len, fmt, value as c_long)
-                    })
-                } else {
-                    snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                        libc::snprintf(buf, len, fmt, value as c_int)
-                    })
-                }
-            }
-            b'u' | b'o' | b'x' | b'X' => {
-                let value = arg.as_u64();
-                if long_long_spec {
-                    snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                        libc::snprintf(buf, len, fmt, value as c_ulonglong)
-                    })
-                } else if long_spec {
-                    snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                        libc::snprintf(buf, len, fmt, value as c_ulong)
-                    })
-                } else {
-                    snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                        libc::snprintf(buf, len, fmt, value as c_uint)
-                    })
-                }
-            }
-            b'c' => snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                libc::snprintf(buf, len, fmt, arg.as_i64() as c_int)
-            }),
-            b's' => snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                libc::snprintf(buf, len, fmt, arg.as_ptr() as *const c_char)
-            }),
-            b'p' => snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                libc::snprintf(buf, len, fmt, arg.as_ptr())
-            }),
-            b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
-                snprintf_one(c_spec.as_ptr(), |buf, len, fmt| {
-                    libc::snprintf(buf, len, fmt, arg.as_f64() as c_double)
-                })
-            }
-            _ => spec.to_vec(),
-        }
+        ptr::copy_nonoverlapping(bytes.as_ptr(), output.cast::<u8>(), bytes.len());
+        *output.add(bytes.len()) = 0;
     }
-}
-
-unsafe fn snprintf_one(
-    fmt: *const u8,
-    mut call: impl FnMut(*mut c_char, usize, *const c_char) -> c_int,
-) -> Vec<u8> {
-    let fmt = fmt as *const c_char;
-    let mut buf = vec![0u8; PRINTF_BUF_SIZE];
-    loop {
-        let written = call(buf.as_mut_ptr() as *mut c_char, buf.len(), fmt);
-        if written < 0 {
-            return Vec::new();
-        }
-        let written = written as usize;
-        if written < buf.len() {
-            buf.truncate(written);
-            return buf;
-        }
-        buf.resize(written + 1, 0);
-    }
-}
-
-impl PrintfArg {
-    fn as_i64(self) -> i64 {
-        match self {
-            Self::Signed(value) => value,
-            Self::Unsigned(value) => value as i64,
-            Self::Float(value) => value as i64,
-            Self::Ptr(value) => value as isize as i64,
-        }
-    }
-
-    fn as_u64(self) -> u64 {
-        match self {
-            Self::Signed(value) => value as u64,
-            Self::Unsigned(value) => value,
-            Self::Float(value) => value as u64,
-            Self::Ptr(value) => value as usize as u64,
-        }
-    }
-
-    fn as_f64(self) -> f64 {
-        match self {
-            Self::Signed(value) => value as f64,
-            Self::Unsigned(value) => value as f64,
-            Self::Float(value) => value,
-            Self::Ptr(value) => value as usize as f64,
-        }
-    }
-
-    fn as_ptr(self) -> *const c_void {
-        match self {
-            Self::Ptr(value) => value,
-            Self::Signed(value) => value as isize as *const c_void,
-            Self::Unsigned(value) => value as usize as *const c_void,
-            Self::Float(_) => ptr::null(),
-        }
-    }
+    c_int::try_from(bytes.len()).unwrap_or(-1)
 }
 
 pub unsafe fn pdf_printf_args(fmt: *const c_char, args: &[PrintfArg]) {
-    let bytes = format_printf(fmt, args);
+    let bytes = unsafe { format_printf(fmt, args) };
     let mut c_bytes = Vec::with_capacity(bytes.len() + 1);
     c_bytes.extend_from_slice(&bytes);
     c_bytes.push(0);
@@ -717,7 +532,7 @@ pub unsafe fn pdf_printf_args(fmt: *const c_char, args: &[PrintfArg]) {
 }
 
 pub unsafe fn tex_printf_args(fmt: *const c_char, args: &[PrintfArg]) {
-    let bytes = format_printf(fmt, args);
+    let bytes = unsafe { format_printf(fmt, args) };
     unsafe {
         safe_print_bytes(&bytes);
         xfflush(__stdoutp);
@@ -725,7 +540,7 @@ pub unsafe fn tex_printf_args(fmt: *const c_char, args: &[PrintfArg]) {
 }
 
 pub unsafe fn pdftex_warn_args(fmt: *const c_char, args: &[PrintfArg]) {
-    let bytes = format_printf(fmt, args);
+    let bytes = unsafe { format_printf(fmt, args) };
     unsafe {
         println();
         println();
@@ -743,7 +558,7 @@ pub unsafe fn pdftex_warn_args(fmt: *const c_char, args: &[PrintfArg]) {
 }
 
 pub unsafe fn pdftex_fail_args(fmt: *const c_char, args: &[PrintfArg]) -> ! {
-    let bytes = format_printf(fmt, args);
+    let bytes = unsafe { format_printf(fmt, args) };
     unsafe {
         println();
         safe_print(c"!pdfTeX error: ".as_ptr());
@@ -1995,7 +1810,9 @@ pub unsafe extern "C" fn stripzeros(a: *mut c_char) -> *mut c_char {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_printf, grow_array, growth_capacity, PrintfArg};
+    use super::{
+        format_printf, grow_array, growth_capacity, snprintf_args, sprintf_args, PrintfArg,
+    };
     use proptest::prelude::*;
     use std::ptr;
 
@@ -2047,24 +1864,85 @@ mod tests {
 
     #[test]
     fn printf_helper_formats_mixed_pdf_fragments() {
-        let out = format_printf(
-            c"/Name /%s %04X %ld %.2x %%".as_ptr(),
-            &[
-                PrintfArg::from(c"Font".as_ptr()),
-                PrintfArg::from(15),
-                PrintfArg::from(123_i64),
-                PrintfArg::from(10),
-            ],
-        );
+        let out = unsafe {
+            format_printf(
+                c"/Name /%s %04X %ld %.2x %%".as_ptr(),
+                &[
+                    PrintfArg::from(c"Font".as_ptr()),
+                    PrintfArg::from(15),
+                    PrintfArg::from(123_i64),
+                    PrintfArg::from(10),
+                ],
+            )
+        };
         assert_eq!(String::from_utf8(out).unwrap(), "/Name /Font 000F 123 0a %");
     }
 
     #[test]
     fn printf_helper_formats_pdf_real_values() {
-        let out = format_printf(
-            c"%.1f %.6g".as_ptr(),
-            &[PrintfArg::from(1.75), PrintfArg::from(0.5)],
-        );
+        let out = unsafe {
+            format_printf(
+                c"%.1f %.6g".as_ptr(),
+                &[PrintfArg::from(1.75), PrintfArg::from(0.5)],
+            )
+        };
         assert_eq!(String::from_utf8(out).unwrap(), "1.8 0.5");
+    }
+
+    #[test]
+    fn buffer_printf_reports_full_length_and_preserves_outside_bytes() {
+        for capacity in 0..16 {
+            let mut output = [b'!'; 20];
+            let written = unsafe {
+                snprintf_args(
+                    output[2..].as_mut_ptr().cast(),
+                    capacity,
+                    c"%04X:%s".as_ptr(),
+                    &[15.into(), PrintfArg::from(c"abc".as_ptr())],
+                )
+            };
+            assert_eq!(written, 8);
+            assert_eq!(&output[..2], b"!!");
+            assert!(output[2 + capacity..].iter().all(|byte| *byte == b'!'));
+            if capacity != 0 {
+                let count = 8.min(capacity - 1);
+                assert_eq!(&output[2..2 + count], &b"000F:abc"[..count]);
+                assert_eq!(output[2 + count], 0);
+            }
+        }
+        assert_eq!(
+            unsafe { snprintf_args(std::ptr::null_mut(), 0, c"%d".as_ptr(), &[123.into()]) },
+            3
+        );
+        let mut output = [b'!'; 8];
+        assert_eq!(
+            unsafe {
+                sprintf_args(
+                    output.as_mut_ptr().cast(),
+                    c"%c:%d".as_ptr(),
+                    &[0.into(), 7.into()],
+                )
+            },
+            3
+        );
+        assert_eq!(&output, b"\0:7\0!!!!");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn bounded_snprintf_matches_native_return_and_truncation(
+            value in proptest::prelude::any::<u64>(),
+            capacity in 0usize..80,
+            width in 0usize..64,
+            precision in 0usize..32,
+        ) {
+            let fmt = std::ffi::CString::new(format!("%#{width}.{precision}llX")).unwrap();
+            let mut native = [b'!'; 80];
+            let mut rust = native;
+            let expected = unsafe { libc::snprintf(native.as_mut_ptr().cast(), capacity, fmt.as_ptr(), value) };
+            let actual = unsafe { snprintf_args(rust.as_mut_ptr().cast(), capacity, fmt.as_ptr(), &[value.into()]) };
+            proptest::prop_assert_eq!(actual, expected);
+            proptest::prop_assert_eq!(rust, native);
+        }
     }
 }

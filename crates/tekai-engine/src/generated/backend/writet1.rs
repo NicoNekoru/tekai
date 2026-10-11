@@ -12,11 +12,6 @@ extern "C" {
     fn fgetc(_: *mut FILE) -> ::core::ffi::c_int;
     #[cfg(unix)]
     fn getc_unlocked(_: *mut FILE) -> ::core::ffi::c_int;
-    fn sprintf(
-        _: *mut ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn sscanf(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -1664,7 +1659,14 @@ unsafe extern "C" fn t1_printf(
     mut code: ::core::ffi::c_int,
     mut glyph: *mut ::core::ffi::c_char,
 ) {
-    sprintf(t1_line_array as *mut ::core::ffi::c_char, fmt, code, glyph);
+    crate::utils::sprintf_args(
+        t1_line_array as *mut ::core::ffi::c_char,
+        fmt,
+        &[
+            crate::utils::PrintfArg::from(code),
+            crate::utils::PrintfArg::from(glyph),
+        ],
+    );
     t1_puts(t1_line_array);
 }
 unsafe extern "C" fn t1_init_params(mut open_name_prefix: *const ::core::ffi::c_char) {
@@ -1852,10 +1854,12 @@ unsafe extern "C" fn t1_modify_fm() {
     }
     i = 0 as ::core::ffi::c_int;
     while i < 6 as ::core::ffi::c_int {
-        sprintf(
+        crate::utils::sprintf_args(
             r,
             b"%g \0" as *const u8 as *const ::core::ffi::c_char,
-            a[i as usize] as ::core::ffi::c_double,
+            &[crate::utils::PrintfArg::from(
+                a[i as usize] as ::core::ffi::c_double,
+            )],
         );
         r = strchr(r, 0 as ::core::ffi::c_int);
         i += 1;
@@ -1910,13 +1914,13 @@ unsafe extern "C" fn t1_modify_italic() {
         - atan((*(*fd_cur).fm).slant as ::core::ffi::c_double * 1E-3f64)
             * (180 as ::core::ffi::c_int as ::core::ffi::c_double / M_PI))
         as ::core::ffi::c_float;
-    sprintf(
+    crate::utils::sprintf_args(
         t1_buf_array.offset(
             (p.offset_from(t1_line_array) as ::core::ffi::c_long + 1 as ::core::ffi::c_long)
                 as isize,
         ),
         b"%g\0" as *const u8 as *const ::core::ffi::c_char,
-        a as ::core::ffi::c_double,
+        &[crate::utils::PrintfArg::from(a as ::core::ffi::c_double)],
     );
     strcpy(strchr(t1_buf_array, 0 as ::core::ffi::c_int), r);
     strcpy(t1_line_array as *mut ::core::ffi::c_char, t1_buf_array);
@@ -2028,18 +2032,18 @@ unsafe extern "C" fn t1_scan_keys() {
         }
         *q = 0 as ::core::ffi::c_char;
         if (*(*fd_cur).fm).slant != 0 as ::core::ffi::c_int {
-            sprintf(
+            crate::utils::sprintf_args(
                 q,
                 b"-Slant_%i\0" as *const u8 as *const ::core::ffi::c_char,
-                (*(*fd_cur).fm).slant,
+                &[crate::utils::PrintfArg::from((*(*fd_cur).fm).slant)],
             );
             q = strchr(q, 0 as ::core::ffi::c_int);
         }
         if (*(*fd_cur).fm).extend != 0 as ::core::ffi::c_int {
-            sprintf(
+            crate::utils::sprintf_args(
                 q,
                 b"-Extend_%i\0" as *const u8 as *const ::core::ffi::c_char,
-                (*(*fd_cur).fm).extend,
+                &[crate::utils::PrintfArg::from((*(*fd_cur).fm).extend)],
             );
         }
         if !(*fd_cur).fontname.is_null() {
@@ -2065,11 +2069,13 @@ unsafe extern "C" fn t1_scan_keys() {
                 + r.offset_from(t1_line_array) as ::core::ffi::c_long)
                 as integer;
             strcpy(t1_buf_array as *mut ::core::ffi::c_char, p);
-            sprintf(
+            crate::utils::sprintf_args(
                 r,
                 b"ABCDEF+%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                (*fd_cur).fontname,
-                t1_buf_array,
+                &[
+                    crate::utils::PrintfArg::from((*fd_cur).fontname),
+                    crate::utils::PrintfArg::from(t1_buf_array),
+                ],
             );
             t1_line_ptr = eol(r) as *mut t1_line_entry;
         }
@@ -2789,7 +2795,14 @@ unsafe extern "C" fn cs_fail(
     mut arg2: ::core::ffi::c_int,
 ) {
     let mut buf: [::core::ffi::c_char; 256] = [0; 256];
-    sprintf(&raw mut buf as *mut ::core::ffi::c_char, fmt, arg1, arg2);
+    crate::utils::sprintf_args(
+        &raw mut buf as *mut ::core::ffi::c_char,
+        fmt,
+        &[
+            crate::utils::PrintfArg::from(arg1),
+            crate::utils::PrintfArg::from(arg2),
+        ],
+    );
     if cs_name.is_null() {
         crate::utils::pdftex_fail_args(
             b"Subr (%i): %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3755,10 +3768,10 @@ unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
     while isdigit(*p as ::core::ffi::c_uchar as ::core::ffi::c_int) != 0 {
         p = p.offset(1);
     }
-    sprintf(
+    crate::utils::sprintf_args(
         t1_line_ptr as *mut ::core::ffi::c_char,
         b"%u\0" as *const u8 as *const ::core::ffi::c_char,
-        count,
+        &[crate::utils::PrintfArg::from(count)],
     );
     strcat(t1_line_ptr as *mut ::core::ffi::c_char, p);
     t1_line_ptr = eol(t1_line_array as *mut ::core::ffi::c_char) as *mut t1_line_entry;
@@ -3784,18 +3797,24 @@ unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
     while ptr < end_tab {
         if (*ptr).used != 0 {
             if is_subr != 0 {
-                sprintf(
+                crate::utils::sprintf_args(
                     t1_line_array as *mut ::core::ffi::c_char,
                     b"dup %lu %u\0" as *const u8 as *const ::core::ffi::c_char,
-                    ptr.offset_from(tab) as ::core::ffi::c_long as ::core::ffi::c_ulong,
-                    (*ptr).cslen as ::core::ffi::c_int,
+                    &[
+                        crate::utils::PrintfArg::from(
+                            ptr.offset_from(tab) as ::core::ffi::c_long as ::core::ffi::c_ulong
+                        ),
+                        crate::utils::PrintfArg::from((*ptr).cslen as ::core::ffi::c_int),
+                    ],
                 );
             } else {
-                sprintf(
+                crate::utils::sprintf_args(
                     t1_line_array as *mut ::core::ffi::c_char,
                     b"/%s %u\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*ptr).name,
-                    (*ptr).cslen as ::core::ffi::c_int,
+                    &[
+                        crate::utils::PrintfArg::from((*ptr).name),
+                        crate::utils::PrintfArg::from((*ptr).cslen as ::core::ffi::c_int),
+                    ],
                 );
             }
             p = strchr(t1_line_array, 0 as ::core::ffi::c_int);
@@ -3807,12 +3826,18 @@ unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
             t1_line_ptr = p.offset((*ptr).len as ::core::ffi::c_int as isize) as *mut t1_line_entry;
             t1_putline();
         } else if is_subr != 0 {
-            sprintf(
+            crate::utils::sprintf_args(
                 t1_line_array as *mut ::core::ffi::c_char,
                 b"dup %lu %u%s \0" as *const u8 as *const ::core::ffi::c_char,
-                ptr.offset_from(tab) as ::core::ffi::c_long as ::core::ffi::c_ulong,
-                cs_len as ::core::ffi::c_int,
-                *cs_token_pair.offset(0 as ::core::ffi::c_int as isize),
+                &[
+                    crate::utils::PrintfArg::from(
+                        ptr.offset_from(tab) as ::core::ffi::c_long as ::core::ffi::c_ulong
+                    ),
+                    crate::utils::PrintfArg::from(cs_len as ::core::ffi::c_int),
+                    crate::utils::PrintfArg::from(
+                        *cs_token_pair.offset(0 as ::core::ffi::c_int as isize),
+                    ),
+                ],
             );
             p = strchr(t1_line_array, 0 as ::core::ffi::c_int);
             memcpy(
@@ -3822,10 +3847,12 @@ unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
             );
             t1_line_ptr = p.offset(cs_len as ::core::ffi::c_int as isize) as *mut t1_line_entry;
             t1_putline();
-            sprintf(
+            crate::utils::sprintf_args(
                 t1_line_array as *mut ::core::ffi::c_char,
                 b" %s\0" as *const u8 as *const ::core::ffi::c_char,
-                *cs_token_pair.offset(1 as ::core::ffi::c_int as isize),
+                &[crate::utils::PrintfArg::from(
+                    *cs_token_pair.offset(1 as ::core::ffi::c_int as isize),
+                )],
             );
             t1_line_ptr = eol(t1_line_array as *mut ::core::ffi::c_char) as *mut t1_line_entry;
             t1_putline();
@@ -3833,10 +3860,10 @@ unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
         release_cs_entries(ptr, ptr.offset(1));
         ptr = ptr.offset(1);
     }
-    sprintf(
+    crate::utils::sprintf_args(
         t1_line_array as *mut ::core::ffi::c_char,
         b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        line_end,
+        &[crate::utils::PrintfArg::from(line_end)],
     );
     t1_line_ptr = eol(t1_line_array as *mut ::core::ffi::c_char) as *mut t1_line_entry;
     t1_putline();

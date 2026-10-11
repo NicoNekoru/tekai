@@ -2,20 +2,9 @@ use crate::allocation::free;
 use crate::openclose::{xmalloc, xstrdup};
 
 extern "C" {
-    fn sprintf(
-        _: *mut ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn sscanf(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
-    fn snprintf(
-        __str: *mut ::core::ffi::c_char,
-        __size: size_t,
-        __format: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
     fn strtol(
@@ -549,10 +538,10 @@ unsafe extern "C" fn utf16be_str(mut code: ::core::ffi::c_long) -> *mut ::core::
     } else {
     };
     if code <= 0xffff as ::core::ffi::c_long {
-        sprintf(
+        crate::utils::sprintf_args(
             &raw mut buf as *mut ::core::ffi::c_char,
             b"%04lX\0" as *const u8 as *const ::core::ffi::c_char,
-            code,
+            &[crate::utils::PrintfArg::from(code)],
         );
     } else {
         v = code - 0x10000 as ::core::ffi::c_long;
@@ -560,11 +549,13 @@ unsafe extern "C" fn utf16be_str(mut code: ::core::ffi::c_long) -> *mut ::core::
             as ::core::ffi::c_uint;
         vl = (v % 0x400 as ::core::ffi::c_long + 0xdc00 as ::core::ffi::c_long)
             as ::core::ffi::c_uint;
-        sprintf(
+        crate::utils::sprintf_args(
             &raw mut buf as *mut ::core::ffi::c_char,
             b"%04X%04X\0" as *const u8 as *const ::core::ffi::c_char,
-            vh,
-            vl,
+            &[
+                crate::utils::PrintfArg::from(vh),
+                crate::utils::PrintfArg::from(vl),
+            ],
         );
     }
     return &raw mut buf as *mut ::core::ffi::c_char;
@@ -713,12 +704,14 @@ unsafe extern "C" fn set_glyph_unicode(
             as *mut ::core::ffi::c_char;
         return;
     }
-    snprintf(
+    crate::utils::snprintf_args(
         &raw mut buf2 as *mut ::core::ffi::c_char,
         SMALL_BUF_SIZE as size_t,
         b"tfm:%s/%s\0" as *const u8 as *const ::core::ffi::c_char,
-        tfmname,
-        s,
+        &[
+            crate::utils::PrintfArg::from(tfmname),
+            crate::utils::PrintfArg::from(s),
+        ],
     );
     tmp.name = &raw mut buf2 as *mut ::core::ffi::c_char;
     tmp.code = UNI_UNDEF as integer;
@@ -731,11 +724,11 @@ unsafe extern "C" fn set_glyph_unicode(
         (*gp).unicode_seq = (*ptmp).unicode_seq;
         return;
     }
-    snprintf(
+    crate::utils::snprintf_args(
         &raw mut buf2 as *mut ::core::ffi::c_char,
         SMALL_BUF_SIZE as size_t,
         b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        s,
+        &[crate::utils::PrintfArg::from(s)],
     );
     tmp.name = &raw mut buf2 as *mut ::core::ffi::c_char;
     tmp.code = UNI_UNDEF as integer;

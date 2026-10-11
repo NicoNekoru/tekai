@@ -32,20 +32,9 @@ extern "C" {
         _: ::core::ffi::c_int,
         __size: size_t,
     ) -> ::core::ffi::c_int;
-    fn sprintf(
-        _: *mut ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn ungetc(_: ::core::ffi::c_int, _: *mut FILE) -> ::core::ffi::c_int;
     fn pclose(_: *mut FILE) -> ::core::ffi::c_int;
     fn popen(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char) -> *mut FILE;
-    fn snprintf(
-        __str: *mut ::core::ffi::c_char,
-        __size: size_t,
-        __format: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn access(_: *const ::core::ffi::c_char, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn close(_: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn sleep(_: ::core::ffi::c_uint) -> ::core::ffi::c_uint;
@@ -4577,10 +4566,12 @@ pub unsafe extern "C" fn calledit(
                         );
                         exit(1 as ::core::ffi::c_int);
                     }
-                    sprintf(
+                    crate::utils::sprintf_args(
                         temp,
                         b"%ld\0" as *const u8 as *const ::core::ffi::c_char,
-                        linenumber as ::core::ffi::c_long,
+                        &[crate::utils::PrintfArg::from(
+                            linenumber as ::core::ffi::c_long,
+                        )],
                     );
                     while *temp as ::core::ffi::c_int != '\0' as i32 {
                         temp = temp.offset(1);
@@ -4913,10 +4904,10 @@ pub unsafe extern "C" fn makesrcspecial(
         gettexstring(srcfilename) as *mut ::core::ffi::c_char;
     let mut buf: [::core::ffi::c_char; 40] = [0; 40];
     let mut s: *mut ::core::ffi::c_char = &raw mut buf as *mut ::core::ffi::c_char;
-    sprintf(
+    crate::utils::sprintf_args(
         &raw mut buf as *mut ::core::ffi::c_char,
         b"src:%d \0" as *const u8 as *const ::core::ffi::c_char,
-        lineno,
+        &[crate::utils::PrintfArg::from(lineno)],
     );
     if (poolptr as size_t)
         .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char))
@@ -5036,12 +5027,14 @@ unsafe extern "C" fn makepdftime(
         } else {
             -(off - off_hours * 60 as ::core::ffi::c_int)
         }) as ::core::ffi::c_int;
-        i = snprintf(
+        i = crate::utils::snprintf_args(
             time_str_0.offset(size as isize) as *mut ::core::ffi::c_char,
             9 as size_t,
             b"%+03d'%02d'\0" as *const u8 as *const ::core::ffi::c_char,
-            off_hours,
-            off_mins,
+            &[
+                crate::utils::PrintfArg::from(off_hours),
+                crate::utils::PrintfArg::from(off_mins),
+            ],
         );
         if i as ::core::ffi::c_uint >= 9 as ::core::ffi::c_int as ::core::ffi::c_uint {
             crate::utils::pdftex_fail_args(
@@ -5305,11 +5298,13 @@ pub unsafe extern "C" fn getfilesize(mut s: integer) {
     if stat(file_name, &raw mut file_data) == 0 as ::core::ffi::c_int {
         let mut len: size_t = 0;
         let mut buf: [::core::ffi::c_char; 20] = [0; 20];
-        i = snprintf(
+        i = crate::utils::snprintf_args(
             &raw mut buf as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<[::core::ffi::c_char; 20]>() as size_t,
             b"%lu\0" as *const u8 as *const ::core::ffi::c_char,
-            file_data.st_size as ::core::ffi::c_ulong,
+            &[crate::utils::PrintfArg::from(
+                file_data.st_size as ::core::ffi::c_ulong,
+            )],
         );
         if i as ::core::ffi::c_uint
             >= ::core::mem::size_of::<[::core::ffi::c_char; 20]>() as ::core::ffi::c_uint
@@ -5396,11 +5391,13 @@ pub unsafe extern "C" fn getfiledump(
     fclose(f_0);
     data_end = (data_ptr as ::core::ffi::c_int + read) as poolpointer;
     while data_ptr < data_end {
-        i = snprintf(
+        i = crate::utils::snprintf_args(
             strpool.offset(poolptr as isize) as *mut packedASCIIcode as *mut ::core::ffi::c_char,
             3 as size_t,
             b"%.2X\0" as *const u8 as *const ::core::ffi::c_char,
-            *strpool.offset(data_ptr as isize) as ::core::ffi::c_uint,
+            &[crate::utils::PrintfArg::from(
+                *strpool.offset(data_ptr as isize) as ::core::ffi::c_uint,
+            )],
         );
         if i as ::core::ffi::c_uint >= 3 as ::core::ffi::c_int as ::core::ffi::c_uint {
             crate::utils::pdftex_fail_args(
@@ -5435,11 +5432,13 @@ pub unsafe extern "C" fn convertStringToHexString(
     j = 0 as ::core::ffi::c_int;
     i = 0 as ::core::ffi::c_int;
     while i < lin {
-        k_0 = snprintf(
+        k_0 = crate::utils::snprintf_args(
             &raw mut buf as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t,
             b"%02X\0" as *const u8 as *const ::core::ffi::c_char,
-            *in_0.offset(i as isize) as ::core::ffi::c_uchar as ::core::ffi::c_uint,
+            &[crate::utils::PrintfArg::from(
+                *in_0.offset(i as isize) as ::core::ffi::c_uchar as ::core::ffi::c_uint,
+            )],
         );
         if k_0 as ::core::ffi::c_uint
             >= ::core::mem::size_of::<[::core::ffi::c_char; 3]>() as ::core::ffi::c_uint
