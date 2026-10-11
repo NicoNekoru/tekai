@@ -27,7 +27,7 @@ required assertion, with no known-failure exemption.
 | Failure | Change |
 | --- | --- |
 | Input changes during a build become a fresh cache entry | Capture a generation before compilation and validate it before publishing cache state. |
-| New higher-priority inputs do not invalidate a cache hit | Retain bounded lookup-directory and alias identities as dependencies. Warm checks inspect those identities without enumerating subfolders. |
+| New higher-priority inputs do not invalidate a cache hit | Retain bounded lookup-directory and alias identities as dependencies. Unchanged warm checks inspect metadata only. Changed directories use direct membership hashes without recursive enumeration. |
 | Textual end markers hide active bytes | Hash complete source bytes rather than guessing execution from textual markers. |
 | Replaced compressed formats reuse stale raw companions | Materialize into a private content-addressed cache, retain source dependencies and recover corrupt cache entries. Never write adjacent installation companions. |
 | Parent cancellation leaves child processes running | Own subprocess groups, forward CLI cancellation, escalate stubborn groups and reap direct children. |
@@ -39,14 +39,18 @@ and must not independently reap children owned by the build scheduler.
 
 ## Rust migration
 
-Supported macOS and Linux dependency builds pass with C and C++ compilers
-disabled. BibTeX uses a Rust-only bridge, and compression uses Rust backends.
+Local macOS workspace checks pass with C and C++ compilers disabled. CI now
+enforces this for candidate builds. BibTeX uses a Rust-only bridge, and
+compression uses Rust backends. Tekai's release support remains macOS.
 The engine stays a Rust library. Release builds retain fat LTO.
 
-The deeper engine migration is unfinished. The exact engine's translated Rust
-still uses C-shaped allocation, streams, formatting and internal ABI connections.
-Removing these requires matching producer and consumer changes, shared Rust
-types, and invocation-owned state. Necessary OS interfaces remain.
+Rust now owns engine allocations and decimal/integer formatting. Compatibility
+properties cover native formatting through test-only oracles. The exact engine
+still contains substantial pdfTeX-derived algorithms, raw-pointer callers,
+internal ABI connections and mutable global state. Rust stream migration is in
+progress. The deeper migration requires shared types and invocation-owned state.
+Necessary OS interfaces remain. Full parity and remote timing for the new
+implementation are pending.
 
 ## Last completed remote result
 

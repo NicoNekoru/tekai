@@ -2,7 +2,7 @@
 name = "tekai-pdftex"
 version = "0.5.0"
 edition = "2024"
-description = "Experimental pdfTeX-compatible engine contract and rewrite plan for tekai."
+description = "Experimental TeX expansion and approximate PDF rendering for Tekai."
 license = "MIT"
 repository = "https://github.com/NicoNekoru/tekai"
 publish = false
