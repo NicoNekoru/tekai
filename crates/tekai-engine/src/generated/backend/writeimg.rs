@@ -2,6 +2,7 @@ use crate::generated::pdftexextra::{do_dump, do_undump};
 use crate::stdio::feof;
 use crate::support::{xfclose, xfopen};
 use crate::utils::xgetc;
+use crate::web2c::zround;
 
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc, xstrdup};
@@ -37,7 +38,6 @@ extern "C" {
         must_exist: boolean,
     ) -> string;
     fn recorder_record_input(_: const_string);
-    fn zround(_: ::core::ffi::c_double) -> integer;
     fn find_input_file(s: integer) -> string;
     fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
     static mut iniversion: boolean;

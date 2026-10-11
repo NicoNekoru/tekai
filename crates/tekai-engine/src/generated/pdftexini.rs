@@ -83,6 +83,7 @@ use crate::generated::pdftexextra::{
 use crate::generated::pdftexextra::{do_dump, do_undump};
 use crate::openclose::open_output;
 use crate::stdio::{gzclose, gzsetparams};
+use crate::web2c::uexit;
 
 use crate::stdio::{exit, fflush, fputs, putc};
 
@@ -100,7 +101,6 @@ extern "C" {
     ) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     static mut kpse_def: kpathsea;
-    fn uexit(status: ::core::ffi::c_int) -> !;
     fn setupboundvariable(_: *mut integer, _: const_string, _: integer);
     static mut versionstring: *const ::core::ffi::c_char;
     fn loadpoolstrings(_: integer) -> ::core::ffi::c_int;

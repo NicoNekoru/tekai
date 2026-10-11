@@ -1,5 +1,6 @@
 use crate::stdio::fread;
 use crate::support::xfopen;
+use crate::web2c::zround;
 
 use crate::allocation::free;
 use crate::openclose::xmalloc;
@@ -20,7 +21,6 @@ extern "C" {
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
-    fn zround(_: ::core::ffi::c_double) -> integer;
     static mut pdfbuf: *mut eightbits;
     static mut pdfbufsize: integer;
     static mut pdfptr: integer;

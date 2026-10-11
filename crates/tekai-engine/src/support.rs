@@ -2,6 +2,7 @@
 
 use crate::openclose::{xmalloc, xrealloc};
 use crate::stdio::Stream as FILE;
+use crate::web2c::uexit;
 use libc::{c_char, c_double, c_int, c_long, c_void, off_t, size_t};
 use std::ffi::{CStr, CString};
 use std::ptr;
@@ -12,7 +13,6 @@ pub static mut versionstring: *const c_char = c" (TeX Live 2027/dev)".as_ptr();
 extern "C" {
     static kpathsea_version_string: *const c_char;
 
-    fn uexit(unix_code: c_int);
 }
 
 #[inline]

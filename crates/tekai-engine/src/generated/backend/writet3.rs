@@ -2,6 +2,7 @@ use crate::openclose::open_input;
 use crate::stdio::feof;
 use crate::support::{xfclose, xfopen};
 use crate::utils::xgetc;
+use crate::web2c::zround;
 
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
@@ -31,7 +32,6 @@ extern "C" {
         _: *const ::core::ffi::c_char,
     ) -> !;
     fn recorder_record_input(_: const_string);
-    fn zround(_: ::core::ffi::c_double) -> integer;
     fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
     static mut nameoffile: *mut ASCIIcode;
     static mut fontdsize: *mut scaled;

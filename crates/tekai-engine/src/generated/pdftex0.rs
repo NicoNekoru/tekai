@@ -109,7 +109,7 @@ use crate::generated::pdftexextra::{
 };
 use crate::openclose::{open_input, open_output};
 use crate::stdio::{exit, feof, fflush, fputs, fwrite, perror, putc};
-use crate::web2c::eof;
+use crate::web2c::{eof, uexit, zround};
 
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
@@ -124,7 +124,6 @@ extern "C" {
     ) -> !;
     static mut kpse_def_inst: kpathsea_instance;
     static mut kpse_def: kpathsea;
-    fn uexit(status: ::core::ffi::c_int) -> !;
     fn kpse_init_prog(
         prefix: const_string,
         dpi: ::core::ffi::c_uint,
@@ -137,7 +136,6 @@ extern "C" {
     fn recorder_change_filename(_: string);
     fn texmf_yesno(_: const_string) -> boolean;
     static mut versionstring: *const ::core::ffi::c_char;
-    fn zround(_: ::core::ffi::c_double) -> integer;
     static mut tfmtemp: ::core::ffi::c_int;
     static mut texinputtype: ::core::ffi::c_int;
     fn makecstring(s: integer) -> *mut ::core::ffi::c_char;

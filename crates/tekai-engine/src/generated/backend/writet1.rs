@@ -1,6 +1,7 @@
 use crate::openclose::open_input;
 use crate::stdio::{feof, ungetc};
 use crate::support::{xfclose, xfopen};
+use crate::web2c::zround;
 
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc, xstrdup};
@@ -53,7 +54,6 @@ extern "C" {
         _: *const ::core::ffi::c_char,
     ) -> !;
     fn recorder_record_input(_: const_string);
-    fn zround(_: ::core::ffi::c_double) -> integer;
     static mut _DefaultRuneLocale: _RuneLocale;
     static mut nameoffile: *mut ASCIIcode;
     fn zpackfilename(n: strnumber, a: strnumber, e: strnumber);

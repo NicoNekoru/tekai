@@ -1,4 +1,4 @@
-use libc::{c_char, c_double, c_float, c_int, c_long, c_void};
+use libc::{c_char, c_float, c_int, c_long, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -6,6 +6,7 @@ use crate::utils::{
     pdf_out, pdf_printf_args, pdf_write_bytes, pdftex_fail_args, pdftex_warn_args, tex_printf_args,
 };
 use crate::utils::{FdEntry, FmEntry, PrintfArg};
+use crate::web2c::zround;
 use crate::xpdf::*;
 
 const MASK_SUPPRESS_PTEX_FILENAME: c_int = 0x02;
@@ -98,7 +99,6 @@ extern "C" {
     fn getpdfsuppresswarningpagegroup() -> c_int;
     fn getpdfsuppressptexinfo() -> c_int;
     fn getptexuseunderscore() -> c_int;
-    fn zround(_: c_double) -> c_int;
 
     fn lookup_fontmap(_: *mut c_char) -> *mut FmEntry;
     fn epdf_create_fontdescriptor(_: *mut FmEntry, _: c_int) -> *mut FdEntry;

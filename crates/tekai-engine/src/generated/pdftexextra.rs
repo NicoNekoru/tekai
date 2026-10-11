@@ -23,6 +23,7 @@ use crate::generated::pdftexini::mainbody;
 use crate::openclose::{close_file, open_input, open_output};
 use crate::stdio::{gzread, gzwrite};
 use crate::support::{read_line, xfclose, xfopen};
+use crate::web2c::uexit;
 
 use crate::stdio::{
     exit, fclose, fflush, fopen, fputs, fread, fseek, pclose, popen, setvbuf, ungetc,
@@ -111,7 +112,6 @@ extern "C" {
     fn dir_p(fn_0: string) -> boolean;
     fn kpse_set_program_name(argv0: const_string, progname: const_string);
     fn fcntl(_: ::core::ffi::c_int, _: ::core::ffi::c_int, ...) -> ::core::ffi::c_int;
-    fn uexit(status: ::core::ffi::c_int) -> !;
     fn usagehelp(message: *mut const_string, bug_email: const_string);
     fn getopt_long_only(
         argc_0: ::core::ffi::c_int,
