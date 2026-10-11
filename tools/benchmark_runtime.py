@@ -42,6 +42,7 @@ SLOTS = ('s0', 's1')
 REPLICAS = ('r0', 'r1')
 PAIRS_PER_UNIT = 4
 MAX_CAPTURE_BYTES = 1024 * 1024
+MAX_ORACLE_DIAGNOSTIC_CHARS = 4096
 MAX_STATE_BYTES = 8 * 1024 * 1024
 MAX_JOURNAL_RECORD_BYTES = 8 * 1024 * 1024
 CACHE_DEPENDENCY_COUNT = 1024
@@ -515,7 +516,10 @@ def make_fixture(root, binary, case):
             png(project / f'i{index}.png', index)
         body = '\n'.join(f'\\includegraphics[width=1cm]{{i{index}.png}}\\newpage' for index in range(8))
         document(project, '\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n' + body + '\n\\end{document}\n')
-    env['TEXINPUTS'] = f'{project}//:{out}//:'
+    # Warm-cache inputs all live in project. Explicit recursive generated
+    # output search intentionally declines safe cache publication, and the
+    # engine already checks its output directory for direct input requests.
+    env['TEXINPUTS'] = f'{project}//:' if case == 'warm-build-cache' else f'{project}//:{out}//:'
     command = [binary, 'build', project / 'main.tex', '--config', config,
                '--out-dir', out, '--once', '--quiet', '--report-json'] if case == 'warm-build-cache' else \
         ([binary, '--version'] if case == 'cli-startup' else
@@ -699,16 +703,35 @@ def execute_fixture(supervisor, fixture, case, initializing=False, validate_outp
     result = supervisor.execute(fixture['command'], fixture['project'], fixture['env'])
     if case == 'warm-build-cache':
         try:
-            report = json.loads(result['stdout'])
-        except ValueError as error:
-            raise BenchmarkError('Build-cache fixture returned invalid JSON') from error
-        expected_runs = 1 if initializing else 0
-        if not isinstance(report, dict) or report.get('skipped') is not (not initializing) \
-                or type(report.get('tex_runs')) is not int or report['tex_runs'] != expected_runs:
-            raise BenchmarkError('Build-cache fixture did not take the expected compile/cache-hit path')
-        result['reported_build_timing'] = reported_build_timing(report, result['seconds'])
-        if initializing:
-            result['cache_state'] = cache_state_snapshot(fixture, establish=True)
+            try:
+                report = json.loads(result['stdout'])
+            except ValueError as error:
+                raise BenchmarkError('Build-cache fixture returned invalid JSON') from error
+            expected_runs = 1 if initializing else 0
+            if not isinstance(report, dict) or report.get('skipped') is not (not initializing) \
+                    or type(report.get('tex_runs')) is not int or report['tex_runs'] != expected_runs:
+                raise BenchmarkError('Build-cache fixture did not take the expected compile/cache-hit path')
+            result['reported_build_timing'] = reported_build_timing(report, result['seconds'])
+            if initializing:
+                result['cache_state'] = cache_state_snapshot(fixture, establish=True)
+        except (OSError, ValueError, RuntimeError) as error:
+            # execute has reaped the successful child and removed its bounded
+            # capture files. A later state oracle must preserve bounded command
+            # evidence even though initialization never reaches the report row.
+            stdout, stderr = result['stdout'], result['stderr_tail']
+            details = {'case': case, 'initializing': initializing, 'child_exit_code': 0,
+                       'command_id': result['command_id'], 'seconds': result['seconds'],
+                       'command': [str(arg)[:1024] for arg in fixture['command'][:16]],
+                       'command_truncated': len(fixture['command']) > 16
+                           or any(len(str(arg)) > 1024 for arg in fixture['command'][:16]),
+                       'stdout_tail': stdout[-MAX_ORACLE_DIAGNOSTIC_CHARS:],
+                       'stderr_tail': stderr[-MAX_ORACLE_DIAGNOSTIC_CHARS:],
+                       'stdout_chars': len(stdout), 'stderr_chars': len(stderr),
+                       'stdout_truncated': len(stdout) > MAX_ORACLE_DIAGNOSTIC_CHARS,
+                       'stderr_truncated': len(stderr) > MAX_ORACLE_DIAGNOSTIC_CHARS,
+                       'used_for_gate': False}
+            raise BenchmarkError(f'{type(error).__name__}: {str(error)[:1024]}\n'
+                                 + 'Completed cache command ' + json.dumps(details, allow_nan=False)) from error
     check_pdf(pdf)
     if validate_output:
         result['output_validation'] = check_fixture_output(supervisor, fixture, case)

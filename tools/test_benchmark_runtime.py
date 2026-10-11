@@ -502,7 +502,10 @@ class FixtureTests(unittest.TestCase):
             root = Path(temporary)
             (root / 'tekai.toml').write_text('[build]\nforce = true\n', encoding='utf-8')
             fixture = bench.make_fixture(root / 'owned', Path('/tekai'), 'warm-build-cache')
+            self.assertEqual(bench.CACHE_DEPENDENCY_COUNT, 1024)
             self.assertEqual(len(fixture['dependencies']), bench.CACHE_DEPENDENCY_COUNT)
+            self.assertEqual(fixture['env']['TEXINPUTS'], f'{fixture["project"]}//:')
+            self.assertNotIn(str(fixture['out']), fixture['env']['TEXINPUTS'])
             source = (fixture['project'] / 'main.tex').read_text()
             for path in fixture['dependencies']:
                 self.assertIn('\\input{' + path.relative_to(fixture['project']).as_posix() + '}', source)
@@ -516,6 +519,46 @@ class FixtureTests(unittest.TestCase):
             self.assertNotEqual(before, bench.fixture_sha256(fixture['project']))
             self.assertEqual({key: fixture['env'][key] for key in ('LC_ALL', 'LANG', 'TZ')},
                              {'LC_ALL': 'C', 'LANG': 'C', 'TZ': 'UTC'})
+            for case in ('cli-startup', 'nested-lookup', 'image-compile'):
+                other = bench.make_fixture(root / case, Path('/tekai'), case)
+                self.assertEqual(other['env']['TEXINPUTS'], f'{other["project"]}//:{other["out"]}//:')
+
+    def test_failed_post_exit_cache_oracle_preserves_bounded_command_diagnostics(self):
+        rng = random.Random(81724)
+        with tempfile.TemporaryDirectory(prefix='test-cache-init-evidence-') as temporary:
+            root = Path(temporary)
+            fixture = {'project': root, 'out': root, 'env': {}, 'command': ['/tekai', 'build', 'main.tex']}
+            for trial in range(16):
+                fixture['command'] = ['\u262f' * 2048] * 32 if trial == 15 else ['/tekai', 'build', 'main.tex']
+                report = {'skipped': False, 'tex_runs': 1, 'diagnostic': '\u262f' * rng.randrange(0, 20000)}
+                stdout = json.dumps(report, ensure_ascii=False)
+                stderr = 'prefix ' + '\u262f' * rng.randrange(0, 20000) + ' diagnostic tail'
+                runner = Mock()
+                runner.execute.return_value = {'command_id': trial + 41, 'seconds': 0.125,
+                                               'stdout': stdout, 'stderr_tail': stderr}
+                failure = FileNotFoundError('missing final state') if trial % 2 else bench.BenchmarkError('invalid state')
+                with self.subTest(trial=trial), patch.object(bench, 'cache_state_snapshot', side_effect=failure), \
+                        patch.object(bench, 'check_pdf') as pdf:
+                    with self.assertRaises(bench.BenchmarkError) as raised:
+                        bench.execute_fixture(runner, fixture, 'warm-build-cache', initializing=True)
+                    reason, evidence = str(raised.exception).split('\nCompleted cache command ', 1)
+                    self.assertIn(str(failure), reason)
+                    details = json.loads(evidence)
+                    self.assertEqual(details['command_id'], trial + 41)
+                    self.assertEqual(details['child_exit_code'], 0)
+                    self.assertEqual(details['seconds'], 0.125)
+                    self.assertTrue(details['initializing'])
+                    self.assertFalse(details['used_for_gate'])
+                    self.assertEqual(details['command'], [arg[:1024] for arg in fixture['command'][:16]])
+                    self.assertEqual(details['command_truncated'], trial == 15)
+                    self.assertEqual(details['stdout_tail'], stdout[-bench.MAX_ORACLE_DIAGNOSTIC_CHARS:])
+                    self.assertEqual(details['stderr_tail'], stderr[-bench.MAX_ORACLE_DIAGNOSTIC_CHARS:])
+                    self.assertEqual(details['stdout_chars'], len(stdout))
+                    self.assertEqual(details['stderr_chars'], len(stderr))
+                    self.assertEqual(details['stdout_truncated'], len(stdout) > bench.MAX_ORACLE_DIAGNOSTIC_CHARS)
+                    self.assertEqual(details['stderr_truncated'], len(stderr) > bench.MAX_ORACLE_DIAGNOSTIC_CHARS)
+                    self.assertLess(len(evidence.encode('utf-8')), 192 * 1024)
+                    pdf.assert_not_called()
 
     def test_state_oracle_generated_dependency_counts_and_mutation_properties(self):
         rng = random.Random(8706)
@@ -821,7 +864,8 @@ class FixtureTests(unittest.TestCase):
             for report in ({'skipped': False, 'tex_runs': 1}, {'skipped': True, 'tex_runs': 1},
                            {'skipped': True, 'tex_runs': False}):
                 with self.subTest(report=report), patch.object(bench.Supervisor, 'execute',
-                        return_value={'stdout': json.dumps({**report, 'elapsed_ms': 5})}):
+                        return_value={'stdout': json.dumps({**report, 'elapsed_ms': 5}),
+                                      'stderr_tail': '', 'command_id': 1, 'seconds': 0.01}):
                     with self.assertRaises(bench.BenchmarkError):
                         bench.execute_fixture(bench.Supervisor(out, 1, time.monotonic() + 1), fixture, 'warm-build-cache')
 
