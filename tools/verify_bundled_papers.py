@@ -100,6 +100,21 @@ def candidate_environment(work):
     return env
 
 
+def require_current_runtime_cache(tree, engine_cache, bundle_id, format_id):
+    raw = engine_cache / "raw-formats-v1" / f"{format_id}.fmt.raw"
+    receipt = raw.with_name(f"{format_id}.meta")
+    if (tree.parent.name != "texmf-" + bundle_id or not raw.is_file()
+            or not receipt.is_file() or raw.is_symlink() or receipt.is_symlink()):
+        raise ValueError("Rebuild the candidate; it does not embed the current bundle and format")
+    # The private raw format's receipt names the compressed embedded source.
+    # An adjacent legacy companion cannot satisfy this verification.
+    with receipt.open("rb") as source:
+        data = source.read(1025)
+    lines = data.decode().splitlines()
+    if len(data) > 1024 or len(lines) != 4 or lines[:2] != ["tekai-format-v1", format_id]:
+        raise ValueError("Candidate raw format receipt does not identify the current embedded format")
+
+
 def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", type=Path, default=bundle.ROOT / "target/debug/tekai")
@@ -164,8 +179,7 @@ def _main():
                      "--out-dir", candidate, "--force", "--quiet"], env=env)
             engine_cache = Path(env["TEKAI_ENGINE_CACHE"])
             tree = next(engine_cache.glob("texmf-*/texmf-dist"))
-            if tree.parent.name != "texmf-" + report["bundle"] or not (engine_cache / f"pdflatex-{format_id}.fmt.raw").is_file():
-                raise ValueError("Rebuild the candidate; it does not embed the current bundle and format")
+            require_current_runtime_cache(tree, engine_cache, report["bundle"], format_id)
             reference = work / case
             reference.mkdir()
             for path in candidate.iterdir():

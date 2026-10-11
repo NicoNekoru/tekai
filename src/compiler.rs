@@ -1135,8 +1135,7 @@ fn build_ownership_directory() -> Result<PathBuf> {
                 path.display()
             );
         }
-        path
-            .canonicalize()
+        path.canonicalize()
             .context("cannot resolve build ownership namespace")
     }
     #[cfg(not(unix))]

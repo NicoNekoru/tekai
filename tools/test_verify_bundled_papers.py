@@ -11,6 +11,48 @@ from unittest.mock import Mock, call, patch
 import verify_bundled_papers as parity
 
 
+class RuntimeCacheIdentityTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="tekai-parity-cache-test-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.tree = self.root / "texmf-current-bundle" / "texmf-dist"
+        self.tree.mkdir(parents=True)
+        self.raw = self.root / "raw-formats-v1" / "current-format.fmt.raw"
+        self.raw.parent.mkdir()
+        self.raw.write_bytes(b"raw format")
+        self.receipt = self.raw.with_name("current-format.meta")
+        self.receipt.write_text("tekai-format-v1\ncurrent-format\nraw-digest\nidentity\n")
+
+    def verify(self, bundle="current-bundle"):
+        parity.require_current_runtime_cache(self.tree, self.root, bundle, "current-format")
+
+    def test_current_private_format_and_bundle_are_required(self):
+        self.verify()
+        with self.assertRaises(ValueError):
+            self.verify("different-bundle")
+        self.receipt.write_text("tekai-format-v1\nwrong-format\nraw-digest\nidentity\n")
+        with self.assertRaises(ValueError):
+            self.verify()
+
+    def test_adjacent_legacy_companion_does_not_satisfy_private_cache_gate(self):
+        self.raw.unlink()
+        (self.root / "pdflatex-current-format.fmt.raw").write_bytes(b"legacy format")
+        with self.assertRaises(ValueError):
+            self.verify()
+
+    def test_receipt_size_and_symlink_are_rejected(self):
+        self.receipt.write_bytes(b"x" * 1025)
+        with self.assertRaises(ValueError):
+            self.verify()
+        self.receipt.unlink()
+        target = self.root / "outside.meta"
+        target.write_text("tekai-format-v1\ncurrent-format\nraw-digest\nidentity\n")
+        self.receipt.symlink_to(target)
+        with self.assertRaises(ValueError):
+            self.verify()
+
+
 class CommandTests(unittest.TestCase):
     def setUp(self):
         self.process = Mock(pid=12345, returncode=0)
