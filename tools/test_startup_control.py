@@ -22,6 +22,37 @@ import benchmark_runtime as benchmark
 import startup_control as control
 
 
+def evidence_model(blocks=8, repeats=8):
+    """A complete fixed plan with one recorded observation per launch."""
+    report = {'policy': {'blocks': blocks, 'repeats': repeats},
+              'planned_balance': control.schedule_balance(blocks, repeats),
+              'epochs': [], 'commands': []}
+    for block in range(blocks):
+        for planned in control.block_schedule(block):
+            epoch_id = len(report['epochs'])
+            epoch = {**planned, 'epoch_id': epoch_id, 'replacement_generation': epoch_id + 1,
+                     'status': 'complete', 'completed_rounds': 1 + repeats, 'copies': []}
+            for ordinal, path_id in enumerate(planned['copy_order']):
+                epoch['copies'].append({'path_id': path_id, 'label': planned['assignment'][path_id],
+                    'copy_ordinal': ordinal, 'sha256_start': 'fixture-bound-hash',
+                    'source_sha256_start': 'fixture-bound-hash', 'unchanged': True,
+                    'source_unchanged': True})
+            report['epochs'].append(epoch)
+            rounds = [('first_after_copy_hash_verification', 0, planned['first_launch_order'])]
+            rounds.extend(('later', repetition, control.later_order(block, planned['assignment_index'], repetition))
+                          for repetition in range(repeats))
+            for phase, repetition, order in rounds:
+                for ordinal, path_id in enumerate(order):
+                    report['commands'].append({'epoch_id': epoch_id, 'block_index': block,
+                        'assignment_id': planned['assignment_id'], 'path_id': path_id,
+                        'label': planned['assignment'][path_id], 'phase': phase, 'repetition': repetition,
+                        'launch_ordinal': ordinal, 'path_launch_order': list(order), 'status': 'verified',
+                        'command_id': len(report['commands']) + 1,
+                        'seconds_since_copy_verification': 0.1 + ordinal,
+                        **dict.fromkeys(control.STAGES, .01)})
+    return report
+
+
 class ScheduleTests(unittest.TestCase):
     def test_all_assignments_and_equal_artifact_exposure_each_block(self):
         for block in range(8):
@@ -83,6 +114,253 @@ class ScheduleTests(unittest.TestCase):
         for blocks, repeats in ((0, 1), (9, 1), (1, 0), (1, 17), (True, 1), (1, True)):
             with self.assertRaises(ValueError):
                 control.schedule_balance(blocks, repeats)
+
+
+class ObservedProgressTests(unittest.TestCase):
+    def test_complete_plan_counts_observed_commands_and_balance(self):
+        completion, balance = control.observed_progress(evidence_model())
+        self.assertTrue(completion['schedule_complete'])
+        self.assertEqual(completion['completed_epochs'], 64)
+        self.assertEqual(completion['verified_commands'], 2304)
+        self.assertEqual(completion['completed_verified_rounds'], 576)
+        self.assertEqual(completion['verified_replacements'], 256)
+        self.assertEqual(completion['completed_block_indices'], list(range(8)))
+        self.assertTrue(balance['artifact_exposure_balanced'])
+        self.assertTrue(balance['assignment_epoch_positions_balanced'])
+        self.assertTrue(balance['within_block_predecessors_balanced'])
+        self.assertTrue(all(balance['path_positions_balanced'].values()))
+
+    def test_missing_final_epoch_preserves_plan_but_reports_actual_imbalance(self):
+        report = evidence_model()
+        report['epochs'].pop()
+        report['commands'] = [row for row in report['commands'] if row['epoch_id'] < 63]
+        completion, balance = control.observed_progress(report)
+        self.assertTrue(report['planned_balance']['assignment_epoch_positions_balanced'])
+        self.assertFalse(completion['schedule_complete'])
+        self.assertEqual(completion['planned_epochs'], 64)
+        self.assertEqual(completion['completed_epochs'], 63)
+        self.assertEqual(completion['verified_commands'], 2268)
+        self.assertEqual(completion['first_launch_verified_commands'], 252)
+        self.assertEqual(completion['completed_block_indices'], list(range(7)))
+        self.assertFalse(balance['artifact_exposure_balanced'])
+        self.assertFalse(balance['assignment_epoch_positions_balanced'])
+        self.assertFalse(balance['within_block_predecessors_balanced'])
+
+    def test_partial_later_round_counts_only_verified_observations(self):
+        report = evidence_model()
+        report['epochs'] = report['epochs'][:1]
+        report['epochs'][0].update(status='incomplete', completed_rounds=1)
+        report['commands'] = report['commands'][:7]
+        report['commands'][-1]['status'] = 'error'
+        completion, balance = control.observed_progress(report)
+        self.assertFalse(completion['schedule_complete'])
+        self.assertEqual(completion['attempted_commands'], 7)
+        self.assertEqual(completion['verified_commands'], 6)
+        self.assertEqual(completion['failed_commands'], 1)
+        self.assertEqual(completion['completed_epochs'], 0)
+        self.assertEqual(completion['completed_verified_rounds'], 1)
+        self.assertEqual(completion['later_verified_commands'], 2)
+        self.assertFalse(balance['within_epoch_later_positions_balanced'])
+        self.assertFalse(balance['within_epoch_later_reversal_pairs_complete'])
+
+    def test_empty_evidence_never_claims_full_balance(self):
+        report = evidence_model()
+        report.update(epochs=[], commands=[])
+        completion, balance = control.observed_progress(report)
+        self.assertFalse(completion['schedule_complete'])
+        self.assertFalse(balance['artifact_exposure_balanced'])
+        self.assertFalse(balance['assignment_epoch_positions_balanced'])
+        self.assertFalse(balance['within_block_predecessors_balanced'])
+        self.assertFalse(balance['within_epoch_later_positions_balanced'])
+        self.assertFalse(balance['within_epoch_later_reversal_pairs_complete'])
+        self.assertFalse(any(balance['path_positions_balanced'].values()))
+
+    def test_complete_epoch_status_cannot_hide_a_missing_command(self):
+        report = evidence_model()
+        report['commands'].pop()
+        completion, _ = control.observed_progress(report)
+        self.assertEqual(completion['completed_epochs'], 63)
+        self.assertFalse(completion['schedule_complete'])
+        self.assertEqual(completion['completed_verified_rounds'], 575)
+
+    def test_every_fixed_plan_command_prefix_has_exact_observed_counts(self):
+        complete = evidence_model()
+        per_epoch = 4 * (1 + complete['policy']['repeats'])
+        observed_positions = {phase: {path: Counter() for path in control.PATH_IDS}
+                              for phase in ('first_after_copy_hash_verification', 'later')}
+        for length in range(len(complete['commands']) + 1):
+            with self.subTest(length=length):
+                epoch_count = (length + per_epoch - 1) // per_epoch
+                report = {**complete, 'epochs': complete['epochs'][:epoch_count],
+                          'commands': complete['commands'][:length]}
+                if length:
+                    newest = complete['commands'][length - 1]
+                    observed_positions[newest['phase']][newest['path_id']][newest['launch_ordinal']] += 1
+                completion, balance = control.observed_progress(report)
+                full_epochs, partial_commands = divmod(length, per_epoch)
+                first_commands = 4 * full_epochs + min(partial_commands, 4)
+                self.assertEqual(completion['attempted_epochs'], epoch_count)
+                self.assertEqual(completion['completed_epochs'], full_epochs)
+                self.assertEqual(completion['attempted_commands'], length)
+                self.assertEqual(completion['verified_commands'], length)
+                self.assertEqual(completion['completed_verified_rounds'], length // 4)
+                self.assertEqual(completion['verified_replacements'], 4 * epoch_count)
+                self.assertEqual(completion['first_launch_verified_commands'], first_commands)
+                self.assertEqual(completion['later_verified_commands'], length - first_commands)
+                self.assertEqual(completion['completed_block_indices'], list(range(full_epochs // 8)))
+                self.assertEqual(completion['schedule_complete'], length == 2304)
+                self.assertEqual(balance['assignment_epoch_positions_balanced'], full_epochs == 64)
+                self.assertEqual(balance['within_block_predecessors_balanced'], full_epochs == 64)
+                for phase, paths in observed_positions.items():
+                    for path, counts in paths.items():
+                        self.assertEqual(balance['path_ordinal_counts'][phase][path], dict(counts))
+
+
+class ContrastTests(unittest.TestCase):
+    def test_first_later_contrast_keeps_copy_path_and_first_launch_covariates(self):
+        report = evidence_model(blocks=1, repeats=2)
+        path = control.PATH_IDS[0]
+        for row in report['commands']:
+            if row['epoch_id'] == 0 and row['path_id'] == path:
+                row['parent_seconds'] = .02 if row['phase'] == 'first_after_copy_hash_verification' else .01
+        described = control.summaries(report)
+        pairs = described['first_later_comparisons']
+        self.assertEqual(len(pairs), 8 * 4)
+        pair = next(row for row in pairs if row['epoch_id'] == 0 and row['path_id'] == path)
+        first = next(row for row in report['commands'] if row['epoch_id'] == 0 and row['path_id'] == path
+                     and row['phase'] == 'first_after_copy_hash_verification')
+        self.assertTrue(pair['complete'])
+        self.assertEqual(pair['label'], report['epochs'][0]['assignment'][path])
+        self.assertEqual(pair['first_verified_commands'], 1)
+        self.assertEqual(pair['later_verified_commands'], 2)
+        self.assertEqual(pair['first_launch_ordinal'], first['launch_ordinal'])
+        self.assertEqual(pair['seconds_since_copy_verification'], first['seconds_since_copy_verification'])
+        self.assertAlmostEqual(pair['stages']['parent_seconds']['first_over_later'], 2)
+        self.assertAlmostEqual(pair['stages']['parent_seconds']['first_minus_later_seconds'], .01)
+        self.assertTrue(all(row['used_for_gate'] is False for row in pairs))
+
+    def test_incomplete_epoch_or_missing_later_command_has_no_first_later_ratio(self):
+        for reason in ('validation-incomplete', 'later-missing', 'later-error', 'first-error'):
+            with self.subTest(reason=reason):
+                report = evidence_model(blocks=1, repeats=2)
+                path = control.PATH_IDS[0]
+                if reason == 'validation-incomplete':
+                    report['epochs'][0]['status'] = 'incomplete'
+                else:
+                    phase = 'first_after_copy_hash_verification' if reason == 'first-error' else 'later'
+                    selected = next(row for row in report['commands'] if row['epoch_id'] == 0
+                                    and row['path_id'] == path and row['phase'] == phase)
+                    if reason == 'later-missing':
+                        report['commands'].remove(selected)
+                    else:
+                        selected['status'] = 'error'
+                pairs = control.summaries(report)['first_later_comparisons']
+                pair = next(row for row in pairs if row['epoch_id'] == 0 and row['path_id'] == path)
+                self.assertFalse(pair['complete'])
+                self.assertTrue(all(stage['first_over_later'] is None
+                                    and stage['first_minus_later_seconds'] is None
+                                    for stage in pair['stages'].values()))
+
+    def test_zero_later_stage_has_no_ratio(self):
+        report = evidence_model(blocks=1, repeats=2)
+        path = control.PATH_IDS[0]
+        for row in report['commands']:
+            if row['epoch_id'] == 0 and row['path_id'] == path and row['phase'] == 'later':
+                row['capture_setup_seconds'] = 0
+        pair = next(row for row in control.summaries(report)['first_later_comparisons']
+                    if row['epoch_id'] == 0 and row['path_id'] == path)
+        self.assertTrue(pair['complete'])
+        self.assertIsNone(pair['stages']['capture_setup_seconds']['first_over_later'])
+
+    def test_mixed_contrast_uses_one_median_per_replacement(self):
+        report = evidence_model(blocks=1, repeats=3)
+        path = control.PATH_IDS[0]
+        mixed_epochs = [epoch for epoch in report['epochs'] if epoch['kind'] == 'mixed']
+        baseline = [epoch for epoch in mixed_epochs if epoch['assignment'][path] == 'baseline']
+        candidate = [epoch for epoch in mixed_epochs if epoch['assignment'][path] == 'candidate']
+        values = {baseline[0]['epoch_id']: (.001, .01, 1),
+                  baseline[1]['epoch_id']: (.02, .03, .04),
+                  baseline[2]['epoch_id']: (.05, .06, .07),
+                  **{epoch['epoch_id']: (.09, .09, .09) for epoch in candidate}}
+        for row in report['commands']:
+            if row['epoch_id'] in values and row['path_id'] == path and row['phase'] == 'later':
+                row['parent_seconds'] = values[row['epoch_id']][row['repetition']]
+        described = control.summaries(report)
+        pairs = described['mixed_path_phase_comparisons']
+        self.assertEqual(len(pairs), 4 * 2)
+        pair = next(row for row in pairs if row['path_id'] == path and row['phase'] == 'later')
+        self.assertTrue(pair['complete'])
+        self.assertEqual(pair['replacement_counts'], {'baseline': 3, 'candidate': 3})
+        self.assertEqual({row['epoch_id'] for row in pair['replacements']}, set(values))
+        self.assertAlmostEqual(pair['stages']['parent_seconds']['baseline']['median'], .03)
+        self.assertAlmostEqual(pair['stages']['parent_seconds']['candidate']['median'], .09)
+        self.assertAlmostEqual(pair['stages']['parent_seconds']['candidate_over_baseline'], 3)
+        self.assertTrue(all(len(row['launch_ordinals']) == 3
+                            and len(row['seconds_since_copy_verification']) == 3
+                            for row in pair['replacements']))
+        self.assertTrue(all(row['used_for_gate'] is False for row in pairs))
+        self.assertIn('order-confounded', described['mixed_contrast_scope'])
+
+    def test_missing_or_incomplete_mixed_replacement_prevents_contrast(self):
+        for reason in ('missing', 'incomplete', 'failed-command'):
+            with self.subTest(reason=reason):
+                report = evidence_model(blocks=1, repeats=2)
+                epoch = next(row for row in report['epochs'] if row['kind'] == 'mixed')
+                if reason == 'missing':
+                    report['epochs'].remove(epoch)
+                    report['commands'] = [row for row in report['commands'] if row['epoch_id'] != epoch['epoch_id']]
+                elif reason == 'incomplete':
+                    epoch['status'] = 'incomplete'
+                else:
+                    selected = next(row for row in report['commands'] if row['epoch_id'] == epoch['epoch_id'])
+                    selected['status'] = 'error'
+                pairs = control.summaries(report)['mixed_path_phase_comparisons']
+                affected = pairs if reason != 'failed-command' else [row for row in pairs
+                    if row['path_id'] == selected['path_id'] and row['phase'] == selected['phase']]
+                self.assertTrue(affected)
+                self.assertTrue(all(row['complete'] is False for row in affected))
+                self.assertTrue(all(stage['candidate_over_baseline'] is None
+                                    and stage['candidate_minus_baseline_seconds'] is None
+                                    for row in affected for stage in row['stages'].values()))
+
+    def test_contrast_completion_uses_the_same_epoch_validators_as_progress(self):
+        for reason in ('round-count', 'copy-changed', 'source-changed', 'copy-missing', 'copy-duplicate',
+                       'copy-binding', 'duplicate-repetition'):
+            with self.subTest(reason=reason):
+                report = evidence_model(blocks=1, repeats=2)
+                epoch = next(row for row in report['epochs'] if row['kind'] == 'mixed')
+                if reason == 'round-count':
+                    epoch['completed_rounds'] -= 1
+                elif reason == 'copy-changed':
+                    epoch['copies'][0]['unchanged'] = False
+                elif reason == 'source-changed':
+                    epoch['copies'][0]['source_unchanged'] = False
+                elif reason == 'copy-missing':
+                    epoch['copies'].pop()
+                elif reason == 'copy-duplicate':
+                    epoch['copies'][-1] = dict(epoch['copies'][0])
+                elif reason == 'copy-binding':
+                    epoch['copies'][0]['sha256_start'] = 'different-from-bound-source'
+                else:
+                    selected = next(row for row in report['commands'] if row['epoch_id'] == epoch['epoch_id']
+                                    and row['phase'] == 'later' and row['repetition'] == 1)
+                    selected['repetition'] = 0
+                completion, _ = control.observed_progress(report)
+                self.assertEqual(completion['completed_epochs'], 7)
+                self.assertFalse(completion['schedule_complete'])
+                described = control.summaries(report)
+                first_later = [row for row in described['first_later_comparisons'] if row['epoch_id'] == epoch['epoch_id']]
+                self.assertEqual(len(first_later), 4)
+                self.assertTrue(all(row['complete'] is False for row in first_later))
+                self.assertTrue(all(stage['first_over_later'] is None
+                                    and stage['first_minus_later_seconds'] is None
+                                    for row in first_later for stage in row['stages'].values()))
+                mixed = described['mixed_path_phase_comparisons']
+                self.assertEqual(len(mixed), 8)
+                self.assertTrue(all(row['complete'] is False for row in mixed))
+                self.assertTrue(all(stage['candidate_over_baseline'] is None
+                                    and stage['candidate_minus_baseline_seconds'] is None
+                                    for row in mixed for stage in row['stages'].values()))
 
 
 class FixtureFiles(unittest.TestCase):
@@ -199,12 +477,12 @@ class DriverTests(FixtureFiles):
         calls = []
         original_primary = self.primary_path.read_bytes()
         real_copy = control.shutil.copy2
+        initial_bytes = {path.read_bytes(): label for label, path in self.sources.items()}
 
         def execute(supervisor, command, cwd, env):
             supervisor.counter += 1
             path = str(command[0])
-            label = next(label for label, source in self.sources.items()
-                         if benchmark.executable_sha256(Path(path)) == benchmark.executable_sha256(source))
+            label = initial_bytes[Path(path).read_bytes()]
             calls.append({'command': list(map(str, command)), 'cwd': str(cwd), 'env': dict(env), 'label': label})
             if mutation:
                 mutation(Path(path), len(calls))
@@ -281,7 +559,7 @@ class DriverTests(FixtureFiles):
             self.assertFalse(row['used_for_gate'])
         self.assertEqual(report['io_totals']['copy_bytes_read'], sum(epoch['copy_bytes_read'] for epoch in report['epochs']))
         self.assertTrue(self.output.with_suffix('.md').exists())
-        self.assertIn('No A/B pooled ratio', report['summaries']['scope'])
+        self.assertIn('no confidence score, primary rescoring or causal attribution', report['summaries']['scope'])
 
     def test_full_production_plan_remains_bounded_and_protects_primary_and_raw_journal(self):
         journal = self.root / 'primary.raw.fixture.jsonl'
@@ -353,6 +631,240 @@ class DriverTests(FixtureFiles):
         self.assertEqual(len(calls), 12)
         self.assertEqual(len(report['epochs']), 1)
         self.assertTrue(any(not row['unchanged'] for row in report['epochs'][0]['copies']))
+
+    def test_same_size_copy_change_with_restored_mtime_still_fails(self):
+        def mutation(path, count):
+            if count == 12:
+                before = path.stat()
+                content = path.read_bytes()
+                path.write_bytes(bytes([content[0] ^ 1]) + content[1:])
+                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+        code, report, calls = self.run_model(mutation=mutation)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 12)
+        changed = [row for row in report['epochs'][0]['copies'] if not row['unchanged']]
+        self.assertEqual(len(changed), 1)
+        self.assertEqual(changed[0]['identity_start']['size_bytes'], changed[0]['identity_end']['size_bytes'])
+        self.assertEqual(changed[0]['identity_start']['mtime_ns'], changed[0]['identity_end']['mtime_ns'])
+        self.assertNotEqual(changed[0]['identity_start']['ctime_ns'], changed[0]['identity_end']['ctime_ns'])
+        self.assertNotEqual(changed[0]['sha256_start'], changed[0]['sha256_end'])
+
+    def test_source_identity_mutations_stop_before_next_replacement(self):
+        source = self.sources['baseline']
+        original = source.read_bytes()
+        for change in ('same-size-restored-mtime', 'replacement-inode', 'mode'):
+            with self.subTest(change=change):
+                source.write_bytes(original)
+                source.chmod(0o700)
+
+                def mutation(_path, count):
+                    if count != 12:
+                        return
+                    before = source.stat()
+                    if change == 'same-size-restored-mtime':
+                        source.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+                        os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+                    elif change == 'replacement-inode':
+                        replacement = self.root / 'replacement-source'
+                        replacement.write_bytes(original)
+                        replacement.chmod(0o700)
+                        replacement.replace(source)
+                    else:
+                        source.chmod(0o600)
+
+                code, report, calls = self.run_model(mutation=mutation)
+                self.assertEqual(code, 1)
+                self.assertEqual(len(calls), 12)
+                self.assertEqual(len(report['epochs']), 1)
+                self.assertTrue(all(row['unchanged'] for row in report['epochs'][0]['copies']))
+                self.assertTrue(any(not row['source_unchanged'] for row in report['epochs'][0]['copies']))
+                self.assertTrue(any('Selected source identity' in error for error in report['errors']))
+
+    def test_source_xattr_change_fails_without_an_identity_change(self):
+        changed = False
+        source = self.sources['baseline']
+        real_xattrs = control.xattrs
+
+        def observation(path):
+            if Path(path) == source:
+                return {'status': 'observed', 'values': [{'name': 'fixture.xattr', 'bytes': 1,
+                        'sha256': 'changed' if changed else 'original'}]}
+            return real_xattrs(path)
+
+        def mutation(_path, count):
+            nonlocal changed
+            if count == 12:
+                changed = True
+
+        with mock.patch.object(control, 'xattrs', side_effect=observation):
+            code, report, calls = self.run_model(mutation=mutation)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 12)
+        self.assertEqual(len(report['epochs']), 1)
+        self.assertTrue(all(row['source_identity'] == row['source_identity_end']
+                            for row in report['epochs'][0]['copies']))
+        self.assertTrue(all(row['source_xattrs_unchanged'] is False
+                            for row in report['epochs'][0]['copies']))
+
+    def test_unused_source_xattr_change_in_same_binary_epoch_is_detected(self):
+        changed = False
+        unused_source = self.sources['candidate']
+        real_xattrs = control.xattrs
+
+        def observation(path):
+            if Path(path) == unused_source:
+                return {'status': 'observed', 'values': [{'name': 'fixture.xattr', 'bytes': 1,
+                        'sha256': 'changed' if changed else 'original'}]}
+            return real_xattrs(path)
+
+        def mutation(_path, count):
+            nonlocal changed
+            if count == 12:
+                changed = True
+
+        with mock.patch.object(control, 'xattrs', side_effect=observation):
+            code, report, calls = self.run_model(mutation=mutation)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 12)
+        self.assertEqual(len(report['epochs']), 1)
+        epoch = report['epochs'][0]
+        self.assertEqual(epoch['assignment_id'], 'baseline-aa')
+        self.assertTrue(all(row['label'] == 'baseline' and row['unchanged'] and row['source_unchanged']
+                            for row in epoch['copies']))
+        self.assertEqual(set(epoch['source_observations_start']), set(benchmark.LABELS))
+        self.assertEqual(set(epoch['source_observations_end']), set(benchmark.LABELS))
+        self.assertFalse(epoch['source_observations_end']['candidate']['unchanged'])
+        self.assertFalse(epoch['source_observations_end']['candidate']['xattrs_unchanged'])
+        self.assertTrue(any('Selected source identity' in error and 'candidate' in error
+                            for error in report['errors']))
+
+    def test_epoch_xattr_observation_can_recover_from_initial_unavailability(self):
+        changed = False
+        observation_calls = 0
+        unused_source = self.sources['candidate']
+        real_xattrs = control.xattrs
+
+        def observation(path):
+            nonlocal observation_calls
+            if Path(path) == unused_source:
+                observation_calls += 1
+                if observation_calls == 1:
+                    return {'status': 'unavailable', 'values': [], 'reason': 'fixture initial denial'}
+                return {'status': 'observed', 'values': [{'name': 'fixture.xattr', 'bytes': 1,
+                        'sha256': 'changed' if changed else 'original'}]}
+            return real_xattrs(path)
+
+        def mutation(_path, count):
+            nonlocal changed
+            if count == 12:
+                changed = True
+
+        with mock.patch.object(control, 'xattrs', side_effect=observation):
+            code, report, calls = self.run_model(mutation=mutation)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 12)
+        self.assertEqual(len(report['epochs']), 1)
+        epoch = report['epochs'][0]
+        self.assertEqual(epoch['source_observations_start']['candidate']['xattrs']['status'], 'observed')
+        self.assertFalse(epoch['source_observations_end']['candidate']['unchanged'])
+        self.assertFalse(epoch['source_observations_end']['candidate']['xattrs_unchanged'])
+
+    def test_final_source_hash_remains_a_required_check(self):
+        source = self.sources['baseline']
+        captured = control.identity(source)
+        original = source.read_bytes()
+        real_identity = control.identity
+
+        def observation(path):
+            return captured if Path(path) == source else real_identity(path)
+
+        def mutation(_path, count):
+            if count == 96:
+                source.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+
+        with mock.patch.object(control, 'identity', side_effect=observation):
+            code, report, calls = self.run_model(mutation=mutation)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 96)
+        observed = next(row for row in report['protected_inputs'] if row['path'] == str(source))
+        self.assertFalse(observed['unchanged'])
+        self.assertNotEqual(observed['sha256_start'], observed['sha256_end'])
+        self.assertEqual(report['status'], 'error')
+        self.assertTrue(report['primary']['unchanged'])
+
+    def test_source_disappearing_after_final_digest_does_not_prevent_report(self):
+        source = self.sources['baseline']
+        observed_hashes = 0
+        real_hash = benchmark.executable_sha256
+
+        def observation(path):
+            nonlocal observed_hashes
+            digest = real_hash(path)
+            if Path(path) == source:
+                observed_hashes += 1
+                if observed_hashes == 2:
+                    source.unlink()
+            return digest
+
+        with mock.patch.object(benchmark, 'executable_sha256', side_effect=observation):
+            code, report, calls = self.run_model()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 96)
+        self.assertEqual(report['status'], 'error')
+        protected = next(row for row in report['protected_inputs'] if row['path'] == str(source))
+        self.assertFalse(protected['unchanged'])
+        self.assertIsNone(protected['sha256_end'])
+        self.assertTrue(report['primary']['unchanged'])
+        self.assertIn('summaries', report)
+        self.assertTrue(self.output.with_suffix('.md').exists())
+
+    def test_missing_copy_or_source_during_finalization_preserves_partial_report(self):
+        source = self.sources['baseline']
+        original = source.read_bytes()
+        for target in ('copy', 'source'):
+            with self.subTest(target=target):
+                source.write_bytes(original)
+                source.chmod(0o700)
+
+                def mutation(path, count):
+                    if count == 12:
+                        (path if target == 'copy' else source).unlink()
+
+                code, report, calls = self.run_model(mutation=mutation)
+                self.assertEqual(code, 1)
+                self.assertEqual(len(calls), 12)
+                self.assertEqual(report['status'], 'error')
+                self.assertEqual(report['epochs'][0]['status'], 'incomplete')
+                self.assertFalse(report['completion']['schedule_complete'])
+                self.assertTrue(report['primary']['unchanged'])
+                self.assertTrue(self.output.with_suffix('.md').exists())
+
+    def test_hash_inventory_keeps_owned_boundaries_and_removes_epoch_source_reads(self):
+        hashed = []
+        real_hash = benchmark.executable_sha256
+
+        def observe(path):
+            hashed.append(str(Path(path).resolve()))
+            return real_hash(path)
+
+        with mock.patch.object(benchmark, 'executable_sha256', side_effect=observe):
+            code, report, _ = self.run_model()
+        self.assertEqual(code, 0)
+        for source in self.sources.values():
+            self.assertEqual(hashed.count(str(source)), 2)
+        owned = {row['isolated_path'] for epoch in report['epochs'] for row in epoch['copies']}
+        self.assertEqual(len(owned), 4)
+        self.assertEqual(Counter(path for path in hashed if path in owned), dict.fromkeys(owned, 16))
+        self.assertTrue(all('source_sha256_end' not in row
+                            for epoch in report['epochs'] for row in epoch['copies']))
+
+    def test_checkpoints_do_not_recompute_final_summaries(self):
+        with mock.patch.object(control, 'summaries', wraps=control.summaries) as describe:
+            code, report, _ = self.run_model()
+        self.assertEqual(code, 0)
+        self.assertEqual(describe.call_count, 1)
+        self.assertIn('cohorts', report['summaries'])
 
     def test_whole_deadline_expiring_in_setup_never_launches(self):
         code, report, calls = self.run_model(extra=('--budget', '0.000000001'))

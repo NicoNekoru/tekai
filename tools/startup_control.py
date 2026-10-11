@@ -39,6 +39,9 @@ ORDER_CYCLE = tuple(order for offset in range(4)
                                   tuple(reversed(PATH_IDS[offset:] + PATH_IDS[:offset]))))
 STAGES = ('parent_seconds', 'capture_setup_seconds', 'popen_seconds', 'launch_setup_seconds',
           'waiter_dispatch_seconds', 'wait_after_acceptance_seconds', 'cleanup_seconds')
+FIRST_PHASE = 'first_after_copy_hash_verification'
+IO_FIELDS = ('copy_bytes_read', 'copy_bytes_written', 'destination_start_hash_bytes_read',
+             'destination_end_hash_bytes_read', 'source_start_hash_bytes_read', 'source_end_hash_bytes_read')
 
 
 def exact_index(value, maximum, name):
@@ -113,6 +116,119 @@ def schedule_balance(blocks, repeats):
             'within_epoch_later_positions_balanced': repeats % 8 == 0,
             'within_epoch_later_reversal_pairs_complete': repeats % 2 == 0,
             'note': 'Reduced counts retain all assignments and equal artifact exposure, but can leave epoch or within-epoch launch positions incompletely balanced.'}
+
+
+def observed_progress(report):
+    """Count evidence that exists, rather than the schedule we intended to run."""
+    blocks, repeats = report['policy']['blocks'], report['policy']['repeats']
+    epochs, commands = report['epochs'], report['commands']
+    verified = [row for row in commands if row['status'] == 'verified']
+    positions = {phase: {path: Counter() for path in PATH_IDS}
+                 for phase in ('copy', FIRST_PHASE, 'later')}
+    artifact_paths = {path: Counter() for path in PATH_IDS}
+    command_artifacts = {phase: {path: Counter() for path in PATH_IDS} for phase in (FIRST_PHASE, 'later')}
+    artifact_positions = {phase: {path: {label: Counter() for label in benchmark.LABELS} for path in PATH_IDS}
+                          for phase in (FIRST_PHASE, 'later')}
+    assignment_positions = {name: Counter() for name, _ in ASSIGNMENTS}
+    predecessors = Counter()
+    by_epoch = {epoch['epoch_id']: [] for epoch in epochs}
+    for row in verified:
+        positions[row['phase']][row['path_id']][row['launch_ordinal']] += 1
+        command_artifacts[row['phase']][row['path_id']][row['label']] += 1
+        artifact_positions[row['phase']][row['path_id']][row['label']][row['launch_ordinal']] += 1
+        by_epoch[row['epoch_id']].append(row)
+    expected_commands = {(FIRST_PHASE, 0, path) for path in PATH_IDS} | {
+        ('later', index, path) for index in range(repeats) for path in PATH_IDS}
+    attempted_per_epoch = Counter(row['epoch_id'] for row in commands)
+    complete_epochs = [epoch for epoch in epochs if epoch['status'] == 'complete'
+                       and epoch['completed_rounds'] == repeats + 1
+                       and attempted_per_epoch[epoch['epoch_id']] == len(expected_commands)
+                       and len(by_epoch[epoch['epoch_id']]) == len(expected_commands)
+                       and {(row['phase'], row['repetition'], row['path_id']) for row in by_epoch[epoch['epoch_id']]} == expected_commands
+                       and len(epoch['copies']) == 4 and {row['path_id'] for row in epoch['copies']} == set(PATH_IDS)
+                       and all(row.get('unchanged') and row.get('source_unchanged') and row.get('xattrs_unchanged') is not False
+                               and row.get('sha256_start') is not None and row['sha256_start'] == row['source_sha256_start']
+                               for row in epoch['copies'])]
+    complete_ids = {epoch['epoch_id'] for epoch in complete_epochs}
+    verified_copies = 0
+    for epoch in epochs:
+        for row in epoch['copies']:
+            if row.get('sha256_start') is None or row['sha256_start'] != row['source_sha256_start']:
+                continue
+            verified_copies += 1
+            positions['copy'][row['path_id']][row['copy_ordinal']] += 1
+            artifact_paths[row['path_id']][row['label']] += 1
+        if epoch['epoch_id'] in complete_ids:
+            assignment_positions[epoch['assignment_id']][epoch['epoch_ordinal']] += 1
+    for left, right in zip(epochs, epochs[1:]):
+        if left['epoch_id'] in complete_ids and right['epoch_id'] in complete_ids and left['block_index'] == right['block_index']:
+            predecessors[left['assignment_id'], right['assignment_id']] += 1
+
+    def balanced(rows, width):
+        return all(len(row) == width and len(set(row.values())) == 1 for row in rows.values())
+
+    epoch_later_balance, reversal_balance = [], []
+    complete_rounds = 0
+    for epoch in epochs:
+        rows = by_epoch[epoch['epoch_id']]
+        later = [row for row in rows if row['phase'] == 'later']
+        local_positions = {path: Counter(row['launch_ordinal'] for row in later if row['path_id'] == path)
+                           for path in PATH_IDS}
+        epoch_later_balance.append(len(later) == repeats * 4 and balanced(local_positions, 4))
+        rounds = {}
+        for phase, repetition in [(FIRST_PHASE, 0), *(('later', index) for index in range(repeats))]:
+            selected = sorted((row for row in rows if row['phase'] == phase and row['repetition'] == repetition),
+                              key=lambda row: row['launch_ordinal'])
+            if len(selected) == 4 and {row['path_id'] for row in selected} == set(PATH_IDS):
+                complete_rounds += 1
+                rounds[phase, repetition] = [row['path_id'] for row in selected]
+        reversal_balance.append(repeats % 2 == 0 and all(
+            ('later', index) in rounds and ('later', index + 1) in rounds
+            and rounds['later', index + 1] == list(reversed(rounds['later', index]))
+            for index in range(0, repeats, 2)))
+    completed_blocks = [block for block in range(blocks)
+                        if sum(epoch['block_index'] == block for epoch in complete_epochs) == len(ASSIGNMENTS)]
+    planned_commands = blocks * len(ASSIGNMENTS) * 4 * (1 + repeats)
+    completion = {'planned_epochs': blocks * len(ASSIGNMENTS), 'attempted_epochs': len(epochs),
+                  'completed_epochs': len(complete_epochs), 'completed_block_indices': completed_blocks,
+                  'completed_epoch_ids': sorted(complete_ids),
+                  'planned_commands': planned_commands, 'attempted_commands': len(commands),
+                  'verified_commands': len(verified), 'failed_commands': sum(row['status'] == 'error' for row in commands),
+                  'unverified_commands': len(commands) - len(verified),
+                  'planned_rounds': blocks * len(ASSIGNMENTS) * (1 + repeats),
+                  'completed_verified_rounds': complete_rounds, 'verified_replacements': verified_copies,
+                  'first_launch_verified_commands': sum(row['phase'] == FIRST_PHASE for row in verified),
+                  'later_verified_commands': sum(row['phase'] == 'later' for row in verified),
+                  'schedule_complete': len(complete_epochs) == blocks * len(ASSIGNMENTS)
+                      and len(commands) == len(verified) == planned_commands
+                      and complete_rounds == blocks * len(ASSIGNMENTS) * (1 + repeats)}
+    balance = {'blocks': blocks, 'repeats': repeats,
+               'scope': 'Observed verified copy starts and commands. Assignment positions and predecessor pairs require complete epochs. Empty or partial coverage is not full balance.',
+               'artifact_counts_per_path': {path: dict(counts) for path, counts in artifact_paths.items()},
+               'artifact_command_counts_per_path': {phase: {path: dict(counts) for path, counts in rows.items()}
+                                                   for phase, rows in command_artifacts.items()},
+               'artifact_path_ordinal_counts': {phase: {path: {label: dict(counts) for label, counts in rows.items()}
+                                                       for path, rows in paths.items()}
+                                                for phase, paths in artifact_positions.items()},
+               'artifact_command_exposure_balanced': {phase: all(counts['baseline'] == counts['candidate'] > 0
+                                                                 for counts in rows.values())
+                                                       for phase, rows in command_artifacts.items()},
+               'artifact_launch_positions_balanced': {phase: all(balanced(rows, 4) for rows in paths.values())
+                                                       for phase, paths in artifact_positions.items()},
+               'assignment_epoch_ordinal_counts': {name: dict(counts) for name, counts in assignment_positions.items()},
+               'path_ordinal_counts': {phase: {path: dict(counts) for path, counts in rows.items()}
+                                      for phase, rows in positions.items()},
+               'artifact_exposure_balanced': all(counts['baseline'] == counts['candidate'] > 0
+                                                 for counts in artifact_paths.values()),
+               'assignment_epoch_positions_balanced': balanced(assignment_positions, 8),
+               'within_block_ordered_predecessor_counts': [{'previous': previous, 'next': following, 'count': count}
+                                                          for (previous, following), count in sorted(predecessors.items())],
+               'within_block_predecessors_balanced': len(predecessors) == 56 and set(predecessors.values()) == {1},
+               'carryover_scope': report['planned_balance']['carryover_scope'],
+               'path_positions_balanced': {phase: balanced(rows, 4) for phase, rows in positions.items()},
+               'within_epoch_later_positions_balanced': bool(epochs) and all(epoch_later_balance),
+               'within_epoch_later_reversal_pairs_complete': bool(epochs) and all(reversal_balance)}
+    return completion, balance
 
 
 def identity(path):
@@ -250,9 +366,10 @@ def validate_copies(epoch, supervisor=None):
         row['xattrs_unchanged'] = before.get('values') == after.get('values') \
             if before.get('status') == after.get('status') == 'observed' else None
         row.update(validation_end_monotonic=time.monotonic(), validated_end=True)
-        row['end_hash_bytes_read'] = row.get('identity_end', {}).get('size_bytes', 0) if row.get('identity_end') else 0
-        if not row['unchanged']:
-            errors.append('Owned executable bytes or identity changed or disappeared at ' + row['path_id'])
+        row['end_hash_bytes_read'] = row['identity_end']['size_bytes'] \
+            if row.get('identity_end') and row.get('sha256_end') is not None else 0
+        if not row['unchanged'] or row['xattrs_unchanged'] is False:
+            errors.append('Owned executable bytes, identity or observed xattrs changed or disappeared at ' + row['path_id'])
         if supervisor is not None:
             supervisor.remaining()
     return errors
@@ -262,19 +379,29 @@ def validate_epoch_sources(epoch, sources, supervisor=None):
     if epoch.get('source_validation_end_monotonic') is not None:
         return []
     errors = []
+    observations = epoch.setdefault('source_observations_end', {})
     for label, source in sources.items():
         if supervisor is not None:
             supervisor.remaining()
         try:
-            digest = benchmark.executable_sha256(source)
+            current_identity, current_xattrs = identity(source), xattrs(source)
         except OSError:
-            digest = None
+            current_identity, current_xattrs = None, {'status': 'unavailable'}
+        expected = epoch['source_observations_start'][label]
+        before = expected['xattrs']
+        xattrs_unchanged = before.get('values') == current_xattrs.get('values') \
+            if before.get('status') == current_xattrs.get('status') == 'observed' else None
+        unchanged = current_identity == expected['identity'] and xattrs_unchanged is not False
+        observations[label] = {'identity': current_identity, 'xattrs': current_xattrs,
+                               'xattrs_unchanged': xattrs_unchanged, 'unchanged': unchanged}
+        if not unchanged:
+            errors.append('Selected source identity or observed xattrs changed or disappeared during epoch for ' + label)
         for row in epoch['copies']:
             if row['label'] == label:
-                row['source_sha256_end'] = digest
-                row['source_unchanged'] = row['source_sha256_start'] == digest
-                if not row['source_unchanged']:
-                    errors.append('Selected source changed or disappeared during epoch for ' + label)
+                row['source_identity_end'] = current_identity
+                row['source_xattrs_end'] = current_xattrs
+                row['source_xattrs_unchanged'] = xattrs_unchanged
+                row['source_unchanged'] = unchanged
         if supervisor is not None:
             supervisor.remaining()
     epoch['source_validation_end_monotonic'] = time.monotonic()
@@ -282,12 +409,40 @@ def validate_epoch_sources(epoch, sources, supervisor=None):
 
 
 def summaries(report):
-    """Do not pool artifacts, assignments, replacements, paths or first launches."""
+    """Keep copy-level and block/path contrasts separate from gate inference."""
     cohorts = []
     aa = []
+    first_later = []
+    completion, _balance = observed_progress(report)
+    complete_ids = set(completion['completed_epoch_ids'])
+    by_epoch = {epoch['epoch_id']: [] for epoch in report['epochs']}
+    for row in report['commands']:
+        by_epoch[row['epoch_id']].append(row)
     for epoch in report['epochs']:
-        selected = [row for row in report['commands'] if row['epoch_id'] == epoch['epoch_id']]
-        for phase in ('first_after_copy_hash_verification', 'later'):
+        selected = by_epoch[epoch['epoch_id']]
+        for path in PATH_IDS:
+            first = [row for row in selected if row['path_id'] == path and row['phase'] == FIRST_PHASE]
+            later = [row for row in selected if row['path_id'] == path and row['phase'] == 'later']
+            verified_first = [row for row in first if row['status'] == 'verified']
+            verified_later = [row for row in later if row['status'] == 'verified']
+            complete = epoch['epoch_id'] in complete_ids and len(first) == len(verified_first) == 1 \
+                and len(later) == len(verified_later) == report['policy']['repeats']
+            pair = {'block_index': epoch['block_index'], 'epoch_id': epoch['epoch_id'], 'path_id': path,
+                    'assignment_id': epoch['assignment_id'], 'label': epoch['assignment'][path],
+                    'first_verified_commands': len(verified_first), 'later_verified_commands': len(verified_later),
+                    'first_launch_ordinal': first[0]['launch_ordinal'] if first else None,
+                    'seconds_since_copy_verification': first[0].get('seconds_since_copy_verification') if first else None,
+                    'complete': complete, 'used_for_gate': False, 'stages': {}}
+            for stage in STAGES:
+                first_stats = profile.describe([row.get(stage) for row in verified_first], 'seconds')
+                later_stats = profile.describe([row.get(stage) for row in verified_later], 'seconds')
+                numerator, denominator = first_stats.get('median'), later_stats.get('median')
+                valid = complete and numerator is not None and denominator is not None and denominator > 0
+                pair['stages'][stage] = {'first': first_stats, 'later': later_stats,
+                                        'first_over_later': numerator / denominator if valid else None,
+                                        'first_minus_later_seconds': numerator - denominator if valid else None}
+            first_later.append(pair)
+        for phase in (FIRST_PHASE, 'later'):
             phase_rows = [row for row in selected if row['phase'] == phase]
             for path in PATH_IDS:
                 rows = [row for row in phase_rows if row['path_id'] == path]
@@ -317,37 +472,101 @@ def summaries(report):
                                       and row['status'] == 'verified' and stage in row]
                               for path in (numerator, denominator)}
                     described = {path: profile.describe(value, 'seconds') for path, value in values.items()}
-                    expected = 1 if phase == 'first_after_copy_hash_verification' else report['policy']['repeats']
-                    complete = all(len(value) == expected for value in values.values()) and epoch['status'] == 'complete'
+                    expected = 1 if phase == FIRST_PHASE else report['policy']['repeats']
+                    complete = all(len(value) == expected for value in values.values()) and epoch['epoch_id'] in complete_ids
                     bottom = described[denominator].get('median', 0)
                     pair['stages'][stage] = {'numerator': described[numerator], 'denominator': described[denominator],
                                             'ratio_r1_over_r0': described[numerator].get('median', 0) / bottom
                                             if complete and bottom > 0 else None, 'complete': complete}
                 aa.append(pair)
-    return {'scope': 'Descriptive evidence stratified by block, assignment, replacement generation, fixed copy/path, slot, artifact and launch phase. No A/B pooled ratio or causal attribution.',
-            'cohorts': cohorts, 'same_binary_slot_comparisons': aa}
+    mixed = []
+    for block in range(report['policy']['blocks']):
+        epochs = [epoch for epoch in report['epochs'] if epoch['block_index'] == block and epoch['kind'] == 'mixed']
+        if not epochs:
+            continue
+        for path in PATH_IDS:
+            for phase in (FIRST_PHASE, 'later'):
+                replacements = []
+                expected = 1 if phase == FIRST_PHASE else report['policy']['repeats']
+                for epoch in epochs:
+                    rows = [row for row in by_epoch[epoch['epoch_id']] if row['path_id'] == path and row['phase'] == phase]
+                    verified = [row for row in rows if row['status'] == 'verified']
+                    replacements.append({'epoch_id': epoch['epoch_id'], 'assignment_id': epoch['assignment_id'],
+                        'label': epoch['assignment'][path], 'complete': epoch['epoch_id'] in complete_ids
+                            and len(rows) == len(verified) == expected,
+                        'attempted_commands': len(rows), 'verified_commands': len(verified),
+                        'launch_ordinals': [row['launch_ordinal'] for row in verified],
+                        'seconds_since_copy_verification': [row.get('seconds_since_copy_verification') for row in verified],
+                        'stage_medians': {stage: profile.describe([row.get(stage) for row in verified], 'seconds').get('median')
+                                          for stage in STAGES}})
+                counts = Counter(row['label'] for row in replacements)
+                complete = counts == {'baseline': 3, 'candidate': 3} and all(row['complete'] for row in replacements)
+                pair = {'block_index': block, 'path_id': path, 'phase': phase, 'complete': complete,
+                        'replacements': replacements, 'replacement_counts': dict(counts), 'stages': {}, 'used_for_gate': False}
+                for stage in STAGES:
+                    described = {label: profile.describe([row['stage_medians'][stage] for row in replacements
+                                                          if row['label'] == label], 'seconds') for label in benchmark.LABELS}
+                    numerator, denominator = described['candidate'].get('median'), described['baseline'].get('median')
+                    valid = complete and numerator is not None and denominator is not None and denominator > 0
+                    pair['stages'][stage] = {**described, 'candidate_over_baseline': numerator / denominator if valid else None,
+                                            'candidate_minus_baseline_seconds': numerator - denominator if valid else None}
+                mixed.append(pair)
+    return {'scope': 'Descriptive evidence stratified by block, replacement, path, artifact and phase. Within-copy first/later ratios and mixed-assignment block/path contrasts are diagnostics, with no confidence score, primary rescoring or causal attribution.',
+            'mixed_contrast_scope': 'Each replacement supplies one phase median. Three baseline and three candidate replacements are required within one block/path/phase. First-launch ordinal and copy-to-launch delay remain recorded covariates. Per-block artifact contrasts can be order-confounded. Across a complete eight-block schedule each artifact/path appears equally at all four first-launch ordinals. No pooling across blocks, paths or phases.',
+            'cohorts': cohorts, 'same_binary_slot_comparisons': aa,
+            'first_later_comparisons': first_later, 'mixed_path_phase_comparisons': mixed}
 
 
-def persist(report, output):
-    report['summaries'] = summaries(report)
-    payload = json.dumps(report, indent=2, allow_nan=False) + '\n'
+def persist(report, output, final=False):
+    started = time.monotonic()
+    report['completion'], report['balance'] = observed_progress(report)
+    if final:
+        report['summaries'] = summaries(report)
+    payload = json.dumps(report, separators=(',', ':'), allow_nan=False) + '\n'
     if len(payload.encode('utf-8')) > MAX_OUTPUT_BYTES:
         raise ValueError('Startup-control report exceeds the finite 32-MiB output limit')
     output.parent.mkdir(parents=True, exist_ok=True)
     benchmark.atomic_text(output, payload)
-    lines = ['# Separate startup controls', '', f"Diagnostic status `{report['status']}`.", '',
+    completion = report['completion']
+    lines = ['# Separate startup controls', '', f"Diagnostic status `{report['status']}`, exit code `{report.get('exit_code', 'unavailable')}`.", '',
              f"Primary outcome `{report['primary'].get('status', 'unavailable')}` remains unchanged.", '',
              'These commands are unwrapped, with phase profiling disabled. No confidence score or gate is computed.', '',
-             report['summaries']['scope'], '',
-             '## Limits', '', *('- ' + note for note in report['limits']), '',
-             '## Positional balance', '',
-             f"Epoch positions fully balanced across blocks `{report['balance']['assignment_epoch_positions_balanced']}`.",
-             f"Later launch positions fully balanced within each epoch `{report['balance']['within_epoch_later_positions_balanced']}`.", '',
-             report['balance']['carryover_scope'], '',
-             report['balance']['carryover_scope'], '',
+             '## Actual completion', '',
+             f"Completed epochs `{completion['completed_epochs']}/{completion['planned_epochs']}`, attempted `{completion['attempted_epochs']}`.",
+             f"Verified commands `{completion['verified_commands']}/{completion['planned_commands']}`, attempted `{completion['attempted_commands']}`, failed `{completion['failed_commands']}`.",
+             f"Verified complete rounds `{completion['completed_verified_rounds']}/{completion['planned_rounds']}`.",
+             f"Verified first launches `{completion['first_launch_verified_commands']}` and later launches `{completion['later_verified_commands']}`.",
+             f"Complete blocks `{completion['completed_block_indices']}`. Requested schedule complete `{completion['schedule_complete']}`.", '',
+             '## Planned and achieved balance', '', report['balance']['scope'], '',
+             '| Balance check | Planned | Achieved |', '| --- | --- | --- |']
+    for key in ('artifact_exposure_balanced', 'assignment_epoch_positions_balanced', 'within_block_predecessors_balanced',
+                'within_epoch_later_positions_balanced', 'within_epoch_later_reversal_pairs_complete'):
+        lines.append(f"| {key} | {report['planned_balance'][key]} | {report['balance'][key]} |")
+    for phase in ('copy', FIRST_PHASE, 'later'):
+        lines.append(f"| {phase} path ordinal balance | {report['planned_balance']['path_positions_balanced'][phase]} | {report['balance']['path_positions_balanced'][phase]} |")
+    lines.extend(['', '| Path | Verified baseline replacements | Verified candidate replacements |', '| --- | ---: | ---: |'])
+    for path, counts in report['balance']['artifact_counts_per_path'].items():
+        lines.append(f"| {path} | {counts.get('baseline', 0)} | {counts.get('candidate', 0)} |")
+    lines.extend(['', f"Verified first-launch artifact exposure balance `{report['balance']['artifact_command_exposure_balanced'][FIRST_PHASE]}`.",
+                  f"Verified first-launch ordinal balance within each artifact/path `{report['balance']['artifact_launch_positions_balanced'][FIRST_PHASE]}`.", '',
+                  '| Path | Artifact | First ordinal 0 | First ordinal 1 | First ordinal 2 | First ordinal 3 |',
+                  '| --- | --- | ---: | ---: | ---: | ---: |'])
+    for path, labels in report['balance']['artifact_path_ordinal_counts'][FIRST_PHASE].items():
+        for label, counts in labels.items():
+            lines.append(f"| {path} | {label} | " + ' | '.join(str(counts.get(index, 0)) for index in range(4)) + ' |')
+    lines.extend(['', report['balance']['carryover_scope'], '', '## Limits', '',
+                  *('- ' + note for note in report['limits']), '', '## Errors', '',
+                  *('- ' + error.replace('\n', ' ') for error in report['errors'])])
+    if not final:
+        lines.extend(['', 'Progress checkpoint. Full descriptive tables are generated once during finalization.'])
+        benchmark.atomic_text(output.with_suffix('.md'), '\n'.join(lines) + '\n')
+        report['checkpointing']['completed_pairs_before_snapshot'] += 1
+        report['checkpointing']['seconds_before_snapshot'] += time.monotonic() - started
+        return
+    lines.extend(['', report['summaries']['scope'], '',
              '## Stratified commands', '',
              '| Block | Epoch | Assignment | Generation | Path | Artifact | Phase | Verified/attempted | Median command ms | Median Popen span ms |',
-             '| ---: | ---: | --- | ---: | --- | --- | --- | --- | ---: | ---: |']
+             '| ---: | ---: | --- | ---: | --- | --- | --- | --- | ---: | ---: |'])
     for row in report['summaries']['cohorts']:
         def milliseconds(stage):
             value = row['stages'][stage].get('median')
@@ -365,8 +584,27 @@ def persist(report, output):
             return f'{value:.6f}' if value is not None else 'unavailable'
         lines.append(f"| {row['block_index']} | {row['epoch_id']} | {row['label']} | {row['slot']} | {row['phase']} | "
                      f"{ratio('parent_seconds')} | {ratio('popen_seconds')} |")
-    lines.extend(['', '## Errors', '', *('- ' + error.replace('\n', ' ') for error in report['errors'])])
+    lines.extend(['', '## First launch versus later launches of the same copy', '',
+                  'Ratios require a fully validated epoch, one first launch and every requested later launch. Partial evidence remains in JSON with null ratios.', '',
+                  '| Block | Epoch | Path | Artifact | First ordinal | Seconds since verification | Complete | Command first/later | Popen first/later |',
+                  '| ---: | ---: | --- | --- | ---: | ---: | --- | ---: | ---: |'])
+    def formatted(value):
+        return f'{value:.6f}' if value is not None else 'unavailable'
+    for row in report['summaries']['first_later_comparisons']:
+        lines.append(f"| {row['block_index']} | {row['epoch_id']} | {row['path_id']} | {row['label']} | "
+                     f"{row['first_launch_ordinal']} | {formatted(row['seconds_since_copy_verification'])} | {row['complete']} | "
+                     f"{formatted(row['stages']['parent_seconds']['first_over_later'])} | {formatted(row['stages']['popen_seconds']['first_over_later'])} |")
+    lines.extend(['', '## Mixed-assignment contrasts within each block and path', '', report['summaries']['mixed_contrast_scope'], '',
+                  '| Block | Path | Phase | Baseline/candidate replacements | Complete | Command candidate/baseline | Popen candidate/baseline |',
+                  '| ---: | --- | --- | --- | --- | ---: | ---: |'])
+    for row in report['summaries']['mixed_path_phase_comparisons']:
+        counts = row['replacement_counts']
+        lines.append(f"| {row['block_index']} | {row['path_id']} | {row['phase']} | {counts.get('baseline', 0)}/{counts.get('candidate', 0)} | "
+                     f"{row['complete']} | {formatted(row['stages']['parent_seconds']['candidate_over_baseline'])} | "
+                     f"{formatted(row['stages']['popen_seconds']['candidate_over_baseline'])} |")
     benchmark.atomic_text(output.with_suffix('.md'), '\n'.join(lines) + '\n')
+    report['checkpointing']['completed_pairs_before_snapshot'] += 1
+    report['checkpointing']['seconds_before_snapshot'] += time.monotonic() - started
 
 
 def parser():
@@ -390,6 +628,8 @@ def alias_guard(outputs, protected, argument_parser):
 
 
 def run_epochs(report, args, sources, source_hashes, metadata, supervisor, work):
+    source_observations = {label: {'identity': identity(source), 'xattrs': xattrs(source)}
+                           for label, source in sources.items()}
     paths = {path: work / path / 'bin/tekai' for path in PATH_IDS}
     environments, projects = {}, {}
     for slot in benchmark.SLOTS:
@@ -408,21 +648,26 @@ def run_epochs(report, args, sources, source_hashes, metadata, supervisor, work)
             epoch_id = len(report['epochs'])
             epoch = {**planned, 'epoch_id': epoch_id, 'replacement_generation': epoch_id + 1,
                      'status': 'incomplete', 'copies': [], 'completed_rounds': 0,
+                     'source_observations_start': source_observations,
                      'prior_epoch_id': epoch_id - 1 if epoch_id else None,
                      'prior_assignment_id': report['epochs'][-1]['assignment_id'] if epoch_id else None,
                      'block_boundary': bool(epoch_id and planned['epoch_ordinal'] == 0),
                      'start_monotonic': time.monotonic()}
             report['epochs'].append(epoch)
             try:
-                epoch['source_hash_start_monotonic'] = time.monotonic()
+                epoch['source_check_start_monotonic'] = time.monotonic()
                 current_sources = {}
                 for label, source in sources.items():
                     supervisor.remaining()
-                    current_sources[label] = benchmark.executable_sha256(source)
+                    current_sources[label] = {'identity': identity(source), 'xattrs': xattrs(source)}
                     supervisor.remaining()
-                    if current_sources[label] != source_hashes[label]:
-                        raise ValueError('Selected source changed before replacement for ' + label)
-                epoch['source_hash_end_monotonic'] = time.monotonic()
+                    before, after = source_observations[label]['xattrs'], current_sources[label]['xattrs']
+                    if current_sources[label]['identity'] != source_observations[label]['identity'] \
+                            or before.get('status') == after.get('status') == 'observed' \
+                            and before.get('values') != after.get('values'):
+                        raise ValueError('Selected source identity or observed xattrs changed before replacement for ' + label)
+                epoch['source_check_end_monotonic'] = time.monotonic()
+                epoch['source_observations_start'] = current_sources
                 epoch['copy_hash_start_monotonic'] = time.monotonic()
                 for ordinal, path_id in enumerate(epoch['copy_order']):
                     supervisor.remaining()
@@ -432,9 +677,9 @@ def run_epochs(report, args, sources, source_hashes, metadata, supervisor, work)
                     row = {'path_id': path_id, 'slot': path_id.split('/')[0], 'replica': path_id.split('/')[1],
                            'label': label, 'copy_ordinal': ordinal, 'replacement_generation': epoch_id + 1,
                            'source_path': str(sources[label]), 'isolated_path': str(destination),
-                           'source_sha256_start': current_sources[label], 'source_identity': identity(sources[label]),
-                           'source_hash_scope': 'Independently checked for each selected artifact at this epoch start, before any owned copy replacement.',
-                           'source_xattrs': xattrs(sources[label]), 'identity_previous': previous,
+                           'source_sha256_start': source_hashes[label], 'source_identity': current_sources[label]['identity'],
+                           'source_hash_scope': 'Full source hash bound before the run and checked in protected_inputs at run end. Epoch boundaries check identity and available xattrs, not another full source hash.',
+                           'source_xattrs': current_sources[label]['xattrs'], 'identity_previous': previous,
                            'sha256_start': None, 'copy_start_monotonic': time.monotonic()}
                     epoch['copies'].append(row)
                     # Unlink and create each owned file independently. Inode
@@ -451,14 +696,9 @@ def run_epochs(report, args, sources, source_hashes, metadata, supervisor, work)
                     supervisor.remaining()
                 epoch['all_copies_verified_monotonic'] = time.monotonic()
                 epoch['copy_hash_elapsed_seconds'] = epoch['all_copies_verified_monotonic'] - epoch['copy_hash_start_monotonic']
-                epoch['copy_bytes_read'] = sum(row['identity_start']['size_bytes'] for row in epoch['copies'])
-                epoch['copy_bytes_written'] = epoch['copy_bytes_read']
-                epoch['destination_start_hash_bytes_read'] = epoch['copy_bytes_read']
-                epoch['source_start_hash_bytes_read'] = sum(source.stat().st_size for source in sources.values())
-                epoch['replacement_setup_elapsed_seconds'] = epoch['all_copies_verified_monotonic'] - epoch['source_hash_start_monotonic']
-                persist(report, args.output)
+                epoch['replacement_setup_elapsed_seconds'] = epoch['all_copies_verified_monotonic'] - epoch['source_check_start_monotonic']
                 copies = {row['path_id']: row for row in epoch['copies']}
-                rounds = [('first_after_copy_hash_verification', 0, epoch['first_launch_order'])]
+                rounds = [(FIRST_PHASE, 0, epoch['first_launch_order'])]
                 rounds.extend(('later', repetition, later_order(block, epoch['assignment_index'], repetition))
                               for repetition in range(args.repeats))
                 for phase, repetition, order in rounds:
@@ -510,12 +750,15 @@ def run_epochs(report, args, sources, source_hashes, metadata, supervisor, work)
                 errors.extend(validate_epoch_sources(epoch, sources))
                 report['errors'].extend(error for error in errors if error not in report['errors'])
                 epoch['destination_end_hash_bytes_read'] = sum(row.get('end_hash_bytes_read', 0) for row in epoch['copies'])
-                epoch['source_end_hash_bytes_read'] = sum(source.stat().st_size for source in sources.values() if source.is_file())
+                completed_copies = [row for row in epoch['copies'] if row.get('identity_start')]
+                epoch['copy_bytes_read'] = sum(row['identity_start']['size_bytes'] for row in completed_copies)
+                epoch['copy_bytes_written'] = epoch['copy_bytes_read']
+                epoch['destination_start_hash_bytes_read'] = sum(row['identity_start']['size_bytes'] for row in completed_copies
+                                                                if row.get('sha256_start') is not None)
+                epoch['source_start_hash_bytes_read'] = epoch['source_end_hash_bytes_read'] = 0
                 epoch['validation_elapsed_seconds'] = time.monotonic() - epoch['validation_start_monotonic']
-                report['io_totals'] = {name: sum(row.get(name, 0) for row in report['epochs']) for name in
-                    ('copy_bytes_read', 'copy_bytes_written', 'destination_start_hash_bytes_read',
-                     'destination_end_hash_bytes_read', 'source_start_hash_bytes_read', 'source_end_hash_bytes_read')}
-                report['io_totals']['scope'] = 'Logical full-file sizes copied or hashed outside clocks, not physical disk I/O or page-cache misses.'
+                report['io_totals'] = {name: sum(row.get(name, 0) for row in report['epochs']) for name in IO_FIELDS}
+                report['io_totals']['scope'] = 'Logical sizes for completed full copies and successful hashes during epochs. Partial copy/hash attempts are not byte-counted. Run-boundary protected hashes are recorded separately. Not physical disk I/O or page-cache misses.'
                 persist(report, args.output)
 
 
@@ -546,15 +789,18 @@ def main(argv=None):
     protected_paths = [*sources.values(), args.metadata, *primary_paths]
     alias_guard((args.output, args.output.with_suffix('.md')), protected_paths, argument_parser)
     started = time.monotonic()
-    report = {'schema_version': 1, 'report_kind': 'startup-controls', 'status': 'incomplete',
+    report = {'schema_version': 2, 'report_kind': 'startup-controls', 'status': 'incomplete',
               'diagnostic_only': True, 'used_for_gate': False,
               'primary': {'path': str(args.primary_report), 'status': 'unavailable'},
               'policy': {'blocks': args.blocks, 'repeats': args.repeats, 'timeout_seconds': args.timeout,
                          'budget_seconds': args.budget, 'phase_profile_enabled': False, 'wrapped': False,
                          'sampling': 'Fixed complete assignment epochs. No adaptive retries, outlier removal, sample selection or primary rescoring.',
                          'first_launch': 'First after copy/hash verification, kept separate from every fixed later repetition.',
-                         'replacement': 'All four owned fixed files are independently unlinked, copied with copy2 and hash-verified each epoch. End hashes and identities validate before the next replacement.'},
-              'timing': dict(benchmark.TIMING_METADATA), 'balance': schedule_balance(args.blocks, args.repeats),
+                         'replacement': 'All four owned fixed files are independently unlinked, copied with copy2 and hash-verified each epoch. End hashes and identities validate before the next replacement.',
+                         'source_verification': 'Full source hashes at run boundaries, identity and available xattrs at epoch boundaries. Destination full hashes before and after every epoch remain required.'},
+              'timing': dict(benchmark.TIMING_METADATA), 'planned_balance': schedule_balance(args.blocks, args.repeats),
+              'checkpointing': {'completed_pairs_before_snapshot': 0, 'seconds_before_snapshot': 0,
+                               'scope': 'Initial and one compact JSON/short Markdown checkpoint per attempted epoch, plus a final report. Counts and elapsed time cover completed pairs before this snapshot, excluding the write of this snapshot. Full descriptive summaries are built only at finalization.'},
               'stage_scopes': {'waiter_dispatch_seconds': 'Waiter dispatch through worker acceptance, including worker scheduling.',
                                'popen_seconds': benchmark.TIMING_METADATA['popen_scope']},
               'machine': {'system': platform.system(), 'architecture': platform.machine(),
@@ -563,8 +809,9 @@ def main(argv=None):
                          'Replacements can alter inode, code-signing and kernel launch/cache history. Inode reuse is reported. Equal-length paths do not establish equal loader/cache state.',
                          'Independent per-slot environments and one common cwd per slot remain fixed. Both executable replicas within a slot share the same environment and cwd. A cross-slot difference includes slot environment and cwd, not executable path text alone.',
                          'Recorded Popen spans include mandatory ownership registration and diagnostic bookkeeping, not isolated loader time. Blocking wait includes worker/completion scheduling.',
-                         'A/B evidence remains stratified by assignment, replacement/copy, slot and phase. A/A ratios are fixed r1/r0 within one artifact and slot. These observations give no causal verdict or speedup confidence score.',
+                         'A/A ratios are fixed r1/r0 within one artifact and slot. First/later ratios compare the same replacement. Mixed block/path contrasts compare replacement phase medians across the six mixed assignments and can be launch-order-confounded. These observations give no causal verdict or speedup confidence score.',
                          'Copying, executable hashing and report checkpoints perform file I/O outside command clocks and condition caches. At most four live owned copies remain, with no retained per-epoch executable archive.',
+                         'Source full hashes occur at run boundaries. Source identity and available xattrs are checked at epoch boundaries; each destination still has independent full pre-launch and post-epoch hashes. Lower overhead changes observer I/O and is not cache-equivalent to earlier control runs.',
                          'Reduced block/repetition counts can leave positional and predecessor balance incomplete. Diagnostic completion means the requested fixed schedule finished, not that all full-cycle balance flags are true.',
                          'Cyclic/reversed launch orders balance command positions. They do not cover every possible immediate predecessor path pair, so launch-order carryover remains unresolved.',
                          'Optional xattrs are bounded outside clocks. Their hashes are observations, not a code-signing validation. Shared-runner load and cache conditioning remain unresolved.'],
@@ -595,6 +842,7 @@ def main(argv=None):
         metadata = benchmark.load_metadata(args.metadata)
         report['metadata'] = metadata
         source_hashes = profile.bind_primary(primary, metadata, sources)
+        report['source_boundary_hash_bytes_read'] = sum(source.stat().st_size for source in sources.values())
         protected.update({sources[label]: source_hashes[label] for label in benchmark.LABELS})
         if any(not path.is_file() or not os.access(path, os.X_OK) for path in sources.values()):
             raise ValueError('Selected source executables are unavailable')
@@ -618,22 +866,25 @@ def main(argv=None):
         for path, expected in protected.items():
             try:
                 current = benchmark.executable_sha256(path)
+                hash_size = path.stat().st_size
             except OSError:
                 current = None
             report.setdefault('protected_inputs', []).append({'path': str(path), 'sha256_start': expected,
                                                             'sha256_end': current, 'unchanged': current == expected})
+            if path in sources.values() and current is not None:
+                report['source_boundary_hash_bytes_read'] = report.get('source_boundary_hash_bytes_read', 0) + hash_size
             if path == args.primary_report:
                 report['primary'].update(sha256_end=current, unchanged=current == expected)
             if current != expected:
                 report['errors'].append('Protected primary/metadata/source changed or disappeared at ' + str(path))
         signal.signal(signal.SIGTERM, previous_handler)
-        complete = len(report['epochs']) == args.blocks * len(ASSIGNMENTS) \
-            and all(row['status'] == 'complete' for row in report['epochs'])
+        completion, _balance = observed_progress(report)
+        complete = completion['schedule_complete']
         if not complete and not report['errors']:
             report['errors'].append('Fixed startup-control schedule is incomplete')
         report.update(status='error' if report['errors'] else 'complete',
                       elapsed_seconds=time.monotonic() - started, exit_code=int(bool(report['errors'])))
-        persist(report, args.output)
+        persist(report, args.output, final=True)
     return report['exit_code']
 
 

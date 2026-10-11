@@ -557,6 +557,9 @@ jobs:
         # This experiment runs after the immutable primary evidence is uploaded.
         # Its new executable copies, rotations and timings cannot rescore a gate.
         run: |
+          # Preserve the diagnostic command's real status despite the log pipe
+          # and continue-on-error. Capture PIPESTATUS before another command.
+          set +e
           python3 -B tools/startup_control.py \
             --baseline "$BASELINE_TARGET_DIR/release/tekai" \
             --candidate "$CARGO_TARGET_DIR/release/tekai" \
@@ -565,18 +568,32 @@ jobs:
             --output "$PERFORMANCE_REPORT_DIR/startup-control/startup.json" \
             --blocks 8 --repeats 8 --timeout 30 --budget 600 \
             2>&1 | tee "$PERFORMANCE_REPORT_DIR/startup-control.log"
+          startup_status=("${PIPESTATUS[@]}")
+          set -e
+          printf 'exit_code=%s\nlog_exit_code=%s\n' "${startup_status[0]}" "${startup_status[1]}" >> "$GITHUB_OUTPUT"
+          printf 'Startup-control command exit code %s. Log capture exit code %s.\n' "${startup_status[0]}" "${startup_status[1]}"
+          if [[ "${startup_status[0]}" -ne 0 ]]; then
+            exit "${startup_status[0]}"
+          fi
+          exit "${startup_status[1]}"
 
       - name: Publish separate startup-control evidence
         if: ${{ always() && steps.startup_control.outcome != 'skipped' }}
         env:
           STARTUP_CONTROL_OUTCOME: ${{ steps.startup_control.outcome }}
+          STARTUP_CONTROL_EXIT_CODE: ${{ steps.startup_control.outputs.exit_code }}
+          STARTUP_CONTROL_LOG_EXIT_CODE: ${{ steps.startup_control.outputs.log_exit_code }}
         run: |
           if [[ -f "$PERFORMANCE_REPORT_DIR/startup-control/startup.md" ]]; then
             cat "$PERFORMANCE_REPORT_DIR/startup-control/startup.md" >> "$GITHUB_STEP_SUMMARY"
           else
             printf '\n%s\n' 'The separate startup control did not complete. Missing evidence cannot identify a startup cause.' >> "$GITHUB_STEP_SUMMARY"
           fi
-          printf '\nStartup control returned `%s`. This cannot change the strict primary gate.\n' "$STARTUP_CONTROL_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          printf '\nStartup-control command exit code `%s`. Log capture exit code `%s`.\n' "${STARTUP_CONTROL_EXIT_CODE:-unavailable}" "${STARTUP_CONTROL_LOG_EXIT_CODE:-unavailable}" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Startup-control step outcome before continue-on-error `%s`. This cannot change the strict primary gate.\n' "$STARTUP_CONTROL_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -z "$STARTUP_CONTROL_EXIT_CODE" ]]; then
+            printf '%s\n' 'The diagnostic command exit code is unavailable, possibly because the step was interrupted or timed out. Do not infer completion from the tolerated step result.' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload startup controls separately
         if: ${{ always() && steps.startup_control.outcome != 'skipped' }}

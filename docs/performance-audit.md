@@ -954,12 +954,12 @@ primary verdict. The comparison still rejects inconclusive results under the
 same 10 percent variability guard and 10 percent practical slowdown boundary.
 
 The startup experiment uses four independent executable copies at fixed,
-equal-length paths in two isolated slots. Each block runs a baseline-only
+equal-length paths in two isolated slots. Each planned block runs a baseline-only
 same-binary control, a candidate-only same-binary control and all six ways to
-place two baseline and two candidate copies across the four paths. Eight
-blocks balance assignment positions and every ordered predecessor pair within
+place two baseline and two candidate copies across the four paths. The requested
+eight blocks balance assignment positions and every ordered predecessor pair within
 a block. Cross-block boundaries remain separate carryover observations. Eight
-repeated launch rounds balance command positions. Every path therefore receives
+requested repeated launch rounds balance command positions. Every path receives
 both artifacts, while the same-binary controls measure differences without
 changing executable bytes.
 
@@ -972,14 +972,61 @@ system caches or reset code-signing state. Both copies within one slot share
 the same working directory and environment. Cross-slot differences can still
 include those slot effects as well as executable-copy effects.
 
+Full destination hashes and file identities still validate each owned copy
+before the first launch and after every assignment epoch. The source hashes
+bind to the primary artifacts at diagnostic start and are checked again at
+diagnostic end. Epoch boundaries check source file identity and bounded
+extended-attribute observations instead of rereading both full source files.
+This removes redundant source hashing while retaining independent full-byte
+verification of each copied executable. Endpoint checks do not detect every
+temporary change restored between checks. Extended-attribute observations do
+not validate code signatures, and unavailable observations remain unavailable.
+The reduced observer I/O changes cache conditioning, so these timings are not
+cache-equivalent to earlier startup-control runs.
+
+Schema 2 separates the requested `planned_balance` from the achieved `balance`.
+`completion` records planned, attempted and completed epochs. It separately
+counts planned, attempted, verified and failed commands. Round counts distinguish
+the plan from rounds with all four commands verified. Completed block indices
+identify the finished blocks. Read those actual counts before interpreting a
+balance flag. An interrupted prefix can retain valid commands without completing
+an epoch or the requested schedule. Progress checkpoints write compact JSON and
+short Markdown once per attempted epoch, in addition to the initial snapshot.
+Only finalization builds the full descriptive summaries and tables.
+The achieved `artifact_path_ordinal_counts` and
+`artifact_launch_positions_balanced` record first-launch order separately for
+each artifact and path. The Markdown report displays those actual first-launch
+counts, rather than relying on overall path-position balance.
+
 Commands use the primary benchmark's persistent owned-process supervisor,
 without system-time wrappers or opt-in binary instrumentation. Every successful
 `--version` command must match the selected artifact's exact version oracle.
 The report retains all command boundaries and labels observations by block,
-assignment, slot, copy path and launch phase. Descriptive timing summaries do
-not estimate isolated loader time or establish a compiler-code regression.
+assignment, slot, copy path and launch phase. `first_later_comparisons` compare
+the first verified launch with the median of the fixed later repetitions on
+the same path and replacement. `mixed_path_phase_comparisons` retain block, path
+and phase. Each replacement contributes one phase median, and the candidate
+median of three replacements is contrasted with the baseline median of three
+replacements. Both summaries include actual counts and completeness. Ratios
+and differences remain null until the required epochs and commands complete.
+A mixed contrast includes replacement history and assignment order, even when
+executable path and launch phase match. Artifact first-launch orders can differ
+within one block even when the full eight-block schedule balances them. The
+first-launch ordinal and delay since copy verification remain recorded for
+each replacement. Descriptive timing summaries do not estimate isolated loader time or establish a
+compiler-code regression.
 The default experiment has 2,304 launches and a separate 600-second budget.
 Interrupted work keeps an incomplete report and cannot become passing evidence.
+Copy, hash and report work remain outside command clocks. Logical bytes copied
+or hashed describe diagnostic overhead, not physical disk reads or page-cache
+misses.
+
+CI publishes the startup command's actual exit code separately from the step
+outcome that `continue-on-error` tolerates. It also reports the log-capture exit
+code, so a logging failure cannot masquerade as diagnostic completion. A missing
+command exit code is `unavailable`, as can happen after interruption or a step
+timeout. Startup JSON, Markdown and logs remain separate artifacts. Diagnostic
+failure never changes or replaces the previously uploaded primary gate outcome.
 
 Manual core CI dispatch accepts `runner_arch` values `all`, `arm64` and `intel`.
 The default preserves both core architectures and the performance profile's
