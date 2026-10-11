@@ -82,8 +82,13 @@ TrueType glyph selection and composite references check their array domains.
 Reserved glyphs own their output slots once. Unsigned optional indices replace
 the signed sentinel. An owned four-glyph font fixture verifies actual embedded
 outlines, metrics and every byte-code mapping. This is not a complete hostile
-font parser. Post-table custom-name counts still wrap after 256, and malformed
-post/name string records need a rewrite.
+font parser. The post table now has a checked Rust parser and stack-owned indexed
+names. One pass reads the referenced string prefix, and glyph lookups do not
+repeat string walks. Output indices preserve the full unsigned range. An owned
+304-glyph font verifies all 302 custom names across the old 256-name wrap, and
+malformed records fail through ordinary diagnostics. Legacy non-NUL name bytes
+through 255 bytes remain accepted. Other name-table records and font-table
+readers still need checked ownership and bounds.
 
 Initialization now uses ordinary Rust calls. The core modules share one type
 family and checked state imports instead of duplicated external declarations.
@@ -91,9 +96,9 @@ Layout tests pin field offsets and union-byte views to preserve existing format
 files. Rounding and termination also use checked Rust calls. Backend ABI
 connections and global ownership remain unfinished.
 
-The combined local checkpoint through `0b794ae` passed 681 workspace unit tests,
-including 205 engine tests, with 512 property cases. It also passed 14 no-system-TeX lookup
-tests, 11 compiler cache tests, 13 self-contained CLI tests, two SyncTeX/epoch
+The combined local checkpoint through `3dc1ef2` passed 709 workspace unit tests,
+including 233 engine tests, with 512 property cases. It also passed 14 no-system-TeX lookup
+tests, 11 compiler cache tests, 17 self-contained CLI tests, two SyncTeX/epoch
 tests, 364 Python policy tests and all required
 runtime regression probes. Fresh format generation and loading passed. All 99
 pages matched pinned reference pixels and extracted text. Strict Clippy,
@@ -109,12 +114,20 @@ need shared types and invocation-owned state. Necessary OS interfaces remain.
 Repeated in-process execution and leak freedom are not established. Remote
 timing for the new implementation is pending.
 
-The next backend checkpoint must fix reproduced source-level bounds faults in
-Type1 interval copies, normalized ToUnicode sequences and SFD cursor/index
-handling. Invocation ownership also remains a blocker. Core pointers are
-overwritten before the repeat-entry check, fatal exits bypass Rust drops, and
-several destructors leave stale global roots. Catching a panic across existing
-non-unwinding internal calls is not a safe replacement for process termination.
+Checked Rust backend cursors now validate SFD fields, inclusive ranges and
+destination capacity. Map-name assembly reserves its suffix and terminator
+before copies. Type1 copies validate both complete intervals. Overlength
+ToUnicode normalization returns a warning without changing the prior mapping.
+The owned CLI fixtures exercise valid boundary values and each rejection path.
+
+The Rust entry owns its argument bytes and claims permanent single entry before
+reset or initialization. Normal completion returns a typed result after flushing
+streams. One argument set stays alive for globals that borrow it. This prevents
+the entry from replacing borrowed backing or reinitializing global workspace
+pointers. Full invocation-owned engine state is still unfinished. Fatal exits
+bypass Rust drops, and several destructors leave stale global roots. Catching a
+panic across existing non-unwinding internal calls is not a safe replacement for
+process termination.
 
 Cache generation checks use filesystem metadata, including change times, to
 detect concurrent edits. They are not a snapshot filesystem. Cold dependency

@@ -48,6 +48,12 @@ versioning.
   behavior without native locale or error state.
 - Check TrueType character, glyph and metric indices before array access.
   Reserve subset glyphs once and preserve unsigned output indices.
+- Own indexed TrueType post names in Rust, check table and Pascal-string bounds,
+  and preserve custom output names beyond the former 256-name counter wrap.
+- Parse SFD and ToUnicode fields with checked Rust cursors. Validate map-name
+  assembly, Type1 encoding intervals and sequence capacity before writes.
+- Own exact-engine arguments, reject repeat entry before global mutation, and
+  return typed normal completion while retaining process-isolated fatal exits.
 - Stream recorder rows and complete file hashes rather than retaining full
   files or duplicate path lists. Limit output snapshots to eight hash workers.
 - Benchmark verified warm cache hits with all referenced inputs intact, and

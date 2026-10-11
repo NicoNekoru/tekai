@@ -7,9 +7,9 @@ runtime interfaces needed by the default `tekai-engine` build path.
 
 The crate produces a Rust library only. Both the CLI and standalone runner
 call its Rust entrypoint directly. It does not produce `libtekai_engine.a`
-or provide a C `main` entrypoint for external TeX Live linking. Internal
-C calling conventions remain where the translated engine modules and system
-interfaces require them.
+or provide a C `main` entrypoint for external TeX Live linking. Some translated
+backend modules still have internal C-style connections. Those are migration
+work, separate from necessary system interfaces.
 
 The engine is built entirely by Cargo and does not link a system TeX engine,
 Kpathsea, libpng, or PDF library. Packages, fonts, maps, encodings, and the
@@ -27,7 +27,14 @@ rebuild, and tests compare the embedded bytes with their source files. This
 reduces build-folder size without stripping debugger information or requiring
 an additional compiler, download, or runtime file beside the executable.
 
-The default CLI invokes this engine in process through an internal entrypoint.
+The default CLI starts a dedicated child process using the same executable.
+That child calls the library's unsafe Rust `run_from_args` entry with owned
+argument bytes. The entry accepts one invocation per process, before any reset
+or initialization. Normal completion returns a typed result after flushing
+engine streams. Argument backing remains alive because generated globals borrow
+it. Other engine state is not torn down, and fatal paths still terminate the
+process. This is not a reusable or concurrent in-process engine API.
+
 For focused debugging, build its standalone executable with:
 
 ```sh

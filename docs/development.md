@@ -417,11 +417,12 @@ counters for state input counts, freshness checks and TeX execution routes.
 The finer routes separate state reading from TOML parsing, metadata checks
 from content/effective-source hashing, memo work, lookup-session resets,
 mode-key generation and report serialization. Their scopes overlap, so their
-durations must not be summed into a total. The exact native
-engine exits without returning to the Rust CLI, so direct engine commands do
-not currently emit the phase record. Parent cache/build commands can report
+durations must not be summed into a total. Dedicated exact-engine children skip
+the parent CLI profiler and do not currently emit the phase record. Normal
+engine completion returns a typed result to the child runner, while fatal paths
+still exit directly. Parent cache/build commands can report
 argument/configuration setup, state loading, freshness checks and TeX subprocess
-waits. Native format initialization remains explicitly unmeasured.
+waits. Engine format initialization remains explicitly unmeasured.
 
 ```sh
 python3 -B tools/profile_runtime.py --candidate target/release/tekai \
