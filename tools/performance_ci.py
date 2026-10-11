@@ -2,8 +2,8 @@
 """Bounded performance regression checks for macOS and Linux.
 
 Correctness assertions determine the exit status. Wall time and peak RSS are
-observations, never speed thresholds. Known open audit failures are labeled
-separately, and unrelated errors in those fixtures still fail the run. Every
+observations, never speed thresholds. Every reproduced correctness issue is
+a required check. Historical report status labels remain readable. Every
 compiler, timer, converter and helper runs in an owned process group. All TeX
 inputs, home directories and caches live in one temporary fixture directory.
 """
@@ -36,13 +36,9 @@ MAX_STDOUT_BYTES = 1024 * 1024
 LOG_TAIL_BYTES = 8192
 HASH_CHUNK_BYTES = 1024 * 1024
 STATUSES = ('passed', 'failed', 'known_failure', 'unexpected_pass', 'observation', 'skipped')
-KNOWN_ISSUES = {
-    'lookup-precedence': 'New higher-priority inputs do not invalidate the build cache.',
-    'source-boundaries': 'Textual end markers can hide active source changes.',
-    'edit-race': 'Changes during compilation can publish a stale PDF as fresh.',
-    'format-cache': 'Replacing a compressed format can reuse its stale raw companion.',
-    'cancel': 'Cancellation can leave the engine running.',
-}
+# Retain historical status decoding, but every reproduced release blocker is
+# now a required assertion. No active fixture has a known-failure exemption.
+KNOWN_ISSUES = {}
 OPEN_SCALING = {
     'format-many': 'Repeated prefix scans and string edits can be quadratic.',
     'lint-long': 'Column lookup can repeat prefix scans.',
@@ -50,7 +46,6 @@ OPEN_SCALING = {
     'unrelated-sidecars': 'Settled caches load unrelated sidecar outputs.',
     'pdf-shared-resources': 'Shared resources are cloned for each page.',
     'expansion-scopes': 'Mutating local groups clone the expansion state.',
-    'aux-concurrency': 'Auxiliary converters have no shared concurrency ceiling.',
 }
 
 
@@ -253,7 +248,7 @@ def _jpeg_pdf_evidence(pdf, content):
 
 
 def verdict(case, values):
-    """Classify fixture evidence. Only an exact known reproduction is an xfail."""
+    """Classify required fixture evidence without active xfail exemptions."""
     checks = []
 
     def check(name, condition):
@@ -283,23 +278,39 @@ def verdict(case, values):
         known = control_ok and values.get('stale_cache_hit') is True
     elif case == 'edit-race':
         check('engine consumed the old source before the edit', 'OLD-CONTENT' in values.get('first_text', ''))
+        first = values.get('first', {})
+        check('changed generation is explicitly rejected', first.get('code') == 1
+              and not first.get('timeout') and not first.get('stdout_truncated')
+              and values.get('generation_rejected') is True)
+        check('changed generation never publishes cache state', values.get('state_exists_after_race') is False)
         control_ok = all(item['passed'] for item in checks)
-        check('next build contains the new text', 'NEW-CONTENT' in values.get('next_text', '')
+        check('next build rebuilds and contains the new text', values.get('next_build', {}).get('skipped') is False
+              and 'NEW-CONTENT' in values.get('next_text', '')
               and 'OLD-CONTENT' not in values.get('next_text', ''))
         known = control_ok and values.get('stale_cache_hit') is True
     elif case == 'format-cache':
         check('initial format emits old text', 'OLD-FORMAT' in values.get('first_text', ''))
-        check('fresh raw companion emits new text', 'NEW-FORMAT' in values.get('refreshed_text', ''))
-        control_ok = all(item['passed'] for item in checks)
         check('replacement format emits new text', 'NEW-FORMAT' in values.get('second_text', '')
               and 'OLD-FORMAT' not in values.get('second_text', ''))
-        known = control_ok and values.get('stale_raw_companion') is True
+        check('in-place replacement emits old text', 'OLD-FORMAT' in values.get('inplace_text', '')
+              and 'NEW-FORMAT' not in values.get('inplace_text', ''))
+        check('fixture preserves atomic replacement mtime', values.get('atomic_mtime_preserved'))
+        check('fixture preserves in-place replacement mtime', values.get('inplace_mtime_preserved'))
+        check('adjacent installation companion remains unchanged', values.get('adjacent_companion_unchanged'))
+        check('corrupted private cache recovers new format text', values.get('private_cache_recovered')
+              and 'NEW-FORMAT' in values.get('refreshed_text', '')
+              and 'OLD-FORMAT' not in values.get('refreshed_text', ''))
     elif case == 'cancel':
         check('engine child started', values.get('child_started'))
         check('parent exited after termination', values.get('parent_exited'))
         control_ok = all(item['passed'] for item in checks)
         check('engine child exits with its parent', values.get('child_survived') is False)
         known = control_ok and values.get('child_survived') is True
+    elif case == 'aux-concurrency':
+        check('all converter jobs complete successfully', values.get('code') == 0
+              and not values.get('timeout') and values.get('completed_converters') == values.get('jobs'))
+        check('shared converter concurrency never exceeds eight',
+              type(values.get('peak_converters')) is int and 0 < values['peak_converters'] <= 8)
     elif case == 'pdf-parent-cycle':
         check('cyclic PDF import returns a normal engine input error', normal_engine_input_error(values))
         check('cyclic PDF import identifies the parent-chain cycle',
@@ -784,15 +795,26 @@ class PerformanceCI(Audit):
             return False
         return True
 
-    def snapshot(self, process):
-        result = self.run([self.ps, '-axo', 'pid=,ppid=,pgid=,stat=,command='], self.work)
+    def snapshot(self, process, observed_child=None):
+        selector = ['-p', str(observed_child['pid'])] if observed_child else ['-axo']
+        if observed_child:
+            selector += ['-o']
+        result = self.run([self.ps, *selector, 'pid=,ppid=,pgid=,stat=,command='], self.work)
+        if observed_child and result.get('code') == 1 and not result.get('stdout') \
+                and not result.get('stderr_tail') and not result.get('timeout'):
+            return []
         if result.get('code') != 0 or result.get('stdout_truncated'):
             raise RuntimeError('Owned-group process inspection failed')
         rows = []
         for line in result['stdout'].splitlines():
             fields = line.strip().split(None, 4)
-            if len(fields) == 5 and fields[0].isdigit() and fields[2] == str(process.pid):
-                rows.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
+            if len(fields) != 5 or not all(field.isdigit() for field in fields[:3]):
+                continue
+            owned = fields[2] == str(process.pid) or fields[1] == str(process.pid)
+            remembered = observed_child and fields[0] == str(observed_child['pid']) \
+                and fields[2] == str(observed_child['pgid']) and fields[4] == observed_child['command']
+            if owned or remembered:
+                rows.append({'pid': int(fields[0]), 'ppid': int(fields[1]), 'pgid': int(fields[2]),
                              'stat': fields[3], 'command': fields[4]})
         return rows
 
@@ -1026,8 +1048,12 @@ class PerformanceCI(Audit):
             (project / 'main.tex').write_text(source.replace('OLD-CONTENT', 'NEW-CONTENT'), encoding='utf-8')
             process.wait(timeout=max(0.001, deadline - time.monotonic()))
             stdout, stderr, truncated = self.captured(process)
-            first = self.parsed({'code': process.returncode, 'stdout': stdout, 'stderr_tail': stderr,
-                                 'stdout_truncated': truncated})
+            first = {'code': process.returncode, 'stdout': stdout, 'stderr_tail': stderr,
+                     'stdout_truncated': truncated, 'timeout': False}
+            generation_rejected = (
+                f'inputs or search directories changed during compilation at {project / "main.tex"}.' in stderr
+                and 'The PDF may be outdated, rerun the build' in stderr)
+            state_exists = (project / 'build/.tekai-main.state.toml').exists()
             first_text = self.text(project)
         except subprocess.TimeoutExpired:
             process.timed_out = True
@@ -1036,7 +1062,9 @@ class PerformanceCI(Audit):
             self.stop(process)
         following = self.parsed(self.run(command, project))
         following_text = self.text(project)
-        self.record('edit-race', first=first, first_text=first_text, next_build=following,
+        self.record('edit-race', first=first, first_text=first_text,
+                    generation_rejected=generation_rejected, state_exists_after_race=state_exists,
+                    next_build=following,
                     next_text=following_text, stale_cache_hit=following.get('skipped') is True
                     and 'OLD-CONTENT' in following_text)
 
@@ -1062,7 +1090,7 @@ class PerformanceCI(Audit):
             process.wait(timeout=max(0.001, deadline - time.monotonic()))
             # The brief grace period measures cancellation, not compiler speed.
             time.sleep(0.2)
-            survivors = [row for row in self.snapshot(process)
+            survivors = [row for row in self.snapshot(process, observed_child=child)
                          if row['pid'] == child['pid'] and not row['stat'].startswith('Z')]
             self.record('cancel', child_started=True, parent_exited=True,
                         child_survived=bool(survivors), child_snapshot=survivors)
@@ -1079,13 +1107,15 @@ class PerformanceCI(Audit):
                                + '\n\\fi\n\\end{document}\n')
         programs = project / 'programs'
         programs.mkdir()
+        markers = project / 'build/concurrency-markers'
+        markers.mkdir(parents=True)
         converter = programs / 'epstopdf'
         blank = pdf_bytes([b'<< /Type /Catalog /Pages 2 0 R >>',
                            b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
                            b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>',
                            b'<< /Length 0 >>\nstream\n\nendstream'])
         converter.write_text(f'#!{sys.executable}\nimport os, sys, time\nfrom pathlib import Path\n'
-                             f'root = Path({str(project)!r})\n'
+                             f'root = Path({str(markers)!r})\n'
                              'marker = root / ("active-" + str(os.getpid()))\nmarker.touch()\n'
                              'try:\n time.sleep(0.5)\n'
                              ' output = next(arg.split("=", 1)[1] for arg in sys.argv[1:] if arg.startswith("--outfile="))\n'
@@ -1099,13 +1129,15 @@ class PerformanceCI(Audit):
         try:
             deadline = time.monotonic() + self.args.timeout
             while process.poll() is None and time.monotonic() < deadline:
-                peak = max(peak, len(list(project.glob('active-*'))))
+                peak = max(peak, len(list(markers.glob('active-*'))))
                 time.sleep(0.01)
             timed_out = process.poll() is None
             process.timed_out = timed_out
             stdout, stderr, _ = self.captured(process)
             self.record('aux-concurrency', jobs=count, peak_converters=peak,
-                        concurrency_gate=False, code=None if timed_out else process.returncode,
+                        completed_converters=sum((project / 'build' / f'image{i}-eps-converted-to.pdf').is_file()
+                                                 for i in range(count)),
+                        concurrency_gate=True, code=None if timed_out else process.returncode,
                         timeout=timed_out, stdout=stdout, stderr_tail=stderr)
         finally:
             self.stop(process)
@@ -1223,7 +1255,7 @@ def parser():
     result.add_argument('--require-pdftotext', action='store_true')
     result.add_argument('--require-expansion', action='store_true')
     result.add_argument('--fail-on-skip', action='store_true')
-    result.add_argument('--strict-known-failures', action='store_true', help='Also fail on the exact known open bugs')
+    result.add_argument('--strict-known-failures', action='store_true', help='Refuse any future known-failure exemptions')
     return result
 
 

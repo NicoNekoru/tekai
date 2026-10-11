@@ -71,53 +71,78 @@ class VerdictTests(unittest.TestCase):
         evidence.update(next_build={'skipped': True}, text='OLD-CHOICE', stale_cache_hit=True)
         self.assertEqual(self.status('database-identity', **evidence), 'failed')
 
-    def test_known_lookup_failure_requires_a_working_forced_control(self):
+    def test_lookup_precedence_is_required_even_with_a_working_forced_control(self):
         evidence = dict(next_build={'skipped': True}, text='OLD-CHOICE', forced_text='NEW-CHOICE',
                         located={'code': 0}, stale_cache_hit=True)
-        self.assertEqual(self.status('lookup-precedence', **evidence), 'known_failure')
+        self.assertEqual(self.status('lookup-precedence', **evidence), 'failed')
         evidence['forced_text'] = 'OLD-CHOICE'
         self.assertEqual(self.status('lookup-precedence', **evidence), 'failed')
 
-    def test_known_failure_cannot_hide_a_resolver_failure(self):
+    def test_lookup_precedence_cannot_hide_a_resolver_failure(self):
         evidence = dict(next_build={'skipped': True}, text='OLD-CHOICE', forced_text='NEW-CHOICE',
                         located={'code': 1}, stale_cache_hit=True)
         self.assertEqual(self.status('lookup-precedence', **evidence), 'failed')
 
-    def test_known_lookup_fix_is_an_unexpected_pass(self):
+    def test_lookup_precedence_fix_is_a_required_pass(self):
         evidence = dict(next_build={'skipped': False}, text='NEW-CHOICE', forced_text='NEW-CHOICE',
                         located={'code': 0}, stale_cache_hit=False)
-        self.assertEqual(self.status('lookup-precedence', **evidence), 'unexpected_pass')
+        self.assertEqual(self.status('lookup-precedence', **evidence), 'passed')
 
-    def test_known_fixture_infrastructure_error_fails(self):
-        for case in ci.KNOWN_ISSUES:
+    def test_release_fixture_infrastructure_error_fails(self):
+        self.assertEqual(ci.KNOWN_ISSUES, {})
+        for case in ('lookup-precedence', 'source-boundaries', 'edit-race', 'format-cache', 'cancel'):
             with self.subTest(case=case):
                 self.assertEqual(self.status(case, exception='read failed'), 'failed')
 
     def test_source_boundaries_require_distinct_mtime_and_forced_output(self):
         evidence = dict(next_build={'skipped': True}, text='OLD-CONTENT', forced_text='NEW-CONTENT',
                         mtime_changed=True, stale_cache_hit=True)
-        self.assertEqual(self.status('source-boundaries', **evidence), 'known_failure')
+        self.assertEqual(self.status('source-boundaries', **evidence), 'failed')
         evidence['mtime_changed'] = False
         self.assertEqual(self.status('source-boundaries', **evidence), 'failed')
 
     def test_edit_race_requires_proof_of_input_consumption(self):
+        evidence = dict(first={'code': 1}, generation_rejected=True, state_exists_after_race=False,
+                        first_text='OLD-CONTENT', next_build={'skipped': False}, next_text='NEW-CONTENT',
+                        stale_cache_hit=False)
+        self.assertEqual(self.status('edit-race', **evidence), 'passed')
+        for changed in ({'first': {'code': 0}}, {'first': {'code': 1, 'timeout': True}},
+                        {'first': {'code': 1, 'stdout_truncated': True}}, {'generation_rejected': False},
+                        {'state_exists_after_race': True}, {'next_build': {'skipped': True}},
+                        {'first_text': 'NEW-CONTENT'}, {'next_text': 'OLD-CONTENT'}):
+            with self.subTest(changed=changed):
+                self.assertEqual(self.status('edit-race', **{**evidence, **changed}), 'failed')
         evidence = dict(first_text='OLD-CONTENT', next_text='OLD-CONTENT', stale_cache_hit=True)
-        self.assertEqual(self.status('edit-race', **evidence), 'known_failure')
+        self.assertEqual(self.status('edit-race', **evidence), 'failed')
         evidence['first_text'] = 'NEW-CONTENT'
         self.assertEqual(self.status('edit-race', **evidence), 'failed')
 
-    def test_format_cache_requires_fresh_companion_control(self):
-        evidence = dict(first_text='OLD-FORMAT', second_text='OLD-FORMAT', refreshed_text='NEW-FORMAT',
-                        stale_raw_companion=True)
-        self.assertEqual(self.status('format-cache', **evidence), 'known_failure')
-        evidence['refreshed_text'] = 'OLD-FORMAT'
-        self.assertEqual(self.status('format-cache', **evidence), 'failed')
+    def test_format_cache_requires_source_updates_and_private_cache_recovery(self):
+        evidence = dict(first_text='OLD-FORMAT', second_text='NEW-FORMAT', inplace_text='OLD-FORMAT',
+                        refreshed_text='NEW-FORMAT', atomic_mtime_preserved=True,
+                        inplace_mtime_preserved=True, adjacent_companion_unchanged=True,
+                        private_cache_recovered=True)
+        self.assertEqual(self.status('format-cache', **evidence), 'passed')
+        for changed in ({'second_text': 'OLD-FORMAT'}, {'inplace_text': 'NEW-FORMAT'},
+                        {'refreshed_text': 'OLD-FORMAT'}, {'atomic_mtime_preserved': False},
+                        {'inplace_mtime_preserved': False}, {'adjacent_companion_unchanged': False},
+                        {'private_cache_recovered': False}):
+            with self.subTest(changed=changed):
+                self.assertEqual(self.status('format-cache', **{**evidence, **changed}), 'failed')
 
     def test_cancellation_requires_child_and_parent_control(self):
         evidence = dict(child_started=True, parent_exited=True, child_survived=True)
-        self.assertEqual(self.status('cancel', **evidence), 'known_failure')
+        self.assertEqual(self.status('cancel', **evidence), 'failed')
         evidence['child_started'] = False
         self.assertEqual(self.status('cancel', **evidence), 'failed')
+
+    def test_auxiliary_concurrency_is_a_required_count_gate(self):
+        evidence = dict(code=0, jobs=32, completed_converters=32, peak_converters=8)
+        self.assertEqual(self.status('aux-concurrency', **evidence), 'passed')
+        for changed in ({'peak_converters': 9}, {'peak_converters': 0},
+                        {'completed_converters': 31}, {'timeout': True}, {'code': 1}):
+            with self.subTest(changed=changed):
+                self.assertEqual(self.status('aux-concurrency', **{**evidence, **changed}), 'failed')
 
     def test_pdf_cycle_requires_a_controlled_parent_chain_rejection(self):
         evidence = dict(code=1, engine_log='! pdfTeX error: xpdf: cyclic PDF page Parent chain\n',
@@ -878,13 +903,41 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual([row['pid'] for row in rows], [100, 101])
         self.assertNotIn('secret', str(rows))
 
+    def test_snapshot_includes_direct_children_with_their_own_groups(self):
+        self.audit.ps = '/unused/ps'
+        text = '100 1 100 S own command\n101 100 101 S engine\n200 1 200 S unrelated\n'
+        with patch.object(self.audit, 'run', return_value={'code': 0, 'stdout': text}):
+            rows = self.audit.snapshot(Mock(pid=100))
+        self.assertEqual([row['pid'] for row in rows], [100, 101])
+        self.assertEqual(rows[1]['pgid'], 101)
+
+    def test_cancellation_snapshot_observes_an_orphan_outside_the_parent_group(self):
+        self.audit.ps = '/unused/ps'
+        observed = dict(pid=101, pgid=101, command='fixture __tekai-engine main.tex')
+        text = '101 1 101 S fixture __tekai-engine main.tex\n'
+        with patch.object(self.audit, 'run', return_value={'code': 0, 'stdout': text}) as run:
+            rows = self.audit.snapshot(Mock(pid=100), observed_child=observed)
+        self.assertEqual([row['pid'] for row in rows], [101])
+        self.assertIn('-p', run.call_args.args[0])
+        with patch.object(self.audit, 'run', return_value={'code': 0, 'stdout': text.replace('fixture', 'unrelated')}):
+            self.assertEqual(self.audit.snapshot(Mock(pid=100), observed_child=observed), [])
+
+    def test_missing_child_is_not_confused_with_denied_inspection(self):
+        observed = dict(pid=101, pgid=101, command='engine')
+        with patch.object(self.audit, 'run', return_value={'code': 1, 'stdout': '', 'stderr_tail': ''}):
+            self.assertEqual(self.audit.snapshot(Mock(pid=100), observed_child=observed), [])
+        with patch.object(self.audit, 'run', return_value={'code': 1, 'stdout': '', 'stderr_tail': 'denied'}):
+            with self.assertRaises(RuntimeError):
+                self.audit.snapshot(Mock(pid=100), observed_child=observed)
+
     def test_report_artifacts_distinguish_outcomes_and_separate_timings(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.audit.record('input-identity', **cache_evidence(), seconds=42, peak_mib=100)
             self.audit.record('edit-race', first_text='OLD-CONTENT', next_text='OLD-CONTENT', stale_cache_hit=True)
         report = json.loads(self.args.output.read_text())
         self.assertEqual(report['summary']['passed'], 1)
-        self.assertEqual(report['summary']['known_failure'], 1)
+        self.assertEqual(report['summary']['failed'], 1)
+        self.assertEqual(report['summary']['known_failure'], 0)
         self.assertNotIn('seconds', report['results'][0]['evidence'])
         self.assertEqual(report['fixture_timing_observations'][0]['fields']['seconds'], 42)
         summary = self.args.output.with_suffix('.md').read_text()

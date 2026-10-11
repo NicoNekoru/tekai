@@ -9,6 +9,7 @@ reaps its direct child.
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -290,11 +291,16 @@ class Audit:
                 time.sleep(0.002)
             (project / 'main.tex').write_text(source.replace('OLD-CONTENT', 'NEW-CONTENT'))
             stdout, stderr = process.communicate(timeout=self.args.timeout)
-            first = self.parsed({'code': process.returncode, 'stdout': stdout, 'stderr_tail': stderr})
+            first = {'code': process.returncode, 'stdout': stdout, 'stderr_tail': stderr, 'timeout': False}
+            generation_rejected = (
+                f'inputs or search directories changed during compilation at {project / "main.tex"}.' in stderr
+                and 'The PDF may be outdated, rerun the build' in stderr)
+            state_exists = (project / 'build/.tekai-main.state.toml').exists()
             first_text = self.text(project)
             next_build = self.parsed(self.run(command, project, env))
             next_text = self.text(project)
             self.record('edit-race', first=first, first_text=first_text,
+                        generation_rejected=generation_rejected, state_exists_after_race=state_exists,
                         next_build=next_build, next_text=next_text,
                         stale_cache_hit=next_build['skipped'] and 'OLD-CONTENT' in next_text)
         finally:
@@ -379,30 +385,61 @@ class Audit:
         raw = project / 'active.fmt.raw'
         # Exercise gzip materialization even if dump compression defaults change.
         old = (project / 'old.fmt').read_bytes()
-        active.write_bytes(old if old.startswith(b'\x1f\x8b') else gzip.compress(old))
+        old = old if old.startswith(b'\x1f\x8b') else gzip.compress(old, mtime=0)
+        new = (project / 'new.fmt').read_bytes()
+        new = new if new.startswith(b'\x1f\x8b') else gzip.compress(new, mtime=0)
+        active.write_bytes(old)
+        # An adjacent companion belongs to the installation, not our cache.
+        poison = b'not a valid format companion\n'
+        raw.write_bytes(poison)
+        raw.chmod(0o400)
+        active.chmod(0o400)
+        identity = active.stat()
         (project / 'build').mkdir()
         command = [*base, '-fmt=active', '-jobname=main',
                    f'-output-directory={project / "build"}', 'main.tex']
         first = self.run(command, project, env)
-        if first.get('code') != 0 or not raw.is_file():
-            raise RuntimeError(f'Format companion fixture failed: {first}')
+        if first.get('code') != 0:
+            raise RuntimeError(f'Format cache fixture failed: {first}')
         first_text = self.text(project)
-        new = (project / 'new.fmt').read_bytes()
         replacement = project / 'replacement.fmt'
-        replacement.write_bytes(new if new.startswith(b'\x1f\x8b') else gzip.compress(new))
+        replacement.write_bytes(new)
+        os.utime(replacement, ns=(identity.st_atime_ns, identity.st_mtime_ns))
+        replacement.chmod(0o400)
         replacement.replace(active)
         second = self.run(command, project, env)
         if second.get('code') != 0:
             raise RuntimeError(f'Replaced format fixture failed: {second}')
         second_text = self.text(project)
-        raw.unlink()
+        atomic_mtime_preserved = active.stat().st_mtime_ns == identity.st_mtime_ns
+        active.chmod(0o600)
+        active.write_bytes(old)
+        os.utime(active, ns=(identity.st_atime_ns, identity.st_mtime_ns))
+        inplace = self.run(command, project, env)
+        if inplace.get('code') != 0:
+            raise RuntimeError(f'In-place format fixture failed: {inplace}')
+        inplace_text = self.text(project)
+        inplace_mtime_preserved = active.stat().st_mtime_ns == identity.st_mtime_ns
+        active.write_bytes(new)
+        os.utime(active, ns=(identity.st_atime_ns, identity.st_mtime_ns))
+        # Corruption recovery must work in our private cache, without touching
+        # either the compressed installation source or its adjacent companion.
+        cache = Path(env['TEKAI_ENGINE_CACHE']) / 'raw-formats-v1'
+        cached_raw = cache / (hashlib.sha256(new).hexdigest() + '.fmt.raw')
+        if not cached_raw.is_file():
+            raise RuntimeError('Format fixture did not publish its content-addressed raw cache')
+        cached_raw.write_bytes(b'corrupted private format\n')
         refreshed = self.run(command, project, env)
         if refreshed.get('code') != 0:
             raise RuntimeError(f'Refreshed format fixture failed: {refreshed}')
         refreshed_text = self.text(project)
         self.record('format-cache', first_text=first_text, second_text=second_text,
-                    refreshed_text=refreshed_text,
-                    stale_raw_companion='OLD-FORMAT' in second_text and 'NEW-FORMAT' in refreshed_text)
+                    inplace_text=inplace_text, refreshed_text=refreshed_text,
+                    atomic_mtime_preserved=atomic_mtime_preserved,
+                    inplace_mtime_preserved=inplace_mtime_preserved,
+                    adjacent_companion_unchanged=raw.read_bytes() == poison,
+                    private_cache_recovered=cached_raw.is_file()
+                    and cached_raw.read_bytes() != b'corrupted private format\n')
 
     def source_boundaries(self):
         if not self.needs_pdftext('source-boundaries'):
