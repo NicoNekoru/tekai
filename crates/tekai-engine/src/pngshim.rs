@@ -43,9 +43,7 @@ pub struct png_color_struct {
     pub blue: u8,
 }
 
-type JmpBuf = [c_int; 48];
 type PngErrorPtr = Option<unsafe extern "C" fn(*mut png_struct_def, *const c_char)>;
-type PngLongjmpPtr = Option<unsafe extern "C" fn(*mut c_int, c_int)>;
 
 struct PngInfo {
     state: *mut PngState,
@@ -112,7 +110,6 @@ struct PngState {
     gamma: Option<(f64, f64)>,
     decoded: Option<Arc<DecodedImage>>,
     row_cursor: usize,
-    jmp: Box<JmpBuf>,
 }
 
 impl PngState {
@@ -138,7 +135,6 @@ impl PngState {
             gamma: None,
             decoded: None,
             row_cursor: 0,
-            jmp: Box::new([0; 48]),
         }
     }
 
@@ -342,17 +338,6 @@ pub unsafe extern "C" fn png_create_info_struct(
     }));
     state.info_ptr = info;
     info.cast()
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn png_set_longjmp_fn(
-    png_ptr: *mut png_struct_def,
-    _longjmp_fn: PngLongjmpPtr,
-    _jmp_buf_size: usize,
-) -> *mut JmpBuf {
-    state(png_ptr)
-        .map(|state| state.jmp.as_mut() as *mut JmpBuf)
-        .unwrap_or(ptr::null_mut())
 }
 
 #[no_mangle]

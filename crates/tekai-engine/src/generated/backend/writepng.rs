@@ -58,19 +58,12 @@ extern "C" {
     fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
     fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
     fn tex_printf(_: *const ::core::ffi::c_char, ...);
-    fn setjmp(_: *mut ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn longjmp(_: *mut ::core::ffi::c_int, _: ::core::ffi::c_int) -> !;
     fn png_create_read_struct(
         user_png_ver: png_const_charp,
         error_ptr: png_voidp,
         error_fn: png_error_ptr,
         warn_fn: png_error_ptr,
     ) -> png_structp;
-    fn png_set_longjmp_fn(
-        png_ptr: png_structrp,
-        longjmp_fn: png_longjmp_ptr,
-        jmp_buf_size: size_t,
-    ) -> *mut jmp_buf;
     fn png_create_info_struct(png_ptr: png_const_structrp) -> png_infop;
     fn png_read_info(png_ptr: png_structrp, info_ptr: png_inforp);
     fn png_set_tRNS_to_alpha(png_ptr: png_structrp);
@@ -185,7 +178,6 @@ pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
 pub type integer = ::core::ffi::c_int;
 pub type eightbits = ::core::ffi::c_uchar;
-pub type jmp_buf = [::core::ffi::c_int; 48];
 pub type png_byte = ::core::ffi::c_uchar;
 pub type png_int_32 = ::core::ffi::c_int;
 pub type png_uint_32 = ::core::ffi::c_uint;
@@ -212,8 +204,6 @@ pub struct png_color_struct {
 pub type png_color = png_color_struct;
 pub type png_colorp = *mut png_color;
 pub type png_error_ptr = Option<unsafe extern "C" fn(png_structp, png_const_charp) -> ()>;
-pub type png_longjmp_ptr =
-    Option<unsafe extern "C" fn(*mut ::core::ffi::c_int, ::core::ffi::c_int) -> ()>;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct JPG_IMAGE_INFO {
@@ -336,24 +326,8 @@ pub unsafe extern "C" fn read_png_info(mut img: integer) {
             &[],
         );
     }
-    if setjmp(&raw mut *(png_set_longjmp_fn
-        as unsafe extern "C" fn(png_structrp, png_longjmp_ptr, size_t) -> *mut jmp_buf)(
-        (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_structrp,
-        ::core::mem::transmute::<
-            Option<unsafe extern "C" fn(*mut ::core::ffi::c_int, ::core::ffi::c_int) -> !>,
-            png_longjmp_ptr,
-        >(Some(
-            longjmp as unsafe extern "C" fn(*mut ::core::ffi::c_int, ::core::ffi::c_int) -> !,
-        )),
-        ::core::mem::size_of::<jmp_buf>() as size_t,
-    ) as *mut ::core::ffi::c_int)
-        != 0
-    {
-        crate::utils::pdftex_fail_args(
-            b"libpng: internal error\0" as *const u8 as *const ::core::ffi::c_char,
-            &[],
-        );
-    }
+    // The Rust decoder reports errors directly through pdftex_fail_args.
+    // It never performs a non-local jump through a libpng callback.
     png_set_option(
         (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_structrp,
         PNG_MAXIMUM_INFLATE_WINDOW,
