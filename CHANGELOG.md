@@ -28,6 +28,9 @@ versioning.
 - Replace the native BibTeX bridge archive and native zlib dependency with
   Rust-only implementations. Remove unused PNG nonlocal-jump compatibility code.
   Require Rust 1.89 for descriptor-owned output locks.
+- Replace native engine allocation, formatting and stdio with Rust-owned code.
+  Bound stream buffers and pushback, preserve EOF and seek behavior, and prevent
+  failed writes from growing retained buffers without limit.
 - Add deterministic scan-count, eviction and watcher-retention CI tests,
   a repeatable runtime benchmark, and transparent-image PDF parity coverage.
 

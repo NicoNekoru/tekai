@@ -44,13 +44,29 @@ enforces this for candidate builds. BibTeX uses a Rust-only bridge, and
 compression uses Rust backends. Tekai's release support remains macOS.
 The engine stays a Rust library. Release builds retain fat LTO.
 
-Rust now owns engine allocations and decimal/integer formatting. Compatibility
-properties cover native formatting through test-only oracles. The exact engine
-still contains substantial pdfTeX-derived algorithms, raw-pointer callers,
-internal ABI connections and mutable global state. Rust stream migration is in
-progress. The deeper migration requires shared types and invocation-owned state.
-Necessary OS interfaces remain. Full parity and remote timing for the new
-implementation are pending.
+Rust now owns engine allocations, decimal/integer formatting and engine streams.
+Streams own files, console access, pipes and gzip codecs. Read and write buffers
+have explicit bounds. EOF, write failures and retries cannot replay old input or
+grow retained output without limit. Compatibility properties use native
+formatting and stream implementations as test-only oracles.
+
+The local stream checkpoint passed 165 engine tests and 99 pages of fixed-DPI
+pixel and extracted-text parity. That result does not validate later cache and
+ownership changes. The final candidate must repeat the parity gate in CI.
+
+The exact engine still contains substantial pdfTeX-derived algorithms,
+raw-pointer callers, internal ABI connections and mutable global state. Native
+scanning, string utilities, option parsing and regex remain to be replaced.
+A proposed Rust regex replacement did not reproduce observable macOS capture
+results and is not part of production. The deeper migration requires shared types
+and invocation-owned state. Necessary OS interfaces remain. Repeated in-process
+execution and leak freedom are not established. Remote timing for the new
+implementation is pending.
+
+Cache generation checks use filesystem metadata, including change times, to
+detect concurrent edits. They are not a snapshot filesystem. Cold dependency
+inventory can still revisit a directory already traversed by engine lookup.
+Unchanged warm checks do not recursively enumerate directories.
 
 ## Last completed remote result
 
