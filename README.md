@@ -117,8 +117,8 @@ See [Editor integrations](docs/editors.md) for their shared CLI contract.
 | `--engine tekai-engine --runner direct` | Default exact build through the self-contained Tekai engine and scheduler. |
 | `--runner latexmk` | System `latexmk` baseline or compatibility escape hatch. |
 | `--engine xe-latex` / `lua-latex` / `tectonic` | Installed external engine with the selected runner's supported orchestration. |
-| `--engine tekai-pdftex` | Experimental approximate native renderer; unsupported inputs fall back to the exact pdfTeX path. |
-| `--engine tekai-pdftex-certified` | Run native diagnostics, then deliver the exact pdfTeX artifact. |
+| `--engine tekai-pdftex` | Exact standalone `tekai-engine` executable. This legacy mode name does not select the approximate renderer. |
+| `--engine tekai-pdftex-certified` | Run experimental native diagnostics, then deliver the installed pdfLaTeX artifact. |
 
 `--fast` changes visible output by replacing expensive graphics and externalized
 content with preview placeholders. `--once` intentionally skips convergence.
@@ -201,10 +201,10 @@ The exact engine and the experimental renderer are intentionally separate:
 - [`crates/tekai-pdftex`](crates/tekai-pdftex/README.md) is the native
   replacement-engine research track.
 
-Current evidence and known limits are recorded in:
+Historical evidence and known limits are recorded in these reports.
 
-- [Tekai engine parity report](output/pdf/tekai-engine-parity-report.md)
-- [experimental native-renderer divergence audit](output/pdf/pdftex-native-divergence-audit.md)
+- [Tekai engine parity report](docs/archive/tekai-engine-parity-report.md)
+- [experimental native-renderer divergence audit](docs/archive/pdftex-native-divergence-audit.md)
 
 ## Repository guide
 
@@ -214,7 +214,7 @@ Current evidence and known limits are recorded in:
 | `src/watch.rs` | Watch filtering, live preview, debounce, and structural fallbacks. |
 | `src/lint.rs` | Single-pass TeX-aware linting, safe fixes, prose policy, and suppression handling. |
 | `crates/tekai-engine` | Self-contained exact typesetting engine. |
-| `crates/tekai-pdftex` | Experimental native renderer and next-engine architecture. |
+| `crates/tekai-pdftex` | Active experimental expansion core and approximate renderer. |
 | `editors/vscode` | VS Code diagnostics, builds, and embedded/system PDF preview. |
 | `editors/nvim` | Neovim diagnostics, commands, and live external PDF preview. |
 | `tests` | CLI and document-workflow integration tests. |

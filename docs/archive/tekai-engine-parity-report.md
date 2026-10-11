@@ -33,7 +33,7 @@ typesetting code. The release build passed the same empty-`PATH` comparison:
 48 and 50 pages respectively, zero changed pages at 144 DPI, and identical
 extracted text. Representative first and final pages were checked visually.
 The bundle and format digests remain those recorded below.
-See [build disk usage](../../docs/development.md#build-disk-usage) for the
+See [build disk usage](../development.md#build-disk-usage) for the
 separate fresh-build size measurements; this gate is not a new release.
 
 ## 0.4.0 release gate
@@ -125,7 +125,7 @@ examples, the Tekai engine produced rendered output identical to the reference
 system at 144 DPI.
 
 This is a dated measurement snapshot. Current usage and engine naming are
-documented in [`docs/usage.md`](../../docs/usage.md); rerun the parity gate after
+documented in [`docs/usage.md`](../usage.md); rerun the parity gate after
 output-affecting changes instead of treating the historical timings below as a
 permanent benchmark.
 

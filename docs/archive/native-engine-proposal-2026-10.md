@@ -1,4 +1,9 @@
-# tekai-pdftex architecture
+# Historical native-engine proposal, October 2026
+
+This is a research proposal, not the supported engine architecture or an
+implemented performance claim. The proposal-only Rust contract, roadmap and
+report modules were retired during pre-merge cleanup. The active expansion
+engine and approximate renderer remain in `crates/tekai-pdftex`.
 
 This document describes the target architecture for the native
 TeX/STY-to-PDF engine. The goal is a clean final build that is faster than one

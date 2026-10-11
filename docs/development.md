@@ -164,7 +164,7 @@ compression may legitimately differ.
 
 Keep temporary rendered pages under `tmp/pdfs/` and remove them after the
 inspection. The current checked evidence lives in
-[`output/pdf/tekai-engine-parity-report.md`](../output/pdf/tekai-engine-parity-report.md).
+the [historical parity report](archive/tekai-engine-parity-report.md).
 
 ## Performance measurement
 
@@ -432,21 +432,17 @@ python3 -B tools/profile_runtime.py --candidate target/release/tekai \
   --repeats 8 --timeout 30 --budget 600
 ```
 
-Profiling and manual attribution are separate artifacts. Neither can
+Profiling and startup controls are separate artifacts. Neither can
 replace a failed or inconclusive primary result. They can perturb later runner
 conditions, so later observations cannot retrospectively explain a scheduling
 event without supporting time-aligned evidence.
 
 CI no longer automatically repeats the whole timing suite twice after a
 failure. The bounded profiler supplies chronological same-artifact controls.
-For an explicit manual investigation, `benchmark_attribution.py` validates a
-completed non-green schema 6 timing comparison, then swaps the same
-executable artifacts' roles and compares the candidate artifact with itself.
-Current binary and verifier hashes must still match the primary report.
-Each control keeps separate provenance, logs and reports. The primary gate
-keeps its original result. These later measurements help investigate
-artifact-associated or role-associated effects under changing runner conditions.
-Incomplete comparisons and execution or integrity errors skip attribution.
+The manual whole-suite attribution runner has been retired. Use the bounded
+profiler and rotated executable-copy startup controls when a specific result
+needs diagnosis. Keep their provenance and timing separate from the primary
+gate. Never rescore, exclude samples or retry until a result becomes green.
 
 The old optional watch benchmark was removed. Watch retention now has one
 bounded diagnostic route in `performance_ci.py`; fixed queue and snapshot
@@ -549,8 +545,8 @@ cache cleanup can reclaim those separately, at the cost of recompilation.
 - `editors/vscode` and `editors/nvim` are thin clients of the public CLI. Keep
   their diagnostic and build-report decoding aligned with `--report-json`.
 
-The long-term native-engine design is in
-[`crates/tekai-pdftex/ARCHITECTURE.md`](../crates/tekai-pdftex/ARCHITECTURE.md).
+The [archived native-engine proposal](archive/native-engine-proposal-2026-10.md)
+is research history. It is not the supported architecture.
 
 ## Documentation maintenance
 
@@ -558,8 +554,9 @@ The long-term native-engine design is in
 - Put user-facing command/configuration details in `docs/usage.md`.
 - Put contributor gates and measurement procedure in this document.
 - Keep historical benchmark numbers dated and scoped to their exact commands.
-- Do not describe `tekai-pdftex` as exact; the default `tekai-engine` path is
-  the parity-preserving embedded engine.
+- Distinguish the experimental `tekai-pdftex` crate from the legacy
+  `--engine tekai-pdftex` CLI mode, which selects the exact standalone engine.
+  The default `tekai-engine` mode uses the embedded exact engine.
 - Update `--help`, config parsing, tests, and docs together when adding a flag.
 
 ## Release checklist

@@ -5,7 +5,7 @@ Date: 2026-07-05
 Status: historical diagnostic snapshot for the experimental
 `--engine tekai-pdftex` renderer. The default `tekai-engine` + `direct` path
 uses the exact `tekai-engine` engine and is not subject to the divergences below.
-See [`docs/usage.md`](../../docs/usage.md) for the current engine modes.
+See [`docs/usage.md`](../usage.md) for the current engine modes.
 
 Compared PDFs:
 

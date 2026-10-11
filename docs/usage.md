@@ -218,11 +218,11 @@ output directory, `.git`, `target`, and `.tekai` trees.
 | `--engine xe-latex` | Installed XeLaTeX; direct scheduling or `latexmk` as selected. |
 | `--engine lua-latex` | Installed LuaLaTeX; direct scheduling or `latexmk` as selected. |
 | `--engine tectonic` | Installed Tectonic. |
-| `--engine tekai-pdftex` | Experimental approximate native renderer. Unsupported documents fall back to exact pdfTeX. |
-| `--engine tekai-pdftex-certified` | Native diagnostic run followed by an exact pdfTeX final artifact. |
+| `--engine tekai-pdftex` | Exact standalone `tekai-engine` executable, despite the legacy mode name. |
+| `--engine tekai-pdftex-certified` | Experimental native diagnostics followed by an installed pdfLaTeX final artifact. |
 
 The experimental native renderer does not yet claim general pixel parity. See
-the [divergence audit](../output/pdf/pdftex-native-divergence-audit.md).
+the [historical divergence audit](archive/pdftex-native-divergence-audit.md).
 
 ## Configuration
 
