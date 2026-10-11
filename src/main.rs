@@ -1,4 +1,4 @@
-use std::ffi::{CString, OsStr};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -129,19 +129,15 @@ fn enable_embedded_engine_runner() -> Result<()> {
 fn run_embedded_engine() -> Result<()> {
     tekai_engine::runtime::texmf_root().context("failed to prepare bundled TeX data")?;
     let mut args = Vec::new();
-    args.push(CString::new("pdflatex").expect("static pdfTeX program name contains no NUL"));
+    args.push(b"pdflatex".to_vec());
     for arg in std::env::args_os().skip(2) {
-        args.push(CString::new(os_arg_bytes(&arg)).context("pdfTeX argument contained NUL")?);
+        args.push(os_arg_bytes(&arg));
     }
-    let mut argv = args
-        .iter()
-        .map(|arg| arg.as_ptr() as *mut core::ffi::c_char)
-        .collect::<Vec<_>>();
-    argv.push(std::ptr::null_mut());
-
-    let code =
-        unsafe { tekai_engine::run_from_c_args(args.len() as core::ffi::c_int, argv.as_mut_ptr()) };
-    std::process::exit(code)
+    // SAFETY: this subcommand is a dedicated engine child process. No Tekai
+    // watcher, cancellation worker, or other engine invocation runs here.
+    let completion = unsafe { tekai_engine::run_from_args(args) }
+        .context("failed to enter the process-isolated TeX engine")?;
+    std::process::exit(completion.exit_code())
 }
 
 #[cfg(unix)]

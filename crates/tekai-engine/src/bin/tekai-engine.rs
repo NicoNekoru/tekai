@@ -1,5 +1,3 @@
-use std::ffi::CString;
-
 #[cfg(unix)]
 fn arg_to_bytes(arg: &std::ffi::OsStr) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
@@ -13,15 +11,15 @@ fn arg_to_bytes(arg: &std::ffi::OsStr) -> Vec<u8> {
 
 fn main() {
     let args = std::env::args_os()
-        .map(|arg| CString::new(arg_to_bytes(&arg)).expect("process argument contained NUL"))
+        .map(|arg| arg_to_bytes(&arg))
         .collect::<Vec<_>>();
-    let mut argv = args
-        .iter()
-        .map(|arg| arg.as_ptr() as *mut libc::c_char)
-        .collect::<Vec<_>>();
-    argv.push(std::ptr::null_mut());
-
-    let code =
-        unsafe { tekai_engine::run_from_c_args(args.len() as libc::c_int, argv.as_mut_ptr()) };
+    // SAFETY: this runner is a dedicated single-invocation engine process.
+    let code = match unsafe { tekai_engine::run_from_args(args) } {
+        Ok(completion) => completion.exit_code(),
+        Err(error) => {
+            eprintln!("{error}");
+            1
+        }
+    };
     std::process::exit(code);
 }

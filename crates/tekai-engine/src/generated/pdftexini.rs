@@ -83,7 +83,6 @@ use crate::generated::pdftexextra::{
 use crate::generated::pdftexextra::{do_dump, do_undump};
 use crate::openclose::open_output;
 use crate::stdio::{gzclose, gzsetparams};
-use crate::web2c::uexit;
 
 use crate::stdio::{exit, fflush, fputs, putc};
 
@@ -12110,7 +12109,7 @@ pub unsafe fn initprim() {
     );
     nonewcontrolsequence = true_0 as boolean;
 }
-pub unsafe fn mainbody() {
+pub unsafe fn mainbody() -> crate::EngineCompletion {
     let mut current_block: u64;
     let mut eqtb: *mut memoryword = zeqtb;
     bounddefault = 0 as ::core::ffi::c_int as integer;
@@ -13712,12 +13711,6 @@ pub unsafe fn mainbody() {
     }
     fflush(crate::stdio::stdout());
     readyalready = 0 as ::core::ffi::c_int as integer;
-    if history as ::core::ffi::c_int != 0 as ::core::ffi::c_int
-        && history as ::core::ffi::c_int != 1 as ::core::ffi::c_int
-    {
-        uexit(1 as ::core::ffi::c_int);
-    } else {
-        uexit(0 as ::core::ffi::c_int);
-    };
+    crate::EngineCompletion::from_history(history)
 }
 pub const INT_MAX: ::core::ffi::c_int = 2147483647 as ::core::ffi::c_int;

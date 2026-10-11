@@ -61,6 +61,7 @@ mod directory_graph;
 mod embedded;
 pub mod file_identity;
 mod integer_parse;
+mod invocation;
 mod jpeg_exif;
 pub mod kpathsea;
 pub mod lookup;
@@ -77,19 +78,36 @@ pub mod utils;
 pub mod web2c;
 pub mod xpdf;
 
+pub use invocation::{EngineCompletion, InvocationError};
 pub use libz_rs_sys as zlib;
 
-pub unsafe fn run_from_c_args(
-    argc: ::core::ffi::c_int,
-    argv: *mut *mut ::core::ffi::c_char,
-) -> ::core::ffi::c_int {
+/// Enter the process-isolated engine with owned argument bytes, including argv0.
+///
+/// This entry accepts one invocation per process. Normal completion returns a
+/// typed result after flushing all engine streams. The accepted argument storage
+/// remains alive for generated globals that borrow it. Other engine allocations
+/// and process state are not torn down, and fatal paths still exit the process.
+///
+/// # Safety
+///
+/// The caller must exclude concurrent access to engine globals and run in a
+/// dedicated CLI process. Initialization changes environment and signal state.
+/// This entry does not make the generated or backend interfaces safe to call
+/// concurrently, and callers must not catch engine panics across extern C calls.
+pub unsafe fn run_from_args(arguments: Vec<Vec<u8>>) -> Result<EngineCompletion, InvocationError> {
+    // Claim permanent entry and retain all argument backing before any reset
+    // or initialization can mutate the process-global engine state.
+    let (argc, argv) = unsafe { invocation::retain_for_entry(arguments)? };
     lookup::reset();
     pngshim::reset_decode_cache();
-    unsafe {
+    let completion = unsafe {
         generated::pdftexextra::synctexoption = ::core::ffi::c_int::MAX;
         synctex::reset_for_run();
         generated::pdftexextra::maininit(argc, argv);
-        generated::pdftexini::mainbody();
-    }
-    libc::EXIT_SUCCESS
+        generated::pdftexini::mainbody()
+    };
+    // Preserve the old uexit path's fflush(NULL) behavior. Recorder and other
+    // still-open streams can have buffered output after normal finalization.
+    unsafe { stdio::flush_all() };
+    Ok(completion)
 }

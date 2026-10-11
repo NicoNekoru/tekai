@@ -18,7 +18,6 @@ pub use crate::core_types::{
     WordFile as wordfile,
 };
 
-use crate::generated::pdftexini::mainbody;
 use crate::integer_parse::{
     decimal_i32_legacy, signed_prefix, source_date_epoch as parse_source_date_epoch, IntegerBase,
 };
@@ -2658,9 +2657,16 @@ pub unsafe extern "C" fn maininit(mut ac: ::core::ffi::c_int, mut av: *mut strin
     }
 }
 unsafe fn main_0(mut ac: ::core::ffi::c_int, mut av: *mut string) -> ::core::ffi::c_int {
-    maininit(ac, av);
-    mainbody();
-    return EXIT_SUCCESS;
+    let arguments = (0..ac)
+        .map(|index| CStr::from_ptr(*av.add(index as usize)).to_bytes().to_vec())
+        .collect();
+    match crate::run_from_args(arguments) {
+        Ok(completion) => completion.exit_code(),
+        Err(error) => {
+            eprintln!("{error}");
+            1
+        }
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn topenin() {
