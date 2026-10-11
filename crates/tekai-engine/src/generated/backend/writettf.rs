@@ -324,14 +324,14 @@ pub struct name_record {
 }
 pub type TTF_USHORT = ::core::ffi::c_ushort;
 #[derive(Copy, Clone)]
-#[repr(C)]
+// Runtime-only metadata, never serialized or passed across FFI.
 pub struct glyph_entry {
     pub offset: TTF_LONG,
     pub newoffset: TTF_LONG,
     pub advWidth: TTF_UFWORD,
     pub lsb: TTF_FWORD,
     pub name: *const ::core::ffi::c_char,
-    pub newindex: TTF_SHORT,
+    pub newindex: Option<TTF_USHORT>,
     pub name_index: TTF_USHORT,
 }
 pub type TTF_SHORT = ::core::ffi::c_short;
@@ -441,6 +441,87 @@ pub const GLYPH_PREFIX_UNICODE: [::core::ffi::c_char; 4] =
     unsafe { ::core::mem::transmute::<[u8; 4], [::core::ffi::c_char; 4]>(*b"uni\0") };
 pub const DEFAULT_NTABS: ::core::ffi::c_int = 14 as ::core::ffi::c_int;
 pub const NEW_CMAP_SIZE: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
+
+// Format-4 cmaps allocate one entry for every unsigned 16-bit character code.
+const TTF_CMAP_ENTRIES: usize = 0x10000;
+
+fn checked_cmap_code(code: ::core::ffi::c_long) -> Option<usize> {
+    let code = usize::try_from(code).ok()?;
+    (code < TTF_CMAP_ENTRIES).then_some(code)
+}
+
+// glyph_tab has an additional loca-only entry at glyph_count, never a glyph ID.
+fn checked_glyph_index(index: ::core::ffi::c_long, glyph_count: TTF_USHORT) -> Option<usize> {
+    let index = usize::try_from(index).ok()?;
+    (index < usize::from(glyph_count)).then_some(index)
+}
+
+fn checked_post_name_count(count: ::core::ffi::c_long, glyph_count: TTF_USHORT) -> Option<usize> {
+    let count = usize::try_from(count).ok()?;
+    (count <= usize::from(glyph_count)).then_some(count)
+}
+
+// Name-selected glyphs must exclude the reserved .notdef glyph and loca sentinel.
+// Invalid numeric names, including index0, warn and keep output index zero.
+fn checked_selected_glyph_index(
+    index: ::core::ffi::c_long,
+    glyph_count: TTF_USHORT,
+) -> Option<usize> {
+    checked_glyph_index(index, glyph_count).filter(|&index| index > 0)
+}
+
+fn initial_glyph_newindex(index: usize) -> Option<TTF_USHORT> {
+    match index {
+        0 => Some(0),
+        1 => Some(1),
+        _ => None,
+    }
+}
+
+// A subset cannot contain more glyphs than its source. This also keeps every
+// insertion inside glyph_index's allocation of glyph_count + 1 slots.
+fn checked_output_glyph_index(
+    index: ::core::ffi::c_long,
+    glyph_count: TTF_USHORT,
+) -> Option<usize> {
+    checked_glyph_index(index, glyph_count)
+}
+
+unsafe fn ttf_append_glyph(source_index: ::core::ffi::c_long) -> TTF_USHORT {
+    let index = checked_glyph_index(source_index, glyphs_count).unwrap_or_else(|| {
+        crate::utils::pdftex_fail_args(
+            b"glyph index %li out of range [0..%i)\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(source_index),
+                crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int),
+            ],
+        )
+    });
+    let output = checked_output_glyph_index(new_glyphs_count as ::core::ffi::c_long, glyphs_count)
+        .unwrap_or_else(|| {
+            crate::utils::pdftex_fail_args(
+                b"TrueType subset output index %i exceeds source glyph count %i\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(new_glyphs_count as ::core::ffi::c_int),
+                    crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int),
+                ],
+            )
+        });
+    let next_count = new_glyphs_count.checked_add(1).unwrap_or_else(|| {
+        crate::utils::pdftex_fail_args(
+            b"TrueType subset glyph count exceeds unsigned 16-bit capacity\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[],
+        )
+    });
+    *glyph_index.add(output) = source_index;
+    (*glyph_tab.add(index)).newindex = Some(new_glyphs_count);
+    let output_index = new_glyphs_count;
+    new_glyphs_count = next_count;
+    output_index
+}
+
 static mut ntabs: TTF_USHORT = 0;
 static mut upem: TTF_USHORT = 0;
 static mut post_format: TTF_FIXED = 0;
@@ -1099,7 +1180,8 @@ unsafe extern "C" fn ttf_copy_encoding() {
             };
             e = (&raw mut ttfenc_tab as *mut ttfenc_entry).offset(*q as isize);
             (*e).code = *charcodes.offset(*q as isize);
-            if (*e).code == -(1 as ::core::ffi::c_int) as ::core::ffi::c_long {
+            if checked_cmap_code((*e).code).is_none() {
+                (*e).code = -1;
                 crate::utils::pdftex_warn_args(
                     b"character %i in subfont %s is not mapped to any charcode\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -1109,18 +1191,6 @@ unsafe extern "C" fn ttf_copy_encoding() {
                     ],
                 );
             } else {
-                if !((*e).code < 0x10000 as ::core::ffi::c_long) as ::core::ffi::c_int
-                    as ::core::ffi::c_long
-                    != 0
-                {
-                    __assert_rtn(
-                        b"ttf_copy_encoding\0" as *const u8 as *const ::core::ffi::c_char,
-                        b"writettf.c\0" as *const u8 as *const ::core::ffi::c_char,
-                        302 as ::core::ffi::c_int,
-                        b"e->code < 0x10000\0" as *const u8 as *const ::core::ffi::c_char,
-                    );
-                } else {
-                };
                 crate::utils::sprintf_args(
                     &raw mut buf as *mut ::core::ffi::c_char,
                     b"/c%4.4X\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1325,6 +1395,15 @@ unsafe extern "C" fn ttf_read_mapx() {
         TTF_FIXED_SIZE as TTF_LONG,
     );
     glyphs_count = ttf_getnum(2 as ::core::ffi::c_int) as TTF_USHORT;
+    if checked_glyph_index(1, glyphs_count).is_none() {
+        crate::utils::pdftex_fail_args(
+            b"unsupported TrueType font: glyph count %i is below required minimum 2\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[crate::utils::PrintfArg::from(
+                glyphs_count as ::core::ffi::c_int,
+            )],
+        );
+    }
     glyph_tab = xmalloc(
         ((1 as ::core::ffi::c_int + glyphs_count as ::core::ffi::c_int) as size_t)
             .wrapping_mul(::core::mem::size_of::<glyph_entry>() as size_t),
@@ -1333,12 +1412,14 @@ unsafe extern "C" fn ttf_read_mapx() {
     while (glyph.offset_from(glyph_tab) as ::core::ffi::c_long)
         < glyphs_count as ::core::ffi::c_long
     {
-        (*glyph).newindex = -(1 as ::core::ffi::c_int) as TTF_SHORT;
+        // The prefilled output slots own source glyphs 0 and 1 from the start.
+        (*glyph).newindex = initial_glyph_newindex(glyph.offset_from(glyph_tab) as usize);
         (*glyph).newoffset = 0 as ::core::ffi::c_int as TTF_LONG;
         (*glyph).name_index = 0 as TTF_USHORT;
         (*glyph).name = &raw mut notdef as *mut ::core::ffi::c_char;
         glyph = glyph.offset(1);
     }
+    (*glyph).newindex = None;
     glyph_index = xmalloc(
         ((glyphs_count as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as size_t)
             .wrapping_mul(::core::mem::size_of::<::core::ffi::c_long>() as size_t),
@@ -1421,6 +1502,16 @@ unsafe extern "C" fn ttf_read_pclt() {
 unsafe extern "C" fn ttf_read_hmtx() {
     let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
     let mut last_advWidth: TTF_UFWORD = 0;
+    if checked_glyph_index(nhmtxs as ::core::ffi::c_long - 1, glyphs_count).is_none() {
+        crate::utils::pdftex_fail_args(
+            b"hmtx: metric count %i out of range [1..%i]\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[
+                crate::utils::PrintfArg::from(nhmtxs as ::core::ffi::c_int),
+                crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int),
+            ],
+        );
+    }
     ttf_seek_tab(
         b"hmtx\0" as *const u8 as *const ::core::ffi::c_char,
         0 as TTF_LONG,
@@ -1480,6 +1571,16 @@ unsafe extern "C" fn ttf_read_post() {
     let mut current_block_46: u64;
     match post_format {
         65536 => {
+            if checked_post_name_count(NMACGLYPHS as ::core::ffi::c_long, glyphs_count).is_none() {
+                crate::utils::pdftex_fail_args(
+                    b"post: glyph name count %i exceeds font glyph count %i\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(NMACGLYPHS),
+                        crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int),
+                    ],
+                );
+            }
             glyph = glyph_tab;
             while (glyph.offset_from(glyph_tab) as ::core::ffi::c_long)
                 < NMACGLYPHS as ::core::ffi::c_long
@@ -1494,6 +1595,16 @@ unsafe extern "C" fn ttf_read_post() {
         }
         131072 => {
             nnames = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT as ::core::ffi::c_int;
+            if checked_post_name_count(nnames as ::core::ffi::c_long, glyphs_count).is_none() {
+                crate::utils::pdftex_fail_args(
+                    b"post: glyph name count %i exceeds font glyph count %i\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[
+                        crate::utils::PrintfArg::from(nnames),
+                        crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int),
+                    ],
+                );
+            }
             glyph = glyph_tab;
             while (glyph.offset_from(glyph_tab) as ::core::ffi::c_long)
                 < nnames as ::core::ffi::c_long
@@ -1559,7 +1670,7 @@ unsafe extern "C" fn ttf_read_post() {
         1202518105438317935 => {
             glyph = glyph_tab;
             while (glyph.offset_from(glyph_tab) as ::core::ffi::c_long)
-                < NMACGLYPHS as ::core::ffi::c_long
+                < NMACGLYPHS.min(glyphs_count as ::core::ffi::c_int) as ::core::ffi::c_long
             {
                 (*glyph).name_index =
                     glyph.offset_from(glyph_tab) as ::core::ffi::c_long as TTF_USHORT;
@@ -1732,11 +1843,11 @@ unsafe extern "C" fn ttf_read_cmap(
             (*p).pid = pid as TTF_USHORT;
             (*p).eid = eid as TTF_USHORT;
             (*p).table = xmalloc(
-                (0x10000 as ::core::ffi::c_int as size_t)
+                (TTF_CMAP_ENTRIES as size_t)
                     .wrapping_mul(::core::mem::size_of::<::core::ffi::c_long>() as size_t),
             ) as *mut ::core::ffi::c_long;
             i = 0 as ::core::ffi::c_long;
-            while i < 0x10000 as ::core::ffi::c_long {
+            while i < TTF_CMAP_ENTRIES as ::core::ffi::c_long {
                 *(*p).table.offset(i as isize) = -(1 as ::core::ffi::c_int) as ::core::ffi::c_long;
                 i += 1;
             }
@@ -1824,7 +1935,7 @@ unsafe extern "C" fn ttf_read_cmap(
                                     & 0xffff as ::core::ffi::c_long;
                             }
                         }
-                        if index >= glyphs_count as ::core::ffi::c_long {
+                        if checked_glyph_index(index, glyphs_count).is_none() {
                             crate::utils::pdftex_fail_args(
                                 b"cmap: glyph index %li out of range [0..%i)\0" as *const u8
                                     as *const ::core::ffi::c_char,
@@ -2389,18 +2500,25 @@ unsafe extern "C" fn ttf_write_glyf() {
                         ttf_getnum(2 as ::core::ffi::c_int) as TTF_USHORT as ::core::ffi::c_long,
                     ) as TTF_USHORT;
                     idx = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
-                    if ((*glyph_tab.offset(idx as isize)).newindex as ::core::ffi::c_int)
-                        < 0 as ::core::ffi::c_int
-                    {
-                        (*glyph_tab.offset(idx as isize)).newindex = new_glyphs_count as TTF_SHORT;
-                        let fresh13 = new_glyphs_count;
-                        new_glyphs_count = new_glyphs_count.wrapping_add(1);
-                        *glyph_index.offset(fresh13 as isize) = idx as ::core::ffi::c_long;
-                    }
-                    ttf_putnum(
-                        TTF_USHORT_SIZE,
-                        (*glyph_tab.offset(idx as isize)).newindex as ::core::ffi::c_long,
-                    );
+                    let index = checked_glyph_index(idx as ::core::ffi::c_long, glyphs_count)
+                        .unwrap_or_else(|| {
+                            crate::utils::pdftex_fail_args(
+                                b"glyf: glyph index %li out of range [0..%i)\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                                &[
+                                    crate::utils::PrintfArg::from(idx as ::core::ffi::c_long),
+                                    crate::utils::PrintfArg::from(
+                                        glyphs_count as ::core::ffi::c_int,
+                                    ),
+                                ],
+                            )
+                        });
+                    let glyph = glyph_tab.add(index);
+                    let output_index = match (*glyph).newindex {
+                        Some(index) => index,
+                        None => ttf_append_glyph(idx as ::core::ffi::c_long),
+                    };
+                    ttf_putnum(TTF_USHORT_SIZE, output_index as ::core::ffi::c_long);
                     if flags as ::core::ffi::c_int & ARG_1_AND_2_ARE_WORDS != 0 {
                         ttf_ncopy(2 as ::core::ffi::c_int * TTF_SHORT_SIZE);
                     } else {
@@ -2485,20 +2603,21 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                     current_block = 16658872821858055392;
                 } else {
                     t = (*cmap).table;
-                    if !(!t.is_null() && (*e).code < 0x10000 as ::core::ffi::c_long)
-                        as ::core::ffi::c_int as ::core::ffi::c_long
-                        != 0
-                    {
+                    if t.is_null() {
                         __assert_rtn(
                             b"ttf_reindex_glyphs\0" as *const u8 as *const ::core::ffi::c_char,
                             b"writettf.c\0" as *const u8 as *const ::core::ffi::c_char,
                             1051 as ::core::ffi::c_int,
-                            b"t != NULL && e->code < 0x10000\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                            b"t != NULL\0" as *const u8 as *const ::core::ffi::c_char,
                         );
                     } else {
                     };
-                    if *t.offset((*e).code as isize) < 0 as ::core::ffi::c_long {
+                    let selected = checked_cmap_code((*e).code)
+                        .and_then(|code| checked_selected_glyph_index(*t.add(code), glyphs_count));
+                    if let Some(index) = selected {
+                        glyph = glyph_tab.add(index);
+                        current_block = 9772907965827425793;
+                    } else {
                         crate::utils::pdftex_warn_args(
                             b"subfont %s: wrong mapping: character %li --> 0x%4.4lX --> .notdef\0"
                                 as *const u8
@@ -2513,23 +2632,6 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                             ],
                         );
                         current_block = 16658872821858055392;
-                    } else {
-                        if !(*t.offset((*e).code as isize) >= 0 as ::core::ffi::c_long
-                            && *t.offset((*e).code as isize) < glyphs_count as ::core::ffi::c_long)
-                            as ::core::ffi::c_int as ::core::ffi::c_long
-                            != 0
-                        {
-                            __assert_rtn(
-                                b"ttf_reindex_glyphs\0" as *const u8 as *const ::core::ffi::c_char,
-                                b"writettf.c\0" as *const u8 as *const ::core::ffi::c_char,
-                                1058 as ::core::ffi::c_int,
-                                b"t[e->code] >= 0 && t[e->code] < glyphs_count\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                            );
-                        } else {
-                        };
-                        glyph = glyph_tab.offset(*t.offset((*e).code as isize) as isize);
-                        current_block = 9772907965827425793;
                     }
                 }
             }
@@ -2538,7 +2640,7 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
         {
             current_block = 16658872821858055392;
         } else {
-            glyph = glyph_tab;
+            glyph = glyph_tab.add(1);
             loop {
                 if !((glyph.offset_from(glyph_tab) as ::core::ffi::c_long)
                     < glyphs_count as ::core::ffi::c_long)
@@ -2601,28 +2703,37 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                                 );
                             } else {
                             };
-                            if *t.offset(index as isize)
-                                != -(1 as ::core::ffi::c_int) as ::core::ffi::c_long
-                            {
-                                if *t.offset(index as isize) >= glyphs_count as ::core::ffi::c_long
+                            if let Some(code) = checked_cmap_code(index as ::core::ffi::c_long) {
+                                let mapped = *t.add(code);
+                                if let Some(index) =
+                                    checked_selected_glyph_index(mapped, glyphs_count)
                                 {
-                                    crate::utils::pdftex_warn_args(b"`%s' is mapped to index %li which is out of valid range [0..%i)\0"
-                                            as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*e).name), crate::utils::PrintfArg::from(*t.offset(index as isize)), crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int)]);
-                                    current_block = 16658872821858055392;
-                                } else {
-                                    glyph = glyph_tab.offset(*t.offset(index as isize) as isize);
+                                    glyph = glyph_tab.add(index);
                                     current_block = 9772907965827425793;
+                                } else {
+                                    if mapped == -1 {
+                                        crate::utils::pdftex_warn_args(
+                                            b"`unicode %s%.4X' is not mapped to any glyph\0"
+                                                as *const u8
+                                                as *const ::core::ffi::c_char,
+                                            &[
+                                                crate::utils::PrintfArg::from(
+                                                    GLYPH_PREFIX_UNICODE.as_ptr(),
+                                                ),
+                                                crate::utils::PrintfArg::from(index),
+                                            ],
+                                        );
+                                    } else {
+                                        crate::utils::pdftex_warn_args(b"`%s' is mapped to index %li which is out of valid range [1..%i)\0"
+                                                as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from((*e).name), crate::utils::PrintfArg::from(mapped), crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int)]);
+                                    }
+                                    current_block = 16658872821858055392;
                                 }
                             } else {
                                 crate::utils::pdftex_warn_args(
-                                    b"`unicode %s%.4X' is not mapped to any glyph\0" as *const u8
+                                    b"`%s' out of valid unicode range [0..65536)\0" as *const u8
                                         as *const ::core::ffi::c_char,
-                                    &[
-                                        crate::utils::PrintfArg::from(
-                                            GLYPH_PREFIX_UNICODE.as_ptr(),
-                                        ),
-                                        crate::utils::PrintfArg::from(index),
-                                    ],
+                                    &[crate::utils::PrintfArg::from((*e).name)],
                                 );
                                 current_block = 16658872821858055392;
                             }
@@ -2636,9 +2747,15 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                             &raw mut n,
                         );
                         if n as size_t == strlen((*e).name) {
-                            if index >= glyphs_count as ::core::ffi::c_int {
+                            if let Some(index) = checked_selected_glyph_index(
+                                index as ::core::ffi::c_long,
+                                glyphs_count,
+                            ) {
+                                glyph = glyph_tab.add(index);
+                                current_block = 9772907965827425793;
+                            } else {
                                 crate::utils::pdftex_warn_args(
-                                    b"`%s' out of valid range [0..%i)\0" as *const u8
+                                    b"`%s' out of valid range [1..%i)\0" as *const u8
                                         as *const ::core::ffi::c_char,
                                     &[
                                         crate::utils::PrintfArg::from((*e).name),
@@ -2648,9 +2765,6 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                                     ],
                                 );
                                 current_block = 16658872821858055392;
-                            } else {
-                                glyph = glyph_tab.offset(index as isize);
-                                current_block = 9772907965827425793;
                             }
                         } else {
                             crate::utils::pdftex_warn_args(
@@ -2681,13 +2795,10 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
                     );
                 } else {
                 };
-                if ((*glyph).newindex as ::core::ffi::c_int) < 0 as ::core::ffi::c_int {
-                    *glyph_index.offset(new_glyphs_count as isize) =
-                        glyph.offset_from(glyph_tab) as ::core::ffi::c_long;
-                    (*glyph).newindex = new_glyphs_count as TTF_SHORT;
-                    new_glyphs_count = new_glyphs_count.wrapping_add(1);
-                }
-                (*e).newindex = (*glyph).newindex as ::core::ffi::c_long;
+                (*e).newindex = match (*glyph).newindex {
+                    Some(index) => index,
+                    None => ttf_append_glyph(glyph.offset_from(glyph_tab) as ::core::ffi::c_long),
+                } as ::core::ffi::c_long;
             }
             _ => {}
         }
@@ -3300,3 +3411,189 @@ pub unsafe extern "C" fn writeotf(mut fd: *mut fd_entry) {
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+#[cfg(test)]
+mod glyph_index_tests {
+    use super::{
+        checked_cmap_code, checked_glyph_index, checked_output_glyph_index,
+        checked_post_name_count, checked_selected_glyph_index, initial_glyph_newindex,
+        TTF_CMAP_ENTRIES,
+    };
+    use core::ffi::c_long;
+    use proptest::prelude::*;
+
+    #[test]
+    fn cmap_code_boundaries_reject_signed_and_oversized_indices() {
+        for code in [c_long::MIN, -65536, -1, 65536, 65537, c_long::MAX] {
+            assert_eq!(checked_cmap_code(code), None, "code {code}");
+        }
+        assert_eq!(checked_cmap_code(0), Some(0));
+        assert_eq!(checked_cmap_code(1), Some(1));
+        assert_eq!(checked_cmap_code(65535), Some(TTF_CMAP_ENTRIES - 1));
+    }
+
+    #[test]
+    fn glyph_boundaries_exclude_the_loca_sentinel_and_selected_zero() {
+        for count in [0_u16, 1, 2, 258, u16::MAX] {
+            for index in [c_long::MIN, -1, c_long::from(count), c_long::MAX] {
+                assert_eq!(
+                    checked_glyph_index(index, count),
+                    None,
+                    "index {index}, count {count}"
+                );
+                assert_eq!(
+                    checked_selected_glyph_index(index, count),
+                    None,
+                    "index {index}, count {count}"
+                );
+            }
+            assert_eq!(checked_glyph_index(0, count), (count > 0).then_some(0));
+            assert_eq!(checked_selected_glyph_index(0, count), None);
+            if count > 1 {
+                let last = usize::from(count) - 1;
+                assert_eq!(checked_glyph_index(last as c_long, count), Some(last));
+                assert_eq!(
+                    checked_selected_glyph_index(last as c_long, count),
+                    Some(last)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reserved_glyphs_own_the_prefilled_output_slots() {
+        assert_eq!(checked_glyph_index(1, 0), None);
+        assert_eq!(checked_glyph_index(1, 1), None);
+        assert_eq!(checked_glyph_index(1, 2), Some(1));
+        assert_eq!(initial_glyph_newindex(0), Some(0));
+        assert_eq!(initial_glyph_newindex(1), Some(1));
+        for index in [2, 258, 32768, 65534, usize::MAX] {
+            assert_eq!(initial_glyph_newindex(index), None);
+        }
+    }
+
+    #[test]
+    fn output_slots_support_unsigned_indices_without_using_extra_allocation() {
+        for count in [0_u16, 1, 2, 258, 32768, u16::MAX] {
+            for index in [c_long::MIN, -1, c_long::from(count), c_long::MAX] {
+                assert_eq!(checked_output_glyph_index(index, count), None);
+            }
+        }
+        assert_eq!(checked_output_glyph_index(32768, u16::MAX), Some(32768));
+        assert_eq!(checked_output_glyph_index(65534, u16::MAX), Some(65534));
+        assert_eq!(65534_u16.checked_add(1), Some(u16::MAX));
+        assert_eq!(u16::MAX.checked_add(1), None);
+    }
+
+    #[test]
+    fn post_name_counts_cannot_include_the_loca_only_entry() {
+        for count in [0_u16, 1, 2, 4, 258, u16::MAX] {
+            assert_eq!(checked_post_name_count(-1, count), None);
+            assert_eq!(checked_post_name_count(0, count), Some(0));
+            assert_eq!(
+                checked_post_name_count(c_long::from(count), count),
+                Some(usize::from(count))
+            );
+            assert_eq!(
+                checked_post_name_count(c_long::from(count) + 1, count),
+                None
+            );
+        }
+        assert_eq!(checked_post_name_count(258, 4), None);
+        assert_eq!(checked_post_name_count(258, 258), Some(258));
+    }
+
+    proptest! {
+        #[test]
+        fn cmap_codes_match_the_allocated_domain(
+            code in prop_oneof![any::<c_long>(), -2 as c_long..=65537 as c_long],
+        ) {
+            let expected = if (0..65536).contains(&code) { Some(code as usize) } else { None };
+            prop_assert_eq!(checked_cmap_code(code), expected);
+        }
+
+        #[test]
+        fn composite_ids_never_select_the_loca_only_entry(
+            index in prop_oneof![any::<c_long>(), -2 as c_long..=65537 as c_long],
+            count in any::<u16>(),
+        ) {
+            let expected = if index >= 0 && index < c_long::from(count) {
+                Some(index as usize)
+            } else { None };
+            prop_assert_eq!(checked_glyph_index(index, count), expected);
+        }
+
+        #[test]
+        fn numeric_names_and_cmap_values_require_a_nonzero_glyph(
+            index in prop_oneof![any::<c_long>(), -2 as c_long..=65537 as c_long],
+            count in any::<u16>(),
+        ) {
+            let expected = if index > 0 && index < c_long::from(count) {
+                Some(index as usize)
+            } else { None };
+            prop_assert_eq!(checked_selected_glyph_index(index, count), expected);
+        }
+
+        #[test]
+        fn output_indices_fit_the_allocation_and_next_unsigned_count(
+            index in prop_oneof![any::<c_long>(), -2 as c_long..=65537 as c_long],
+            count in any::<u16>(),
+        ) {
+            let expected = if index >= 0 && index < c_long::from(count) {
+                Some(index as usize)
+            } else { None };
+            let actual = checked_output_glyph_index(index, count);
+            prop_assert_eq!(actual, expected);
+            if let Some(index) = actual {
+                prop_assert!(index < usize::from(count) + 1);
+                prop_assert!((index as u16).checked_add(1).is_some());
+            }
+        }
+
+        #[test]
+        fn post_name_prefixes_fit_the_initialized_glyph_domain(
+            names in prop_oneof![any::<c_long>(), -2 as c_long..=65537 as c_long],
+            count in any::<u16>(),
+        ) {
+            let expected = if names >= 0 && names <= c_long::from(count) {
+                Some(names as usize)
+            } else { None };
+            prop_assert_eq!(checked_post_name_count(names, count), expected);
+        }
+
+        #[test]
+        fn metric_counts_require_a_nonempty_initialized_glyph_prefix(
+            metrics in any::<u16>(),
+            count in any::<u16>(),
+        ) {
+            let valid = checked_glyph_index(c_long::from(metrics) - 1, count).is_some();
+            prop_assert_eq!(valid, metrics > 0 && metrics <= count);
+        }
+
+        #[test]
+        fn reserved_ownership_keeps_repeated_selections_within_capacity(
+            count in 2_u16..512,
+            selections in prop::collection::vec(any::<u16>(), 0..512),
+        ) {
+            let mut ownership = (0..usize::from(count)).map(initial_glyph_newindex).collect::<Vec<_>>();
+            let mut output = vec![0_usize, 1];
+            for selection in selections {
+                let source = usize::from(selection % count);
+                let index = match ownership[source] {
+                    Some(index) => usize::from(index),
+                    None => {
+                        let index = checked_output_glyph_index(output.len() as c_long, count)
+                            .expect("each source glyph is appended at most once");
+                        ownership[source] = Some(index as u16);
+                        output.push(source);
+                        index
+                    }
+                };
+                prop_assert_eq!(output[index], source);
+            }
+            prop_assert!(output.len() <= usize::from(count));
+            let unique = output.iter().copied().collect::<std::collections::HashSet<_>>();
+            prop_assert_eq!(unique.len(), output.len());
+        }
+    }
+}

@@ -31,6 +31,10 @@ impl Project {
     }
 
     fn write(&self, name: &str, source: &str) {
+        self.write_bytes(name, source.as_bytes());
+    }
+
+    fn write_bytes(&self, name: &str, source: &[u8]) {
         let path = self.0.join(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, source).unwrap();
@@ -78,6 +82,340 @@ impl Drop for Project {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping() {
+    fn put16(bytes: &mut [u8], offset: usize, value: u16) {
+        bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+    }
+    fn put32(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+    }
+    fn read16(bytes: &[u8], offset: usize) -> u16 {
+        u16::from_be_bytes(bytes[offset..offset + 2].try_into().unwrap())
+    }
+    fn read32(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+    fn checksum(bytes: &[u8]) -> u32 {
+        bytes.chunks(4).fold(0_u32, |sum, chunk| {
+            let mut word = [0; 4];
+            word[..chunk.len()].copy_from_slice(chunk);
+            sum.wrapping_add(u32::from_be_bytes(word))
+        })
+    }
+    fn table_range(font: &[u8], tag: &[u8; 4]) -> std::ops::Range<usize> {
+        for record in font[12..12 + usize::from(read16(font, 4)) * 16]
+            .as_chunks::<16>()
+            .0
+        {
+            if &record[..4] == tag {
+                let offset = read32(record, 8) as usize;
+                return offset..offset + read32(record, 12) as usize;
+            }
+        }
+        panic!("missing sfnt table {tag:?}");
+    }
+    fn table<'a>(font: &'a [u8], tag: &[u8; 4]) -> &'a [u8] {
+        &font[table_range(font, tag)]
+    }
+    fn rectangle(width: i16, height: i16) -> Vec<u8> {
+        let mut glyph = Vec::new();
+        for word in [1_i16, 0, 0, width, height, 3, 0] {
+            glyph.extend_from_slice(&word.to_be_bytes());
+        }
+        glyph.extend_from_slice(&[1; 4]); // Four on-curve points, signed 16-bit deltas.
+        for delta in [0, width, 0, -width, 0, 0, height, 0] {
+            glyph.extend_from_slice(&delta.to_be_bytes());
+        }
+        glyph
+    }
+    fn synthetic_font() -> (Vec<u8>, [Vec<u8>; 4]) {
+        // Standard sfnt tables and owned rectangle outlines, no OS font data.
+        // https://learn.microsoft.com/en-us/typography/opentype/spec/otff
+        let mut composite = Vec::new();
+        for word in [-1_i16, 0, 0, 700, 400] {
+            composite.extend_from_slice(&word.to_be_bytes());
+        }
+        for (flags, glyph, x) in [(0x23_u16, 0_u16, 0_i16), (0x23, 1, 200), (0x03, 2, 400)] {
+            composite.extend_from_slice(&flags.to_be_bytes());
+            composite.extend_from_slice(&glyph.to_be_bytes());
+            composite.extend_from_slice(&x.to_be_bytes());
+            composite.extend_from_slice(&0_i16.to_be_bytes());
+        }
+        let glyphs = [
+            rectangle(100, 100),
+            rectangle(200, 200),
+            rectangle(300, 400),
+            composite,
+        ];
+        let mut glyf = Vec::new();
+        let mut loca = Vec::new();
+        for glyph in &glyphs {
+            loca.extend_from_slice(&(glyf.len() as u32).to_be_bytes());
+            glyf.extend_from_slice(glyph);
+        }
+        loca.extend_from_slice(&(glyf.len() as u32).to_be_bytes());
+
+        let mut head = vec![0; 54];
+        put32(&mut head, 0, 0x00010000);
+        put32(&mut head, 4, 0x00010000);
+        put32(&mut head, 12, 0x5f0f3cf5);
+        put16(&mut head, 18, 1000);
+        put16(&mut head, 40, 700);
+        put16(&mut head, 42, 400);
+        put16(&mut head, 46, 8);
+        put16(&mut head, 48, 2);
+        put16(&mut head, 50, 1); // Long loca offsets.
+        let mut hhea = vec![0; 36];
+        put32(&mut hhea, 0, 0x00010000);
+        put16(&mut hhea, 4, 800);
+        put16(&mut hhea, 6, (-200_i16) as u16);
+        put16(&mut hhea, 10, 630);
+        put16(&mut hhea, 14, (-70_i16) as u16);
+        put16(&mut hhea, 16, 700);
+        put16(&mut hhea, 18, 1);
+        put16(&mut hhea, 34, 4);
+        let mut hmtx = Vec::new();
+        for advance in [600_u16, 610, 620, 630] {
+            hmtx.extend_from_slice(&advance.to_be_bytes());
+            hmtx.extend_from_slice(&0_i16.to_be_bytes());
+        }
+        let mut maxp = vec![0; 32];
+        put32(&mut maxp, 0, 0x00010000);
+        for (offset, value) in [
+            (4, 4),
+            (6, 4),
+            (8, 1),
+            (10, 12),
+            (12, 3),
+            (14, 1),
+            (28, 3),
+            (30, 1),
+        ] {
+            put16(&mut maxp, offset, value);
+        }
+        let mut os2 = vec![0; 78];
+        for (offset, value) in [
+            (2, 615),
+            (4, 400),
+            (6, 5),
+            (62, 64),
+            (64, 65),
+            (66, 72),
+            (68, 800),
+            (72, 0),
+            (74, 800),
+            (76, 200),
+        ] {
+            put16(&mut os2, offset, value);
+        }
+        put16(&mut os2, 70, (-200_i16) as u16);
+        os2[58..62].copy_from_slice(b"TEST");
+        let mut post = vec![0; 32];
+        put32(&mut post, 0, 0x00030000); // No glyph names, numeric fallback is required.
+        put16(&mut post, 8, (-75_i16) as u16);
+        put16(&mut post, 10, 50);
+        let names = [
+            (1, "SyntheticGlyphs"),
+            (2, "Regular"),
+            (4, "SyntheticGlyphs Regular"),
+            (6, "SyntheticGlyphs"),
+        ];
+        let mut name = vec![0; 6 + names.len() * 12];
+        put16(&mut name, 2, names.len() as u16);
+        let storage = name.len();
+        put16(&mut name, 4, storage as u16);
+        for (index, (id, text)) in names.iter().enumerate() {
+            let offset = 6 + index * 12;
+            put16(&mut name, offset, 1); // Macintosh Roman, ASCII-only owned names.
+            put16(&mut name, offset + 6, *id);
+            put16(&mut name, offset + 8, text.len() as u16);
+            let string_offset = name.len() - storage;
+            put16(&mut name, offset + 10, string_offset as u16);
+            name.extend_from_slice(text.as_bytes());
+        }
+        let mut cmap = Vec::new();
+        for word in [0_u16, 1, 3, 1] {
+            cmap.extend_from_slice(&word.to_be_bytes());
+        }
+        cmap.extend_from_slice(&12_u32.to_be_bytes());
+        for word in [
+            4_u16, 48, 0, 8, 8, 2, 0, 65, 66, 67, 0xffff, 0, 65, 66, 67, 0xffff,
+        ] {
+            cmap.extend_from_slice(&word.to_be_bytes());
+        }
+        for delta in [-63_i16, -66, -64, 1] {
+            // U+0041 -> 2, U+0042 -> 0, U+0043 -> 3.
+            cmap.extend_from_slice(&delta.to_be_bytes());
+        }
+        cmap.extend_from_slice(&[0; 8]);
+        let mut tables = vec![
+            (*b"OS/2", os2),
+            (*b"cmap", cmap),
+            (*b"glyf", glyf),
+            (*b"head", head),
+            (*b"hhea", hhea),
+            (*b"hmtx", hmtx),
+            (*b"loca", loca),
+            (*b"maxp", maxp),
+            (*b"name", name),
+            (*b"post", post),
+        ];
+        tables.sort_by_key(|(tag, _)| *tag);
+        let mut font = vec![0; 12 + tables.len() * 16];
+        put32(&mut font, 0, 0x00010000);
+        put16(&mut font, 4, tables.len() as u16);
+        put16(&mut font, 6, 128);
+        put16(&mut font, 8, 3);
+        put16(&mut font, 10, 32);
+        for (index, (tag, bytes)) in tables.into_iter().enumerate() {
+            let offset = font.len();
+            let record = 12 + index * 16;
+            font[record..record + 4].copy_from_slice(&tag);
+            put32(&mut font, record + 4, checksum(&bytes));
+            put32(&mut font, record + 8, offset as u32);
+            put32(&mut font, record + 12, bytes.len() as u32);
+            font.extend_from_slice(&bytes);
+            while !font.len().is_multiple_of(4) {
+                font.push(0);
+            }
+        }
+        let adjustment = 0xb1b0afba_u32.wrapping_sub(checksum(&font));
+        let head_offset = table_range(&font, b"head").start;
+        put32(&mut font, head_offset + 8, adjustment);
+        assert_eq!(checksum(&font), 0xb1b0afba);
+        (font, glyphs)
+    }
+    fn embedded_font(pdf: &[u8]) -> &[u8] {
+        let marker = b"/FontFile2 ";
+        let reference = pdf
+            .windows(marker.len())
+            .position(|part| part == marker)
+            .expect("the PDF must embed a TrueType FontFile2");
+        let number = &pdf[reference + marker.len()..];
+        let digits = number
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        let object = format!(
+            "\n{} 0 obj\n",
+            std::str::from_utf8(&number[..digits]).unwrap()
+        );
+        let offset = pdf
+            .windows(object.len())
+            .position(|part| part == object.as_bytes())
+            .unwrap();
+        let body = &pdf[offset + object.len()..];
+        let start = body
+            .windows(7)
+            .position(|part| part == b"stream\n")
+            .unwrap()
+            + 7;
+        let payload = &body[start..];
+        let end = payload
+            .windows(10)
+            .position(|part| part == b"\nendstream")
+            .unwrap();
+        &payload[..end]
+    }
+
+    let project = Project::new();
+    let (font, glyphs) = synthetic_font();
+    project.write_bytes("synthetic.ttf", &font);
+    let mut encoding = String::from("/SyntheticEncoding [\n");
+    for code in 0..256 {
+        let name = match code {
+            65 => "index2",
+            66 => "index1",
+            67 => "index3",
+            68 => "index0",
+            69 => "index-1",
+            70 => "uni10000",
+            71 => "uni0042",
+            72 => "uni0041",
+            _ => ".notdef",
+        };
+        encoding.push_str(&format!("/{name}\n"));
+    }
+    encoding.push_str("] def\n");
+    project.write("synthetic.enc", &encoding);
+    project.write(
+        "main.tex",
+        r#"\pdfcompresslevel=0
+\pdfobjcompresslevel=0
+\pdfmapline{=cmr10 SyntheticGlyphs <synthetic.enc <synthetic.ttf}
+\documentclass{article}
+\pagestyle{empty}
+\begin{document}
+\font\probe=cmr10 at 10pt
+\probe ABCDEFGH
+\end{document}
+"#,
+    );
+    project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+    let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+    let diagnostic: String = log.split_ascii_whitespace().collect();
+    for warning in [
+        "`index0' out of valid range [1..4)",
+        "`index-1' out of valid range [1..4)",
+        "`uni10000' out of valid unicode range [0..65536)",
+        "`uni0042' is mapped to index 0 which is out of valid range [1..4)",
+    ] {
+        assert!(
+            diagnostic.contains(&warning.split_ascii_whitespace().collect::<String>()),
+            "{log}"
+        );
+    }
+    let pdf = fs::read(project.0.join("build/main.pdf")).unwrap();
+    let embedded = embedded_font(&pdf);
+    assert_eq!(read16(table(embedded, b"maxp"), 4), 4);
+    assert_eq!(read16(table(embedded, b"hhea"), 34), 4);
+    assert_eq!(table(embedded, b"hmtx"), table(&font, b"hmtx"));
+    let loca = table(embedded, b"loca");
+    let long_loca = read16(table(embedded, b"head"), 50) == 1;
+    let offsets = (0..=4)
+        .map(|index| {
+            if long_loca {
+                read32(loca, index * 4) as usize
+            } else {
+                usize::from(read16(loca, index * 2)) * 2
+            }
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        offsets.windows(2).all(|pair| pair[0] < pair[1]),
+        "{offsets:?}"
+    );
+    let glyf = table(embedded, b"glyf");
+    for (index, expected) in glyphs.iter().enumerate() {
+        assert_eq!(&glyf[offsets[index]..offsets[index + 1]], expected);
+    }
+    // Small subsets use the Macintosh format-0 byte cmap, with reserved glyph1
+    // retained at output1 and composite3 still referring to outputs0,1,2.
+    let cmap = table(embedded, b"cmap");
+    let macintosh = (0..usize::from(read16(cmap, 2)))
+        .map(|index| 4 + index * 8)
+        .find(|&record| read16(cmap, record) == 1 && read16(cmap, record + 2) == 0)
+        .expect("Macintosh byte cmap");
+    let format0 = read32(cmap, macintosh + 4) as usize;
+    assert_eq!(read16(cmap, format0), 0);
+    assert_eq!(read16(cmap, format0 + 2), 262);
+    let mut expected_encoding = [0_u8; 256];
+    for (code, expected) in [
+        (65, 2),
+        (66, 1),
+        (67, 3),
+        (68, 0),
+        (69, 0),
+        (70, 0),
+        (71, 0),
+        (72, 2),
+    ] {
+        expected_encoding[code] = expected;
+    }
+    assert_eq!(&cmap[format0 + 6..format0 + 262], &expected_encoding);
 }
 
 #[test]
