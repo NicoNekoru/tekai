@@ -25,6 +25,11 @@ resolver = "3"
 [workspace.dependencies]
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
 
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+incremental = false
+
 [profile.release]
 codegen-units = 1
 lto = "fat"

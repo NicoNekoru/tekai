@@ -488,17 +488,68 @@ through all 25 rotating includes. Those samples are recorded separately in
 
 ## Build disk usage
 
+Development builds disable incremental compilation and use packed line-table
+debug information. Tests inherit these settings. Assertions, overflow checks
+and test unwinding remain enabled. Filename and line-number backtraces remain
+available, but local-variable, parameter and type inspection requires full
+debug information. Release builds retain their separate fat-LTO profile.
+
+Opt into full debugger information for the command that needs it. Incremental
+compilation is also available when faster edit/rebuild cycles matter more than
+disk usage. Changing either setting creates additional cached artifact variants.
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=full CARGO_PROFILE_TEST_DEBUG=full cargo test --locked
+CARGO_INCREMENTAL=1 cargo build --locked
+```
+
+On macOS, packed debug information uses `dsymutil` and produces `.dSYM` folders.
+Keep those folders alongside the binaries when diagnosing backtraces. A failed
+`dsymutil` invocation can emit a warning without failing compilation, so check
+build warnings before relying on source-line symbolization. The profile options
+are documented in the [Cargo profile reference](https://doc.rust-lang.org/cargo/reference/profiles.html).
+
 Measure a fresh build directory, not a long-lived `target/debug` containing
 old crate versions, feature combinations, test executables, and incremental
-compilation caches. Do not clear another developer's cache to measure a change:
+compilation caches. Do not clear another developer's cache to measure a change.
 
 ```sh
 size_target=$(mktemp -d "${TMPDIR:-/tmp}/tekai-size.XXXXXX")
 cargo build --locked --target-dir "$size_target"
-du -sk "$size_target/debug"
+du -sk "$size_target"
 cargo test --workspace --locked --no-run --target-dir "$size_target"
-du -sk "$size_target/debug"
+du -sk "$size_target"
 ```
+
+On 2026-10-11, fresh ARM64 macOS targets with Rust 1.99.0 and identical locked
+build inputs gave the following Cargo-target totals. Every variant disabled incremental
+compilation and completed both commands above, including all 19 workspace test
+executables. The C and C++ compiler commands were disabled. Size measurements
+preceded test execution and additional toolchain or lint checks.
+
+| Debug information | After build | After build + workspace test compilation |
+| --- | ---: | ---: |
+| Full, unpacked | 1,216,652 KiB | 2,272,552 KiB |
+| Full, packed | 1,011,720 KiB | 2,142,448 KiB |
+| Line tables, packed, new default | 880,512 KiB | 1,787,912 KiB |
+| Line tables, off, rejected | 830,004 KiB | 1,573,532 KiB |
+
+The selected profile reduces the matched test-compilation total by 21.3%, about
+473 MiB. This comparison isolates debug-information changes. It does not measure
+the additional savings from disabling previously enabled incremental caches.
+Packed line tables retained source-line backtraces in an existing caught-panic
+test. The smaller `off` variant lost local stack-frame source lines on this Mac
+and was rejected. Its panic header still showed a source location, which alone
+does not demonstrate debug-information lookup.
+
+The full/unpacked target retained 452 compiler object files totaling
+625,901,800 apparent bytes. Packed line tables retained none and produced 21
+`.dSYM` folders totaling 214,184 KiB. The totals above include these folders.
+They are `du -sk` filesystem-accounted sizes, counting hard links once. APFS
+clones can share physical extents, so these figures do not prove independent
+physical bytes or peak filesystem consumption. Concurrent local tests also
+prevent a causal build-time comparison. These are dated measurements, not
+cross-platform size limits.
 
 On 2026-10-03, matched fresh ARM64 macOS builds with Rust 1.98.1, the locked
 dependencies, and the default debug profile gave these results against 0.4.0:

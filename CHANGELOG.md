@@ -5,6 +5,10 @@ versioning.
 
 ## Unreleased
 
+- Reduce local build-cache growth by disabling incremental compilation and
+  packing line-level debug information. Preserve filename and line-number
+  backtraces, with full debugger information available through Cargo overrides.
+  Release optimization is unchanged.
 - Index recursive project and shared package trees once per build/pass. Reuse
   overlapping search roots and parse mutable filename databases once per file
   identity, preserving path priority and database-only lookup.
