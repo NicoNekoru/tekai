@@ -314,11 +314,11 @@ impl Session {
         for (name, reason) in [
             (
                 "embedded_engine_entry",
-                "native_engine_exits_without_returning_to_Rust",
+                "engine_child_process_outside_parent_instrumentation",
             ),
             (
                 "format_initialization",
-                "not_separately_instrumented_inside_native_engine",
+                "not_separately_instrumented_inside_engine_child",
             ),
         ] {
             phases.push(PhaseRecord {
@@ -327,8 +327,8 @@ impl Session {
                 elapsed_ms: None,
                 calls: 0,
                 active_calls: 0,
-                source: "native exact engine, outside parent process instrumentation",
-                scope: "native_engine_internal",
+                source: "exact engine child, outside parent process instrumentation",
+                scope: "engine_child_internal",
                 reason: Some(reason),
             });
         }
@@ -337,7 +337,7 @@ impl Session {
             .lock()
             .map_err(|_| io::Error::other("profile counters poisoned"))?;
         let record = Record {
-            schema_version: 2,
+            schema_version: 3,
             producer: "tekai-rust",
             scope: "cli_process",
             source: "opt_in_rust_instrumentation",
@@ -444,7 +444,7 @@ mod tests {
     #[test]
     fn inventory_is_bounded_and_unobserved_phases_are_unavailable() {
         let record = record(&Session::new());
-        assert_eq!(record["schema_version"], 2);
+        assert_eq!(record["schema_version"], 3);
         assert_eq!(record["untrusted"], true);
         assert_eq!(record["phases_overlap"], true);
         let phases = record["phases"].as_array().unwrap();

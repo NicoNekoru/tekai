@@ -43,21 +43,22 @@ MEM = 'MemTotal: 1000 kB\nMemAvailable: 500 kB\nMemFree: 100 kB\nSwapTotal: 200 
 TOP = 'CPU usage: 1.00% user, 2.00% sys, 97.00% idle\nCPU usage: 3.00% user, 4.00% sys, 93.00% idle\n'
 
 
-def phase_record(version=2):
+def phase_record(version=3):
     phases = []
-    sources = profile.PHASE_SOURCES if version == 2 else profile.PHASE_SOURCES_V1
+    sources = {1: profile.PHASE_SOURCES_V1, 2: profile.PHASE_SOURCES_V2, 3: profile.PHASE_SOURCES}[version]
+    reasons = profile.CHILD_REASONS if version == 3 else profile.NATIVE_REASONS_V2
     for name, source in sources.items():
-        native = name in profile.NATIVE_REASONS
+        native = name in reasons
         phases.append({'name': name, 'status': 'unavailable' if native else 'available',
                        'elapsed_ms': None if native else 4.0, 'calls': 0 if native else 1,
                        'active_calls': 0, 'source': source,
-                       'scope': 'native_engine_internal' if native else 'subprocess_launch_and_wait'
+                       'scope': ('engine_child_internal' if version == 3 else 'native_engine_internal') if native else 'subprocess_launch_and_wait'
                                 if name == 'tex_subprocess' else 'inclusive_wall_time_current_process',
-                       'reason': profile.NATIVE_REASONS[name] if native else None})
+                       'reason': reasons[name] if native else None})
     record = {'schema_version': version, 'producer': 'tekai-rust', 'scope': 'cli_process',
             'source': 'opt_in_rust_instrumentation', 'untrusted': True, 'status': 'success',
             'elapsed_ms': 10.0, 'completed_spans_only': True, 'phases_overlap': True, 'phases': phases}
-    if version == 2:
+    if version in (2, 3):
         record['counters'] = [{'name': name, 'value': 1, 'unit': unit,
                               'scope': 'aggregate_observations_current_process'}
                              for name, unit in profile.COUNTER_UNITS.items()]
@@ -198,6 +199,27 @@ class PhaseTests(unittest.TestCase):
         self.assertFalse(result['compatibility']['counters_available'])
         self.assertIn('input_metadata', result['compatibility']['missing_phase_names'])
 
+    def test_schema2_keeps_legacy_engine_labels_and_granular_observations(self):
+        result = profile.parse_phases(phase_line(phase_record(2)))
+        self.assertEqual(result['status'], 'reported')
+        self.assertEqual(result['compatibility']['granular_observations'], 'available')
+        self.assertTrue(result['compatibility']['counters_available'])
+        self.assertEqual(result['compatibility']['missing_phase_names'], [])
+
+    def test_engine_unavailable_reasons_are_versioned_without_invented_measurements(self):
+        for version in (1, 2, 3):
+            data = phase_record(version)
+            entry = next(phase for phase in data['phases'] if phase['name'] == 'embedded_engine_entry')
+            incompatible = profile.NATIVE_REASONS_V2 if version == 3 else profile.CHILD_REASONS
+            entry['reason'] = incompatible['embedded_engine_entry']
+            with self.subTest(version=version, mutation='wrong version reason'):
+                self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
+            data = phase_record(version)
+            entry = next(phase for phase in data['phases'] if phase['name'] == 'embedded_engine_entry')
+            entry.update(status='available', elapsed_ms=1, calls=1, reason=None)
+            with self.subTest(version=version, mutation='invented child measurement'):
+                self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
+
     def test_unfinished_calls_are_not_invented(self):
         data = phase_record()
         data['phases'][0].update(status='unavailable', elapsed_ms=None, calls=0, active_calls=1,
@@ -209,7 +231,7 @@ class PhaseTests(unittest.TestCase):
         mutations = ({}, [], {'bad': 1})
         for data in mutations:
             self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
-        for key, value in (('schema_version', True), ('schema_version', 3), ('producer', 'other'),
+        for key, value in (('schema_version', True), ('schema_version', 4), ('producer', 'other'),
                            ('scope', 'tree'), ('source', 'guessed'), ('untrusted', False),
                            ('completed_spans_only', False), ('phases_overlap', False),
                            ('status', 'pass'), ('status', []), ('elapsed_ms', -1), ('elapsed_ms', True),

@@ -423,6 +423,10 @@ engine completion returns a typed result to the child runner, while fatal paths
 still exit directly. Parent cache/build commands can report
 argument/configuration setup, state loading, freshness checks and TeX subprocess
 waits. Engine format initialization remains explicitly unmeasured.
+Phase protocol version 3 names these unavailable observations as child-process
+internals rather than claiming that normal Rust engine entry never returns.
+The reader still validates versions 1 and 2 using their original labels and
+reasons. No version supplies measured child-internal durations.
 
 ```sh
 python3 -B tools/profile_runtime.py --candidate target/release/tekai \

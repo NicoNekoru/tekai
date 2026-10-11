@@ -25,6 +25,8 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("empty-bin")).unwrap();
+        fs::write(root.join("tekai.toml"), "").unwrap();
         Self(root)
     }
 
@@ -33,8 +35,10 @@ impl Fixture {
         command
             .current_dir(&self.0)
             .args(args)
-            .env_remove("TEKAI_DIAGNOSTIC_PROFILE")
+            .env_clear()
+            .env("PATH", self.0.join("empty-bin"))
             .env("HOME", self.0.join("home"))
+            .env("TEKAI_TEXMF_MODE", "bundled")
             .env("TEKAI_ENGINE_CACHE", self.0.join("cache-engine"))
             .env("TEKAI_FORMAT_CACHE", self.0.join("cache-format"))
             .env("TEKAI_AUX_CACHE", self.0.join("cache-aux"))
@@ -47,6 +51,26 @@ impl Fixture {
             command.env("TEKAI_DIAGNOSTIC_PROFILE", value);
         }
         command.output().expect("CLI did not start")
+    }
+
+    fn run_build(&self, main: &str, opt_in: Option<&str>) -> Output {
+        self.run(
+            &[
+                "build",
+                main,
+                "--engine",
+                "tekai-engine",
+                "--runner",
+                "direct",
+                "--bib",
+                "none",
+                "--draft-prepass",
+                "never",
+                "--once",
+                "--report-json",
+            ],
+            opt_in,
+        )
     }
 }
 
@@ -71,9 +95,9 @@ fn records(output: &Output) -> Vec<Value> {
 
 fn only_record(output: &Output) -> Value {
     let records = records(output);
-    assert_eq!(records.len(), 1, "{output:#?}");
+    assert_eq!(records.len(), 1, "{}", output_details(output));
     let record = records.into_iter().next().unwrap();
-    assert_eq!(record["schema_version"], 2);
+    assert_eq!(record["schema_version"], 3);
     assert_eq!(record["producer"], "tekai-rust");
     assert_eq!(record["scope"], "cli_process");
     assert_eq!(record["source"], "opt_in_rust_instrumentation");
@@ -117,12 +141,12 @@ fn only_record(output: &Output) -> Value {
         let name = phase["name"].as_str().unwrap();
         let (scope, unavailable_reason) = match name {
             "embedded_engine_entry" => (
-                "native_engine_internal",
-                "native_engine_exits_without_returning_to_Rust",
+                "engine_child_internal",
+                "engine_child_process_outside_parent_instrumentation",
             ),
             "format_initialization" => (
-                "native_engine_internal",
-                "not_separately_instrumented_inside_native_engine",
+                "engine_child_internal",
+                "not_separately_instrumented_inside_engine_child",
             ),
             "tex_subprocess" => (
                 "subprocess_launch_and_wait",
@@ -195,6 +219,34 @@ fn phase<'a>(record: &'a Value, name: &str) -> &'a Value {
         .expect("fixed phase was omitted")
 }
 
+fn assert_phase_calls(record: &Value, name: &str, calls: u64) {
+    assert_eq!(
+        phase(record, name)["calls"],
+        calls,
+        "unexpected completed call count for {name}\n{record:#}"
+    );
+}
+
+fn counter(record: &Value, name: &str) -> u64 {
+    record["counters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|counter| counter["name"] == name)
+        .expect("fixed counter was omitted")["value"]
+        .as_u64()
+        .unwrap()
+}
+
+fn output_details(output: &Output) -> String {
+    format!(
+        "status {}\nstdout\n{}\nstderr\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
 fn ordinary_stderr(output: &Output) -> String {
     std::str::from_utf8(&output.stderr)
         .unwrap()
@@ -206,31 +258,33 @@ fn ordinary_stderr(output: &Output) -> String {
 #[test]
 fn missing_source_error_is_unchanged_and_only_exact_opt_in_emits() {
     let fixture = Fixture::new();
-    let args = ["build", "missing.tex", "--report-json"];
-    let default = fixture.run(&args, None);
-    assert_eq!(default.status.code(), Some(1));
+    let default = fixture.run_build("missing.tex", None);
+    assert_eq!(
+        default.status.code(),
+        Some(1),
+        "{}",
+        output_details(&default)
+    );
     assert!(records(&default).is_empty());
     for value in ["", "0", "true", " 1", "1\n"] {
-        let disabled = fixture.run(&args, Some(value));
+        let disabled = fixture.run_build("missing.tex", Some(value));
         assert_eq!(disabled.status.code(), default.status.code());
         assert_eq!(disabled.stdout, default.stdout);
         assert_eq!(disabled.stderr, default.stderr);
     }
-    let enabled = fixture.run(&args, Some("1"));
+    let enabled = fixture.run_build("missing.tex", Some("1"));
     assert_eq!(enabled.status.code(), default.status.code());
     assert_eq!(enabled.stdout, default.stdout);
     assert_eq!(ordinary_stderr(&enabled).as_bytes(), default.stderr);
     let record = only_record(&enabled);
     assert_eq!(record["status"], "error");
-    for name in [
-        "cli_parse",
-        "cli_config_setup",
-        "build_total",
-        "build_setup",
-    ] {
-        assert_eq!(phase(&record, name)["calls"], 1);
+    for name in ["cli_parse", "cli_config_setup", "build_total"] {
+        assert_phase_calls(&record, name, 1);
     }
-    assert_eq!(phase(&record, "tex_subprocess")["calls"], 0);
+    // Lookup-policy setup validates the root before entering direct_build.
+    assert_phase_calls(&record, "build_setup", 0);
+    assert_phase_calls(&record, "build_state_load", 0);
+    assert_phase_calls(&record, "tex_subprocess", 0);
 }
 
 #[test]
@@ -269,39 +323,92 @@ fn existing_check_exit_preserves_json_and_emits_after_work() {
 }
 
 #[test]
-fn malformed_state_observes_failed_load_without_launching_engine() {
+fn malformed_state_parse_is_observed_as_a_miss_before_source_read_error() {
     let fixture = Fixture::new();
-    fs::write(fixture.0.join("main.tex"), "Unused source.\n").unwrap();
+    // A directory resolves successfully, then fails the source read after
+    // cache recovery. This prevents an engine launch without treating
+    // malformed, disposable cache metadata as a fatal build error.
+    fs::create_dir(fixture.0.join("main.tex")).unwrap();
     fs::create_dir(fixture.0.join("build")).unwrap();
-    fs::write(fixture.0.join("build/.tekai-main.state.toml"), "[").unwrap();
-    let args = ["build", "main.tex", "--report-json"];
-    let default = fixture.run(&args, None);
-    let enabled = fixture.run(&args, Some("1"));
-    assert_eq!(default.status.code(), Some(1));
+    let state_path = fixture.0.join("build/.tekai-main.state.toml");
+    fs::write(&state_path, "[").unwrap();
+    let default = fixture.run_build("main.tex", None);
+    assert_eq!(
+        default.status.code(),
+        Some(1),
+        "{}",
+        output_details(&default)
+    );
+    assert!(
+        ordinary_stderr(&default).contains("failed to read TeX source"),
+        "{}",
+        output_details(&default)
+    );
+    assert!(!state_path.exists(), "malformed state was not invalidated");
+    // The first CLI invocation invalidates the malformed state. Restore the
+    // same byte before measuring the second invocation's parse observation.
+    fs::write(&state_path, "[").unwrap();
+    let enabled = fixture.run_build("main.tex", Some("1"));
     assert_eq!(enabled.status.code(), default.status.code());
     assert_eq!(enabled.stdout, default.stdout);
     assert_eq!(ordinary_stderr(&enabled).as_bytes(), default.stderr);
-    assert!(ordinary_stderr(&enabled).contains("failed to parse build state"));
+    assert!(!ordinary_stderr(&enabled).contains("failed to parse build state"));
+    assert!(!state_path.exists(), "malformed state was not invalidated");
     let record = only_record(&enabled);
     assert_eq!(record["status"], "error");
-    assert_eq!(phase(&record, "build_state_load")["calls"], 1);
-    assert_eq!(phase(&record, "build_state_read")["calls"], 1);
-    assert_eq!(phase(&record, "build_state_parse")["calls"], 1);
-    let counter = |name| {
-        record["counters"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|counter| counter["name"] == name)
-            .unwrap()["value"]
-            .as_u64()
-            .unwrap()
-    };
-    assert_eq!(counter("state_bytes_read"), 1);
-    assert_eq!(counter("state_dependencies"), 0);
-    assert_eq!(counter("freshness_requests"), 0);
-    assert_eq!(counter("warm_cache_hits"), 0);
-    assert_eq!(phase(&record, "tex_subprocess")["calls"], 0);
+    for name in [
+        "build_setup",
+        "build_state_load",
+        "build_state_read",
+        "build_state_parse",
+        "build_cache_checks",
+    ] {
+        assert_phase_calls(&record, name, 1);
+    }
+    assert_eq!(counter(&record, "state_bytes_read"), 1);
+    assert_eq!(counter(&record, "state_dependencies"), 0);
+    assert_eq!(counter(&record, "freshness_requests"), 0);
+    assert_eq!(counter(&record, "warm_cache_hits"), 0);
+    assert_phase_calls(&record, "tex_subprocess", 0);
+    for extension in ["log", "fls", "pdf"] {
+        assert!(
+            !fixture.0.join(format!("build/main.{extension}")).exists(),
+            "engine unexpectedly wrote {extension}"
+        );
+    }
+}
+
+#[test]
+fn unreadable_state_reports_io_error_without_parsing_or_launching_engine() {
+    let fixture = Fixture::new();
+    fs::write(fixture.0.join("main.tex"), "Unused source.\n").unwrap();
+    fs::create_dir_all(fixture.0.join("build/.tekai-main.state.toml")).unwrap();
+    let default = fixture.run_build("main.tex", None);
+    let enabled = fixture.run_build("main.tex", Some("1"));
+    assert_eq!(
+        default.status.code(),
+        Some(1),
+        "{}",
+        output_details(&default)
+    );
+    assert_eq!(enabled.status.code(), default.status.code());
+    assert_eq!(enabled.stdout, default.stdout);
+    assert_eq!(ordinary_stderr(&enabled).as_bytes(), default.stderr);
+    assert!(
+        ordinary_stderr(&enabled).contains("failed to read build state"),
+        "{}",
+        output_details(&enabled)
+    );
+    let record = only_record(&enabled);
+    assert_eq!(record["status"], "error");
+    assert_phase_calls(&record, "build_state_load", 1);
+    assert_phase_calls(&record, "build_state_read", 1);
+    assert_phase_calls(&record, "build_state_parse", 0);
+    assert_eq!(counter(&record, "state_bytes_read"), 0);
+    assert_eq!(counter(&record, "state_dependencies"), 0);
+    assert_eq!(counter(&record, "freshness_requests"), 0);
+    assert_eq!(counter(&record, "warm_cache_hits"), 0);
+    assert_phase_calls(&record, "tex_subprocess", 0);
 }
 
 #[test]

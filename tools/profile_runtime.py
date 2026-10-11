@@ -47,7 +47,7 @@ PHASE_SOURCES_V1 = {
     'embedded_engine_entry': 'native exact engine, outside parent process instrumentation',
     'format_initialization': 'native exact engine, outside parent process instrumentation',
 }
-PHASE_SOURCES = {**PHASE_SOURCES_V1,
+PHASE_SOURCES_V2 = {**PHASE_SOURCES_V1,
     'build_state_read': 'compiler build-state file read',
     'build_state_parse': 'compiler build-state TOML parse',
     'input_metadata': 'compiler::file_metadata_fingerprint',
@@ -58,14 +58,22 @@ PHASE_SOURCES = {**PHASE_SOURCES_V1,
     'cli_report_serialization': 'main build-report JSON conversion and serialization',
     'build_mode_key': 'compiler::direct_mode_key',
 }
+PHASE_SOURCES = {**PHASE_SOURCES_V2,
+    'embedded_engine_entry': 'exact engine child, outside parent process instrumentation',
+    'format_initialization': 'exact engine child, outside parent process instrumentation',
+}
 COUNTER_UNITS = {'state_bytes_read': 'bytes', 'state_dependencies': 'recorded_inputs',
     'freshness_requests': 'requests', 'freshness_memo_hits': 'requests', 'freshness_memo_misses': 'requests',
     'metadata_checks': 'calls', 'metadata_matches': 'freshness_routes',
     'content_hash_fallbacks': 'freshness_routes', 'effective_hash_fallbacks': 'freshness_routes',
     'virtual_freshness_checks': 'freshness_routes', 'stale_inputs': 'observed_stale_inputs', 'warm_cache_hits': 'builds'}
-NATIVE_REASONS = {
+NATIVE_REASONS_V2 = {
     'embedded_engine_entry': 'native_engine_exits_without_returning_to_Rust',
     'format_initialization': 'not_separately_instrumented_inside_native_engine',
+}
+CHILD_REASONS = {
+    'embedded_engine_entry': 'engine_child_process_outside_parent_instrumentation',
+    'format_initialization': 'not_separately_instrumented_inside_engine_child',
 }
 
 
@@ -183,10 +191,10 @@ def parse_phases(stderr, truncated=False):
         version = data.get('schema_version')
         expected_keys = {'schema_version', 'producer', 'scope', 'source', 'untrusted', 'status', 'elapsed_ms',
                          'completed_spans_only', 'phases_overlap', 'phases'}
-        if version == 2:
+        if version in (2, 3):
             expected_keys.add('counters')
         if set(data) != expected_keys \
-                or type(version) is not int or version not in (1, 2) \
+                or type(version) is not int or version not in (1, 2, 3) \
                 or data.get('producer') != 'tekai-rust' or data.get('scope') != 'cli_process' \
                 or data.get('source') != 'opt_in_rust_instrumentation' or data.get('untrusted') is not True \
                 or data.get('completed_spans_only') is not True or data.get('phases_overlap') is not True \
@@ -196,7 +204,8 @@ def parse_phases(stderr, truncated=False):
         if version == 1 and len(lines[0].encode('utf-8')) + len('TEKAI_PROFILE ') + 1 > 8192:
             raise ValueError('Legacy phase record exceeds its 8-KiB bound')
         phases = data.get('phases')
-        sources = PHASE_SOURCES if version == 2 else PHASE_SOURCES_V1
+        sources = {1: PHASE_SOURCES_V1, 2: PHASE_SOURCES_V2, 3: PHASE_SOURCES}[version]
+        reasons = CHILD_REASONS if version == 3 else NATIVE_REASONS_V2
         names = tuple(sources)
         if not isinstance(phases, list) or len(phases) != len(names) \
                 or any(not isinstance(phase, dict) for phase in phases) \
@@ -205,7 +214,7 @@ def parse_phases(stderr, truncated=False):
             raise ValueError('Missing or duplicated fixed phase inventory')
         for phase in phases:
             name = phase['name']
-            scope = 'native_engine_internal' if name in NATIVE_REASONS else \
+            scope = ('engine_child_internal' if version == 3 else 'native_engine_internal') if name in reasons else \
                 'subprocess_launch_and_wait' if name == 'tex_subprocess' else 'inclusive_wall_time_current_process'
             if set(phase) != {'name', 'status', 'elapsed_ms', 'calls', 'active_calls', 'source', 'scope', 'reason'} \
                     or phase.get('status') not in ('available', 'unavailable') \
@@ -214,13 +223,13 @@ def parse_phases(stderr, truncated=False):
                     or phase.get('source') != sources[name] or phase.get('scope') != scope:
                 raise ValueError('Invalid phase scope, source or call count')
             if phase['status'] == 'available':
-                if name in NATIVE_REASONS or phase['calls'] == 0 or not finite_number(phase.get('elapsed_ms')) \
+                if name in reasons or phase['calls'] == 0 or not finite_number(phase.get('elapsed_ms')) \
                         or phase.get('reason') is not None:
                     raise ValueError('Invalid available phase duration')
             elif phase['calls'] != 0 or phase.get('elapsed_ms') is not None \
-                    or phase.get('reason') != NATIVE_REASONS.get(name, 'no_completed_call_in_this_process'):
+                    or phase.get('reason') != reasons.get(name, 'no_completed_call_in_this_process'):
                 raise ValueError('Unavailable phase requires null duration and a reason')
-        if version == 2:
+        if version in (2, 3):
             counters = data.get('counters')
             if not isinstance(counters, list) or len(counters) != len(COUNTER_UNITS) \
                     or any(not isinstance(counter, dict) or type(counter.get('name')) is not str for counter in counters) \
@@ -233,10 +242,10 @@ def parse_phases(stderr, truncated=False):
                         or counter.get('scope') != 'aggregate_observations_current_process':
                     raise ValueError('Invalid counter unit, scope or count')
         result.update(status='reported', data=data,
-                      compatibility={'schema_version': version, 'granular_observations': 'available' if version == 2
-                                     else 'unavailable_legacy_schema', 'missing_phase_names': [] if version == 2
+                      compatibility={'schema_version': version, 'granular_observations': 'available' if version in (2, 3)
+                                     else 'unavailable_legacy_schema', 'missing_phase_names': [] if version in (2, 3)
                                      else sorted(set(PHASE_SOURCES) - set(PHASE_SOURCES_V1)),
-                                     'counters_available': version == 2})
+                                     'counters_available': version in (2, 3)})
     except (ValueError, RecursionError, OverflowError) as error:
         result.update(status='invalid', reason=str(error))
     return result
@@ -912,7 +921,7 @@ def main(argv=None):
                                        'command': list(map(str, fixture['command'])), 'input_sha256': fixture['input_sha256'],
                                        'status': 'not_started', 'output_validation': None}
                                 row['phase_opt_in_note'] = 'Clap --version exits before Rust diagnostic emission; absent phases are expected.' \
-                                    if case == 'cli-startup' else 'Native engine entry bypasses Rust CLI instrumentation; absent phases are expected.' \
+                                    if case == 'cli-startup' else 'Engine child entry bypasses Rust CLI instrumentation; absent phases are expected.' \
                                     if case in ('nested-lookup', 'image-compile') else \
                                     'Warm-build instrumentation is opt-in; selected baseline may have an older or absent protocol.'
                                 if case == 'warm-build-cache' and repetition >= 0:
