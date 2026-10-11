@@ -55,6 +55,7 @@ pub mod generated {
 }
 
 mod allocation;
+mod backend_parse;
 mod cache;
 mod core_types;
 mod directory_graph;
@@ -74,6 +75,7 @@ pub mod search;
 mod stdio;
 pub mod support;
 pub mod synctex;
+mod ttf_post;
 pub mod utils;
 pub mod web2c;
 pub mod xpdf;

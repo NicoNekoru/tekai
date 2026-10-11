@@ -1,15 +1,11 @@
 use crate::allocation::free;
+use crate::backend_parse::{copy_without_spaces, Cursor, FieldError};
 use crate::generated::pdftexextra::{do_dump, do_undump};
 use crate::integer_parse::{signed_prefix, IntegerBase};
 use crate::openclose::{xmalloc, xstrdup};
 use std::ffi::CStr;
 
 extern "C" {
-    fn sscanf(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn strcat(
         __s1: *mut ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
@@ -275,8 +271,7 @@ pub unsafe extern "C" fn glyph_unicode_free() {
 pub unsafe extern "C" fn deftounicode(mut glyph: strnumber, mut unistr: strnumber) {
     let mut buf: [::core::ffi::c_char; 256] = [0; 256];
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut buf2: [::core::ffi::c_char; 256] = [0; 256];
-    let mut q: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let mut buf2: [u8; 256] = [0; 256];
     let mut valid_unistr: ::core::ffi::c_int = 0;
     let mut i: ::core::ffi::c_int = 0;
     let mut l: ::core::ffi::c_int = 0;
@@ -324,6 +319,20 @@ pub unsafe extern "C" fn deftounicode(mut glyph: strnumber, mut unistr: strnumbe
             break;
         }
         i += 1;
+    }
+    if valid_unistr == 2 {
+        if copy_without_spaces(CStr::from_ptr(p).to_bytes(), &mut buf2).is_err() {
+            valid_unistr = 0;
+        }
+    } else if valid_unistr == 1 {
+        sscan_result = match Cursor::new(CStr::from_ptr(p).to_bytes()).hex(None) {
+            Ok(value) => value as ::core::ffi::c_ulong,
+            Err(FieldError::Overflow) => ::core::ffi::c_ulong::MAX,
+            Err(FieldError::NoMatch) => {
+                valid_unistr = 0;
+                0
+            }
+        };
     }
     if l == 0 as ::core::ffi::c_int
         || valid_unistr == 0 as ::core::ffi::c_int
@@ -391,34 +400,10 @@ pub unsafe extern "C" fn deftounicode(mut glyph: strnumber, mut unistr: strnumbe
             as *mut ::core::ffi::c_char;
     }
     if valid_unistr == 2 as ::core::ffi::c_int {
-        q = &raw mut buf2 as *mut ::core::ffi::c_char;
-        while *p as ::core::ffi::c_int != 0 as ::core::ffi::c_int {
-            if *p as ::core::ffi::c_int != ' ' as i32 {
-                let fresh0 = q;
-                q = q.offset(1);
-                *fresh0 = *p;
-            }
-            p = p.offset(1);
-        }
-        *q = 0 as ::core::ffi::c_char;
         (*gu).code = UNI_STRING as integer;
         (*gu).unicode_seq = xstrdup(&raw mut buf2 as *mut ::core::ffi::c_char as const_string)
             as *mut ::core::ffi::c_char;
     } else {
-        i = sscanf(
-            p,
-            b"%lX\0" as *const u8 as *const ::core::ffi::c_char,
-            &raw mut sscan_result,
-        );
-        if !(i == 1 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
-            __assert_rtn(
-                b"deftounicode\0" as *const u8 as *const ::core::ffi::c_char,
-                b"tounicode.c\0" as *const u8 as *const ::core::ffi::c_char,
-                120 as ::core::ffi::c_int,
-                b"i == 1\0" as *const u8 as *const ::core::ffi::c_char,
-            );
-        } else {
-        };
         if sscan_result > 0x10ffff as ::core::ffi::c_ulong {
             crate::utils::pdftex_warn_args(
                 b"ToUnicode: value out of range [0,10FFFF]: %lX\0" as *const u8
@@ -445,7 +430,8 @@ unsafe extern "C" fn check_unicode_value(
     mut s: *const ::core::ffi::c_char,
     mut multiple_value: boolean,
 ) -> ::core::ffi::c_long {
-    let mut l: ::core::ffi::c_int = strlen(s) as ::core::ffi::c_int;
+    let bytes = CStr::from_ptr(s).to_bytes();
+    let mut l: ::core::ffi::c_int = bytes.len() as ::core::ffi::c_int;
     let mut i: ::core::ffi::c_int = 0;
     let mut code: ::core::ffi::c_long = 0;
     if l == 0 as ::core::ffi::c_int {
@@ -468,15 +454,10 @@ unsafe extern "C" fn check_unicode_value(
         }
         if multiple_value != 0 {
             if i % 4 as ::core::ffi::c_int == 3 as ::core::ffi::c_int {
-                if sscanf(
-                    s.offset(i as isize)
-                        .offset(-(3 as ::core::ffi::c_int as isize)),
-                    b"%4lX\0" as *const u8 as *const ::core::ffi::c_char,
-                    &raw mut code,
-                ) != 1 as ::core::ffi::c_int
-                {
-                    return UNI_UNDEF as ::core::ffi::c_long;
-                }
+                code = match Cursor::new(&bytes[(i - 3) as usize..]).hex(Some(4)) {
+                    Ok(value) => value as ::core::ffi::c_long,
+                    Err(_) => return UNI_UNDEF as ::core::ffi::c_long,
+                };
                 if !(0 as ::core::ffi::c_long <= code && code <= 0xd7ff as ::core::ffi::c_long
                     || 0xe000 as ::core::ffi::c_long <= code
                         && code <= 0xffff as ::core::ffi::c_long)
@@ -485,14 +466,10 @@ unsafe extern "C" fn check_unicode_value(
                 }
             }
         } else if i == l - 1 as ::core::ffi::c_int {
-            if sscanf(
-                s,
-                b"%lX\0" as *const u8 as *const ::core::ffi::c_char,
-                &raw mut code,
-            ) != 1 as ::core::ffi::c_int
-            {
-                return UNI_UNDEF as ::core::ffi::c_long;
-            }
+            code = match Cursor::new(bytes).hex(None) {
+                Ok(value) => value as ::core::ffi::c_long,
+                Err(_) => return UNI_UNDEF as ::core::ffi::c_long,
+            };
             if !(0 as ::core::ffi::c_long <= code && code <= 0xd7ff as ::core::ffi::c_long
                 || 0xe000 as ::core::ffi::c_long <= code && code <= 0x10ffff as ::core::ffi::c_long)
             {

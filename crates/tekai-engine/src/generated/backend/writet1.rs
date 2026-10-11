@@ -1,3 +1,4 @@
+use crate::backend_parse::checked_span;
 use crate::openclose::open_input;
 use crate::stdio::{feof, ungetc};
 use crate::support::{xfclose, xfopen};
@@ -2293,6 +2294,15 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
                 && (b >= 0 as ::core::ffi::c_int && b < 256 as ::core::ffi::c_int)
                 && (c >= 0 as ::core::ffi::c_int && c < 256 as ::core::ffi::c_int)
             {
+                if checked_span(i64::from(a), i64::from(c), 256).is_none()
+                    || checked_span(i64::from(b), i64::from(c), 256).is_none()
+                {
+                    crate::utils::pdftex_fail_args(
+                        b"invalid pfb, encoding interval out of range\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                        &[],
+                    );
+                }
                 i = 0 as ::core::ffi::c_int;
                 while i < c {
                     copy_glyph_names(glyph_names, a + i, b + i);

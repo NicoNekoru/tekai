@@ -131,6 +131,38 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
         }
         glyph
     }
+    fn assemble(mut tables: Vec<([u8; 4], Vec<u8>)>) -> Vec<u8> {
+        tables.sort_by_key(|(tag, _)| *tag);
+        // The head checksum is computed with checkSumAdjustment cleared.
+        put32(
+            &mut tables.iter_mut().find(|(tag, _)| tag == b"head").unwrap().1,
+            8,
+            0,
+        );
+        let mut font = vec![0; 12 + tables.len() * 16];
+        put32(&mut font, 0, 0x00010000);
+        put16(&mut font, 4, tables.len() as u16);
+        put16(&mut font, 6, 128);
+        put16(&mut font, 8, 3);
+        put16(&mut font, 10, 32);
+        for (index, (tag, bytes)) in tables.into_iter().enumerate() {
+            let offset = font.len();
+            let record = 12 + index * 16;
+            font[record..record + 4].copy_from_slice(&tag);
+            put32(&mut font, record + 4, checksum(&bytes));
+            put32(&mut font, record + 8, offset as u32);
+            put32(&mut font, record + 12, bytes.len() as u32);
+            font.extend_from_slice(&bytes);
+            while !font.len().is_multiple_of(4) {
+                font.push(0);
+            }
+        }
+        let adjustment = 0xb1b0afba_u32.wrapping_sub(checksum(&font));
+        let head_offset = table_range(&font, b"head").start;
+        put32(&mut font, head_offset + 8, adjustment);
+        assert_eq!(checksum(&font), 0xb1b0afba);
+        font
+    }
     fn synthetic_font() -> (Vec<u8>, [Vec<u8>; 4]) {
         // Standard sfnt tables and owned rectangle outlines, no OS font data.
         // https://learn.microsoft.com/en-us/typography/opentype/spec/otff
@@ -251,7 +283,7 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
             cmap.extend_from_slice(&delta.to_be_bytes());
         }
         cmap.extend_from_slice(&[0; 8]);
-        let mut tables = vec![
+        let tables = vec![
             (*b"OS/2", os2),
             (*b"cmap", cmap),
             (*b"glyf", glyf),
@@ -263,30 +295,82 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
             (*b"name", name),
             (*b"post", post),
         ];
-        tables.sort_by_key(|(tag, _)| *tag);
-        let mut font = vec![0; 12 + tables.len() * 16];
-        put32(&mut font, 0, 0x00010000);
-        put16(&mut font, 4, tables.len() as u16);
-        put16(&mut font, 6, 128);
-        put16(&mut font, 8, 3);
-        put16(&mut font, 10, 32);
-        for (index, (tag, bytes)) in tables.into_iter().enumerate() {
-            let offset = font.len();
-            let record = 12 + index * 16;
-            font[record..record + 4].copy_from_slice(&tag);
-            put32(&mut font, record + 4, checksum(&bytes));
-            put32(&mut font, record + 8, offset as u32);
-            put32(&mut font, record + 12, bytes.len() as u32);
-            font.extend_from_slice(&bytes);
-            while !font.len().is_multiple_of(4) {
-                font.push(0);
+        (assemble(tables), glyphs)
+    }
+    fn named_font(font: &[u8], source_glyphs: &[Vec<u8>; 4]) -> (Vec<u8>, Vec<Vec<u8>>) {
+        let glyph_count = 304_u16;
+        let mut glyphs = source_glyphs[..3].to_vec();
+        let mut composite = Vec::new();
+        for word in [-1_i16, 0, 0, 700, 400] {
+            composite.extend_from_slice(&word.to_be_bytes());
+        }
+        for index in 4..glyph_count {
+            let flags = if index + 1 == glyph_count {
+                0x03_u16
+            } else {
+                0x23
+            };
+            for word in [flags, index, 0, 0] {
+                composite.extend_from_slice(&word.to_be_bytes());
             }
         }
-        let adjustment = 0xb1b0afba_u32.wrapping_sub(checksum(&font));
-        let head_offset = table_range(&font, b"head").start;
-        put32(&mut font, head_offset + 8, adjustment);
-        assert_eq!(checksum(&font), 0xb1b0afba);
-        (font, glyphs)
+        glyphs.push(composite);
+        glyphs.extend((4..glyph_count).map(|_| rectangle(300, 400)));
+        let mut glyf = Vec::new();
+        let mut loca = Vec::new();
+        let mut hmtx = Vec::new();
+        for glyph in &glyphs {
+            loca.extend_from_slice(&(glyf.len() as u32).to_be_bytes());
+            glyf.extend_from_slice(glyph);
+            hmtx.extend_from_slice(&600_u16.to_be_bytes());
+            hmtx.extend_from_slice(&0_u16.to_be_bytes());
+        }
+        loca.extend_from_slice(&(glyf.len() as u32).to_be_bytes());
+        let names: Vec<_> = (2..glyph_count)
+            .map(|index| match index {
+                // Exact post names must win before numeric-name fallbacks.
+                2 => b"uni10000".to_vec(),
+                3 => b"index-1".to_vec(),
+                _ => format!("ownedGlyph{index}").into_bytes(),
+            })
+            .collect();
+        let mut post = table(font, b"post")[..32].to_vec();
+        put32(&mut post, 0, 0x00020000);
+        post.extend_from_slice(&glyph_count.to_be_bytes());
+        for index in 0..glyph_count {
+            let name_index = if index < 2 { index } else { 258 + index - 2 };
+            post.extend_from_slice(&name_index.to_be_bytes());
+        }
+        for name in &names {
+            post.push(name.len() as u8);
+            post.extend_from_slice(name);
+        }
+        let mut tables: Vec<_> = font[12..12 + usize::from(read16(font, 4)) * 16]
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|record| {
+                let tag: [u8; 4] = record[..4].try_into().unwrap();
+                (tag, table(font, &tag).to_vec())
+            })
+            .collect();
+        for (tag, bytes) in &mut tables {
+            match &*tag {
+                b"glyf" => *bytes = glyf.clone(),
+                b"loca" => *bytes = loca.clone(),
+                b"hmtx" => *bytes = hmtx.clone(),
+                b"post" => *bytes = post.clone(),
+                b"hhea" => put16(bytes, 34, glyph_count),
+                b"maxp" => {
+                    put16(bytes, 4, glyph_count);
+                    put16(bytes, 10, 1200);
+                    put16(bytes, 12, 300);
+                    put16(bytes, 28, 300);
+                }
+                _ => {}
+            }
+        }
+        (assemble(tables), names)
     }
     fn embedded_font(pdf: &[u8]) -> &[u8] {
         let marker = b"/FontFile2 ";
@@ -416,6 +500,299 @@ fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping()
         expected_encoding[code] = expected;
     }
     assert_eq!(&cmap[format0 + 6..format0 + 262], &expected_encoding);
+
+    fn write_named_project(project: &Project, font: &[u8]) {
+        project.write_bytes("synthetic.ttf", font);
+        let mut encoding = String::from("/SyntheticEncoding [\n");
+        for code in 0..256 {
+            let name = match code {
+                65 => "uni10000",
+                66 => "index1",
+                67 => "index-1",
+                _ => ".notdef",
+            };
+            encoding.push_str(&format!("/{name}\n"));
+        }
+        encoding.push_str("] def\n");
+        project.write("synthetic.enc", &encoding);
+        project.write(
+            "main.tex",
+            r#"\pdfcompresslevel=0
+\pdfobjcompresslevel=0
+\pdfmapline{=cmr10 SyntheticGlyphs <synthetic.enc <synthetic.ttf}
+\documentclass{article}
+\pagestyle{empty}
+\begin{document}
+\font\probe=cmr10 at 10pt
+\probe ABC
+\end{document}
+"#,
+        );
+    }
+
+    // One selected composite pulls in 300 owned components, crossing the old
+    // byte-sized post writer counter while preserving every source name.
+    let (named, names) = named_font(&font, &glyphs);
+    let named_project = Project::new();
+    write_named_project(&named_project, &named);
+    named_project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+    let log = fs::read_to_string(named_project.0.join("build/main.log")).unwrap();
+    assert!(
+        !log.contains("out of valid"),
+        "exact post-name precedence must win: {log}"
+    );
+    let pdf = fs::read(named_project.0.join("build/main.pdf")).unwrap();
+    let embedded = embedded_font(&pdf);
+    assert_eq!(read16(table(embedded, b"maxp"), 4), 304);
+    let post = table(embedded, b"post");
+    assert_eq!(read32(post, 0), 0x00020000);
+    assert_eq!(&post[4..32], &table(&named, b"post")[4..32]);
+    assert_eq!(read16(post, 32), 304);
+    assert_eq!(read16(post, 34), 0);
+    assert_eq!(read16(post, 36), 1);
+    let mut position = 34 + 304 * 2;
+    for (index, expected) in names.iter().enumerate() {
+        assert_eq!(read16(post, 34 + (index + 2) * 2), 258 + index as u16);
+        let length = usize::from(post[position]);
+        position += 1;
+        assert_eq!(&post[position..position + length], expected);
+        position += length;
+    }
+    assert_eq!(position, post.len());
+    assert_eq!(read16(post, 34 + 258 * 2), 514);
+    assert_eq!(read16(post, 34 + 303 * 2), 559);
+
+    let post_range = table_range(&named, b"post");
+    let strings = post_range.start + 34 + 304 * 2;
+    let last_string = strings
+        + names[..names.len() - 1]
+            .iter()
+            .map(|name| name.len() + 1)
+            .sum::<usize>();
+    for (case, expected) in [
+        (0, "post: truncated glyph names"),
+        (1, "post: glyph name contains an embedded NUL"),
+        (2, "post: glyph name index has no Pascal string"),
+        (3, "post: table extent exceeds font file"),
+    ] {
+        let mut malformed = named.clone();
+        match case {
+            0 => malformed[last_string] = 255,
+            1 => malformed[strings + 1] = 0,
+            2 => put16(&mut malformed, post_range.start + 34 + 303 * 2, u16::MAX),
+            3 => {
+                let record = (0..usize::from(read16(&malformed, 4)))
+                    .map(|index| 12 + index * 16)
+                    .find(|&record| &malformed[record..record + 4] == b"post")
+                    .unwrap();
+                put32(&mut malformed, record + 12, u32::MAX);
+            }
+            _ => unreachable!(),
+        }
+        let malformed_project = Project::new();
+        write_named_project(&malformed_project, &malformed);
+        let output =
+            malformed_project.run(&["build", "main.tex", "--report-json", "--once", "--force"]);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "malformed post case {case}: {output:?}"
+        );
+        let diagnostics = format!(
+            "{}\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+            fs::read_to_string(malformed_project.0.join("build/main.log")).unwrap_or_default()
+        );
+        let normalized: String = diagnostics.split_ascii_whitespace().collect();
+        let expected: String = expected.split_ascii_whitespace().collect();
+        assert!(normalized.contains(&expected), "case {case}: {diagnostics}");
+        assert!(
+            !diagnostics.contains("panicked"),
+            "case {case}: {diagnostics}"
+        );
+    }
+}
+
+#[test]
+fn bundled_engine_checks_subfont_map_name_capacity_before_assembly() {
+    let project = Project::new();
+    fn document(prefix: &str, sfd_name: &str) -> String {
+        format!(
+            "\\pdfmapline{{={prefix}@{sfd_name}@ <unused.ttf}}\n\
+\\documentclass{{article}}\n\
+\\pagestyle{{empty}}\n\
+\\begin{{document}}\n\
+Subfont map name control.\n\
+\\end{{document}}\n"
+        )
+    }
+    let longest_sfd_name = "s".repeat(251);
+    project.write(&format!("{longest_sfd_name}.sfd"), "x 65\n");
+    project.write("main.tex", &document("probe", &longest_sfd_name));
+    project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+
+    project.write("synthetic.sfd", "x 65\n");
+    project.write("main.tex", &document(&"p".repeat(254), "synthetic"));
+    project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+
+    for (prefix, sfd_name, infix) in [
+        ("probe".to_owned(), "s".repeat(252), "x"),
+        ("probe".to_owned(), "s".repeat(400), "x"),
+        ("p".repeat(255), "synthetic".to_owned(), "x"),
+        ("p".repeat(254), "synthetic".to_owned(), "xx"),
+    ] {
+        project.write("synthetic.sfd", &format!("{infix} 65\n"));
+        project.write("main.tex", &document(&prefix, &sfd_name));
+        let output = project.run(&["build", "main.tex", "--report-json", "--once", "--force"]);
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+        let diagnostic: String = log.split_ascii_whitespace().collect();
+        assert!(diagnostic.contains("bufferoverflowatfile"), "{log}");
+        assert!(diagnostic.contains("subfont.rs"), "{log}");
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked"));
+    }
+}
+
+#[test]
+fn bundled_engine_rejects_out_of_bounds_type1_encoding_intervals() {
+    let project = Project::new();
+    project.write(
+        "main.tex",
+        r"\pdfmapline{=cmr10 SyntheticInterval <synthetic.pfa}
+\documentclass{article}
+\pagestyle{empty}
+\begin{document}
+\font\probe=cmr10 at 10pt
+\probe A
+\end{document}
+",
+    );
+    for interval in [
+        "dup dup 255 2 getinterval 0 exch putinterval",
+        "dup dup 0 2 getinterval 255 exch putinterval",
+    ] {
+        // The invalid encoding is in the plaintext portion, before eexec.
+        // An exact interval diagnostic proves rejection before any glyph copy.
+        project.write(
+            "synthetic.pfa",
+            &format!(
+                "%!PS-AdobeFont-1.0: SyntheticInterval 1.0\n\
+11 dict begin\n\
+/FontName /SyntheticInterval def\n\
+/FontType 1 def\n\
+/FontMatrix [0.001 0 0 0.001 0 0] readonly def\n\
+/FontBBox [0 0 1000 1000] readonly def\n\
+/Encoding 256 array\n\
+{interval}\n\
+readonly def\n\
+currentdict end\n\
+currentfile eexec\n"
+            ),
+        );
+        let output = project.run(&["build", "main.tex", "--report-json", "--once", "--force"]);
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+        let diagnostic: String = log.split_ascii_whitespace().collect();
+        assert!(
+            diagnostic.contains("invalidpfb,encodingintervaloutofrange"),
+            "{log}"
+        );
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked"));
+    }
+}
+
+#[test]
+fn bundled_engine_rejects_malformed_sfd_fields_without_panicking() {
+    let project = Project::new();
+    // Parsing the map expands this unused subfont immediately. No host font or
+    // even a TrueType fixture is needed to reach the actual SFD reader.
+    project.write(
+        "main.tex",
+        r"\pdfmapline{=probe@synthetic@ <unused.ttf}
+\documentclass{article}
+\pagestyle{empty}
+\begin{document}
+SFD parser control.
+\end{document}
+",
+    );
+    project.write("synthetic.sfd", "10 0: -1 010 0x10 65_66 \\\n67\n");
+    project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+    let control_log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+    assert!(
+        control_log
+            .split_ascii_whitespace()
+            .collect::<String>()
+            .contains("synthetic.sfd"),
+        "{control_log}"
+    );
+    for (source, expected) in [
+        ("10 -1: 65\n".to_owned(), "invalidindex:"),
+        ("10 256: 65\n".to_owned(), "invalidindex:"),
+        ("10 255: 65_66\n".to_owned(), "invalidrange:"),
+        (format!("10 {}_\n", "0".repeat(200)), "invalidtoken:"),
+        ("10 9223372036854775808\n".to_owned(), "invalidtoken:"),
+        ("10 2_1\n".to_owned(), "invalidrange:"),
+        ("10 255: 65 \\\n66\n".to_owned(), "invalidindex:"),
+    ] {
+        project.write("synthetic.sfd", &source);
+        let output = project.run(&["build", "main.tex", "--report-json", "--once", "--force"]);
+        assert_eq!(output.status.code(), Some(1), "{source:?}: {output:?}");
+        let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+        let diagnostic: String = log.split_ascii_whitespace().collect();
+        assert!(diagnostic.contains(expected), "{source:?}: {log}");
+        assert!(diagnostic.contains("synthetic.sfd"), "{log}");
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked"));
+    }
+}
+
+#[test]
+fn bundled_engine_warns_and_preserves_mapping_for_oversized_tounicode_sequences() {
+    let project = Project::new();
+    let valid_sequence = "0041 ".repeat(63);
+    let at_capacity = "0041 ".repeat(64);
+    let past_capacity = "0041 ".repeat(65);
+    project.write(
+        "main.tex",
+        &format!(
+            "\\pdfcompresslevel=0\n\
+\\pdfobjcompresslevel=0\n\
+\\pdfgentounicode=1\n\
+\\pdfglyphtounicode{{A}}{{0042}}\n\
+\\pdfglyphtounicode{{A}}{{{at_capacity}}}\n\
+\\pdfglyphtounicode{{A}}{{{past_capacity}}}\n\
+\\pdfglyphtounicode{{B}}{{{valid_sequence}}}\n\
+\\pdfglyphtounicode{{C}}{{10000000000000000}}\n\
+\\documentclass{{article}}\n\
+\\pagestyle{{empty}}\n\
+\\begin{{document}}\n\
+\\font\\probe=cmr10 at 10pt\n\
+\\probe ABC\n\
+\\end{{document}}\n"
+        ),
+    );
+    project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
+    let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+    let diagnostic: String = log.split_ascii_whitespace().collect();
+    assert_eq!(
+        diagnostic.matches("ToUnicode:invalidparameter(s):").count(),
+        2,
+        "{log}"
+    );
+    assert!(
+        diagnostic.contains("ToUnicode:valueoutofrange[0,10FFFF]:"),
+        "{log}"
+    );
+    let pdf = fs::read(project.0.join("build/main.pdf")).unwrap();
+    let pdf = String::from_utf8_lossy(&pdf);
+    assert!(pdf.contains("<41> <0042>"), "prior A mapping was lost");
+    assert!(
+        pdf.contains(&format!("<42> <{}>", "0041".repeat(63))),
+        "the valid 252-byte B sequence was lost"
+    );
+    assert!(!pdf.contains(&format!("<41> <{}>", "0041".repeat(64))));
+    assert!(!pdf.contains(&format!("<41> <{}>", "0041".repeat(65))));
 }
 
 #[test]

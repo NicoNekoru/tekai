@@ -2,7 +2,10 @@ use crate::allocation::free;
 use crate::openclose::open_input;
 use crate::openclose::{xmalloc, xstrdup};
 use crate::support::{xfclose, xfseek, xftell};
+use crate::ttf_post::{self, OutputGlyphName, PostError, PostNames};
 use crate::utils::xgetc;
+use std::ffi::CStr;
+use std::io::Read;
 
 extern "C" {
     fn sscanf(
@@ -48,7 +51,6 @@ extern "C" {
     static mut pdfptr: integer;
     static mut pdfgone: longinteger;
     static mut pdfsaveoffset: longinteger;
-    static mut k: ::core::ffi::c_uchar;
     fn zpackfilename(n: strnumber, a: strnumber, e: strnumber);
     fn pdfflush();
     fn getnullstr() -> strnumber;
@@ -546,8 +548,6 @@ static mut name_buf: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 static mut name_buf_size: ::core::ffi::c_int = 0;
 static mut dir_tab: *mut dirtab_entry = ::core::ptr::null::<dirtab_entry>() as *mut dirtab_entry;
-static mut glyph_name_buf: *mut ::core::ffi::c_char =
-    ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 static mut checksum: TTF_ULONG = 0;
 static mut tab_length: TTF_ULONG = 0;
 static mut tmp_ulong: TTF_ULONG = 0;
@@ -1533,19 +1533,39 @@ unsafe extern "C" fn ttf_read_hmtx() {
         }
     }
 }
-unsafe extern "C" fn ttf_read_post() {
-    let mut k_0: ::core::ffi::c_int = 0;
-    let mut nnames: ::core::ffi::c_int = 0;
-    let mut length: ::core::ffi::c_long = 0;
+struct PostReader(*mut FILE);
+
+impl Read for PostReader {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        let count =
+            unsafe { crate::stdio::fread(bytes.as_mut_ptr().cast(), 1, bytes.len(), self.0) };
+        if count == 0 && unsafe { crate::stdio::ferror(self.0) } != 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(count)
+        }
+    }
+}
+
+unsafe fn post_failure(error: PostError) -> ! {
+    crate::utils::pdftex_fail_args(error.message().as_ptr(), &[])
+}
+
+unsafe fn ttf_read_post() -> Option<PostNames> {
     let mut int_part: ::core::ffi::c_long = 0;
     let mut frac_part: ::core::ffi::c_long = 0;
     let mut sign: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
     let mut italic_angle: TTF_FIXED = 0;
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
-    let mut tab: *const dirtab_entry = ttf_seek_tab(
-        b"post\0" as *const u8 as *const ::core::ffi::c_char,
-        0 as TTF_LONG,
+    let tab = ttf_name_lookup(b"post\0" as *const u8 as *const ::core::ffi::c_char, true_0);
+    xfseek(ttf_file, 0, libc::SEEK_END, cur_file_name as const_string);
+    let file_length = xftell(ttf_file, cur_file_name as const_string) as u64;
+    let extent = ttf_post::checked_table_extent((*tab).offset, (*tab).length, file_length)
+        .unwrap_or_else(|error| post_failure(error));
+    xfseek(
+        ttf_file,
+        extent.start as ::core::ffi::c_long,
+        SEEK_SET,
+        cur_file_name as const_string,
     );
     post_format = ttf_getnum(TTF_FIXED_SIZE) as TTF_FIXED;
     italic_angle = ttf_getnum(TTF_FIXED_SIZE) as TTF_FIXED;
@@ -1562,13 +1582,12 @@ unsafe extern "C" fn ttf_read_post() {
         as ::core::ffi::c_int;
     (*fd_cur).font_dim[ITALIC_ANGLE_CODE as usize].set = true_0 as boolean;
     if glyph_tab.is_null() {
-        return;
+        return None;
     }
     ttf_getnum(
         2 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
             + 5 as ::core::ffi::c_int * 4 as ::core::ffi::c_int,
     );
-    let mut current_block_46: u64;
     match post_format {
         65536 => {
             if checked_post_name_count(NMACGLYPHS as ::core::ffi::c_long, glyphs_count).is_none() {
@@ -1581,104 +1600,49 @@ unsafe extern "C" fn ttf_read_post() {
                     ],
                 );
             }
-            glyph = glyph_tab;
-            while (glyph.offset_from(glyph_tab) as ::core::ffi::c_long)
-                < NMACGLYPHS as ::core::ffi::c_long
-            {
-                (*glyph).name =
-                    mac_glyph_names[glyph.offset_from(glyph_tab) as ::core::ffi::c_long as usize];
-                (*glyph).name_index =
-                    glyph.offset_from(glyph_tab) as ::core::ffi::c_long as TTF_USHORT;
-                glyph = glyph.offset(1);
+            for index in 0..ttf_post::STANDARD_NAMES {
+                let glyph = glyph_tab.add(index);
+                (*glyph).name = mac_glyph_names[index];
+                (*glyph).name_index = index as TTF_USHORT;
             }
-            current_block_46 = 3938820862080741272;
         }
         131072 => {
-            nnames = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT as ::core::ffi::c_int;
-            if checked_post_name_count(nnames as ::core::ffi::c_long, glyphs_count).is_none() {
-                crate::utils::pdftex_fail_args(
-                    b"post: glyph name count %i exceeds font glyph count %i\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    &[
-                        crate::utils::PrintfArg::from(nnames),
-                        crate::utils::PrintfArg::from(glyphs_count as ::core::ffi::c_int),
-                    ],
-                );
-            }
-            glyph = glyph_tab;
-            while (glyph.offset_from(glyph_tab) as ::core::ffi::c_long)
-                < nnames as ::core::ffi::c_long
-            {
-                (*glyph).name_index = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
-                glyph = glyph.offset(1);
-            }
-            length = (*tab).length as ::core::ffi::c_long
-                - (xftell(ttf_file, cur_file_name as const_string)
-                    - (*tab).offset as ::core::ffi::c_long);
-            glyph_name_buf = xmalloc(
-                (length as size_t)
-                    .wrapping_mul(::core::mem::size_of::<::core::ffi::c_char>() as size_t),
-            ) as *mut ::core::ffi::c_char;
-            p = glyph_name_buf;
-            while (p.offset_from(glyph_name_buf) as ::core::ffi::c_long) < length {
-                k_0 = ttf_getnum(TTF_BYTE_SIZE) as TTF_BYTE as ::core::ffi::c_int;
-                while k_0 > 0 as ::core::ffi::c_int {
-                    let fresh16 = p;
-                    p = p.offset(1);
-                    *fresh16 = ttf_getnum(TTF_CHAR_SIZE) as TTF_CHAR as ::core::ffi::c_char;
-                    k_0 -= 1;
-                }
-                let fresh17 = p;
-                p = p.offset(1);
-                *fresh17 = 0 as ::core::ffi::c_char;
-            }
-            glyph = glyph_tab;
-            while (glyph.offset_from(glyph_tab) as ::core::ffi::c_long)
-                < nnames as ::core::ffi::c_long
-            {
-                if ((*glyph).name_index as ::core::ffi::c_int) < NMACGLYPHS {
-                    (*glyph).name = mac_glyph_names[(*glyph).name_index as usize];
+            let names = ttf_post::read_format2(
+                PostReader(ttf_file),
+                u64::from((*tab).length) - 32,
+                glyphs_count,
+            )
+            .unwrap_or_else(|error| post_failure(error));
+            for (index, &name_index) in names.indices().iter().enumerate() {
+                let glyph = glyph_tab.add(index);
+                (*glyph).name_index = name_index;
+                (*glyph).name = if usize::from(name_index) < ttf_post::STANDARD_NAMES {
+                    mac_glyph_names[usize::from(name_index)]
                 } else {
-                    p = glyph_name_buf;
-                    k_0 = (*glyph).name_index as ::core::ffi::c_int - NMACGLYPHS;
-                    while k_0 > 0 as ::core::ffi::c_int {
-                        p = strchr(p, 0 as ::core::ffi::c_int)
-                            .offset(1 as ::core::ffi::c_int as isize);
-                        k_0 -= 1;
-                    }
-                    (*glyph).name = p;
-                }
-                glyph = glyph.offset(1);
+                    names
+                        .custom(name_index)
+                        .unwrap_or_else(|| post_failure(PostError::NameIndex))
+                        .as_ptr()
+                };
             }
-            current_block_46 = 3938820862080741272;
-        }
-        196608 => {
-            current_block_46 = 1202518105438317935;
+            return Some(names);
         }
         _ => {
-            crate::utils::pdftex_warn_args(
-                b"unsupported format (%.8X) of `post' table, assuming 3.0\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &[crate::utils::PrintfArg::from(
-                    post_format as ::core::ffi::c_uint,
-                )],
-            );
-            current_block_46 = 1202518105438317935;
-        }
-    }
-    match current_block_46 {
-        1202518105438317935 => {
-            glyph = glyph_tab;
-            while (glyph.offset_from(glyph_tab) as ::core::ffi::c_long)
-                < NMACGLYPHS.min(glyphs_count as ::core::ffi::c_int) as ::core::ffi::c_long
-            {
-                (*glyph).name_index =
-                    glyph.offset_from(glyph_tab) as ::core::ffi::c_long as TTF_USHORT;
-                glyph = glyph.offset(1);
+            if post_format != 0x30000 {
+                crate::utils::pdftex_warn_args(
+                    b"unsupported format (%.8X) of `post' table, assuming 3.0\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(
+                        post_format as ::core::ffi::c_uint,
+                    )],
+                );
+            }
+            for index in 0..ttf_post::STANDARD_NAMES.min(usize::from(glyphs_count)) {
+                (*glyph_tab.add(index)).name_index = index as TTF_USHORT;
             }
         }
-        _ => {}
-    };
+    }
+    None
 }
 unsafe extern "C" fn ttf_read_loca() {
     let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
@@ -1982,7 +1946,7 @@ unsafe extern "C" fn ttf_read_cmap(
         }
     };
 }
-unsafe extern "C" fn ttf_read_font() {
+unsafe fn ttf_read_font() -> Option<PostNames> {
     ttf_read_tabdir();
     if ttf_name_lookup(
         b"PCLT\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2021,9 +1985,10 @@ unsafe extern "C" fn ttf_read_font() {
     ttf_read_hhea();
     ttf_read_pclt();
     ttf_read_hmtx();
-    ttf_read_post();
+    let glyph_names = ttf_read_post();
     ttf_read_loca();
     ttf_read_name();
+    glyph_names
 }
 unsafe extern "C" fn ttf_reset_chksm(mut tab: *mut dirtab_entry) {
     checksum = 0 as TTF_ULONG;
@@ -2991,10 +2956,6 @@ unsafe extern "C" fn ttf_write_post() {
         b"post\0" as *const u8 as *const ::core::ffi::c_char,
         TTF_FIXED_SIZE as TTF_LONG,
     );
-    let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
-    let mut s: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut id: *mut ::core::ffi::c_long = ::core::ptr::null_mut::<::core::ffi::c_long>();
-    let mut l: ::core::ffi::c_int = 0;
     ttf_reset_chksm(tab);
     if (*fd_cur).write_ttf_glyph_names == 0 || post_format == 0x30000 as TTF_FIXED {
         ttf_putnum(TTF_FIXED_SIZE, 0x30000 as ::core::ffi::c_long);
@@ -3011,43 +2972,30 @@ unsafe extern "C" fn ttf_write_post() {
                 + 5 as ::core::ffi::c_int * TTF_ULONG_SIZE,
         );
         ttf_putnum(TTF_USHORT_SIZE, new_glyphs_count as ::core::ffi::c_long);
-        k = 0 as ::core::ffi::c_uchar;
-        id = glyph_index;
-        while (id.offset_from(glyph_index) as ::core::ffi::c_long)
-            < new_glyphs_count as ::core::ffi::c_long
-        {
-            glyph = glyph_tab.offset(*id as isize);
-            if (*glyph).name_index as ::core::ffi::c_int >= NMACGLYPHS
-                || unsafe_name((*glyph).name) != 0
-            {
-                let fresh5 = k;
-                k = k.wrapping_add(1);
-                (*glyph).name_index = (NMACGLYPHS + fresh5 as ::core::ffi::c_int) as TTF_USHORT;
-            }
-            ttf_putnum(TTF_USHORT_SIZE, (*glyph).name_index as ::core::ffi::c_long);
-            id = id.offset(1);
+        let mut glyphs = Vec::new();
+        glyphs
+            .try_reserve_exact(usize::from(new_glyphs_count))
+            .unwrap_or_else(|_| post_failure(PostError::Allocation));
+        for output_index in 0..usize::from(new_glyphs_count) {
+            let source_index = checked_glyph_index(*glyph_index.add(output_index), glyphs_count)
+                .unwrap_or_else(|| post_failure(PostError::GlyphCount));
+            let glyph = &*glyph_tab.add(source_index);
+            glyphs.push(OutputGlyphName {
+                index: glyph.name_index,
+                name: CStr::from_ptr(glyph.name),
+                ambiguous: unsafe_name(glyph.name) != 0,
+            });
         }
-        id = glyph_index;
-        while (id.offset_from(glyph_index) as ::core::ffi::c_long)
-            < new_glyphs_count as ::core::ffi::c_long
-        {
-            glyph = glyph_tab.offset(*id as isize);
-            if (*glyph).name_index as ::core::ffi::c_int >= NMACGLYPHS {
-                s = (*glyph).name;
-                l = strlen(s) as ::core::ffi::c_int;
-                ttf_putnum(TTF_BYTE_SIZE, l as ::core::ffi::c_long);
-                loop {
-                    let fresh6 = l;
-                    l = l - 1;
-                    if !(fresh6 > 0 as ::core::ffi::c_int) {
-                        break;
-                    }
-                    let fresh7 = s;
-                    s = s.offset(1);
-                    ttf_putnum(TTF_CHAR_SIZE, *fresh7 as ::core::ffi::c_long);
-                }
+        let output = ttf_post::output_names(&glyphs).unwrap_or_else(|error| post_failure(error));
+        for index in output.indices {
+            ttf_putnum(TTF_USHORT_SIZE, ::core::ffi::c_long::from(index));
+        }
+        for name in output.custom {
+            let bytes = name.to_bytes();
+            ttf_putnum(TTF_BYTE_SIZE, bytes.len() as ::core::ffi::c_long);
+            for &byte in bytes {
+                ttf_putnum(TTF_CHAR_SIZE, ::core::ffi::c_long::from(byte));
             }
-            id = id.offset(1);
         }
     }
     ttf_set_chksm(tab);
@@ -3245,10 +3193,11 @@ pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
     dir_tab = ::core::ptr::null_mut::<dirtab_entry>();
     glyph_tab = ::core::ptr::null_mut::<glyph_entry>();
     glyph_index = ::core::ptr::null_mut::<::core::ffi::c_long>();
-    glyph_name_buf = ::core::ptr::null_mut::<::core::ffi::c_char>();
     name_tab = ::core::ptr::null_mut::<name_record>();
     name_buf = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    ttf_read_font();
+    // Custom glyph pointers borrow this stack-owned name table. Keep it alive
+    // through encoding, subset emission and every other font consumer.
+    let glyph_names = ttf_read_font();
     pdfsaveoffset = pdfgone + pdfptr as longinteger;
     pdfflush();
     if (*(*fd_cur).fm).type_0 as ::core::ffi::c_int & F_SUBSETTED != 0 as ::core::ffi::c_int {
@@ -3270,10 +3219,8 @@ pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
         free(glyph_index as *mut ::core::ffi::c_void);
     }
     glyph_index = ::core::ptr::null_mut::<::core::ffi::c_long>();
-    if !glyph_name_buf.is_null() {
-        free(glyph_name_buf as *mut ::core::ffi::c_void);
-    }
-    glyph_name_buf = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    // Drop Rust-owned strings only after glyph_tab and all font consumers.
+    drop(glyph_names);
     if !name_tab.is_null() {
         free(name_tab as *mut ::core::ffi::c_void);
     }
@@ -3388,7 +3335,7 @@ pub unsafe extern "C" fn writeotf(mut fd: *mut fd_entry) {
     )
     .is_null()
     {
-        ttf_read_post();
+        let _ = ttf_read_post();
     }
     tab = ttf_seek_tab(
         b"CFF \0" as *const u8 as *const ::core::ffi::c_char,

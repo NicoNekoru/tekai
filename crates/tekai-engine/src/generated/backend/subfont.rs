@@ -1,32 +1,20 @@
+use crate::backend_parse::{checked_inclusive_span, checked_span, Cursor};
+use crate::integer_parse::IntegerBase;
 use crate::openclose::open_input;
 use crate::stdio::feof;
 use crate::support::xfclose;
+use std::ffi::CStr;
 
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xstrdup};
 
 extern "C" {
-    fn sscanf(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
-    fn strcat(
-        __s1: *mut ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
         -> *mut ::core::ffi::c_char;
     fn strcmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strncpy(
-        __dst: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_char;
     fn __assert_rtn(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -384,7 +372,6 @@ unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sf
     let mut i: ::core::ffi::c_long = 0;
     let mut j: ::core::ffi::c_long = 0;
     let mut k: ::core::ffi::c_long = 0;
-    let mut n: ::core::ffi::c_int = 0;
     tmp_sfd.name = sfd_name;
     if sfd_tree.is_null() {
         sfd_tree = avl_create(
@@ -445,15 +432,22 @@ unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sf
         sf = new_subfont_entry();
         (*sf).next = (*sfd).subfont;
         (*sfd).subfont = sf;
-        sscanf(
-            &raw mut sfd_line as *mut ::core::ffi::c_char,
-            b"%s %n\0" as *const u8 as *const ::core::ffi::c_char,
-            &raw mut buf as *mut ::core::ffi::c_char,
-            &raw mut n,
-        );
+        let mut cursor = Cursor::new(CStr::from_ptr((&raw const sfd_line).cast()).to_bytes());
+        let infix = match cursor.word(None) {
+            Ok(infix) if infix.len() < buf.len() => infix,
+            _ => crate::utils::pdftex_fail_args(
+                b"invalid token:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[crate::utils::PrintfArg::from(
+                    (&raw const sfd_line).cast::<::core::ffi::c_char>(),
+                )],
+            ),
+        };
+        ::core::ptr::copy_nonoverlapping(infix.as_ptr(), buf.as_mut_ptr().cast(), infix.len());
+        buf[infix.len()] = 0;
+        cursor.skip_whitespace();
         (*sf).infix = xstrdup(&raw mut buf as *mut ::core::ffi::c_char as const_string)
             as *mut ::core::ffi::c_char;
-        p = (&raw mut sfd_line as *mut ::core::ffi::c_char).offset(n as isize);
+        p = (&raw mut sfd_line as *mut ::core::ffi::c_char).add(cursor.offset());
         k = 0 as ::core::ffi::c_long;
         loop {
             if *p as ::core::ffi::c_int == '\\' as i32 {
@@ -463,54 +457,55 @@ unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sf
                 if *p as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
                     break;
                 }
-                if sscanf(
-                    p,
-                    b" %li %n\0" as *const u8 as *const ::core::ffi::c_char,
-                    &raw mut i,
-                    &raw mut n,
-                ) == 0 as ::core::ffi::c_int
-                {
-                    crate::utils::pdftex_fail_args(
+                let mut cursor = Cursor::new(CStr::from_ptr(p).to_bytes());
+                i = match cursor.integer(IntegerBase::Auto) {
+                    Ok(value) => value,
+                    Err(_) => crate::utils::pdftex_fail_args(
                         b"invalid token:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
                         &[crate::utils::PrintfArg::from(p)],
-                    );
-                }
-                p = p.offset(n as isize);
-                if *p as ::core::ffi::c_int == ':' as i32 {
-                    k = i;
-                    p = p.offset(1);
-                } else if *p as ::core::ffi::c_int == '_' as i32 {
-                    if sscanf(
-                        p.offset(1 as ::core::ffi::c_int as isize),
-                        b" %li %n\0" as *const u8 as *const ::core::ffi::c_char,
-                        &raw mut j,
-                        &raw mut n,
-                    ) == 0 as ::core::ffi::c_int
-                    {
+                    ),
+                };
+                cursor.skip_whitespace();
+                if cursor.literal(b":").is_ok() {
+                    if checked_span(i, 0, (*sf).charcodes.len()).is_none() {
                         crate::utils::pdftex_fail_args(
+                            b"invalid index:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
+                            &[crate::utils::PrintfArg::from(p)],
+                        );
+                    }
+                    k = i;
+                } else if cursor.literal(b"_").is_ok() {
+                    j = match cursor.integer(IntegerBase::Auto) {
+                        Ok(value) => value,
+                        Err(_) => crate::utils::pdftex_fail_args(
                             b"invalid token:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
                             &[crate::utils::PrintfArg::from(p)],
-                        );
-                    }
-                    if i > j || k + (j - i) > 255 as ::core::ffi::c_long {
-                        crate::utils::pdftex_fail_args(
+                        ),
+                    };
+                    cursor.skip_whitespace();
+                    let span = match checked_inclusive_span(k, i, j, (*sf).charcodes.len()) {
+                        Some(span) => span,
+                        None => crate::utils::pdftex_fail_args(
                             b"invalid range:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
                             &[crate::utils::PrintfArg::from(p)],
-                        );
+                        ),
+                    };
+                    for (offset, slot) in span.clone().enumerate() {
+                        (*sf).charcodes[slot] = i + offset as ::core::ffi::c_long;
                     }
-                    while i <= j {
-                        let fresh0 = i;
-                        i = i + 1;
-                        let fresh1 = k;
-                        k = k + 1;
-                        (*sf).charcodes[fresh1 as usize] = fresh0;
-                    }
-                    p = p.offset((n + 1 as ::core::ffi::c_int) as isize);
+                    k = span.end as ::core::ffi::c_long;
                 } else {
-                    let fresh2 = k;
-                    k = k + 1;
-                    (*sf).charcodes[fresh2 as usize] = i;
+                    let span = match checked_span(k, 1, (*sf).charcodes.len()) {
+                        Some(span) => span,
+                        None => crate::utils::pdftex_fail_args(
+                            b"invalid index:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
+                            &[crate::utils::PrintfArg::from(p)],
+                        ),
+                    };
+                    (*sf).charcodes[span.start] = i;
+                    k = span.end as ::core::ffi::c_long;
                 }
+                p = p.add(cursor.offset());
             }
         }
     }
@@ -533,7 +528,6 @@ pub unsafe extern "C" fn handle_subfont_fm(
     mut fm: *mut fm_entry,
     mut mode: ::core::ffi::c_int,
 ) -> boolean {
-    let mut l: size_t = 0;
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut q: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut r: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -559,22 +553,21 @@ pub unsafe extern "C" fn handle_subfont_fm(
     if r.is_null() {
         return false_0;
     }
+    let tfm_name = CStr::from_ptr(p).to_bytes();
     if q <= p
         || r <= q.offset(1 as ::core::ffi::c_int as isize)
-        || r.offset_from(p) as ::core::ffi::c_long as size_t != strlen(p).wrapping_sub(1 as size_t)
+        || r.offset_from(p) as usize != tfm_name.len() - 1
     {
         return false_0;
     }
-    l = r.offset_from(q.offset(1 as ::core::ffi::c_int as isize)) as ::core::ffi::c_long as size_t;
-    strncpy(
-        &raw mut buf as *mut ::core::ffi::c_char,
-        q.offset(1 as ::core::ffi::c_int as isize),
-        l,
-    );
-    buf[l as usize] = 0 as ::core::ffi::c_char;
-    if strlen(&raw mut buf as *mut ::core::ffi::c_char).wrapping_add(4 as size_t)
-        as ::core::ffi::c_uint
-        > 256 as ::core::ffi::c_int as ::core::ffi::c_uint
+    let first_at = q.offset_from(p) as usize;
+    let second_at = r.offset_from(p) as usize;
+    let sfd_name = &tfm_name[first_at + 1..second_at];
+    let suffix = b".sfd\0";
+    if sfd_name
+        .len()
+        .checked_add(suffix.len())
+        .is_none_or(|length| length > buf.len())
     {
         crate::utils::pdftex_fail_args(
             b"buffer overflow at file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
@@ -587,9 +580,11 @@ pub unsafe extern "C" fn handle_subfont_fm(
             ],
         );
     }
-    strcat(
-        &raw mut buf as *mut ::core::ffi::c_char,
-        b".sfd\0" as *const u8 as *const ::core::ffi::c_char,
+    ::core::ptr::copy_nonoverlapping(sfd_name.as_ptr(), buf.as_mut_ptr().cast(), sfd_name.len());
+    ::core::ptr::copy_nonoverlapping(
+        suffix.as_ptr(),
+        buf.as_mut_ptr().cast::<u8>().add(sfd_name.len()),
+        suffix.len(),
     );
     sfd = read_sfd(&raw mut buf as *mut ::core::ffi::c_char);
     if sfd.is_null() {
@@ -605,12 +600,30 @@ pub unsafe extern "C" fn handle_subfont_fm(
         (*fm).pid = 3 as ::core::ffi::c_short;
         (*fm).eid = 1 as ::core::ffi::c_short;
     }
-    l = q.offset_from(p) as ::core::ffi::c_long as size_t;
+    let prefix = &tfm_name[..first_at];
     sf = (*sfd).subfont;
     while !sf.is_null() {
-        strncpy(&raw mut buf as *mut ::core::ffi::c_char, p, l);
-        buf[l as usize] = 0 as ::core::ffi::c_char;
-        strcat(&raw mut buf as *mut ::core::ffi::c_char, (*sf).infix);
+        let infix = CStr::from_ptr((*sf).infix).to_bytes();
+        let length = match prefix.len().checked_add(infix.len()) {
+            Some(length) if length < buf.len() => length,
+            _ => crate::utils::pdftex_fail_args(
+                b"buffer overflow at file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    crate::utils::PrintfArg::from(
+                        b"tekai-engine/generated/backend/subfont.rs\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    ),
+                    crate::utils::PrintfArg::from(196 as ::core::ffi::c_int),
+                ],
+            ),
+        };
+        ::core::ptr::copy_nonoverlapping(prefix.as_ptr(), buf.as_mut_ptr().cast(), prefix.len());
+        ::core::ptr::copy_nonoverlapping(
+            infix.as_ptr(),
+            buf.as_mut_ptr().cast::<u8>().add(prefix.len()),
+            infix.len(),
+        );
+        buf[length] = 0;
         fm2 = new_fm_entry();
         (*fm2).tfm_name = xstrdup(&raw mut buf as *mut ::core::ffi::c_char as const_string)
             as *mut ::core::ffi::c_char;
