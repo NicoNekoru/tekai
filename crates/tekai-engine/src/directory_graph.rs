@@ -29,6 +29,14 @@ struct Directory {
     edges: Vec<Edge>,
     files: HashMap<OsString, Option<usize>>,
     component: usize,
+    // Owned output trees retain only their directory entry/alias edges until
+    // files actually observed in this pass are registered. Never inventory
+    // historical artifacts beneath these nodes.
+    opaque: bool,
+    // A boundary came from the directory inventory. Sparse descendants can
+    // share a physical node with another lexical alias, but must not hide the
+    // alias edge that needs updating when an observed route is retargeted.
+    opaque_boundary: bool,
 }
 
 pub(crate) struct DirectoryGraph {
@@ -36,6 +44,7 @@ pub(crate) struct DirectoryGraph {
     root_hops: Option<usize>,
     nodes: Vec<Directory>,
     by_path: HashMap<PathBuf, usize>,
+    opaque_by_path: HashMap<PathBuf, usize>,
     basenames: HashSet<OsString>,
     cyclic_components: Vec<bool>,
     bytes: usize,
@@ -96,8 +105,21 @@ impl DirectoryGraph {
         excluded_paths: &[&Path],
         budget: usize,
     ) -> Option<Self> {
+        Self::build_with_generated(root, excluded_paths, &[], budget)
+    }
+
+    pub(crate) fn build_with_generated(
+        root: &Path,
+        excluded_paths: &[&Path],
+        generated_paths: &[&Path],
+        budget: usize,
+    ) -> Option<Self> {
         let canonical = root.canonicalize().ok()?;
         let excluded = excluded_paths
+            .iter()
+            .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+            .collect::<Vec<_>>();
+        let generated = generated_paths
             .iter()
             .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
             .collect::<Vec<_>>();
@@ -109,6 +131,7 @@ impl DirectoryGraph {
             root_hops: root_hops(root),
             nodes: Vec::new(),
             by_path: HashMap::new(),
+            opaque_by_path: HashMap::new(),
             basenames: HashSet::new(),
             cyclic_components: Vec::new(),
             bytes: root.as_os_str().len() + std::mem::size_of::<Self>() + 256,
@@ -123,9 +146,15 @@ impl DirectoryGraph {
             #[cfg(test)]
             ordinary_directory_canonicalizations: 0,
         };
-        graph.add_directory(canonical)?;
+        let opaque = generated.iter().any(|path| canonical.starts_with(path));
+        let root_node = graph.add_directory(canonical, opaque)?;
+        graph.nodes[root_node].opaque_boundary = opaque;
         let mut next = 0;
         while next < graph.nodes.len() {
+            if graph.nodes[next].opaque {
+                next += 1;
+                continue;
+            }
             #[cfg(test)]
             {
                 graph.read_dirs += 1;
@@ -189,7 +218,10 @@ impl DirectoryGraph {
                         let target = if let Some(&target) = graph.by_path.get(&target) {
                             target
                         } else {
-                            graph.add_directory(target)?
+                            let opaque = generated.iter().any(|path| target.starts_with(path));
+                            let target = graph.add_directory(target, opaque)?;
+                            graph.nodes[target].opaque_boundary = opaque;
+                            target
                         };
                         graph.charge(name.capacity() + std::mem::size_of::<Edge>() + 64)?;
                         graph.nodes[next].edges.push(Edge { name, target, hops });
@@ -215,7 +247,10 @@ impl DirectoryGraph {
     }
 
     pub(crate) fn dependency_directories(&self) -> impl Iterator<Item = &Path> {
-        self.nodes.iter().map(|node| node.canonical.as_path())
+        self.nodes
+            .iter()
+            .filter(|node| !node.opaque)
+            .map(|node| node.canonical.as_path())
     }
 
     pub(crate) fn dependencies_complete(&self) -> bool {
@@ -245,10 +280,166 @@ impl DirectoryGraph {
     /// File membership belongs to a physical node, so one insertion updates
     /// every alias route. The caller must evict on false and rebuild on demand.
     pub(crate) fn add_output(&mut self, canonical_parent: &Path, name: &OsStr) -> bool {
-        let Some(&node) = self.by_path.get(canonical_parent) else {
-            return false;
+        let node = if let Some(&node) = self.by_path.get(canonical_parent) {
+            node
+        } else {
+            let Some((ancestor, mut node)) = canonical_parent.ancestors().find_map(|path| {
+                self.by_path
+                    .get(path)
+                    .copied()
+                    .filter(|&node| self.nodes[node].opaque)
+                    .map(|node| (path, node))
+            }) else {
+                return false;
+            };
+            let mut path = ancestor.to_path_buf();
+            for part in canonical_parent
+                .strip_prefix(ancestor)
+                .unwrap()
+                .components()
+            {
+                path.push(part);
+                let target = if let Some(&target) = self.by_path.get(&path) {
+                    target
+                } else {
+                    let Some(target) = self.add_directory(path.clone(), true) else {
+                        return false;
+                    };
+                    // Canonical physical ancestor chains only add singleton
+                    // acyclic nodes: no repeated SCC inventory is necessary.
+                    if self.charge(1).is_none() {
+                        return false;
+                    }
+                    self.nodes[target].component = self.cyclic_components.len();
+                    self.cyclic_components.push(false);
+                    target
+                };
+                let edge_name = part.as_os_str();
+                if !self.nodes[node]
+                    .edges
+                    .iter()
+                    .any(|edge| edge.name == edge_name)
+                {
+                    if self
+                        .charge(edge_name.len() + std::mem::size_of::<Edge>() + 64)
+                        .is_none()
+                    {
+                        return false;
+                    }
+                    self.nodes[node].edges.push(Edge {
+                        name: edge_name.to_os_string(),
+                        target,
+                        hops: hop_limit().map(|_| 0),
+                    });
+                    self.nodes[node]
+                        .edges
+                        .sort_unstable_by(|a, b| a.name.cmp(&b.name));
+                }
+                node = target;
+            }
+            node
         };
         let hops = resolve_hops(canonical_parent, Path::new(name));
+        self.add_file(node, name, hops)
+    }
+
+    /// Attach only the observed lexical directory chain beneath an opaque
+    /// output node. A shadow view of an external alias target prevents old
+    /// unrelated files from becoming implicit inputs through that new edge.
+    pub(crate) fn add_output_route(&mut self, path: &Path) -> bool {
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        let Some(name) = path.file_name() else {
+            return false;
+        };
+        // The same physical parent can have an ordinary inventoried source
+        // view and a sparse generated-output view. Update the ordinary view
+        // too, while keeping historical siblings absent from the sparse one.
+        let Ok(canonical_parent) = parent.canonicalize() else {
+            return false;
+        };
+        if parent.components().any(|part| part == Component::ParentDir) {
+            // Native resolution may cross a symlink before '..'. Register the
+            // physical destination, never a synthetic '..' traversal edge
+            // that recursive directory enumeration could not have produced.
+            return self.add_output(&canonical_parent, name);
+        }
+        if let Some(&node) = self.by_path.get(&canonical_parent) {
+            if !self.nodes[node].opaque
+                && !self.add_file(node, name, resolve_hops(parent, Path::new(name)))
+            {
+                return false;
+            }
+        }
+        let Some((ancestor, mut node)) = parent.ancestors().find_map(|ancestor| {
+            let canonical = ancestor.canonicalize().ok()?;
+            self.opaque_by_path
+                .get(&canonical)
+                .copied()
+                .filter(|&node| self.nodes[node].opaque_boundary || ancestor == canonical)
+                .map(|node| (ancestor, node))
+        }) else {
+            return parent
+                .canonicalize()
+                .is_ok_and(|parent| self.add_output(&parent, name));
+        };
+        let mut lexical = ancestor.to_path_buf();
+        let mut recompute = false;
+        for part in parent.strip_prefix(ancestor).unwrap().components() {
+            let edge_name = part.as_os_str();
+            let hops = resolve_hops(&lexical, Path::new(edge_name));
+            lexical.push(part);
+            let Ok(canonical) = lexical.canonicalize() else {
+                return false;
+            };
+            let (target, reused) = if let Some(&target) = self.opaque_by_path.get(&canonical) {
+                (target, true)
+            } else {
+                let Some(target) = self.add_directory(canonical, true) else {
+                    return false;
+                };
+                if self.charge(1).is_none() {
+                    return false;
+                }
+                self.nodes[target].component = self.cyclic_components.len();
+                self.cyclic_components.push(false);
+                (target, false)
+            };
+            if let Some(edge) = self.nodes[node]
+                .edges
+                .iter_mut()
+                .find(|edge| edge.name == edge_name)
+            {
+                if edge.target != target || edge.hops != hops {
+                    edge.target = target;
+                    edge.hops = hops;
+                    recompute = true;
+                }
+            } else {
+                if self
+                    .charge(edge_name.len() + std::mem::size_of::<Edge>() + 64)
+                    .is_none()
+                {
+                    return false;
+                }
+                // A new edge to a reused node may close an alias cycle.
+                recompute |= reused || hops != hop_limit().map(|_| 0);
+                self.nodes[node].edges.push(Edge {
+                    name: edge_name.to_os_string(),
+                    target,
+                    hops,
+                });
+                self.nodes[node]
+                    .edges
+                    .sort_unstable_by(|a, b| a.name.cmp(&b.name));
+            }
+            node = target;
+        }
+        if recompute {
+            self.compute_components();
+        }
+        let hops = resolve_hops(parent, Path::new(name));
         self.add_file(node, name, hops)
     }
 
@@ -257,7 +448,7 @@ impl DirectoryGraph {
         (self.bytes <= self.budget).then_some(())
     }
 
-    fn add_directory(&mut self, canonical: PathBuf) -> Option<usize> {
+    fn add_directory(&mut self, canonical: PathBuf, opaque: bool) -> Option<usize> {
         // Include both owned canonical paths, map buckets and node allocation.
         self.charge(
             canonical.capacity() * 2
@@ -266,12 +457,18 @@ impl DirectoryGraph {
                 + 256,
         )?;
         let node = self.nodes.len();
-        self.by_path.insert(canonical.clone(), node);
+        self.by_path.entry(canonical.clone()).or_insert(node);
+        if opaque {
+            self.charge(canonical.capacity() + std::mem::size_of::<PathBuf>() + 128)?;
+            self.opaque_by_path.insert(canonical.clone(), node);
+        }
         self.nodes.push(Directory {
             canonical,
             edges: Vec::new(),
             files: HashMap::new(),
             component: 0,
+            opaque,
+            opaque_boundary: false,
         });
         Some(node)
     }
@@ -304,6 +501,7 @@ impl DirectoryGraph {
     // Iterative Kosaraju. The reverse edges and DFS stacks are temporary and
     // contain O(nodes + edges) directory IDs, without alias path spellings.
     fn compute_components(&mut self) {
+        self.cyclic_components.clear();
         let mut seen = vec![false; self.nodes.len()];
         let mut order = Vec::with_capacity(self.nodes.len());
         let mut reverse = vec![Vec::new(); self.nodes.len()];
@@ -677,6 +875,61 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn sparse_output_chains_do_not_inventory_old_trees_and_stay_bounded() {
+        let fixture = Fixture::new();
+        let output = fixture.directory("output");
+        for n in 0..100 {
+            let old = fixture.directory(&format!("output/old/{n}/deep"));
+            fs::write(old.join("historical.tex"), "old").unwrap();
+        }
+        let mut graph =
+            DirectoryGraph::build_with_generated(&fixture.0, &[], &[&output], BUDGET).unwrap();
+        assert_eq!(graph.read_dirs, 1);
+        assert_eq!(graph.nodes.len(), 2);
+        assert!(graph.find(Some(""), Path::new("historical.tex")).is_none());
+        let parent = fixture.directory("output/generated/deep");
+        let current = parent.join("current.tex");
+        fs::write(&current, "current").unwrap();
+        assert!(graph.add_output_route(&current));
+        assert_eq!(graph.read_dirs, 1);
+        assert_eq!(graph.nodes.len(), 4);
+        assert!(graph.retained_bytes() <= BUDGET);
+        assert_eq!(
+            graph.find(Some(""), Path::new("current.tex")),
+            Some(current)
+        );
+        assert!(graph.find(Some(""), Path::new("historical.tex")).is_none());
+        let before = graph.retained_bytes();
+        let extra_parent = fixture.directory("output/refused/deep");
+        let extra = extra_parent.join("extra.tex");
+        fs::write(&extra, "extra").unwrap();
+        graph.budget = before;
+        assert!(!graph.add_output_route(&extra));
+        assert_eq!(graph.read_dirs, 1);
+    }
+
+    #[test]
+    fn observed_dot_dot_routes_do_not_invent_recursive_parent_edges() {
+        let fixture = Fixture::new();
+        let output = fixture.directory("output");
+        let mut graph =
+            DirectoryGraph::build_with_generated(&fixture.0, &[], &[&output], BUDGET).unwrap();
+        fixture.directory("output/new/sub");
+        let tail = fixture.directory("output/new/tail");
+        fs::write(tail.join("file.tex"), "current").unwrap();
+        assert!(graph.add_output_route(&output.join("new/sub/../tail/file.tex")));
+        let node = graph.opaque_by_path[&output.join("new")];
+        assert!(!graph.opaque_by_path.contains_key(&output.join("new/sub")));
+        assert!(graph.nodes[node].edges.iter().all(|edge| edge.name != ".."));
+        assert_eq!(graph.read_dirs, 1);
+        assert_eq!(
+            graph.find(Some(""), Path::new("file.tex")),
+            Some(tail.join("file.tex"))
+        );
+        assert!(graph.find(Some("sub//"), Path::new("file.tex")).is_none());
     }
 
     const LABELS: [&str; 3] = ["a", "b", "c"];

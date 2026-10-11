@@ -17,12 +17,40 @@ use crate::directory_graph::DirectoryGraph;
 
 const INDEX_BUDGET: usize = 32 * 1024 * 1024;
 const INDEX_LIMIT: usize = 128;
+const OBSERVED_FILE_BUDGET: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FileStamp {
     modified: Option<SystemTime>,
     len: u64,
     identity: Option<crate::file_identity::ChangeIdentity>,
+}
+
+#[derive(Eq, PartialEq)]
+struct ObservedInputStamp {
+    file: FileStamp,
+    parent: FileStamp,
+    leaf: FileStamp,
+}
+
+struct ObservedFileReceipt {
+    // A lexical route is permission to find this physical destination only.
+    // Retargeting an alias must not expose the new target's old artifacts.
+    physical: PathBuf,
+    input_stamp: Option<ObservedInputStamp>,
+}
+
+fn observed_input_stamp(path: &Path) -> Option<ObservedInputStamp> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    let leaf = metadata_stamp(&metadata);
+    leaf.identity?;
+    let file = if metadata.is_symlink() {
+        file_stamp(path).filter(|stamp| stamp.identity.is_some())?
+    } else {
+        leaf.clone()
+    };
+    let parent = file_stamp(path.parent()?).filter(|stamp| stamp.identity.is_some())?;
+    Some(ObservedInputStamp { file, parent, leaf })
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -92,10 +120,15 @@ struct LookupSession {
     exclusion_config: Option<OsString>,
     policy_generation: u64,
     project_exclusions: Vec<PathBuf>,
+    observed_files: HashMap<PathBuf, ObservedFileReceipt>,
+    observed_bytes: usize,
+    observed_budget: usize,
     #[cfg(test)]
     disk_scans: usize,
     #[cfg(test)]
     database_reads: usize,
+    #[cfg(test)]
+    input_resolutions: usize,
 }
 
 impl LookupSession {
@@ -107,10 +140,15 @@ impl LookupSession {
             exclusion_config: std::env::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES"),
             policy_generation: POLICY_GENERATION.with(Cell::get),
             project_exclusions: project_exclusions(),
+            observed_files: HashMap::new(),
+            observed_bytes: 0,
+            observed_budget: OBSERVED_FILE_BUDGET,
             #[cfg(test)]
             disk_scans: 0,
             #[cfg(test)]
             database_reads: 0,
+            #[cfg(test)]
+            input_resolutions: 0,
         }
     }
 
@@ -193,17 +231,14 @@ impl LookupSession {
                 return Some(direct);
             }
         }
-        if implicit_project
+        let opaque_root = implicit_project
             && self
                 .project_exclusions
                 .iter()
-                .any(|excluded| root.starts_with(excluded))
-        {
-            return None;
-        }
+                .any(|excluded| root.starts_with(excluded));
         // A zero-directory wildcard always searches the root first. This also
         // sees freshly generated files without a recursive scan.
-        if let Some(suffix) = suffix {
+        if let Some(suffix) = suffix.filter(|_| !opaque_root) {
             if !suffix.contains("//") {
                 let path = root.join(suffix).join(requested);
                 if path.is_file() {
@@ -237,32 +272,57 @@ impl LookupSession {
             return self.indices.get(&key)?.find(requested, &pattern);
         }
         let key = IndexKey::Disk(root.clone(), implicit_project);
-        let mut excluded = crate::runtime::installed_bundle_root()
+        let excluded = crate::runtime::installed_bundle_root()
             .map(Path::to_path_buf)
             .into_iter()
             .collect::<Vec<_>>();
-        if implicit_project {
-            excluded.extend(self.project_exclusions.iter().cloned());
-        }
+        let generated = if implicit_project {
+            &self.project_exclusions[..]
+        } else {
+            &[]
+        };
         #[cfg(test)]
         {
             self.disk_scans += 1;
         }
         if self.oversized.contains(&key) {
-            return best_match(
-                disk_entries(&root, excluded)
-                    .filter(|entry| entry.file_type().is_file())
-                    .map(|entry| entry.into_path()),
+            return streaming_find(
+                &root,
+                &excluded,
+                generated,
+                &self.observed_files,
                 requested,
                 &pattern,
             );
         }
         let mut index = FileIndex::new(root.clone());
-        if let Some(graph) = DirectoryGraph::build_excluding(
+        if let Some(mut graph) = DirectoryGraph::build_with_generated(
             &root,
             &excluded.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
+            &generated.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
             self.budget.saturating_sub(index.bytes),
         ) {
+            for (path, receipt) in &self.observed_files {
+                if !observed_route_is_current(path, receipt) {
+                    continue;
+                }
+                if let Some(parent) = path.parent() {
+                    if parent
+                        .ancestors()
+                        .any(|ancestor| graph.contains_directory(ancestor))
+                        && !graph.add_output_route(path)
+                    {
+                        return streaming_find(
+                            &root,
+                            &excluded,
+                            generated,
+                            &self.observed_files,
+                            requested,
+                            &pattern,
+                        );
+                    }
+                }
+            }
             index.bytes += graph.retained_bytes();
             index.graph = Some(graph);
             let found = index.find(requested, &pattern);
@@ -274,41 +334,112 @@ impl LookupSession {
             self.oversized.remove(0);
         }
         self.oversized.push(key);
-        best_match(
-            disk_entries(&root, excluded)
-                .filter(|entry| entry.file_type().is_file())
-                .map(|entry| entry.into_path()),
+        streaming_find(
+            &root,
+            &excluded,
+            generated,
+            &self.observed_files,
             requested,
             &pattern,
         )
     }
 
-    fn record_output(&mut self, path: &Path) {
-        if !self
-            .indices
-            .keys()
-            .any(|key| matches!(key, IndexKey::Disk(_, _)))
-        {
-            return;
+    fn record_input(&mut self, path: &Path, immutable_bundle: Option<&Path>) -> bool {
+        if immutable_bundle.is_some_and(|root| {
+            path.strip_prefix(root).is_ok_and(|relative| {
+                relative
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_)))
+            })
+        }) {
+            // Bundled lookup already uses the immutable archive index. Its
+            // normal returned paths cannot alias into generated namespaces.
+            return true;
         }
-        let Some(parent) = path.parent().and_then(|parent| {
-            if parent.as_os_str().is_empty() {
-                Path::new(".")
-            } else {
-                parent
+        if let Some(previous) = self
+            .observed_files
+            .get(path)
+            .and_then(|receipt| receipt.input_stamp.as_ref())
+        {
+            if observed_input_stamp(path).as_ref() == Some(previous) {
+                return true;
             }
-            .canonicalize()
-            .ok()
-        }) else {
-            return;
+        }
+        #[cfg(test)]
+        {
+            self.input_resolutions += 1;
+        }
+        let owned = physical_output_paths(path).is_some_and(|paths| {
+            paths.iter().any(|path| {
+                self.project_exclusions
+                    .iter()
+                    .any(|root| path.starts_with(root))
+            })
+        });
+        if !owned {
+            return true;
+        }
+        if !self.record_output(path) {
+            return false;
+        }
+        // There is at most one stamp for each admitted path. Its reserved
+        // allocation is included in observed_file_cost, never a separate
+        // unbounded cache. Changed identities must resolve aliases again.
+        if let Some(receipt) = self.observed_files.get_mut(path) {
+            if let Some(stamp) = observed_input_stamp(path) {
+                receipt.input_stamp = Some(stamp);
+            }
+        }
+        true
+    }
+
+    fn can_record_output(&self, path: &Path) -> bool {
+        let Some(paths) = physical_output_paths(path) else {
+            return true;
         };
-        let Some(name) = path.file_name() else { return };
-        let path = parent.join(name);
-        // A leaf symlink can create a different basename in another tree.
-        // Reset rather than inventing alias spellings for an arbitrary target.
-        if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-            *self = Self::new();
-            return;
+        self.can_record_paths(&paths)
+    }
+
+    fn can_record_paths(&self, paths: &[PathBuf]) -> bool {
+        let Some(physical) = paths.last() else {
+            return true;
+        };
+        paths
+            .iter()
+            .try_fold(self.observed_bytes, |bytes, path| {
+                let previous = self
+                    .observed_files
+                    .get(path)
+                    .map_or(0, |receipt| observed_file_cost(path, &receipt.physical));
+                bytes
+                    .checked_sub(previous)?
+                    .checked_add(observed_file_cost(path, physical))
+            })
+            .is_some_and(|bytes| bytes <= self.observed_budget)
+    }
+
+    fn record_output(&mut self, path: &Path) -> bool {
+        let Some(paths) = physical_output_paths(path) else {
+            return true;
+        };
+        if !self.can_record_paths(&paths) {
+            return false;
+        }
+        let physical = paths.last().unwrap();
+        for path in &paths {
+            let previous = self
+                .observed_files
+                .get(path)
+                .map_or(0, |receipt| observed_file_cost(path, &receipt.physical));
+            self.observed_bytes =
+                self.observed_bytes - previous + observed_file_cost(path, physical);
+            self.observed_files.insert(
+                path.clone(),
+                ObservedFileReceipt {
+                    physical: physical.clone(),
+                    input_stamp: None,
+                },
+            );
         }
         let keys = self
             .indices
@@ -316,51 +447,146 @@ impl LookupSession {
             .filter(|key| matches!(key, IndexKey::Disk(_, _)))
             .cloned()
             .collect::<Vec<_>>();
-        for key in keys {
-            if !self.indices.peek(&key).is_some_and(|index| {
-                path.starts_with(&index.root)
-                    || index.graph.as_ref().is_some_and(|graph| {
-                        parent
-                            .ancestors()
-                            .any(|ancestor| graph.contains_directory(ancestor))
-                    })
-            }) {
+        for path in paths {
+            let Some(parent) = path.parent() else {
                 continue;
-            }
-            if let Some(mut index) = self.indices.remove(&key) {
-                let Some(graph) = &mut index.graph else {
-                    continue;
-                };
-                let previous = graph.retained_bytes();
-                // A newly created directory invalidates the inventory. Known
-                // parents only need one file insertion, shared by every alias.
-                if !graph.add_output(&parent, name) {
+            };
+            for key in &keys {
+                if !self.indices.peek(key).is_some_and(|index| {
+                    path.starts_with(&index.root)
+                        || index.graph.as_ref().is_some_and(|graph| {
+                            parent
+                                .ancestors()
+                                .any(|ancestor| graph.contains_directory(ancestor))
+                        })
+                }) {
                     continue;
                 }
-                index.bytes = index.bytes - previous + graph.retained_bytes();
-                let bytes = index.bytes;
-                self.indices.insert(key, index, bytes);
+                if let Some(mut index) = self.indices.remove(key) {
+                    let Some(graph) = &mut index.graph else {
+                        continue;
+                    };
+                    let previous = graph.retained_bytes();
+                    // A newly created directory invalidates the inventory. Known
+                    // parents only need one file insertion, shared by every alias.
+                    if !graph.add_output_route(&path) {
+                        continue;
+                    }
+                    index.bytes = index.bytes - previous + graph.retained_bytes();
+                    let bytes = index.bytes;
+                    self.indices.insert(key.clone(), index, bytes);
+                }
             }
         }
+        true
     }
 }
 
-fn disk_entries(root: &Path, excluded: Vec<PathBuf>) -> impl Iterator<Item = walkdir::DirEntry> {
-    walkdir::WalkDir::new(root)
+fn observed_file_cost(path: &Path, physical: &Path) -> usize {
+    path.as_os_str().len()
+        + physical.as_os_str().len()
+        + std::mem::size_of::<PathBuf>() * 2
+        + std::mem::size_of::<ObservedFileReceipt>()
+        + 256
+}
+
+fn observed_route_is_current(path: &Path, receipt: &ObservedFileReceipt) -> bool {
+    path.canonicalize()
+        .is_ok_and(|physical| physical == receipt.physical)
+}
+
+fn physical_output_paths(path: &Path) -> Option<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    let mut path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    // Resolve the native parent before removing dot-dot components. A parent
+    // such as output/link/.. can name a different directory than output when
+    // link is a symlink. Retain a lexical route only when it resolves to the
+    // same parent, otherwise register the actual physical destination alone.
+    let parent = path.parent()?.canonicalize().ok()?;
+    let lexical = absolute_lexical(&path)?;
+    if lexical
+        .parent()?
+        .canonicalize()
+        .is_ok_and(|lexical_parent| lexical_parent == parent)
+    {
+        paths.push(lexical);
+    }
+    for _ in 0..=40 {
+        let parent = path.parent()?.canonicalize().ok()?;
+        path = parent.join(path.file_name()?);
+        if !paths.contains(&path) {
+            paths.push(path.clone());
+        }
+        let Ok(target) = fs::read_link(&path) else {
+            return Some(paths);
+        };
+        path = if target.is_absolute() {
+            target
+        } else {
+            parent.join(target)
+        };
+        if paths.contains(&path) {
+            return None;
+        }
+    }
+    None
+}
+
+fn streaming_find(
+    root: &Path,
+    excluded: &[PathBuf],
+    generated: &[PathBuf],
+    observed: &HashMap<PathBuf, ObservedFileReceipt>,
+    requested: &Path,
+    pattern: &DirectoryPattern,
+) -> Option<PathBuf> {
+    let mut best = None;
+    let mut entries = walkdir::WalkDir::new(root)
         .follow_links(true)
         .sort_by_file_name()
-        .into_iter()
-        .filter_entry(move |entry| {
-            !excluded.iter().any(|path| {
+        .into_iter();
+    while let Some(entry) = entries.next() {
+        let Ok(entry) = entry else { continue };
+        let physical = if entry.path_is_symlink() {
+            entry.path().canonicalize().ok()
+        } else {
+            Some(entry.path().to_path_buf())
+        };
+        let under = |roots: &[PathBuf]| {
+            roots.iter().any(|path| {
                 entry.path().starts_with(path)
-                    || (entry.path_is_symlink()
-                        && entry
-                            .path()
-                            .canonicalize()
-                            .is_ok_and(|target| target.starts_with(path)))
+                    || physical
+                        .as_ref()
+                        .is_some_and(|target| target.starts_with(path))
             })
-        })
-        .filter_map(Result::ok)
+        };
+        if under(excluded) {
+            entries.skip_current_dir();
+            continue;
+        }
+        if under(generated) {
+            entries.skip_current_dir();
+            if let Some(physical) = physical {
+                for (path, receipt) in observed {
+                    if let Ok(relative) = path.strip_prefix(&physical) {
+                        let candidate = entry.path().join(relative);
+                        if match_rank(&candidate, requested, pattern).is_some()
+                            && observed_route_is_current(&candidate, receipt)
+                        {
+                            consider_match(&candidate, requested, pattern, &mut best);
+                        }
+                    }
+                }
+            }
+        } else if entry.file_type().is_file() {
+            consider_match(entry.path(), requested, pattern, &mut best);
+        }
+    }
+    best.map(|(_, path)| path)
 }
 
 fn project_exclusions() -> Vec<PathBuf> {
@@ -391,11 +617,15 @@ pub(crate) fn find_search_path(
 
 fn file_stamp(path: &Path) -> Option<FileStamp> {
     let metadata = fs::metadata(path).ok()?;
-    Some(FileStamp {
+    Some(metadata_stamp(&metadata))
+}
+
+fn metadata_stamp(metadata: &fs::Metadata) -> FileStamp {
+    FileStamp {
         modified: metadata.modified().ok(),
         len: metadata.len(),
-        identity: crate::file_identity::change_identity(&metadata),
-    })
+        identity: crate::file_identity::change_identity(metadata),
+    }
 }
 
 fn read_database(
@@ -804,14 +1034,32 @@ pub(crate) fn find(base: &Path, candidate: &str, entry: &Path) -> Option<PathBuf
     })
 }
 
-pub(crate) fn record_output(path: &Path) {
+pub(crate) fn can_record_output(path: &Path) -> bool {
     SESSION.with(|session| {
-        // Before the first lookup there is no cached inventory to update.
-        // The first scan observes every output already written on disk.
-        if let Some(session) = session.borrow_mut().as_mut() {
-            session.record_output(path);
-        }
-    });
+        session
+            .borrow_mut()
+            .get_or_insert_with(LookupSession::new)
+            .can_record_output(path)
+    })
+}
+
+pub(crate) fn record_input(path: &Path) -> bool {
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        let session = session.get_or_insert_with(LookupSession::new);
+        session.record_input(path, crate::runtime::installed_bundle_root())
+    })
+}
+
+pub(crate) fn record_output(path: &Path) -> bool {
+    SESSION.with(|session| {
+        // Outputs may precede the first lookup. Keep the bounded observation
+        // ledger, but leave all disk inventories lazy until actually needed.
+        session
+            .borrow_mut()
+            .get_or_insert_with(LookupSession::new)
+            .record_output(path)
+    })
 }
 
 #[cfg(test)]
@@ -855,6 +1103,395 @@ mod tests {
                 Some(generated.clone())
             );
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registered_outputs_survive_eviction_and_fallback_but_not_session_reset() {
+        let root = fixture();
+        let output = root.join("a-output");
+        fs::create_dir_all(output.join("generated/deep")).unwrap();
+        fs::create_dir_all(root.join("z-source")).unwrap();
+        let old = output.join("generated/deep/old.tex");
+        let created = output.join("generated/deep/choice.tex");
+        let source = root.join("z-source/choice.tex");
+        fs::write(&old, "old unobserved artifact").unwrap();
+        fs::write(&source, "source").unwrap();
+        for budget in [INDEX_BUDGET, 1] {
+            let mut session = LookupSession::new();
+            session.project_exclusions = vec![output.clone()];
+            session.budget = budget;
+            assert_eq!(
+                session.find_policy(&root, "choice.tex", ".//", true),
+                Some(source.clone())
+            );
+            assert!(session.find_policy(&root, "old.tex", ".//", true).is_none());
+            fs::write(&created, "current output").unwrap();
+            assert!(session.record_output(&created));
+            assert_eq!(
+                session.find_policy(&root, "choice.tex", ".//", true),
+                Some(created.clone())
+            );
+            assert_eq!(
+                session.find_policy(&root, "choice.tex", "a-output//generated//", true),
+                Some(created.clone())
+            );
+            assert!(session
+                .find_policy(&root, "old.tex", "a-output//", true)
+                .is_none());
+            let keys = session.indices.keys().cloned().collect::<Vec<_>>();
+            for key in keys {
+                session.indices.remove(&key);
+            }
+            assert_eq!(
+                session.find_policy(&root, "choice.tex", ".//", true),
+                Some(created.clone())
+            );
+            assert!(session
+                .find_policy(&root, "choice.tex", "!!a-output//", true)
+                .is_none());
+            fs::write(root.join("ls-R"), "./a-output/generated/deep:\nold.tex\n").unwrap();
+            assert!(session
+                .find_policy(&root, "choice.tex", "!!a-output//", true)
+                .is_none());
+            assert_eq!(
+                session.find_policy(&root, "old.tex", "!!a-output//", true),
+                Some(old.clone())
+            );
+            let mut next = LookupSession::new();
+            next.project_exclusions = vec![output.clone()];
+            assert_eq!(
+                next.find_policy(&root, "choice.tex", ".//", true),
+                Some(source.clone())
+            );
+            assert!(next.find_policy(&root, "old.tex", ".//", true).is_none());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn observed_file_admission_is_bounded_and_deduplicated_without_inventory() {
+        let root = fixture();
+        let first = root.join("first.tex");
+        let refused = root.join("refused.tex");
+        fs::write(&first, "first").unwrap();
+        let mut session = LookupSession::new();
+        let paths = physical_output_paths(&first).unwrap();
+        session.observed_budget = paths
+            .iter()
+            .map(|path| observed_file_cost(path, paths.last().unwrap()))
+            .sum();
+        assert!(session.can_record_output(&first));
+        assert!(session.record_output(&first));
+        assert_eq!(session.observed_bytes, session.observed_budget);
+        assert!(session.record_output(&first));
+        assert_eq!(session.observed_bytes, session.observed_budget);
+        assert!(!session.can_record_output(&refused));
+        assert!(!session.record_output(&refused));
+        assert_eq!(session.observed_files.len(), paths.len());
+        assert_eq!(session.disk_scans, 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn immutable_bundle_and_unchanged_observed_inputs_avoid_repeated_resolution() {
+        let root = fixture();
+        let cache = root.join("cache");
+        let bundle = cache.join("texmf-id/texmf-dist");
+        let output = root.join("output");
+        fs::create_dir_all(&bundle).unwrap();
+        fs::create_dir_all(&output).unwrap();
+        let package = bundle.join("article.cls");
+        let input = output.join("input.tex");
+        fs::write(&package, "immutable").unwrap();
+        fs::write(&input, "observed").unwrap();
+        let mut session = LookupSession::new();
+        session.project_exclusions = vec![output.clone(), cache];
+        for _ in 0..100 {
+            assert!(session.record_input(&package, Some(&bundle)));
+        }
+        assert_eq!(session.input_resolutions, 0);
+        assert!(session.observed_files.is_empty());
+        assert!(session.record_input(&input, Some(&bundle)));
+        let supports_identity = file_stamp(&input).unwrap().identity.is_some();
+        for _ in 0..100 {
+            assert!(session.record_input(&input, Some(&bundle)));
+        }
+        assert_eq!(
+            session.input_resolutions,
+            if supports_identity { 1 } else { 101 }
+        );
+        assert!(
+            session
+                .observed_files
+                .values()
+                .any(|receipt| receipt.input_stamp.is_some())
+                || !supports_identity
+        );
+        assert!(session.record_input(&bundle.join("../../../output/input.tex"), Some(&bundle)));
+        assert_eq!(
+            session.input_resolutions,
+            if supports_identity { 2 } else { 102 }
+        );
+        assert!(session.observed_bytes <= session.observed_budget);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_observed_alias_identity_resolves_and_updates_the_new_target() {
+        let root = fixture();
+        let output = root.join("output");
+        fs::create_dir_all(&output).unwrap();
+        for target in ["first", "second"] {
+            fs::create_dir_all(root.join(target)).unwrap();
+            fs::write(root.join(target).join("input.tex"), target).unwrap();
+        }
+        let alias = output.join("alias");
+        std::os::unix::fs::symlink(root.join("first"), &alias).unwrap();
+        let input = alias.join("input.tex");
+        let mut session = LookupSession::new();
+        session.project_exclusions = vec![output.clone()];
+        assert!(session
+            .find_policy(&root, "input.tex", "output//", true)
+            .is_none());
+        assert!(session.record_input(&input, None));
+        assert_eq!(session.input_resolutions, 1);
+        assert_eq!(
+            session.find_policy(&root, "input.tex", "output//", true),
+            Some(input.clone())
+        );
+        assert!(session.record_input(&input, None));
+        assert_eq!(session.input_resolutions, 1);
+        fs::remove_file(&alias).unwrap();
+        std::os::unix::fs::symlink(root.join("second"), &alias).unwrap();
+        assert!(session.record_input(&input, None));
+        assert_eq!(session.input_resolutions, 2);
+        assert!(session
+            .observed_files
+            .contains_key(&root.join("second/input.tex")));
+        assert_eq!(
+            session.find_policy(&root, "input.tex", "output//", true),
+            Some(input)
+        );
+        let graph = session
+            .indices
+            .keys()
+            .find_map(|key| {
+                session
+                    .indices
+                    .peek(key)
+                    .and_then(|index| index.graph.as_ref())
+            })
+            .unwrap();
+        let output_node = graph.find(Some("alias"), Path::new("input.tex"));
+        assert_eq!(output_node, Some(alias.join("input.tex")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hardlinked_input_identity_does_not_hide_an_observed_parent_alias_retarget() {
+        let root = fixture();
+        let external = fixture();
+        let output = root.join("output");
+        fs::create_dir_all(&output).unwrap();
+        for directory in ["first", "second"] {
+            fs::create_dir_all(external.join(directory)).unwrap();
+            fs::write(external.join(directory).join("sibling.tex"), directory).unwrap();
+        }
+        fs::write(external.join("first/input.tex"), "same inode").unwrap();
+        fs::hard_link(
+            external.join("first/input.tex"),
+            external.join("second/input.tex"),
+        )
+        .unwrap();
+        let alias = output.join("alias");
+        std::os::unix::fs::symlink(external.join("first"), &alias).unwrap();
+        let mut session = LookupSession::new();
+        session.project_exclusions = vec![output];
+        assert!(session
+            .find_policy(&root, "input.tex", "output//", true)
+            .is_none());
+        assert!(session.record_input(&alias.join("input.tex"), None));
+        assert!(session.record_input(&alias.join("sibling.tex"), None));
+        let other_alias = root.join("output/other-alias");
+        std::os::unix::fs::symlink(external.join("second"), &other_alias).unwrap();
+        assert!(session.record_input(&other_alias.join("input.tex"), None));
+        assert_eq!(
+            session.find_policy(&root, "sibling.tex", "output//", true),
+            Some(alias.join("sibling.tex"))
+        );
+        let first = file_stamp(&alias.join("input.tex"));
+        fs::remove_file(&alias).unwrap();
+        std::os::unix::fs::symlink(external.join("second"), &alias).unwrap();
+        assert_eq!(first, file_stamp(&alias.join("input.tex")));
+        assert!(session.record_input(&alias.join("input.tex"), None));
+        assert_eq!(session.input_resolutions, 4);
+        assert_eq!(
+            session.find_policy(&root, "input.tex", "output//", true),
+            Some(alias.join("input.tex"))
+        );
+        assert!(session
+            .find_policy(&root, "sibling.tex", "output//", true)
+            .is_none());
+        session.indices = BudgetCache::new(INDEX_BUDGET, INDEX_LIMIT);
+        assert!(session
+            .find_policy(&root, "sibling.tex", "output//", true)
+            .is_none());
+        session.budget = 1;
+        session.indices = BudgetCache::new(1, INDEX_LIMIT);
+        assert!(session
+            .find_policy(&root, "sibling.tex", "output//", true)
+            .is_none());
+        let leaf_alias = root.join("output/leaf.tex");
+        std::os::unix::fs::symlink(external.join("first/input.tex"), &leaf_alias).unwrap();
+        assert!(session.record_input(&leaf_alias, None));
+        let resolutions = session.input_resolutions;
+        fs::remove_file(&leaf_alias).unwrap();
+        std::os::unix::fs::symlink(external.join("second/input.tex"), &leaf_alias).unwrap();
+        assert!(session.record_input(&leaf_alias, None));
+        assert_eq!(session.input_resolutions, resolutions + 1);
+        assert_eq!(
+            session.observed_files[&leaf_alias].physical,
+            external.join("second/input.tex")
+        );
+        assert_eq!(
+            session.find_policy(&root, "leaf.tex", "output//", true),
+            Some(leaf_alias)
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observed_outputs_preserve_known_aliases_without_admitting_old_siblings() {
+        let root = fixture();
+        let output = root.join("m-output");
+        let external = fixture();
+        fs::create_dir_all(output.join("deep")).unwrap();
+        fs::create_dir_all(external.join("deep")).unwrap();
+        std::os::unix::fs::symlink(&output, root.join("a-output-alias")).unwrap();
+        std::os::unix::fs::symlink(&external, output.join("link")).unwrap();
+        fs::write(external.join("deep/old.tex"), "old").unwrap();
+        let created = output.join("deep/created.tex");
+        let alias_created = output.join("link/deep/aliased.tex");
+        for budget in [INDEX_BUDGET, 1] {
+            let mut session = LookupSession::new();
+            session.project_exclusions = vec![output.clone()];
+            session.budget = budget;
+            assert!(session
+                .find_policy(&root, "created.tex", ".//", true)
+                .is_none());
+            fs::write(&created, "current").unwrap();
+            assert!(session.record_output(&created));
+            fs::write(&alias_created, "alias current").unwrap();
+            assert!(session.record_output(&alias_created));
+            assert_eq!(
+                session.find_policy(&root, "created.tex", ".//", true),
+                Some(root.join("a-output-alias/deep/created.tex"))
+            );
+            assert_eq!(
+                session.find_policy(&root, "aliased.tex", ".//", true),
+                Some(root.join("a-output-alias/link/deep/aliased.tex"))
+            );
+            assert_eq!(
+                session.find_policy(&root, "aliased.tex", "m-output//link//", true),
+                Some(alias_created.clone())
+            );
+            assert!(session.find_policy(&root, "old.tex", ".//", true).is_none());
+        }
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observed_output_updates_normal_and_opaque_views_of_the_same_alias_target() {
+        let root = fixture();
+        let output = root.join("output");
+        let external = fixture();
+        fs::create_dir_all(output.join("deep")).unwrap();
+        fs::create_dir_all(external.join("deep")).unwrap();
+        std::os::unix::fs::symlink(&external, output.join("link")).unwrap();
+        std::os::unix::fs::symlink(&external, root.join("z-source-alias")).unwrap();
+        fs::write(external.join("deep/old.tex"), "old source").unwrap();
+        let route = output.join("link/deep/new.tex");
+        let mut session = LookupSession::new();
+        session.project_exclusions = vec![output.clone()];
+        assert!(session.find_policy(&root, "new.tex", ".//", true).is_none());
+        fs::write(&route, "current output").unwrap();
+        assert!(session.record_output(&route));
+        assert_eq!(
+            session.find_policy(&root, "new.tex", ".//", true),
+            Some(route.clone())
+        );
+        assert_eq!(
+            session.find_policy(&root, "new.tex", "z-source-alias//", true),
+            Some(external.join("deep/new.tex"))
+        );
+        assert_eq!(
+            session.find_policy(&external.join("deep"), "new.tex", ".//", true),
+            Some(external.join("deep/new.tex"))
+        );
+        assert!(session
+            .find_policy(&root, "old.tex", "output//", true)
+            .is_none());
+        assert_eq!(
+            session.find_policy(&root, "old.tex", "z-source-alias//", true),
+            Some(external.join("deep/old.tex"))
+        );
+        assert_eq!(session.disk_scans, 1);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_parent_resolution_preserves_symlink_dot_dot_semantics() {
+        let root = fixture();
+        let output = root.join("output");
+        let external = fixture();
+        fs::create_dir_all(&output).unwrap();
+        fs::create_dir_all(external.join("deep")).unwrap();
+        std::os::unix::fs::symlink(external.join("deep"), output.join("link")).unwrap();
+        std::os::unix::fs::symlink(&external, root.join("source-alias")).unwrap();
+        let route = output.join("link/../created.tex");
+        let mut session = LookupSession::new();
+        session.project_exclusions = vec![output.clone()];
+        assert!(session
+            .find_policy(&root, "created.tex", ".//", true)
+            .is_none());
+        fs::write(&route, "native destination").unwrap();
+        assert!(session.record_output(&route));
+        assert_eq!(
+            physical_output_paths(&route),
+            Some(vec![external.join("created.tex")])
+        );
+        assert_eq!(
+            session.find_policy(&root, "created.tex", ".//", true),
+            Some(root.join("source-alias/created.tex"))
+        );
+        assert!(session
+            .find_policy(&root, "created.tex", "output//", true)
+            .is_none());
+        assert_eq!(session.disk_scans, 1);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streaming_search_continues_after_earlier_dangling_alias_errors() {
+        let root = fixture();
+        std::os::unix::fs::symlink(root.join("missing"), root.join("a-broken")).unwrap();
+        fs::create_dir(root.join("z-source")).unwrap();
+        let source = root.join("z-source/choice.sty");
+        fs::write(&source, "source").unwrap();
+        let mut session = LookupSession::new();
+        session.budget = 1;
+        assert_eq!(session.find(&root, "choice.sty", ".//"), Some(source));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1000,7 +1637,12 @@ mod tests {
         SESSION.with(|session| assert!(session.borrow().is_none()));
         fs::write(nested.join("first.tex"), "first").unwrap();
         record_output(&nested.join("first.tex"));
-        SESSION.with(|session| assert!(session.borrow().is_none()));
+        SESSION.with(|session| {
+            assert_eq!(
+                session.borrow().as_ref().unwrap().indices.retained_bytes(),
+                0
+            );
+        });
         assert_eq!(
             find(&root, "first.tex", &entry),
             Some(nested.join("first.tex"))

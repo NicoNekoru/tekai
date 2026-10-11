@@ -707,6 +707,37 @@ struct AuxToolSessionCache {
     source_read_cache: TexSourceReadCache,
     source_external_tools_checked: Mutex<bool>,
     source_external_tool_jobs: Mutex<Option<SourceExternalToolJobs>>,
+    generated_output_observations: Mutex<GeneratedOutputObservations>,
+}
+
+#[derive(Debug, Default)]
+struct GeneratedOutputObservations {
+    paths: HashSet<PathBuf>,
+    bytes: usize,
+    overflowed: bool,
+}
+
+impl GeneratedOutputObservations {
+    const BUDGET: usize = 4 * 1024 * 1024;
+
+    fn insert(&mut self, path: PathBuf) {
+        if self.overflowed || self.paths.contains(&path) {
+            return;
+        }
+        let cost = path.capacity() + std::mem::size_of::<PathBuf>() + 128;
+        if self
+            .bytes
+            .checked_add(cost)
+            .is_none_or(|bytes| bytes > Self::BUDGET)
+        {
+            self.paths.clear();
+            self.bytes = 0;
+            self.overflowed = true;
+            return;
+        }
+        self.bytes += cost;
+        self.paths.insert(path);
+    }
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
@@ -1889,6 +1920,21 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
             run_mode,
             preamble_override,
         )?;
+        let fls_path = out_dir.join(format!("{job_name}.fls"));
+        if fls_path.is_file() {
+            let mut observations = aux_session_cache
+                .generated_output_observations
+                .lock()
+                .expect("generated output observation mutex poisoned");
+            for output in recorded_outputs(&fls_path, &doc_dir)? {
+                if !is_settled_aux_cache_sidecar(&output)
+                    && !path_extension_is_any(&output, &["fmt"])
+                    && output.starts_with(&out_dir)
+                {
+                    observations.insert(canonical_or_original(&output));
+                }
+            }
+        }
         let tex_elapsed = tex_started.elapsed();
         preamble_format_used |= tex_invocation.preamble_format_used;
         preamble_format_built |= tex_invocation.preamble_format_built;
@@ -2169,10 +2215,6 @@ fn run_tex_direct(
     mode: TexRunMode,
     preamble_override: PreambleFormatOverride,
 ) -> Result<TexInvocationReport> {
-    if !tex_run_records_files(options, mode) {
-        let _ = fs::remove_file(out_dir.join(format!("{job_name}.fls")));
-    }
-
     let precompiled = match preamble_override {
         PreambleFormatOverride::Auto => {
             prepare_preamble_format(doc_dir, file_name, out_dir, main, options, mode)?
@@ -2408,9 +2450,9 @@ fn tex_direct_base_command(
         .arg("-interaction=nonstopmode")
         .arg("-halt-on-error")
         .arg("-file-line-error");
-    if tex_run_records_files(options, mode) {
-        command.arg("-recorder");
-    }
+    // Every pass must expose output observations before the next overwrites
+    // its recorder. Draft-only filecontents can otherwise evade provenance.
+    command.arg("-recorder");
     command
         .arg(format!("-jobname={job_name}"))
         .arg(format!("-output-directory={}", out_dir.display()));
@@ -2429,13 +2471,6 @@ fn tex_direct_base_command(
         command.arg(output_mode_arg);
     }
     command
-}
-
-fn tex_run_records_files(options: &BuildOptions, mode: TexRunMode) -> bool {
-    !mode.draft_graphics
-        || !mode.suppress_pdf_output
-        || mode.force_pgf_list_and_make
-        || options.shell_escape
 }
 
 fn add_tex_direct_input(
@@ -11850,6 +11885,29 @@ fn write_build_state(
         RawTexMode::Root,
         &owned_outputs,
     )?;
+    {
+        let observations = direct
+            .aux_session_cache
+            .generated_output_observations
+            .lock()
+            .expect("generated output observation mutex poisoned");
+        if observations.overflowed {
+            return Ok(None);
+        }
+        // A non-overwriting filecontents input can be written in an earlier
+        // pass and absent from the final recorder's OUTPUT rows. Keep bounded
+        // whole-build observations so such inputs also decline publication.
+        let main = direct.main.canonicalize().ok();
+        for input in &mut inputs {
+            if observations.paths.contains(Path::new(&input.path))
+                && !main
+                    .as_ref()
+                    .is_some_and(|main| Path::new(&input.path) == main)
+            {
+                input.metadata = None;
+            }
+        }
+    }
     append_bibtex_inputs(&mut inputs, direct.doc_dir, direct.out_dir, direct.job_name)?;
     append_biber_inputs(&mut inputs, direct.doc_dir, direct.out_dir, direct.job_name)?;
     append_index_inputs(&mut inputs, direct.doc_dir, direct.out_dir, direct.job_name)?;
@@ -12256,7 +12314,12 @@ fn recorded_inputs_with_owned_outputs(
     let mut aliases = HashSet::new();
     let main = main.canonicalize().ok();
     let out_dir_canonical = out_dir.canonicalize().ok();
-    let recorded_owned = recorded_outputs(fls_path, doc_dir)?
+    let recorded_generation_outputs = recorded_outputs(fls_path, doc_dir)?;
+    let recorded_generated = recorded_generation_outputs
+        .iter()
+        .map(|path| canonical_or_original(path))
+        .collect::<HashSet<_>>();
+    let recorded_owned = recorded_generation_outputs
         .into_iter()
         .filter(|path| is_settled_aux_cache_sidecar(path) || path_extension_is_any(path, &["fmt"]))
         .map(|path| canonical_or_original(&path))
@@ -12290,12 +12353,25 @@ fn recorded_inputs_with_owned_outputs(
         } else {
             fingerprint_path_reusing(&path, Some(previous))?
         };
-        inputs.push(fingerprint.with_context(|| {
+        let mut fingerprint = fingerprint.with_context(|| {
             format!(
                 "recorded input disappeared or is not a regular file after compilation: {}",
                 path.display()
             )
-        })?);
+        })?;
+        if recorded_generated.contains(&canonical)
+            && path_is_under_cached_directory(&path, out_dir, out_dir_canonical.as_deref())
+            && !main
+                .as_ref()
+                .is_some_and(|main| path_matches_canonical(&path, main))
+        {
+            // An arbitrary file created and consumed by this engine pass is
+            // neither an immutable source nor a trusted scheduler artifact.
+            // Compile it normally, but decline publication until descriptor
+            // receipts can prove which generated bytes were consumed.
+            fingerprint.metadata = None;
+        }
+        inputs.push(fingerprint);
     }
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     inputs.dedup_by(|left, right| left.path == right.path);
@@ -13943,7 +14019,7 @@ mod tests {
     }
 
     #[test]
-    fn draft_graphics_prepass_skips_recorder_when_no_generated_tools_need_it() {
+    fn draft_and_final_graphics_passes_record_dependency_observations() {
         let options =
             test_build_options(Path::new("main.tex"), Path::new("out"), DraftPrepass::Auto);
         let draft_mode = TexRunMode {
@@ -13960,36 +14036,32 @@ mod tests {
             force_pgf_list_and_make: true,
             ..draft_mode
         };
+        for mode in [draft_mode, final_mode, pgf_mode] {
+            let command =
+                tex_direct_base_command(Path::new("."), "main", Path::new("out"), &options, mode);
+            assert!(command.get_args().any(|arg| arg == "-recorder"));
+        }
+    }
 
-        assert!(!tex_run_records_files(&options, draft_mode));
-        assert!(tex_run_records_files(&options, final_mode));
-        assert!(tex_run_records_files(&options, pgf_mode));
-
-        let draft_command = tex_direct_base_command(
-            Path::new("."),
-            "main",
-            Path::new("out"),
-            &options,
-            draft_mode,
-        );
-        let draft_args = draft_command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert!(!draft_args.iter().any(|arg| arg == "-recorder"));
-
-        let final_command = tex_direct_base_command(
-            Path::new("."),
-            "main",
-            Path::new("out"),
-            &options,
-            final_mode,
-        );
-        let final_args = final_command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert!(final_args.iter().any(|arg| arg == "-recorder"));
+    #[test]
+    fn whole_build_output_observations_are_bounded_and_overflow_declines_coverage() {
+        let mut observations = GeneratedOutputObservations::default();
+        let path = PathBuf::from("output/generated/input.tex");
+        observations.insert(path.clone());
+        let bytes = observations.bytes;
+        observations.insert(path);
+        assert_eq!(observations.bytes, bytes);
+        assert_eq!(observations.paths.len(), 1);
+        assert!(!observations.overflowed);
+        observations.insert(PathBuf::from(
+            "x".repeat(GeneratedOutputObservations::BUDGET),
+        ));
+        assert!(observations.overflowed);
+        assert_eq!(observations.bytes, 0);
+        assert!(observations.paths.is_empty());
+        observations.insert(PathBuf::from("output/next.tex"));
+        assert!(observations.overflowed);
+        assert!(observations.paths.is_empty());
     }
 
     #[test]

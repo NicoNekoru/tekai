@@ -247,6 +247,14 @@ pub(crate) unsafe fn open_input(
         }
 
         if !(*f_ptr).is_null() {
+            if !crate::lookup::record_input(std::path::Path::new(
+                CStr::from_ptr(nameoffile_body()).to_string_lossy().as_ref(),
+            )) {
+                eprintln!("tekai: current-pass generated-input tracking exceeds the 4 MiB limit");
+                crate::stdio::fclose(*f_ptr);
+                *f_ptr = ptr::null_mut();
+                return FALSE;
+            }
             recorder_record_input(nameoffile_body());
             if filefmt == KPSE_TFM_FORMAT {
                 tfmtemp = fast_fgetc(*f_ptr);
@@ -296,6 +304,16 @@ pub(crate) unsafe fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c_cha
             allocated = true;
         }
 
+        if !crate::lookup::can_record_output(std::path::Path::new(
+            CStr::from_ptr(fname).to_string_lossy().as_ref(),
+        )) {
+            eprintln!("tekai: current-pass generated-output tracking exceeds the 4 MiB limit; output was not opened");
+            if allocated {
+                crate::allocation::free(fname as *mut c_void);
+            }
+            *f_ptr = ptr::null_mut();
+            return FALSE;
+        }
         *f_ptr = crate::stdio::fopen(fname, fopen_mode);
         if (*f_ptr).is_null() {
             let texmfoutput = kpse_var_value(c"TEXMFOUTPUT".as_ptr());
@@ -305,7 +323,13 @@ pub(crate) unsafe fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c_cha
                 }
                 fname = concat3_ptr(texmfoutput, c"/".as_ptr(), original);
                 allocated = true;
-                *f_ptr = crate::stdio::fopen(fname, fopen_mode);
+                if crate::lookup::can_record_output(std::path::Path::new(
+                    CStr::from_ptr(fname).to_string_lossy().as_ref(),
+                )) {
+                    *f_ptr = crate::stdio::fopen(fname, fopen_mode);
+                } else {
+                    eprintln!("tekai: current-pass generated-output tracking exceeds the 4 MiB limit; fallback output was not opened");
+                }
             }
             crate::allocation::free(texmfoutput as *mut c_void);
         }
@@ -314,10 +338,15 @@ pub(crate) unsafe fn open_output(f_ptr: *mut *mut FILE, fopen_mode: *const c_cha
             if allocated {
                 set_nameoffile_from_c_str(fname);
             }
-            crate::lookup::record_output(std::path::Path::new(
-                &CStr::from_ptr(fname).to_string_lossy().into_owned(),
-            ));
-            recorder_record_output(fname);
+            if !crate::lookup::record_output(std::path::Path::new(
+                CStr::from_ptr(fname).to_string_lossy().as_ref(),
+            )) {
+                eprintln!("tekai: current-pass generated-output tracking exceeds the 4 MiB limit");
+                crate::stdio::fclose(*f_ptr);
+                *f_ptr = ptr::null_mut();
+            } else {
+                recorder_record_output(fname);
+            }
         }
         if allocated {
             crate::allocation::free(fname as *mut c_void);

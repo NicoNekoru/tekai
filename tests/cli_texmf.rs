@@ -368,6 +368,90 @@ Generated body.
             .join("paper/build/generated/deep/newinput.tex")
             .is_file()
     );
+    assert!(
+        !project
+            .0
+            .join("paper/build/.tekai-main.state.toml")
+            .exists()
+    );
+}
+
+#[test]
+fn explicitly_checked_generated_files_remain_available_in_later_non_overwriting_passes() {
+    for draft in ["never", "always"] {
+        let project = Project::new();
+        fs::create_dir_all(project.0.join("paper/build/generated/deep")).unwrap();
+        project.write(
+            "paper/main.tex",
+            r"\documentclass{article}
+\begin{filecontents*}{generated/deep/nonoverwrite.tex}
+\typeout{OBSERVED-NONOVERWRITING-INPUT}
+Generated body.
+\end{filecontents*}
+\begin{document}
+\tableofcontents
+\section{Generated}\label{generated}
+See Section~\ref{generated}.
+\input{nonoverwrite}
+\end{document}
+",
+        );
+        let build_args = [
+            "build",
+            "main.tex",
+            "--draft-prepass",
+            draft,
+            "--report-json",
+        ];
+        let first = project.success(&build_args, &[]);
+        assert!(first["tex_runs"].as_u64().unwrap() > 1, "{first}");
+        if draft == "always" {
+            assert!(first["draft_tex_runs"].as_u64().unwrap() > 0, "{first}");
+        }
+        project.marker("OBSERVED-NONOVERWRITING-INPUT");
+        assert!(
+            !project
+                .0
+                .join("paper/build/.tekai-main.state.toml")
+                .exists()
+        );
+        let source = fs::read(
+            project
+                .0
+                .join("paper/build/generated/deep/nonoverwrite.tex"),
+        )
+        .unwrap();
+        let repeated = project.success(
+            &[
+                "build",
+                "main.tex",
+                "--force",
+                "--draft-prepass",
+                draft,
+                "--report-json",
+            ],
+            &[],
+        );
+        assert!(!repeated["skipped"].as_bool().unwrap(), "{repeated}");
+        project.marker("OBSERVED-NONOVERWRITING-INPUT");
+        assert_eq!(
+            fs::read(
+                project
+                    .0
+                    .join("paper/build/generated/deep/nonoverwrite.tex")
+            )
+            .unwrap(),
+            source
+        );
+        // An unchanged input created before this build is now a sound dependency.
+        assert_eq!(project.success(&build_args, &[])["skipped"], true);
+        project.write(
+            "paper/build/generated/deep/nonoverwrite.tex",
+            "\\typeout{EDITED-NONOVERWRITING-INPUT}\nUpdated body.\n",
+        );
+        assert_eq!(project.success(&build_args, &[])["skipped"], false);
+        project.marker("EDITED-NONOVERWRITING-INPUT");
+    }
 }
 
 #[test]
