@@ -414,7 +414,7 @@ the residual between external and internal timers.
 
 Phase records aggregate a fixed inventory of completed calls and bounded work
 counters for state input counts, freshness checks and TeX execution routes.
-The finer routes separate state reading from TOML parsing, metadata checks
+The finer routes separate state reading from cache parsing, metadata checks
 from content/effective-source hashing, memo work, lookup-session resets,
 mode-key generation and report serialization. Their scopes overlap, so their
 durations must not be summed into a total. Dedicated exact-engine children skip
@@ -425,8 +425,9 @@ argument/configuration setup, state loading, freshness checks and TeX subprocess
 waits. Engine format initialization remains explicitly unmeasured.
 Phase protocol version 3 names these unavailable observations as child-process
 internals rather than claiming that normal Rust engine entry never returns.
-The reader still validates versions 1 and 2 using their original labels and
-reasons. No version supplies measured child-internal durations.
+Protocol 4 identifies build-state parsing as JSON. The reader still validates
+versions 1 through 3 using their original labels and reasons, including TOML
+parsing in versions 2 and 3. No version supplies measured child-internal durations.
 
 ```sh
 python3 -B tools/profile_runtime.py --candidate target/release/tekai \

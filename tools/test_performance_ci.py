@@ -1097,6 +1097,37 @@ class RunnerTests(unittest.TestCase):
             self.audit.lookup()
         self.assertEqual(self.audit.report['results'][-1]['correctness']['status'], 'passed')
 
+    def test_edit_race_rejects_either_exact_published_state_filename(self):
+        cases = (((), False), (('.tekai-main.state.toml',), True), (('.tekai-main.state.json',), True),
+                 (('.tekai-main.state.toml', '.tekai-main.state.json'), True),
+                 (('.tekai-main.state.json.bak', '.tekai-other.state.json', '.tekai-main.state.tmp'), False))
+        for index, (names, published) in enumerate(cases):
+            with self.subTest(names=names):
+                project = self.work / f'edit-race-state-{index}'
+                ci.document(project)
+                build = project / 'build'
+                build.mkdir()
+                (build / 'audit.marker').write_text('started\n', encoding='utf-8')
+                for name in names:
+                    (build / name).write_text('{}' if name.endswith('.json') else 'version = 43\n',
+                                             encoding='utf-8')
+                process = Mock(returncode=1)
+                stderr = ('inputs or search directories changed during compilation at '
+                          + str(project / 'main.tex') + '.\nThe PDF may be outdated, rerun the build\n')
+                with patch.object(self.audit, 'needs_pdftext', return_value=True), \
+                        patch.object(self.audit, 'project', return_value=project), \
+                        patch.object(self.audit, 'start', return_value=process), \
+                        patch.object(self.audit, 'captured', return_value=('', stderr, False)), \
+                        patch.object(self.audit, 'stop') as stop, \
+                        patch.object(self.audit, 'run', return_value={'code': 0, 'stdout': '{"skipped": false, "tex_runs": 1}'}), \
+                        patch.object(self.audit, 'text', side_effect=('OLD-CONTENT', 'NEW-CONTENT')), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.audit.edit_race()
+                row = self.audit.report['results'][-1]
+                self.assertEqual(row['evidence']['state_exists_after_race'], published)
+                self.assertEqual(row['correctness']['status'], 'failed' if published else 'passed')
+                stop.assert_called_once_with(process)
+
     def executable_fixtures(self):
         self.args.engine = self.work / 'fixture-engine'
         self.args.engine.write_bytes(b'engine-first')

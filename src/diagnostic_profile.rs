@@ -85,7 +85,7 @@ const PHASES: [(Phase, &str, &str); 18] = [
     (
         Phase::BuildStateParse,
         "build_state_parse",
-        "compiler build-state TOML parse",
+        "compiler build-state JSON parse",
     ),
     (
         Phase::InputMetadata,
@@ -337,7 +337,7 @@ impl Session {
             .lock()
             .map_err(|_| io::Error::other("profile counters poisoned"))?;
         let record = Record {
-            schema_version: 3,
+            schema_version: 4,
             producer: "tekai-rust",
             scope: "cli_process",
             source: "opt_in_rust_instrumentation",
@@ -444,11 +444,18 @@ mod tests {
     #[test]
     fn inventory_is_bounded_and_unobserved_phases_are_unavailable() {
         let record = record(&Session::new());
-        assert_eq!(record["schema_version"], 3);
+        assert_eq!(record["schema_version"], 4);
         assert_eq!(record["untrusted"], true);
         assert_eq!(record["phases_overlap"], true);
         let phases = record["phases"].as_array().unwrap();
         assert_eq!(phases.len(), PHASES.len() + 2);
+        assert_eq!(
+            phases
+                .iter()
+                .find(|phase| phase["name"] == "build_state_parse")
+                .unwrap()["source"],
+            "compiler build-state JSON parse"
+        );
         for phase in phases {
             assert_eq!(phase["status"], "unavailable");
             assert!(phase["elapsed_ms"].is_null());

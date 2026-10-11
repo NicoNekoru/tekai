@@ -1127,7 +1127,7 @@ fn diagnostic_cache_routes_are_stable_and_profiling_preserves_outputs() {
         assert!(stderr.len() <= 16 * 1024);
         let profile: Value =
             serde_json::from_str(stderr.strip_prefix("TEKAI_PROFILE ").unwrap()).unwrap();
-        assert_eq!(profile["schema_version"], 3);
+        assert_eq!(profile["schema_version"], 4);
         assert_eq!(profile["untrusted"], true);
         assert_eq!(profile["status"], "success");
         assert!(profile["phases"].as_array().unwrap().iter().all(|phase| {
@@ -1159,7 +1159,7 @@ fn diagnostic_cache_routes_are_stable_and_profiling_preserves_outputs() {
     ];
     let initial = project.success(args);
     assert_eq!(initial["tex_runs"], 1);
-    let state_path = project.0.join("build/.tekai-main.state.toml");
+    let state_path = project.0.join("build/.tekai-main.state.json");
     let state = fs::read(&state_path).unwrap();
     let pdf = fs::read(project.0.join("build/main.pdf")).unwrap();
     let mut prior_counters = None;

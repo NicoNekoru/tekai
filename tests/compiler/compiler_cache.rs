@@ -31,6 +31,36 @@ fn generated_output_dir_artifacts_do_not_invalidate_noop_cache() {
     assert!(!first.skipped, "{first:#?}");
     assert!(out_dir.join("main.pdf").exists());
 
+    // A legacy state cannot establish a current hit. A valid JSON state can
+    // coexist with it, and malformed JSON must rebuild rather than fall back.
+    let state_path = out_dir.join(".tekai-main.state.json");
+    let legacy_path = out_dir.join(".tekai-main.state.toml");
+    let state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let mut legacy_fields = toml::map::Map::new();
+    legacy_fields.insert(
+        "version".into(),
+        toml::Value::Integer(state["version"].as_i64().unwrap()),
+    );
+    for field in ["mode_key", "pdf_path"] {
+        legacy_fields.insert(
+            field.into(),
+            toml::Value::String(state[field].as_str().unwrap().into()),
+        );
+    }
+    legacy_fields.insert("inputs".into(), toml::Value::Array(vec![]));
+    let legacy = toml::to_string(&legacy_fields).unwrap();
+    fs::write(&legacy_path, &legacy).unwrap();
+    fs::remove_file(&state_path).unwrap();
+    let migrated = build(&options(&main, &out_dir)).expect("legacy state rebuild failed");
+    assert!(!migrated.skipped, "{migrated:#?}");
+    assert!(migrated.tex_runs > 0, "{migrated:#?}");
+    assert!(build(&options(&main, &out_dir)).unwrap().skipped);
+    fs::write(&state_path, "{").unwrap();
+    let recovered = build(&options(&main, &out_dir)).expect("malformed JSON rebuild failed");
+    assert!(!recovered.skipped, "{recovered:#?}");
+    assert!(recovered.tex_runs > 0, "{recovered:#?}");
+    assert_eq!(fs::read_to_string(&legacy_path).unwrap(), legacy);
+
     fs::write(out_dir.join("main.aux"), "% mutated generated aux\n")
         .expect("failed to mutate generated aux");
     fs::write(out_dir.join("main.toc"), "% mutated generated toc\n")
@@ -110,7 +140,7 @@ fn fresh_output_dir_restores_settled_pdf_artifact_from_shared_cache() {
         fs::read(fresh_out.join("main.pdf")).expect("failed to read restored pdf"),
         first_pdf
     );
-    assert!(fresh_out.join(".tekai-main.state.toml").exists());
+    assert!(fresh_out.join(".tekai-main.state.json").exists());
 
     let local_cached = build(&options(&main, &fresh_out)).expect("local cache check failed");
     assert!(local_cached.skipped, "{local_cached:#?}");
@@ -269,7 +299,7 @@ fn implicit_generated_namespaces_are_ignored_but_explicit_search_remains_availab
     // inventory which intentionally excludes those mutable generated trees.
     for _ in 0..2 {
         assert!(!build(&options).unwrap().skipped);
-        assert!(!out_dir.join(".tekai-main.state.toml").exists());
+        assert!(!out_dir.join(".tekai-main.state.json").exists());
     }
     assert_pdf_text_when_available(&out_dir.join("main.pdf"), "OUTPUT-CHOICE", "SOURCE-CHOICE");
     fs::remove_dir_all(root).unwrap();
@@ -361,7 +391,7 @@ fn edits_during_compilation_never_publish_a_fresh_cache_state() {
             error.to_string().contains("changed during compilation"),
             "{error:#}"
         );
-        assert!(!out_dir.join(".tekai-main.state.toml").exists());
+        assert!(!out_dir.join(".tekai-main.state.json").exists());
         let next = build(&options).unwrap();
         assert!(!next.skipped);
         assert!(next.tex_runs > 0);
@@ -544,7 +574,7 @@ fn absolute_bibliography_source_alias_retarget_rebuilds_and_repairs_owned_state(
             .contains("OldAliasTitle")
     );
     assert!(build(&options).unwrap().skipped);
-    let state = fs::read_to_string(out.join(".tekai-main.state.toml")).unwrap();
+    let state = fs::read_to_string(out.join(".tekai-main.state.json")).unwrap();
     assert!(state.contains("tekai-input-alias:"));
     fs::remove_file(&alias).unwrap();
     symlink(&new, &alias).unwrap();
@@ -557,7 +587,7 @@ fn absolute_bibliography_source_alias_retarget_rebuilds_and_repairs_owned_state(
     assert!(build(&options).unwrap().skipped);
 
     // Interrupted owned metadata must not prevent a forced build from repair.
-    fs::write(out.join(".tekai-main.state.toml"), b"\xff").unwrap();
+    fs::write(out.join(".tekai-main.state.json"), b"\xff").unwrap();
     fs::write(out.join(".tekai-main.bibstate.toml"), "version = [").unwrap();
     let repaired = build(&BuildOptions {
         force: true,

@@ -1925,7 +1925,7 @@ mod tests {
             assert!(
                 final_options
                     .out_dir
-                    .join(".tekai-main.state.toml")
+                    .join(".tekai-main.state.json")
                     .is_file(),
                 "the compiler must publish real final build state"
             );

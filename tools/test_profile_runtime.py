@@ -43,22 +43,23 @@ MEM = 'MemTotal: 1000 kB\nMemAvailable: 500 kB\nMemFree: 100 kB\nSwapTotal: 200 
 TOP = 'CPU usage: 1.00% user, 2.00% sys, 97.00% idle\nCPU usage: 3.00% user, 4.00% sys, 93.00% idle\n'
 
 
-def phase_record(version=3):
+def phase_record(version=4):
     phases = []
-    sources = {1: profile.PHASE_SOURCES_V1, 2: profile.PHASE_SOURCES_V2, 3: profile.PHASE_SOURCES}[version]
-    reasons = profile.CHILD_REASONS if version == 3 else profile.NATIVE_REASONS_V2
+    sources = {1: profile.PHASE_SOURCES_V1, 2: profile.PHASE_SOURCES_V2,
+               3: profile.PHASE_SOURCES_V3, 4: profile.PHASE_SOURCES_V4}[version]
+    reasons = profile.CHILD_REASONS if version in (3, 4) else profile.NATIVE_REASONS_V2
     for name, source in sources.items():
         native = name in reasons
         phases.append({'name': name, 'status': 'unavailable' if native else 'available',
                        'elapsed_ms': None if native else 4.0, 'calls': 0 if native else 1,
                        'active_calls': 0, 'source': source,
-                       'scope': ('engine_child_internal' if version == 3 else 'native_engine_internal') if native else 'subprocess_launch_and_wait'
+                       'scope': ('engine_child_internal' if version in (3, 4) else 'native_engine_internal') if native else 'subprocess_launch_and_wait'
                                 if name == 'tex_subprocess' else 'inclusive_wall_time_current_process',
                        'reason': reasons[name] if native else None})
     record = {'schema_version': version, 'producer': 'tekai-rust', 'scope': 'cli_process',
             'source': 'opt_in_rust_instrumentation', 'untrusted': True, 'status': 'success',
             'elapsed_ms': 10.0, 'completed_spans_only': True, 'phases_overlap': True, 'phases': phases}
-    if version in (2, 3):
+    if version in (2, 3, 4):
         record['counters'] = [{'name': name, 'value': 1, 'unit': unit,
                               'scope': 'aggregate_observations_current_process'}
                              for name, unit in profile.COUNTER_UNITS.items()]
@@ -206,11 +207,27 @@ class PhaseTests(unittest.TestCase):
         self.assertTrue(result['compatibility']['counters_available'])
         self.assertEqual(result['compatibility']['missing_phase_names'], [])
 
+    def test_build_state_parser_source_is_versioned_without_relabeling_old_records(self):
+        for version in (2, 3, 4):
+            data = phase_record(version)
+            entry = next(phase for phase in data['phases'] if phase['name'] == 'build_state_parse')
+            expected = 'compiler build-state JSON parse' if version == 4 else 'compiler build-state TOML parse'
+            with self.subTest(version=version, mutation='original source'):
+                result = profile.parse_phases(phase_line(data))
+                self.assertEqual(result['status'], 'reported')
+                observed = next(phase for phase in result['data']['phases'] if phase['name'] == 'build_state_parse')
+                self.assertEqual(observed['source'], expected)
+                self.assertTrue(result['compatibility']['counters_available'])
+                self.assertEqual(result['compatibility']['missing_phase_names'], [])
+            entry['source'] = 'compiler build-state TOML parse' if version == 4 else 'compiler build-state JSON parse'
+            with self.subTest(version=version, mutation='wrong version source'):
+                self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
+
     def test_engine_unavailable_reasons_are_versioned_without_invented_measurements(self):
-        for version in (1, 2, 3):
+        for version in (1, 2, 3, 4):
             data = phase_record(version)
             entry = next(phase for phase in data['phases'] if phase['name'] == 'embedded_engine_entry')
-            incompatible = profile.NATIVE_REASONS_V2 if version == 3 else profile.CHILD_REASONS
+            incompatible = profile.NATIVE_REASONS_V2 if version in (3, 4) else profile.CHILD_REASONS
             entry['reason'] = incompatible['embedded_engine_entry']
             with self.subTest(version=version, mutation='wrong version reason'):
                 self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
@@ -231,7 +248,7 @@ class PhaseTests(unittest.TestCase):
         mutations = ({}, [], {'bad': 1})
         for data in mutations:
             self.assertEqual(profile.parse_phases(phase_line(data))['status'], 'invalid')
-        for key, value in (('schema_version', True), ('schema_version', 4), ('producer', 'other'),
+        for key, value in (('schema_version', True), ('schema_version', 5), ('producer', 'other'),
                            ('scope', 'tree'), ('source', 'guessed'), ('untrusted', False),
                            ('completed_spans_only', False), ('phases_overlap', False),
                            ('status', 'pass'), ('status', []), ('elapsed_ms', -1), ('elapsed_ms', True),

@@ -173,12 +173,46 @@ Fresh Cargo release elapsed was 321.8 to 208.9 seconds on Intel and 145.3 to
 runners, not a causal estimate for removing the C archive.
 
 [Run 38137192590](https://github.com/NicoNekoru/tekai/actions/runs/38137192590)
-now tests the verified `83156ff` checkpoint against the same actual `main` on both
-free runner architectures. It includes the lookup and benchmark-fixture fixes.
-Later Rust ownership checkpoints are outside that comparison. Both core jobs
+tested `83156ff` against the same actual `main` on both free runner architectures.
+Later Rust ownership checkpoints are outside that comparison. Both architectures
+passed 170 deterministic assertions and all 99 reference pages. Both core jobs
 passed real installed-TeX lookup, then failed two outdated diagnostic-profile
-expectations. The current test changes distinguish early root validation,
-recoverable malformed cache metadata and fatal cache I/O errors.
+expectations, since corrected in `6d607e9`.
+
+| Case | Intel | ARM |
+| --- | --- | --- |
+| CLI startup | Inconclusive, ratio 1.0705, interval 1.0376 to 1.1014 | Pass, ratio 0.9828 |
+| Nested lookup | Pass, ratio 0.1837 | Pass, ratio 0.1727 |
+| Image compilation | Pass, ratio 1.0154 | Pass, ratio 1.0094 |
+| Warm build cache | Whole-run deadline, 16 complete units and an incomplete unit | Fail, ratio 1.9528, interval 1.9203 to 1.9776 |
+
+Intel completed 66 full warm pairs, then one baseline batch and 11 commands from
+the candidate batch. Its balanced 64-pair prefix had a descriptive ratio of
+2.0811, without a final warm verdict. Warm sampling began at 3170.116 seconds
+of its 3600-second budget. Scored compiler commands consumed 2687.570 seconds
+across the first three cases, including 1567.327 seconds for nested-lookup
+baseline commands. Checkpoints took 3.990 seconds. Reducing checkpoint work
+cannot resolve this deadline.
+
+All completed warm batches preserved state bytes and identity. Candidate
+opt-in profiles on both architectures recorded 3124 dependencies, 1031 metadata
+matches, 2093 virtual checks and no hash fallbacks. Median state parsing took
+31.812 milliseconds on Intel and 11.742 on ARM, compared with 7.394 and 4.559
+milliseconds for freshness checks. These profiles overlap and are diagnostic.
+They do not establish leak freedom or a final Intel warm timing result.
+
+The follow-up changes only dependency BuildState serialization to compact JSON,
+at schema 44, keeping every fingerprint, freshness guard and atomic publication
+rule. Legacy TOML files cause a safe rebuild and remain untouched. Auxiliary
+caches retain TOML. The benchmark pins either supported filename and format,
+so actual-main TOML baselines remain usable. Diagnostic protocol 4 identifies
+the new parser without relabeling observations from protocols 1 through 3.
+Local verification passed 744 workspace unit tests with 512 property cases,
+369 Python tests, all 104 compiler integrations, six diagnostic CLI tests,
+16 self-contained CLI tests and 14 no-system-TeX lookup tests. One unit and the
+separate large-paper CLI fixture were not run by those commands. Strict workspace
+Clippy and Rust 1.89 checks passed with C and C++ compilers disabled. A release
+comparison and remote verification remain pending.
 
 ## Remaining performance work
 

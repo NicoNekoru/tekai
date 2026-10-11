@@ -58,10 +58,14 @@ PHASE_SOURCES_V2 = {**PHASE_SOURCES_V1,
     'cli_report_serialization': 'main build-report JSON conversion and serialization',
     'build_mode_key': 'compiler::direct_mode_key',
 }
-PHASE_SOURCES = {**PHASE_SOURCES_V2,
+PHASE_SOURCES_V3 = {**PHASE_SOURCES_V2,
     'embedded_engine_entry': 'exact engine child, outside parent process instrumentation',
     'format_initialization': 'exact engine child, outside parent process instrumentation',
 }
+PHASE_SOURCES_V4 = {**PHASE_SOURCES_V3,
+    'build_state_parse': 'compiler build-state JSON parse',
+}
+PHASE_SOURCES = PHASE_SOURCES_V4
 COUNTER_UNITS = {'state_bytes_read': 'bytes', 'state_dependencies': 'recorded_inputs',
     'freshness_requests': 'requests', 'freshness_memo_hits': 'requests', 'freshness_memo_misses': 'requests',
     'metadata_checks': 'calls', 'metadata_matches': 'freshness_routes',
@@ -191,10 +195,10 @@ def parse_phases(stderr, truncated=False):
         version = data.get('schema_version')
         expected_keys = {'schema_version', 'producer', 'scope', 'source', 'untrusted', 'status', 'elapsed_ms',
                          'completed_spans_only', 'phases_overlap', 'phases'}
-        if version in (2, 3):
+        if version in (2, 3, 4):
             expected_keys.add('counters')
         if set(data) != expected_keys \
-                or type(version) is not int or version not in (1, 2, 3) \
+                or type(version) is not int or version not in (1, 2, 3, 4) \
                 or data.get('producer') != 'tekai-rust' or data.get('scope') != 'cli_process' \
                 or data.get('source') != 'opt_in_rust_instrumentation' or data.get('untrusted') is not True \
                 or data.get('completed_spans_only') is not True or data.get('phases_overlap') is not True \
@@ -204,8 +208,9 @@ def parse_phases(stderr, truncated=False):
         if version == 1 and len(lines[0].encode('utf-8')) + len('TEKAI_PROFILE ') + 1 > 8192:
             raise ValueError('Legacy phase record exceeds its 8-KiB bound')
         phases = data.get('phases')
-        sources = {1: PHASE_SOURCES_V1, 2: PHASE_SOURCES_V2, 3: PHASE_SOURCES}[version]
-        reasons = CHILD_REASONS if version == 3 else NATIVE_REASONS_V2
+        sources = {1: PHASE_SOURCES_V1, 2: PHASE_SOURCES_V2,
+                   3: PHASE_SOURCES_V3, 4: PHASE_SOURCES_V4}[version]
+        reasons = CHILD_REASONS if version in (3, 4) else NATIVE_REASONS_V2
         names = tuple(sources)
         if not isinstance(phases, list) or len(phases) != len(names) \
                 or any(not isinstance(phase, dict) for phase in phases) \
@@ -214,7 +219,7 @@ def parse_phases(stderr, truncated=False):
             raise ValueError('Missing or duplicated fixed phase inventory')
         for phase in phases:
             name = phase['name']
-            scope = ('engine_child_internal' if version == 3 else 'native_engine_internal') if name in reasons else \
+            scope = ('engine_child_internal' if version in (3, 4) else 'native_engine_internal') if name in reasons else \
                 'subprocess_launch_and_wait' if name == 'tex_subprocess' else 'inclusive_wall_time_current_process'
             if set(phase) != {'name', 'status', 'elapsed_ms', 'calls', 'active_calls', 'source', 'scope', 'reason'} \
                     or phase.get('status') not in ('available', 'unavailable') \
@@ -229,7 +234,7 @@ def parse_phases(stderr, truncated=False):
             elif phase['calls'] != 0 or phase.get('elapsed_ms') is not None \
                     or phase.get('reason') != reasons.get(name, 'no_completed_call_in_this_process'):
                 raise ValueError('Unavailable phase requires null duration and a reason')
-        if version in (2, 3):
+        if version in (2, 3, 4):
             counters = data.get('counters')
             if not isinstance(counters, list) or len(counters) != len(COUNTER_UNITS) \
                     or any(not isinstance(counter, dict) or type(counter.get('name')) is not str for counter in counters) \
@@ -242,10 +247,10 @@ def parse_phases(stderr, truncated=False):
                         or counter.get('scope') != 'aggregate_observations_current_process':
                     raise ValueError('Invalid counter unit, scope or count')
         result.update(status='reported', data=data,
-                      compatibility={'schema_version': version, 'granular_observations': 'available' if version in (2, 3)
-                                     else 'unavailable_legacy_schema', 'missing_phase_names': [] if version in (2, 3)
+                      compatibility={'schema_version': version, 'granular_observations': 'available' if version in (2, 3, 4)
+                                     else 'unavailable_legacy_schema', 'missing_phase_names': [] if version in (2, 3, 4)
                                      else sorted(set(PHASE_SOURCES) - set(PHASE_SOURCES_V1)),
-                                     'counters_available': version in (2, 3)})
+                                     'counters_available': version in (2, 3, 4)})
     except (ValueError, RecursionError, OverflowError) as error:
         result.update(status='invalid', reason=str(error))
     return result

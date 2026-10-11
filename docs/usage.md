@@ -300,7 +300,9 @@ the right place for checked-in Kpathsea roots such as `TEXINPUTS`, `BIBINPUTS`,
 ## Cache and output behavior
 
 Direct builds write artifacts under `out_dir`, including a
-`.tekai-<job>.state.toml` dependency state. If mode, output, environment,
+`.tekai-<job>.state.json` dependency state. Older TOML build states are ignored
+and cause one rebuild. Auxiliary cache formats remain unchanged.
+If mode, output, environment,
 and effective inputs are unchanged, the next build skips TeX.
 
 The cache is TeX-aware:

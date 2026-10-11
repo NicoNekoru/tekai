@@ -5,6 +5,9 @@ versioning.
 
 ## Unreleased
 
+- Store dependency build state as compact JSON to remove TOML parsing from warm
+  cache checks. Preserve all freshness checks and atomic publication. Existing
+  TOML build states cause one rebuild, with auxiliary cache formats unchanged.
 - Reduce local build-cache growth by disabling incremental compilation and
   packing line-level debug information. Preserve filename and line-number
   backtraces, with full debugger information available through Cargo overrides.

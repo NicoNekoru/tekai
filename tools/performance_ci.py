@@ -1053,7 +1053,8 @@ class PerformanceCI(Audit):
             generation_rejected = (
                 f'inputs or search directories changed during compilation at {project / "main.tex"}.' in stderr
                 and 'The PDF may be outdated, rerun the build' in stderr)
-            state_exists = (project / 'build/.tekai-main.state.toml').exists()
+            state_exists = any((project / f'build/.tekai-main.state.{kind}').exists()
+                               for kind in ('toml', 'json'))
             first_text = self.text(project)
         except subprocess.TimeoutExpired:
             process.timed_out = True

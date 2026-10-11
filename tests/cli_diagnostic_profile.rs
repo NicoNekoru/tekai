@@ -97,7 +97,7 @@ fn only_record(output: &Output) -> Value {
     let records = records(output);
     assert_eq!(records.len(), 1, "{}", output_details(output));
     let record = records.into_iter().next().unwrap();
-    assert_eq!(record["schema_version"], 3);
+    assert_eq!(record["schema_version"], 4);
     assert_eq!(record["producer"], "tekai-rust");
     assert_eq!(record["scope"], "cli_process");
     assert_eq!(record["source"], "opt_in_rust_instrumentation");
@@ -159,6 +159,9 @@ fn only_record(output: &Output) -> Value {
         };
         assert_eq!(phase["scope"], scope);
         assert!(!phase["source"].as_str().unwrap().is_empty());
+        if name == "build_state_parse" {
+            assert_eq!(phase["source"], "compiler build-state JSON parse");
+        }
         assert!(phase["calls"].as_u64().is_some());
         assert_eq!(phase["active_calls"], 0);
         if let Some(elapsed) = phase["elapsed_ms"].as_f64() {
@@ -330,7 +333,7 @@ fn malformed_state_parse_is_observed_as_a_miss_before_source_read_error() {
     // malformed, disposable cache metadata as a fatal build error.
     fs::create_dir(fixture.0.join("main.tex")).unwrap();
     fs::create_dir(fixture.0.join("build")).unwrap();
-    let state_path = fixture.0.join("build/.tekai-main.state.toml");
+    let state_path = fixture.0.join("build/.tekai-main.state.json");
     fs::write(&state_path, "[").unwrap();
     let default = fixture.run_build("main.tex", None);
     assert_eq!(
@@ -382,7 +385,7 @@ fn malformed_state_parse_is_observed_as_a_miss_before_source_read_error() {
 fn unreadable_state_reports_io_error_without_parsing_or_launching_engine() {
     let fixture = Fixture::new();
     fs::write(fixture.0.join("main.tex"), "Unused source.\n").unwrap();
-    fs::create_dir_all(fixture.0.join("build/.tekai-main.state.toml")).unwrap();
+    fs::create_dir_all(fixture.0.join("build/.tekai-main.state.json")).unwrap();
     let default = fixture.run_build("main.tex", None);
     let enabled = fixture.run_build("main.tex", Some("1"));
     assert_eq!(

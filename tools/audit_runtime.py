@@ -295,7 +295,8 @@ class Audit:
             generation_rejected = (
                 f'inputs or search directories changed during compilation at {project / "main.tex"}.' in stderr
                 and 'The PDF may be outdated, rerun the build' in stderr)
-            state_exists = (project / 'build/.tekai-main.state.toml').exists()
+            state_exists = any((project / f'build/.tekai-main.state.{extension}').exists()
+                               for extension in ('toml', 'json'))
             first_text = self.text(project)
             next_build = self.parsed(self.run(command, project, env))
             next_text = self.text(project)

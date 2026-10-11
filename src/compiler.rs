@@ -15,7 +15,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
 
-const BUILD_STATE_VERSION: u32 = 43;
+const BUILD_STATE_VERSION: u32 = 44;
 const BIB_STATE_VERSION: u32 = 12;
 const INDEX_STATE_VERSION: u32 = 11;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
@@ -238,7 +238,7 @@ pub struct TexPassReport {
     pub external_runs: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 struct BuildState {
     version: u32,
     mode_key: String,
@@ -1320,12 +1320,12 @@ pub fn build_dependency_paths(options: &BuildOptions) -> Result<Vec<PathBuf>> {
             .filter(|root| !doc_dir.starts_with(root))
             .collect(),
     );
-    let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.state.json"));
     let mut paths = source_seed_dependency_paths(&main)?;
     if !state_path.exists() {
         return Ok(paths);
     }
-    let Some(state) = read_owned_cache_state::<BuildState>(&state_path, "build state")? else {
+    let Some(state) = read_build_state_if_exists(&state_path)? else {
         return Ok(paths);
     };
     let mode_key = direct_mode_key(options, &main);
@@ -1458,7 +1458,7 @@ fn tekai_pdftex_direct_build(options: &BuildOptions) -> Result<BuildReport> {
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("cannot create output directory {}", out_dir.display()))?;
     let pdf_path = job_output_path(&out_dir, &job_name, "pdf");
-    let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.state.json"));
     let mode_key = direct_mode_key(options, &main);
     drop(setup);
 
@@ -1610,7 +1610,7 @@ fn direct_build(options: &BuildOptions) -> Result<BuildReport> {
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("cannot create output directory {}", out_dir.display()))?;
     let pdf_path = job_output_path(&out_dir, &job_name, "pdf");
-    let state_path = out_dir.join(format!(".tekai-{job_name}.state.toml"));
+    let state_path = out_dir.join(format!(".tekai-{job_name}.state.json"));
     let mode_key = direct_mode_key(options, &main);
     drop(setup);
 
@@ -11711,9 +11711,7 @@ fn read_build_state_if_exists(state_path: &Path) -> Result<Option<BuildState>> {
     };
     diagnostic_profile::count(Counter::StateBytesRead, source.len() as u64);
     let state: Option<BuildState> = diagnostic_profile::measure(Phase::BuildStateParse, || {
-        std::str::from_utf8(&source)
-            .ok()
-            .and_then(|source| toml::from_str(source).ok())
+        serde_json::from_slice(&source).ok()
     });
     let Some(state) = state else {
         return Ok(None);
@@ -12016,8 +12014,8 @@ fn write_build_state_from_fingerprints(
         pdf_path: pdf_path.display().to_string(),
         inputs,
     };
-    let source = toml::to_string(&state).context("failed to serialize build state")?;
-    write_state_atomically(state_path, source.as_bytes())
+    let source = serde_json::to_vec(&state).context("failed to serialize build state")?;
+    write_state_atomically(state_path, &source)
         .with_context(|| format!("failed to write build state {}", state_path.display()))?;
     Ok(state)
 }
@@ -14967,7 +14965,7 @@ mod tests {
         let root = unique_temp_dir("tekai-generation-input-edits");
         fs::create_dir_all(&root).unwrap();
         let path = root.join("main.tex");
-        let state_path = root.join("state.toml");
+        let state_path = root.join("state.json");
         for atomic in [false, true] {
             fs::write(&path, "OLD-CONTENT").unwrap();
             let modified = fs::metadata(&path).unwrap().modified().unwrap();
@@ -15349,7 +15347,7 @@ mod tests {
             lookup_inputs: Some(Vec::new()),
             owned_format_directories: Vec::new(),
         };
-        let state = root.join("state.toml");
+        let state = root.join("state.json");
         assert!(
             publish_generation_state(
                 &state,
@@ -17602,7 +17600,7 @@ mod tests {
             ),
         )
         .expect("failed to write bib state");
-        fs::write(out_dir.join(".tekai-main.state.toml"), "not cached\n")
+        fs::write(out_dir.join(".tekai-main.state.json"), "not cached\n")
             .expect("failed to write build state");
         fs::write(out_dir.join("main.log"), "not cached\n").expect("failed to write log");
         fs::write(out_dir.join("main.pdf"), "%PDF cached artifact\n").expect("failed to write pdf");
@@ -17673,7 +17671,7 @@ mod tests {
             )
         );
         assert!(!fresh_out_dir.join("main.log").exists());
-        assert!(!fresh_out_dir.join(".tekai-main.state.toml").exists());
+        assert!(!fresh_out_dir.join(".tekai-main.state.json").exists());
 
         fs::write(
             &main,
@@ -17823,7 +17821,7 @@ mod tests {
             ".tekai-main.bibstate.toml"
         )));
         assert!(!is_settled_aux_cache_sidecar(Path::new(
-            ".tekai-main.state.toml"
+            ".tekai-main.state.json"
         )));
         assert_eq!(
             makeindex_input_kind(Path::new("people.IDX")),
@@ -18004,6 +18002,127 @@ mod tests {
         ));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn build_state_json_preserves_every_fingerprint_field(
+            mode_chars in proptest::collection::vec(proptest::char::any(), 0..128),
+            pdf_chars in proptest::collection::vec(proptest::char::any(), 0..128),
+            records in proptest::collection::vec((
+                proptest::collection::vec(proptest::char::any(), 0..80),
+                proptest::prelude::any::<u64>(),
+                proptest::prelude::any::<u64>(),
+                proptest::prelude::any::<u64>(),
+                proptest::prelude::any::<u64>(),
+                proptest::prelude::any::<i64>(),
+                proptest::prelude::any::<i64>(),
+                0u8..3,
+            ), 0..64),
+        ) {
+            let prefixes = ["", BIBER_GLOB_FINGERPRINT_PATH_PREFIX,
+                BIBER_CONFIG_FINGERPRINT_PATH_PREFIX, LOOKUP_DIRECTORY_PATH_PREFIX,
+                INPUT_ALIAS_PATH_PREFIX];
+            let inputs = records.into_iter().enumerate().map(|(index, record)| {
+                let (chars, len, modified_ns, device, inode, seconds, nanos, metadata_kind) = record;
+                FileFingerprint {
+                    path: format!("{}{}", prefixes[index % prefixes.len()],
+                        chars.into_iter().collect::<String>()),
+                    len,
+                    modified_ns,
+                    hash: format!("{:016x}", len ^ modified_ns),
+                    metadata: (metadata_kind != 0).then_some(FileMetadataFingerprint {
+                        len,
+                        modified_ns,
+                        identity: (metadata_kind == 2).then_some((device, inode, seconds, nanos)),
+                    }),
+                }
+            }).collect();
+            let state = BuildState {
+                version: BUILD_STATE_VERSION,
+                mode_key: mode_chars.into_iter().collect(),
+                pdf_path: pdf_chars.into_iter().collect(),
+                inputs,
+            };
+            let source = serde_json::to_vec(&state).unwrap();
+            let decoded: BuildState = serde_json::from_slice(&source).unwrap();
+            proptest::prop_assert_eq!(decoded, state);
+        }
+    }
+
+    #[test]
+    fn build_state_json_migration_and_atomic_publication_preserve_inputs() {
+        let root = unique_temp_dir("tekai-build-state-json");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join(".tekai-main.state.json");
+        let legacy_path = root.join(".tekai-main.state.toml");
+        let input = FileFingerprint {
+            path: "quoted\"/Unicode-雪\\tab\tnewline\n.tex".into(),
+            len: u64::MAX,
+            modified_ns: u64::MAX,
+            hash: "tex-root-raw:0123456789abcdef".into(),
+            metadata: Some(FileMetadataFingerprint {
+                len: u64::MAX,
+                modified_ns: u64::MAX,
+                identity: Some((u64::MAX, u64::MAX, i64::MIN, i64::MAX)),
+            }),
+        };
+        let old_state = BuildState {
+            version: BUILD_STATE_VERSION - 1,
+            mode_key: "old".into(),
+            pdf_path: root.join("main.pdf").display().to_string(),
+            inputs: vec![],
+        };
+        let legacy = toml::to_string(&old_state).unwrap();
+        fs::write(&legacy_path, &legacy).unwrap();
+        assert!(read_build_state_if_exists(&path).unwrap().is_none());
+        let state = write_build_state_from_fingerprints(
+            &path,
+            "current",
+            &root.join("main.pdf"),
+            vec![input.clone(), input.clone()],
+        )
+        .unwrap();
+        assert_eq!(state.inputs, vec![input]);
+        assert_eq!(
+            read_build_state_if_exists(&path).unwrap(),
+            Some(state.clone())
+        );
+        let valid = fs::read(&path).unwrap();
+        for malformed in [
+            b"\xff".as_slice(),
+            b"{".as_slice(),
+            b"{}".as_slice(),
+            b"null".as_slice(),
+            legacy.as_bytes(),
+            &valid[..valid.len() - 1],
+        ] {
+            fs::write(&path, malformed).unwrap();
+            assert!(read_build_state_if_exists(&path).unwrap().is_none());
+        }
+        let mut trailing = valid.clone();
+        trailing.extend_from_slice(b" trailing");
+        fs::write(&path, trailing).unwrap();
+        assert!(read_build_state_if_exists(&path).unwrap().is_none());
+        let mut wrong_type: serde_json::Value = serde_json::from_slice(&valid).unwrap();
+        wrong_type["inputs"][0]["modified_ns"] = serde_json::json!("not an integer");
+        fs::write(&path, serde_json::to_vec(&wrong_type).unwrap()).unwrap();
+        assert!(read_build_state_if_exists(&path).unwrap().is_none());
+        fs::write(&path, valid).unwrap();
+        assert_eq!(read_build_state_if_exists(&path).unwrap(), Some(state));
+        assert_eq!(fs::read_to_string(&legacy_path).unwrap(), legacy);
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        let error = read_build_state_if_exists(&path).unwrap_err();
+        assert!(error.to_string().contains("failed to read build state"));
+        assert!(fs::read_dir(&root).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tekai-state-")
+        }));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -18317,8 +18436,8 @@ mod tests {
             ],
         };
         fs::write(
-            out_dir.join(".tekai-main.state.toml"),
-            toml::to_string(&state).expect("failed to serialize build state"),
+            out_dir.join(".tekai-main.state.json"),
+            serde_json::to_vec(&state).expect("failed to serialize build state"),
         )
         .expect("failed to write build state");
 

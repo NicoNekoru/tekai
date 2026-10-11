@@ -371,7 +371,7 @@ Generated body.
     assert!(
         !project
             .0
-            .join("paper/build/.tekai-main.state.toml")
+            .join("paper/build/.tekai-main.state.json")
             .exists()
     );
 }
@@ -412,7 +412,7 @@ See Section~\ref{generated}.
         assert!(
             !project
                 .0
-                .join("paper/build/.tekai-main.state.toml")
+                .join("paper/build/.tekai-main.state.json")
                 .exists()
         );
         let source = fs::read(

@@ -41,7 +41,7 @@ fn direct_runner_does_not_cache_unsettled_max_run_builds() {
         "{too_few_runs:#}"
     );
     assert!(
-        !out_dir.join(".tekai-main.state.toml").exists(),
+        !out_dir.join(".tekai-main.state.json").exists(),
         "unsettled build should not write a successful cache state"
     );
 

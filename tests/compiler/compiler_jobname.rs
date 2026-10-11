@@ -47,7 +47,7 @@ fn direct_runner_honors_custom_job_name_for_outputs_and_aux_tools() {
     assert!(out_dir.join("paper-final.v1.pdf").exists());
     assert!(out_dir.join("paper-final.v1.aux").exists());
     assert!(out_dir.join("paper-final.v1.bbl").exists());
-    assert!(out_dir.join(".tekai-paper-final.v1.state.toml").exists());
+    assert!(out_dir.join(".tekai-paper-final.v1.state.json").exists());
     assert!(!out_dir.join("main.pdf").exists());
 
     let dependencies =
@@ -95,9 +95,9 @@ Dotted default job name: \jobname.
     assert!(!first.skipped, "{first:#?}");
     assert!(out_dir.join("paper.v1.pdf").exists());
     assert!(out_dir.join("paper.v1.aux").exists());
-    assert!(out_dir.join(".tekai-paper.v1.state.toml").exists());
+    assert!(out_dir.join(".tekai-paper.v1.state.json").exists());
     assert!(!out_dir.join("paper.pdf").exists());
-    assert!(!out_dir.join(".tekai-paper.state.toml").exists());
+    assert!(!out_dir.join(".tekai-paper.state.json").exists());
 
     let cached = build(&options).expect("cached dotted root-stem build failed");
     assert!(cached.skipped, "{cached:#?}");

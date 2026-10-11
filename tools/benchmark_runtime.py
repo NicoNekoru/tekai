@@ -534,7 +534,20 @@ def make_fixture(root, binary, case):
 
 def cache_state_snapshot(fixture, establish=False):
     """Bounded state oracle at batch boundaries, outside every command timer."""
-    path = fixture['out'] / '.tekai-main.state.toml'
+    candidates = {kind: fixture['out'] / f'.tekai-main.state.{kind}' for kind in ('toml', 'json')}
+    selected = fixture.get('cache_state_source')
+    present = [kind for kind, candidate in candidates.items() if candidate.exists()]
+    if selected is None:
+        if not establish:
+            raise BenchmarkError('Build-cache state source was not pinned during initialization')
+        if len(present) != 1:
+            raise BenchmarkError('Build-cache state requires exactly one supported state path at initialization')
+        kind = present[0]
+        path = candidates[kind]
+    else:
+        path, kind = selected
+        if candidates.get(kind) != path or present != [kind]:
+            raise BenchmarkError('Build-cache state path or format mutated during the verified cache-hit workload')
     metadata = path.stat()
     if not 0 < metadata.st_size <= MAX_STATE_BYTES:
         raise BenchmarkError('Build-cache state exceeds its finite size limit or is empty')
@@ -544,19 +557,43 @@ def cache_state_snapshot(fixture, establish=False):
         raise BenchmarkError('Build-cache state changed while the bounded oracle read it')
     try:
         source = data.decode('utf-8')
-        blocks = re.findall(r'(?ms)^\[\[inputs\]\]\n(.*?)(?=^\[|\Z)', source)
-        paths = []
-        for block in blocks:
-            fields = re.findall(r'(?m)^path = (.+)$', block)
-            if len(fields) != 1:
-                raise ValueError('Input table lacks one serialized path')
-            value = json.loads(fields[0])
-            if not isinstance(value, str):
-                raise ValueError('Input path is not a string')
-            paths.append(value)
-    except (UnicodeError, ValueError) as error:
+        if kind == 'json':
+            def unique_object(fields):
+                value = {}
+                for key, field in fields:
+                    if key in value:
+                        raise ValueError('Duplicate serialized state field')
+                    value[key] = field
+                return value
+
+            def invalid_constant(value):
+                raise ValueError('Non-JSON serialized state constant: ' + value)
+
+            state = json.loads(source, object_pairs_hook=unique_object, parse_constant=invalid_constant)
+            if not isinstance(state, dict) or not isinstance(state.get('inputs'), list):
+                raise ValueError('State lacks a serialized input array')
+            paths = []
+            for entry in state['inputs']:
+                if not isinstance(entry, dict) or not isinstance(entry.get('path'), str):
+                    raise ValueError('Input entry lacks one serialized string path')
+                entry['path'].encode('utf-8')
+                paths.append(entry['path'])
+        else:
+            blocks = re.findall(r'(?ms)^\[\[inputs\]\]\n(.*?)(?=^\[|\Z)', source)
+            paths = []
+            for block in blocks:
+                fields = re.findall(r'(?m)^path = (.+)$', block)
+                if len(fields) != 1:
+                    raise ValueError('Input table lacks one serialized path')
+                value = json.loads(fields[0])
+                if not isinstance(value, str):
+                    raise ValueError('Input path is not a string')
+                paths.append(value)
+            if len(blocks) != len(re.findall(r'(?m)^\[\[inputs\]\]$', source)):
+                raise ValueError('Malformed serialized input tables')
+    except (UnicodeError, ValueError, RecursionError) as error:
         raise BenchmarkError('Build-cache state has unsupported recorded-input serialization') from error
-    if len(blocks) != len(re.findall(r'(?m)^\[\[inputs\]\]$', source)) or len(paths) != len(set(paths)):
+    if len(paths) != len(set(paths)):
         raise BenchmarkError('Build-cache state has malformed or duplicate recorded inputs')
     expected = fixture.get('expected_dependency_paths')
     if expected is None:
@@ -564,13 +601,15 @@ def cache_state_snapshot(fixture, establish=False):
     main_path = fixture.get('expected_main_path') or str((fixture['project'] / 'main.tex').resolve())
     if not expected <= set(paths) or main_path not in paths:
         raise BenchmarkError('Build-cache state omits genuinely referenced fixture inputs')
-    row = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data),
+    row = {'state_path': str(path), 'state_format': kind,
+           'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data),
            'mtime_ns': metadata.st_mtime_ns, 'ctime_ns': metadata.st_ctime_ns,
            'device': metadata.st_dev, 'inode': metadata.st_ino,
            'recorded_input_count': len(paths), 'referenced_dependency_count': len(expected),
            'input_paths_sha256': hashlib.sha256(json.dumps(sorted(paths), ensure_ascii=False).encode('utf-8')).hexdigest(),
            'all_referenced_inputs_verified': True, 'used_for_gate': False}
     if establish:
+        fixture['cache_state_source'] = (path, kind)
         fixture['expected_cache_state'] = row
     elif row != fixture.get('expected_cache_state'):
         raise BenchmarkError('Build-cache state mutated during the verified cache-hit workload')

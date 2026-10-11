@@ -63,6 +63,15 @@ def mocked_fixture(root, _binary, _case):
                 input_sha256=bench.fixture_sha256(project))
 
 
+def serialized_cache_state(kind, inputs):
+    paths = [str(path.resolve()) for path in inputs]
+    if kind == 'json':
+        return json.dumps({'version': 44, 'inputs': [{'path': path, 'len': 0} for path in paths]},
+                          ensure_ascii=False)
+    return 'version = 43\n' + '\n'.join('[[inputs]]\npath = ' + json.dumps(path) + '\nlen = 0\n'
+                                            for path in paths)
+
+
 class StatisticsTests(unittest.TestCase):
     def analyze(self, ratios, seconds=1):
         return bench.analyze_pairs(samples(ratios, seconds), 0.10, 0.25)
@@ -564,32 +573,132 @@ class FixtureTests(unittest.TestCase):
         rng = random.Random(8706)
         with tempfile.TemporaryDirectory(prefix='test-cache-state-') as temporary:
             work = Path(temporary)
-            for trial in range(16):
-                root = work / str(trial)
+            for trial, kind in itertools.product(range(16), ('toml', 'json')):
+                root = work / f'{trial}-{kind}-"\u262f'
                 project, out = root / 'project', root / 'out'
                 dependencies = bench.dependency_document(project, rng.randrange(1, 32))
                 out.mkdir()
                 fixture = {'project': project, 'out': out, 'dependencies': dependencies}
                 inputs = [project / 'main.tex', *dependencies]
                 rng.shuffle(inputs)
-                state = out / '.tekai-main.state.toml'
-                source = 'version = 1\n' + '\n'.join('[[inputs]]\npath = ' + json.dumps(str(path.resolve())) + '\nlen = 0\n'
-                                                        for path in inputs)
+                state = out / f'.tekai-main.state.{kind}'
+                source = serialized_cache_state(kind, inputs)
                 state.write_text(source, encoding='utf-8')
                 initial = bench.cache_state_snapshot(fixture, establish=True)
+                self.assertEqual(initial['state_path'], str(state))
+                self.assertEqual(initial['state_format'], kind)
+                self.assertEqual(initial['sha256'], bench.hashlib.sha256(source.encode('utf-8')).hexdigest())
                 self.assertEqual(initial['referenced_dependency_count'], len(dependencies))
                 self.assertEqual(initial['recorded_input_count'], len(inputs))
+                self.assertEqual(bench.cache_state_snapshot(fixture), initial)
+                # Exact owned state names are the only supported choices.
+                (out / '.tekai-main.state.json.bak').write_text('{}', encoding='utf-8')
+                (out / '.tekai-other.state.json').write_text('{}', encoding='utf-8')
                 self.assertEqual(bench.cache_state_snapshot(fixture), initial)
                 # Same bytes rewritten are still a mutation because identity
                 # timestamps detect state writes on the claimed no-write route.
                 state.write_text(source, encoding='utf-8')
                 with self.assertRaisesRegex(bench.BenchmarkError, 'mutated'):
                     bench.cache_state_snapshot(fixture)
-                state.write_text('version = 1\n[[inputs]]\npath = ' + json.dumps(str((project / 'main.tex').resolve())) + '\n', encoding='utf-8')
-                with self.assertRaisesRegex(bench.BenchmarkError, 'omits'):
+                for remaining in ([project / 'main.tex'], dependencies):
+                    state.write_text(serialized_cache_state(kind, remaining), encoding='utf-8')
+                    with self.subTest(trial=trial, kind=kind, omitted=remaining), \
+                            self.assertRaisesRegex(bench.BenchmarkError, 'omits'):
+                        bench.cache_state_snapshot(fixture, establish=True)
+                state.write_text(serialized_cache_state(kind, [*inputs, inputs[0]]), encoding='utf-8')
+                with self.assertRaisesRegex(bench.BenchmarkError, 'duplicate'):
                     bench.cache_state_snapshot(fixture, establish=True)
-                with patch.object(bench, 'MAX_STATE_BYTES', 4), self.assertRaisesRegex(bench.BenchmarkError, 'finite size'):
+                path = json.dumps(str(inputs[0].resolve()))
+                malformed = ['[[inputs]]\npath = 1\n', '[[inputs]]\nlen = 0\n',
+                             '[[inputs]]\npath = ' + path + '\npath = ' + path + '\n'] \
+                    if kind == 'toml' else [
+                        '{', '[]', '{}', '{"inputs": null}', '{"inputs": {}}',
+                        '{"inputs": [null]}', '{"inputs": ["not a table"]}',
+                        '{"inputs": [{}]}', '{"inputs": [{"path": 1}]}',
+                        '{"inputs": [{"path": true}]}', '{"inputs": [{"path": null}]}',
+                        '{"inputs": [], "inputs": []}',
+                        '{"inputs": [{"path": ' + path + ', "pa\\u0074h": ' + path + '}]}',
+                        source[:-2] + ', {"path": "\\ud800"}]}',
+                        source[:-1] + ', "other": {"key": 1, "key": 2}}',
+                        source[:-1] + ', "other": NaN}', source + '\ntrailing data']
+                for invalid in malformed:
+                    state.write_text(invalid, encoding='utf-8')
+                    with self.subTest(trial=trial, kind=kind, malformed=invalid), \
+                            self.assertRaisesRegex(bench.BenchmarkError, 'serialization'):
+                        bench.cache_state_snapshot(fixture, establish=True)
+                if kind == 'json':
+                    # Paths elsewhere in a valid object do not count as inputs.
+                    state.write_text(json.dumps({'inputs': [], 'unrelated': [str(path.resolve()) for path in inputs]}),
+                                     encoding='utf-8')
+                    with self.assertRaisesRegex(bench.BenchmarkError, 'omits'):
+                        bench.cache_state_snapshot(fixture, establish=True)
+                state.write_bytes(b'\xff')
+                with self.assertRaisesRegex(bench.BenchmarkError, 'serialization'):
                     bench.cache_state_snapshot(fixture, establish=True)
+                state.write_bytes(b'')
+                with self.assertRaisesRegex(bench.BenchmarkError, 'finite size'):
+                    bench.cache_state_snapshot(fixture, establish=True)
+                state.write_text(source, encoding='utf-8')
+                with patch.object(bench, 'MAX_STATE_BYTES', len(source.encode('utf-8')) - 1), \
+                        self.assertRaisesRegex(bench.BenchmarkError, 'finite size'):
+                    bench.cache_state_snapshot(fixture, establish=True)
+
+    def test_state_oracle_pins_format_and_path_across_scored_batch_mutations(self):
+        with tempfile.TemporaryDirectory(prefix='test-cache-state-source-') as temporary:
+            work = Path(temporary)
+            for kind, mutation in itertools.product(('toml', 'json'), ('add', 'move', 'reencode', 'replace')):
+                with self.subTest(kind=kind, mutation=mutation):
+                    root = work / f'{kind}-{mutation}'
+                    project, out = root / 'project', root / 'out'
+                    dependencies = bench.dependency_document(project, 1)
+                    out.mkdir()
+                    fixture = {'project': project, 'out': out, 'dependencies': dependencies}
+                    inputs = [project / 'main.tex', *dependencies]
+                    state = out / f'.tekai-main.state.{kind}'
+                    other_kind = 'json' if kind == 'toml' else 'toml'
+                    other = out / f'.tekai-main.state.{other_kind}'
+                    source = serialized_cache_state(kind, inputs)
+                    state.write_text(source, encoding='utf-8')
+                    initial = bench.cache_state_snapshot(fixture, establish=True)
+
+                    def command(*_args, **_kwargs):
+                        if mutation in ('add', 'move'):
+                            other.write_text(serialized_cache_state(other_kind, inputs), encoding='utf-8')
+                            if mutation == 'move':
+                                state.unlink()
+                        elif mutation == 'reencode':
+                            state.write_text(serialized_cache_state(other_kind, inputs), encoding='utf-8')
+                        else:
+                            replacement = out / 'replacement'
+                            replacement.write_text(source, encoding='utf-8')
+                            identity = state.stat()
+                            os.utime(replacement, ns=(identity.st_atime_ns, identity.st_mtime_ns))
+                            replacement.replace(state)
+                        return {'command_id': 1, 'seconds': 0.125, 'parent_timing': [0, 0.1, 0.125],
+                                'command_timing': [], 'output_validation': {'verified': True}}
+
+                    with patch.object(bench, 'execute_fixture', side_effect=command), \
+                            self.assertRaises(bench.BenchmarkError) as raised:
+                        bench.batch(Mock(), fixture, 'warm-build-cache', 1)
+                    self.assertEqual(raised.exception.partial_batch['completed_iterations'], 1)
+                    self.assertFalse(raised.exception.partial_batch['complete'])
+                    self.assertFalse(raised.exception.partial_batch['used_for_gate'])
+                    self.assertEqual(fixture['cache_state_source'], (state, kind))
+                    self.assertEqual(fixture['expected_cache_state'], initial)
+                    if mutation in ('add', 'move'):
+                        with self.assertRaisesRegex(bench.BenchmarkError, 'path or format mutated'):
+                            bench.cache_state_snapshot(fixture, establish=True)
+                        if mutation == 'add':
+                            unpinned = {'project': project, 'out': out, 'dependencies': dependencies}
+                            with self.assertRaisesRegex(bench.BenchmarkError, 'exactly one'):
+                                bench.cache_state_snapshot(unpinned, establish=True)
+            empty = work / 'unowned'
+            empty.mkdir()
+            (empty / '.tekai-main.state.json.bak').write_text('{}', encoding='utf-8')
+            with self.assertRaisesRegex(bench.BenchmarkError, 'exactly one'):
+                bench.cache_state_snapshot({'out': empty}, establish=True)
+            with self.assertRaisesRegex(bench.BenchmarkError, 'not pinned'):
+                bench.cache_state_snapshot({'out': empty})
 
     def test_parent_resource_snapshot_is_diagnostic_and_reports_cumulative_scope(self):
         snapshot = bench.parent_snapshot()
