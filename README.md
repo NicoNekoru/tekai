@@ -142,6 +142,20 @@ Installed auxiliary programs run only with `--external-tools`. Without that
 opt-in, unsupported auxiliary workflows fail without launching a program.
 `--shell-escape` and external engines/runners are separate explicit opt-ins.
 
+Scheduled engine and auxiliary-tool jobs are noninteractive and receive null
+stdin. Direct engine CLI invocation transfers a foreground terminal to its
+supervised worker, propagates job suspension and continuation, and restores
+terminal ownership when the worker finishes. CLI cancellation cleans the owned
+worker group, including ordinary nested shell and PGF commands.
+
+The engine's Rust embedding API owns state and resources per invocation.
+Repeated calls and independent threads do not share mutable engine state.
+nested calls on one thread are rejected. `run_from_args` and `run_with_options`
+remain unsafe APIs for trusted input and formats, not a TeX sandbox. Recovery
+and teardown require `panic=unwind`. See
+[invocation ownership](docs/development.md#invocation-ownership) for the host
+and subprocess contracts.
+
 ## Configuration
 
 Projects may check in `tekai.toml`. Root-document commands find the nearest

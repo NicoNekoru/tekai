@@ -28,7 +28,7 @@ Match the CI gates before handing off a change:
 cargo fmt --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy -p tekai-engine \
-  --bin tekai-engine \
+  --all-targets \
   --no-default-features \
   --features standalone-binary \
   --locked -- -D warnings
@@ -40,7 +40,7 @@ cargo build -p tekai-engine \
 cargo test --workspace --locked -- --test-threads=1
 cargo build --release --locked
 rustup run 1.89.0 cargo check --workspace --all-targets --locked
-rustup run 1.89.0 cargo check -p tekai-engine --bin tekai-engine \
+rustup run 1.89.0 cargo check -p tekai-engine --all-targets \
   --no-default-features --features standalone-binary --locked
 python3 -B -m unittest discover -s tools -p 'test_*.py'
 ```
@@ -54,6 +54,8 @@ cargo test --test lint --test cli_lint --test cli_format --test cli_check --test
 cargo test --test compiler compiler_cache
 cargo test --test compiler compiler_tekai_pdftex
 cargo test -p tekai-engine
+cargo test -p tekai-engine --no-default-features --features standalone-binary \
+  --test standalone_cli --locked -- --test-threads=1
 cargo test -p tekai-pdftex
 ```
 
@@ -63,6 +65,63 @@ proof that the external workflow works on the current machine.
 Run affected optional suites with `--show-output` to retain their skip notices.
 Report missing tools explicitly. Hosted BasicTeX results and local bundled
 results establish different coverage.
+
+The `standalone_cli` target requires `standalone-binary` and executes the real
+standalone executable through a private controlling PTY. Its two tests check
+terminal input/output and SIGTERM cleanup of blocked pipe descendants. CI
+integration discovery enables required features per package and requires both
+tests to execute, rather than accepting a zero-test success. These are native
+CLI tests, separate from unit tests of the shared supervisor helper.
+
+### Invocation ownership
+
+`tekai_engine::run_from_args` and `run_with_options` own the generated core,
+argument storage, allocation arena, caches, decoders, streams and other mutable
+resources for one call. Scoped thread-local pointers route access without
+owning those resources. Repeated calls and independent threads have separate
+state. A nested invocation on the same thread returns `NestedInvocation`.
+Invocation-local environment overrides and working directories do not change
+the host process environment or directory, and the library installs no signal
+handlers.
+
+Both entry functions are unsafe. Callers must supply trusted TeX input and
+format files and keep internal engine calls within their invocation. Ownership
+does not make unchecked translated pointers safe for arbitrary formats or
+sandbox opted-in shell commands. Fatal diagnostics and help/version exits
+return typed completions without exiting the host. Unexpected Rust panics
+propagate after scoped teardown. Teardown releases partial resources; it does
+not turn an unfinished PDF into a successfully finalized document.
+
+Use `panic=unwind` for the executable hosting the engine. Abort-mode builds are
+rejected because fatal diagnostic recovery uses Rust unwinding. CI builds both
+performance artifacts with matching unwind settings, fat LTO and one codegen
+unit. Passing `cargo test` alone does not certify the executable's panic
+strategy, because Cargo tests use unwinding independently of release profiles.
+
+Pipe children also have an ownership contract. The default `InvocationOwned`
+policy creates private command groups and stops abandoned groups before reaping
+their leaders. The host must not independently reap these children or configure
+SIGCHLD for automatic reaping. `SupervisedProcess` inherits an isolated engine
+worker group whose external supervisor must clean descendants before reaping
+that worker. Ordinary explicit `pclose` and `system` completion preserves
+intentional background shell side effects. Abandoned calls clean owned groups.
+The library never transfers the host's terminal foreground group implicitly.
+
+The CLI owns its signal registrations outside the engine. Direct engine CLI
+invocation leases the foreground terminal to its worker only when the CLI
+already owns that terminal. Worker suspension becomes a visible CLI stop.
+continuation reacquires the worker terminal only after the shell foregrounds
+the CLI. Completion and unwind restore foreground ownership before the worker
+is reaped. Terminal changes mask SIGTTOU only in the calling thread and restore
+its previous signal mask. SIGTERM receives bounded grace before group kill,
+and ordinary nested shell/PGF workers stay in the outer owned group. A killed
+supervisor, an independent child reaper or a command deliberately escaping its
+group is outside this cleanup contract.
+
+Automatically scheduled TeX and auxiliary-tool jobs run concurrently and are
+noninteractive. They receive null stdin even when command output is visible.
+Use direct engine CLI invocation for interactive terminal input, rather than
+depending on a scheduled tool inheriting the user's terminal.
 
 Use fresh task-owned target directories for minimum-toolchain checks rather
 than mixing compiler versions in a development cache. Disable C and C++
@@ -211,7 +270,7 @@ must preserve dependency filtering and structural fallbacks.
 ### Lookup sessions and retention limits
 
 Mutable filesystem lookup is implemented in `tekai-engine/src/lookup.rs`.
-Each build, dependency scan and native pass starts a fresh thread-local session.
+Each build, dependency scan and native pass owns a fresh scoped session.
 Recursive roots are indexed by basename once, and an ancestor index supplies
 filtered views for overlapping search entries. Matching repeated `//` wildcards
 uses a dynamic-programming table and preserves outer-first directory priority.
@@ -224,8 +283,11 @@ commands and pipes invalidate the inventory because opted-in external commands
 can create arbitrary inputs. Symlink-directory aliases are retained, including
 initially empty aliases, so a generated file becomes visible through each name.
 A new build or one-shot `locate` sees external edits.
-Call `lookup::reset` before a new scheduler-resolution session when using the
-engine crate directly. Never cache negative filesystem lookups across builds.
+When resolving files through the engine crate directly, use
+`lookup::with_lookup_session` or `with_lookup_policy` around the complete
+operation so related lookups share one owned cache and release it afterward.
+`lookup::reset` invalidates the active inventory; it is not a resource owner.
+Never cache negative filesystem lookups across builds.
 
 Whole-document cache publication requires evidence that every dependency was
 stable during compilation. Files generated and consumed within a build do not
@@ -252,9 +314,11 @@ Retained data has explicit admission and eviction rules.
 These are retention budgets, not a total process-memory limit. A currently
 decoded image, native font tables and the typesetting workspace can require
 additional memory. Container and path overhead are charged conservatively.
-The immutable bundled filename index is process-owned `OnceLock` data, not a
-history of document lookups. Native typesetting runs in a child per pass, so its
-global font/image tables cannot accumulate across watcher rebuilds. Investigate
+The bundled filename index and configured bundle/cache roots belong to their
+invocation or public lookup context, rather than retaining the first call's
+environment for the process lifetime. Native typesetting runs in a child per
+scheduled pass; direct library calls also release their font/image resources
+per invocation. Investigate
 heap-tool warnings by ownership and repeated live measurements rather than
 treating every at-exit allocation as a growing leak.
 
@@ -471,8 +535,8 @@ from content/effective-source hashing, memo work, lookup-session resets,
 mode-key generation and report serialization. Their scopes overlap, so their
 durations must not be summed into a total. Dedicated exact-engine children skip
 the parent CLI profiler and do not currently emit the phase record. Normal
-engine completion returns a typed result to the child runner, while fatal paths
-still exit directly. Parent cache/build commands can report
+engine completion and fatal diagnostics return typed results to the child
+runner. Parent cache/build commands can report
 argument/configuration setup, state loading, freshness checks and TeX subprocess
 waits. Engine format initialization remains explicitly unmeasured.
 Phase protocol version 3 names these unavailable observations as child-process

@@ -1,85 +1,119 @@
 # Release verification status
 
-This ledger records the verified implementation through `bd9bf45` on
-12 October 2026. Supported commands and measurement policy live in
-[development instructions](development.md). Earlier reproductions, ownership
-checkpoints and remote comparisons remain in the
-[October investigation record](archive/performance-investigation-2026-10.md).
+This is the 12 October 2026 evidence snapshot for release preparation. The
+pushed core checkpoint is `4329103`, following the lint rewrite in `a86f394`
+and CI-profile fix in `0764e7b`. Local results below span working-tree
+checkpoints rather than one final frozen release candidate. Final
+migrated-candidate remote gates remain pending. No release or tag is recorded.
+Supported commands and measurement policy live in
+[development instructions](development.md). Historical reproductions, native
+utility and one-shot ownership checkpoints, and older timing comparisons remain
+in the [October investigation record](archive/performance-investigation-2026-10.md).
+Their verdicts apply to their named revisions.
 
-## Current evidence
+## Remote evidence
 
-[Run 38210192247](https://github.com/NicoNekoru/tekai/actions/runs/38210192247)
-tested `bd9bf45` against actual `main` at `0b6e92e`. Both macOS ARM64 and
-Intel core jobs passed, including the bundled large-paper gate, real
-installed-TeX lookup, Rust checks and compiler integrations. Both architectures
-also passed release library tests, required runtime regressions and all
-99 reference pages with matching pixels and extracted text. The portable
-Python runner tests passed on Python 3.10 and 3.13.
-
-The hosted paired comparisons retained their original MAD-blocking policy and
-returned inconclusive. They did not demonstrate a regression.
-
-| Case | Intel | ARM64 |
+| Run | Tested candidate | Result and scope |
 | --- | --- | --- |
-| CLI startup | Inconclusive | Pass |
-| Nested lookup | Inconclusive | Inconclusive |
-| Image compilation | Pass | Pass |
-| Warm build cache | Pass | Pass |
+| [38277929669](https://github.com/NicoNekoru/tekai/actions/runs/38277929669) | `238cb16`, quick | Both macOS core jobs, ARM Rust 1.89 MSRV check and Python 3.10/3.13 runner tests passed. All four ARM paired cases passed with 128 pairs and 32 complete units each. Runtime diagnostics failed on 31 malformed-image cases under CI's forced `panic=abort` build. Parity and profiling were skipped. Quick collected no Intel timing. |
+| [38254058813](https://github.com/NicoNekoru/tekai/actions/runs/38254058813) | `01b3eba` against actual `main` at `0b6e92e`, full | All eight jobs passed. Each macOS architecture exercised BasicTeX lookup, 170 runtime cases with zero failures or skips, all 99 reference pages with matching pixels and extracted text, and four strict paired cases with 128 pairs and 32 complete units each. This predates the complete core-state migration. |
 
-A separate complete local ARM64 comparison used the same baseline and candidate,
-immutable source snapshots, the same canonical source and fresh target paths,
-Rust 1.99.0 and matching release settings. Candidate compilation disabled C and
-C++ compilers. All four cases passed under the original MAD-blocking policy,
-with 128 pairs and 32 complete crossover units per case. It completed in
-3524.9 seconds without errors.
-
-| Case | Candidate / baseline | Median interval |
-| --- | ---: | --- |
-| CLI startup | 0.9971 | 0.9844 to 1.0116 |
-| Nested lookup | 0.1468 | 0.1458 to 0.1473 |
-| Image compilation | 0.9717 | 0.9663 to 0.9760 |
-| Warm build cache | 0.9913 | 0.9849 to 0.9981 |
-
-Executable and fixture hashes stayed unchanged. Warm-cache output, all
-1024 referenced inputs and state content and identity remained verified.
-The complete local report, raw command journal and retained-artifact hashes
-remain under `/tmp/tekai-local-timing.bd9bf45.IRZYnD/`. This result applies to
-these workloads on that Mac, not hosted-runner stability, universal speed,
-asymptotic complexity or leak freedom.
-
-The local bundled PGF regression covers explicit and forced list-and-make modes,
-warm figure reuse, missing-figure regeneration, picture edits and child-only
-dependencies. It verifies that child-only edits regenerate the affected figure
-while the parent source, recorder and picture hash stay unchanged. System-TeX
-PGF tests skipped on the local machine but ran in the hosted core jobs.
-Optional tests that return early can still appear as harness passes. They must
+`0764e7b` changes CI and build-provenance checks to require matching
+`panic=unwind` release profiles. That prospective fix does not repair the failed
+quick report or establish a passing runtime gate for the migrated candidate.
+A passing ARM comparison cannot substitute for Intel measurements, and skipped
+parity or profiling is missing evidence. Optional tests that return early must
 not be counted as exercised compatibility workflows.
 
-## Final-candidate gates
+## Local migrated-candidate evidence
 
-The results above precede the timing-policy update. Before release, the final
-prepared candidate must repeat property tests and deterministic work bounds,
-bundled-engine cache and
-cancellation fixtures, malformed-input regressions, reference PDF pixels and
-text, and paired release timing on both supported macOS architectures.
-Required runtime assertions have no known-failure exemption.
+These gates ran on local working-tree checkpoints. A final frozen revision is
+still pending, so these counts do not establish final remote release evidence.
 
-The approved prospective timing policy makes relative MAD of pooled
-per-artifact absolute batch times diagnostic rather than an independent veto.
-It retains 128 pairs, 32 balanced crossover units, the 10% practical relative
-slowdown boundary and multiplicity-adjusted median-ratio intervals. Fixed minimum
-batch durations, the 5% order-bias guard, complete matched samples, output
-oracles, executable and fixture integrity, cache-state checks and owned-process
-deadlines remain blocking. Insufficient interval precision remains inconclusive,
-with exit 2.
+| Gate | Observed local result |
+| --- | --- |
+| Workspace units | 951 passed, three intentional child helpers ignored |
+| Fresh engine tests | 459 passed, two intentional child helpers ignored |
+| Architecture checks | Six passed |
+| In-process invocation checkpoint | Five passed in 55 seconds |
+| PDFtex tests | 212 passed |
+| Rust 1.89 workspace compile check | All targets and features passed in 9.12 seconds |
+| Strict workspace Clippy | All targets and features passed in 6.21 seconds |
+| CLI cancellation | Four passed in 19.41 seconds after the nested PGF fixture guard correction |
+| CLI supervisor, including PTY handling | Nine passed, one child helper ignored |
+| Lint/format at `a86f394` | 46 unit/property and 38 CLI/integration tests passed |
+| Selected release runtime/image checks | 136 passed, zero failures or skips |
+| Local pinned-reference PDF comparison | All 99 pages matched pixels and extracted text |
 
-This change applies to newly collected final-candidate evidence. Historical
-reports keep their original policy and verdicts. No samples are discarded or
-rescored to make the hosted results green. The final comparison must record the
-actual `main` baseline and the prepared candidate, not substitute the local
-result or diagnostic profiles.
+The engine now uses shared Rust record types and Rust internal calls. Rust
+implementations replace production C string/memory utilities, floating scans,
+option parsing and regex matching. Core fields, argv, buffers and resource
+sessions are invocation-owned, with non-owning scoped thread routing. Repeated
+entry, nested rejection, independent threads, fatal/help completion and unwind
+teardown have local tests. Necessary OS interfaces remain separate. Builds with
+C and C++ compilers disabled do not prove the absence of OS FFI or memory defects.
 
-## Scoped correctness guarantees
+Miri found a real move-provenance defect in environment `CString` views. The
+raw-owner correction passed Stacked and Tree Borrows probes with seeds 0 through
+3. Six actual environment tests passed Stacked Borrows, excluding the native-child
+and 32 MiB capacity cases. The core constructor passed Tree Borrows, and Xpdf
+typed drop, retained argv and memory-stream close passed Stacked Borrows.
+The complete StreamSession probe is blocked by Miri's isolated `gettimeofday`
+restriction, with no bypass applied. These scoped checks do not cover every
+resource path or establish leak freedom.
+
+CLI foreground-terminal tests now pass, but terminal-stop handling for private
+invocation-owned pipe groups remains in progress and blocks release. Ordinary
+engine exits require unwind-compatible builds. Trusted input and formats are
+still required.
+
+Review also found test-runner cleanup signalling numeric groups after command
+reaping. A shared non-reaping exit-observation owner is replacing that protocol.
+It must retain the leader until group cleanup and let a live CLI supervisor
+stop its nested workers before forceful termination. New helper verification
+and the final hosted gates remain pending.
+
+The lint/format rewrite replaces repeated coordinate and escape-prefix scans
+with per-pass indexes and forward cursors, applies edits in one forward build,
+and indexes malformed balanced arguments. It also removes deep math-stack
+copies and temporary indentation strings. Bounded legacy differentials cover
+Unicode/CRLF locations, escape parity, masking, name/payload parsing and edit
+precedence. Deterministic work counters exercise 80,000-line, long-line,
+backslash and malformed-argument fixtures. A local debug audit collected 15
+samples with zero timeouts. Formatting
+40,000 and 80,000 math lines took 0.547 and 1.122 seconds. The 80,000-backslash
+and long-line fixtures took 0.0343 and 0.0202 seconds. These diagnostic timings
+do not replace strict paired release measurements. Existing edit sorting is
+O(k log k), and the checked routes do not establish general linter linearity.
+
+## Final-candidate gates and strict timing policy
+
+Before release, the final frozen candidate must repeat both macOS core jobs,
+the Rust 1.89 compile guard, property tests and deterministic work bounds,
+in-process ownership and targeted Miri checks, bundled cache and cancellation
+fixtures, malformed-input regressions, all-page PDF pixels/text, and strict
+paired release timing on both macOS architectures. Record the exact candidate,
+actual `main` baseline, toolchain, matched build settings, executable/fixture
+hashes and raw journals. Required runtime assertions have no known-failure
+exemption. Local results and historical green runs cannot stand in for these
+gates.
+
+Decision policy `paired-relative-gate-v2` retains 128 pairs, 32 balanced
+crossover units, the 10% practical relative slowdown boundary and
+multiplicity-adjusted median-ratio intervals. Fixed minimum batch durations,
+the 5% order-bias guard, complete matched samples, output oracles, executable
+and fixture integrity, cache-state checks and owned-process deadlines remain
+blocking. Insufficient interval precision remains inconclusive with exit 2,
+and CI rejects it. Pooled per-artifact absolute-duration MAD is diagnostic,
+not an independent veto.
+
+Historical reports retain their original policy and verdicts. No samples are
+discarded, rescored or retried until green. Neither diagnostic profiles nor
+hosted-runner passes prove universal performance or the interval assumptions.
+See the [measurement policy](development.md#paired-performance-gate) for
+commands, inference assumptions and retained-artifact requirements.
+
+## Scoped cache correctness guarantees
 
 - Build generations validate ordinary inputs and lookup identities before
   publication. Complete source bytes are hashed without guessing execution from
@@ -108,9 +142,13 @@ result or diagnostic profiles.
   owned metadata causes a rebuild. Atomic replacement does not promise
   power-loss durability.
 
-Subprocess ownership forwards CLI cancellation, stops descendants and reaps
-direct children. Auxiliary commands share an eight-child ceiling. SIGKILL
-cannot run parent cleanup, and library callers retain their own signal policy.
+Subprocess ownership forwards CLI cancellation, stops owned descendants and
+reaps direct children. Auxiliary commands share an eight-child ceiling.
+Supervisor SIGKILL and commands that deliberately escape the owned group are
+outside cleanup guarantees. Library callers retain their own signal policy.
+Explicitly completed `system`/`pclose` background commands remain caller-managed
+side effects. CLI jobs use an external supervisor and inherited worker groups.
+Private-pipe terminal-stop verification above remains pending.
 
 Equal and nested output folders use sorted, deduplicated descriptor locks.
 Cleanup holds an exclusive lease while builds share it. Persistent lock
@@ -119,46 +157,21 @@ processes. Hash collisions can serialize unrelated folders, continuous builds
 can postpone cleanup, and custom caches inside another build's output folder
 still need separate placement constraints.
 
-## Rust migration and remaining limits
+## Remaining limits and performance work
 
-Candidate builds pass with C and C++ compiler commands disabled. BibTeX uses a
-Rust-only bridge and compression uses Rust backends. Rust owns allocation
-wrappers, integer formatting, stream backends, argument storage and checked
-integer/backend parsers. Shared core types and layout tests preserve format
-compatibility. Checked font parsers cover the implemented TrueType post and
-OpenType name paths, SFD fields, encoding-copy intervals and ToUnicode updates.
-These checks do not make every font reader a complete hostile-input parser.
-
-Disabling native compilers does not remove native runtime calls. Three
-floating-point scans, C string utilities, option parsing and the native regex
-compiler/matcher remain production dependencies. Regex result storage is
-bounded, but a Rust replacement still needs implementation and verification.
-Backend ABI connections, raw-pointer callers and mutable global ownership also
-remain unfinished. Necessary operating-system interfaces are separate from
-those replaceable utilities.
-
-The exact engine accepts one dedicated-process invocation. Argument backing
-stays alive for globals that borrow it, and normal completion flushes streams
-and returns a typed result. Fatal exits can bypass Rust drops, and several
-destructors leave stale global roots. Repeated in-process execution, complete
-invocation-owned state and leak freedom are not established. Rust panics must
-not be caught across existing non-unwinding internal calls.
-
-The active experimental renderer remains research code without general page
-parity. Neither its architectural goals nor complete native-utility replacement
-should be reported as completed release work. Release support remains macOS,
-and the exact engine remains a Rust library with fat-LTO release builds.
-
-## Follow-up performance work
-
-Dedicated operation-count tests are still needed for repeated formatting and
-lint scans, unrelated settled-cache sidecar loading, shared PDF resource copies,
-expansion-state copies and repeated auxiliary-phase recorder reads. Streaming
-removes complete file copies and duplicate retained paths, but does not cap the
-longest recorder row or every unique dependency set.
+Operation-count evidence is still needed for unrelated settled-cache sidecar
+loading, shared PDF resource copies, expansion-state copies and repeated
+auxiliary-phase recorder reads. Streaming avoids complete recorder copies and
+duplicate retained paths, but does not cap the longest row or every unique
+dependency set.
 
 Full-byte hashing uses 64 KiB of scratch per active call. Output snapshots have
 at most eight hash workers, bounding their hash scratch at 512 KiB. This does
-not bound total process memory or concurrent independent builds. Remaining font
-readers need ownership and bounds, and the compact name-layout planner is not a
-globally optimal packing solver.
+not bound total process memory or concurrent independent builds. Checked font
+paths do not make every font/format reader safe for hostile input, and the
+compact name-layout planner is not a globally optimal packing solver.
+
+The experimental renderer remains research code without general page parity.
+Release support remains macOS. Linux Python runner tests do not establish Linux
+engine support. The exact engine remains a Rust library with fat-LTO release
+builds and unwind-compatible exit handling.
