@@ -480,6 +480,13 @@ impl StreamSession {
     }
 
     pub(crate) fn new_with_pipe_policy(policy: PipeProcessPolicy) -> Pin<Box<Self>> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        Self::new_with_nonce(policy, nonce)
+    }
+
+    fn new_with_nonce(policy: PipeProcessPolicy, nonce: u128) -> Pin<Box<Self>> {
         Box::pin(Self {
             streams: RefCell::new(Vec::new()),
             console: Console {
@@ -507,9 +514,7 @@ impl StreamSession {
             },
             pipe_policy: policy,
             next_temp: Cell::new(0),
-            temp_nonce: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_nanos()),
+            temp_nonce: nonce,
             _thread_confined: PhantomData,
             _pinned: PhantomPinned,
         })
@@ -1781,6 +1786,68 @@ mod tests {
         let handle = Handle(unsafe { tmpfile() });
         assert!(!handle.0.is_null());
         handle
+    }
+
+    #[test]
+    fn registered_memory_streams_survive_owner_moves_reborrows_and_finish() {
+        struct TrackedReader {
+            input: io::Cursor<Vec<u8>>,
+            dropped: Rc<Cell<usize>>,
+        }
+        impl Read for TrackedReader {
+            fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+                self.input.read(output)
+            }
+        }
+        impl Drop for TrackedReader {
+            fn drop(&mut self) {
+                self.dropped.set(self.dropped.get() + 1);
+            }
+        }
+        let dropped = Rc::new(Cell::new(0));
+        // Only unrelated OS clock discovery is injected. This is the same
+        // production initializer, registry, console and scope implementation.
+        let mut session = StreamSession::new_with_nonce(PipeProcessPolicy::InvocationOwned, 42);
+        let handle = session.as_mut().scope(|| {
+            let console = stdout();
+            assert!(!console.is_null());
+            assert_eq!(unsafe { ferror(console) }, 0);
+            let mut handles = Vec::new();
+            for _ in 0..2 {
+                handles.push(
+                    Stream::new(
+                        Backing::TestReader(Box::new(TrackedReader {
+                            input: io::Cursor::new(b"abc".to_vec()),
+                            dropped: Rc::clone(&dropped),
+                        })),
+                        true,
+                        false,
+                        false,
+                        Buffering::Full,
+                    )
+                    .into_handle(),
+                );
+            }
+            handles[0]
+        });
+        let mut moved = session;
+        moved.as_mut().scope(|| unsafe {
+            // Console aliases are used only in their current routing scope.
+            let console = stdout();
+            assert_eq!(ferror(console), 0);
+            assert_eq!(fgetc(handle), i32::from(b'a'));
+            assert_eq!(ungetc(i32::from(b'A'), handle), i32::from(b'A'));
+            assert_eq!(fgetc(handle), i32::from(b'A'));
+            assert_eq!(fclose(handle), 0);
+        });
+        assert_eq!(dropped.get(), 1);
+        moved.as_mut().finish().unwrap();
+        assert_eq!(dropped.get(), 2);
+        moved.as_mut().finish().unwrap();
+        assert_eq!(dropped.get(), 2);
+        drop(moved);
+        assert_eq!(dropped.get(), 2);
+        assert!(ACTIVE_SESSION.with(Cell::get).is_null());
     }
 
     #[test]
