@@ -1216,3 +1216,41 @@ during this measurement. An earlier overlapping Python-test trial remains
 recorded but excluded from timing evidence. This diagnostic uses the pre-JSON
 checkpoint rather than actual `main`, has fewer pairs than the required CI gate,
 and cannot replace remote verification.
+
+## Archived pre-gate maintainer measurements, 9 October 2026
+
+The following subsection was moved verbatim from the active development guide
+during release preparation. Its dates, numbers and qualifications remain
+unchanged. It does not establish performance for the final migrated candidate.
+
+### Previous maintainer measurements
+
+Before the paired CI gate, matched warm trials on 2026-10-09 on an Apple M4 Pro
+compared the installed
+0.5.0 release with the optimized refactor. Each timing is the median of three
+runs after warming the same case. Paper copies, output directories and caches
+were separate for each binary. The added folders contained unused data files.
+
+| Case | 0.5.0 | Refactor |
+| --- | ---: | ---: |
+| Minimal native pass, 4000 unused leaf folders | 1.309 s | 0.100 s |
+| 50-page paper, no added folders | 2.612 s | 1.870 s |
+| 50-page paper, 1000 unused leaf folders | 69.085 s | 1.867 s |
+| 48-page paper, 1000 unused leaf folders | 8.250 s | 0.672 s |
+| Cached build, 4000 unrelated personal-tree folders | 75.8 ms | 13.5 ms |
+| Cached build, 4000 unrelated site-tree folders | 73.8 ms | 9.7 ms |
+| 32 unique transparent PNGs, peak RSS | 162.0 MiB | 49.3 MiB |
+
+The 25-include preview rotation was one continuous run per binary. Release
+0.5.0 grew from 29.3 to 55.3 MiB as inactive sources accumulated. The refactor
+started at 28.9 MiB and reached a roughly 35.1 MiB plateau after three edits.
+It remained there through edit 23, with lower RSS at the last sample.
+The complete sample series is in the historical benchmark JSON. Simple unpadded startup
+timings differ by a few milliseconds, so this table is evidence about scaling
+and retention rather than a promise that every small build is faster.
+
+A final candidate-only recheck after the generated-file alias fixes measured
+1.724 s for the padded 50-page paper, 0.624 s for the padded 48-page paper and
+49.0 MiB peak RSS for 32 PNGs. Preview RSS stayed between 29.4 and 30.9 MiB
+through all 25 rotating includes. Those samples are recorded separately in
+`target/runtime-performance/final-candidate.json`.

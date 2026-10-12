@@ -1,8 +1,9 @@
 # Release verification status
 
 This is the 12 October 2026 evidence snapshot for release preparation. The
-pushed core checkpoint is `4329103`, following the lint rewrite in `a86f394`
-and CI-profile fix in `0764e7b`. Local results below span working-tree
+pushed core checkpoint is `4329103`, followed by private-terminal handling in
+`1d3c7b9`, harness ownership in `411daa3` and the stream probe in `dead5ab`.
+The lint rewrite is `a86f394` and CI-profile fix is `0764e7b`. Local results span
 checkpoints rather than one final frozen release candidate. Final
 migrated-candidate remote gates remain pending. No release or tag is recorded.
 Supported commands and measurement policy live in
@@ -32,15 +33,20 @@ still pending, so these counts do not establish final remote release evidence.
 
 | Gate | Observed local result |
 | --- | --- |
-| Workspace units | 951 passed, three intentional child helpers ignored |
-| Fresh engine tests | 459 passed, two intentional child helpers ignored |
+| Workspace units | 960 passed, four intentional child helpers ignored |
+| Fresh engine tests | 468 passed, three intentional child helpers ignored |
 | Architecture checks | Six passed |
-| In-process invocation checkpoint | Five passed in 55 seconds |
+| In-process invocation checkpoint | Five passed in 65.51 seconds |
 | PDFtex tests | 212 passed |
-| Rust 1.89 workspace compile check | All targets and features passed in 9.12 seconds |
-| Strict workspace Clippy | All targets and features passed in 6.21 seconds |
+| Rust 1.89 workspace compile check | Versioned 0.6.0, all targets and features passed in 5.59 seconds |
+| Strict workspace Clippy | Versioned 0.6.0, all targets and features passed in 6.26 seconds |
+| CLI help | Versioned 0.6.0, every command passed the long-help/example gate |
 | CLI cancellation | Four passed in 19.41 seconds after the nested PGF fixture guard correction |
 | CLI supervisor, including PTY handling | Nine passed, one child helper ignored |
+| Private-pipe stdio, including eight PTY cases | 40 passed, two child helpers ignored |
+| Actual standalone CLI routing | Two passed, no failures or skips |
+| Bundled CLI gate with ignored cases included | All 19 passed, including both large papers |
+| Python harness suite | 402 passed |
 | Lint/format at `a86f394` | 46 unit/property and 38 CLI/integration tests passed |
 | Selected release runtime/image checks | 136 passed, zero failures or skips |
 | Local pinned-reference PDF comparison | All 99 pages matched pixels and extracted text |
@@ -58,20 +64,24 @@ raw-owner correction passed Stacked and Tree Borrows probes with seeds 0 through
 3. Six actual environment tests passed Stacked Borrows, excluding the native-child
 and 32 MiB capacity cases. The core constructor passed Tree Borrows, and Xpdf
 typed drop, retained argv and memory-stream close passed Stacked Borrows.
-The complete StreamSession probe is blocked by Miri's isolated `gettimeofday`
-restriction, with no bypass applied. These scoped checks do not cover every
-resource path or establish leak freedom.
+The actual StreamSession constructor, registry, handle moves, scope reborrow,
+close and residual finish now pass Stacked and Tree Borrows seeds 0 through 3.
+Its production initializer accepts a nonce, letting this probe omit only OS
+clock discovery. No alias, leak or isolation checks were disabled. These scoped
+checks do not cover every resource path or establish leak freedom.
 
-CLI foreground-terminal tests now pass, but terminal-stop handling for private
-invocation-owned pipe groups remains in progress and blocks release. Ordinary
-engine exits require unwind-compatible builds. Trusted input and formats are
-still required.
+CLI foreground-terminal and private-pipe terminal-stop tests pass. Default
+private commands report terminal stops as ordinary I/O errors without changing
+the host terminal. CallerManagedProcess explicitly retains host job control
+and host responsibility for descendants. Ordinary engine exits require
+unwind-compatible builds. Trusted input and formats are still required.
 
 Review also found test-runner cleanup signalling numeric groups after command
-reaping. A shared non-reaping exit-observation owner is replacing that protocol.
-It must retain the leader until group cleanup and let a live CLI supervisor
-stop its nested workers before forceful termination. New helper verification
-and the final hosted gates remain pending.
+reaping. A shared non-reaping exit-observation owner now retains the leader
+until group cleanup and observer publication, resumes stopped owned jobs, and
+allows a full TERM grace for nested CLI cleanup before forceful termination.
+Native regressions cover lost authority, residual children, stopped supervisors
+and escaped output descriptors. The final versioned hosted gates remain pending.
 
 The lint/format rewrite replaces repeated coordinate and escape-prefix scans
 with per-pass indexes and forward cursors, applies edits in one forward build,
@@ -148,7 +158,8 @@ Supervisor SIGKILL and commands that deliberately escape the owned group are
 outside cleanup guarantees. Library callers retain their own signal policy.
 Explicitly completed `system`/`pclose` background commands remain caller-managed
 side effects. CLI jobs use an external supervisor and inherited worker groups.
-Private-pipe terminal-stop verification above remains pending.
+All local terminal and cancellation checks above passed. These results do not
+substitute for the final hosted gates.
 
 Equal and nested output folders use sorted, deduplicated descriptor locks.
 Cleanup holds an exclusive lease while builds share it. Persistent lock

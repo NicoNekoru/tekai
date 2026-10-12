@@ -3,82 +3,68 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
-## Unreleased
+## 0.6.0 - 2026-10-12
 
-- Store dependency build state as compact JSON to remove TOML parsing from warm
-  cache checks. Preserve all freshness checks and atomic publication. Existing
-  TOML build states cause one rebuild, with auxiliary cache formats unchanged.
-- Reduce local build-cache growth by disabling incremental compilation and
-  packing line-level debug information. Preserve filename and line-number
-  backtraces, with full debugger information available through Cargo overrides.
-  Release optimization is unchanged.
-- Index recursive project and shared package trees once per build/pass. Reuse
-  overlapping search roots and parse mutable filename databases once per file
-  identity, preserving path priority and database-only lookup.
-- Replace exponential recursive-wildcard matching with dynamic programming.
-  Register files created by TeX immediately and refresh lookup after opted-in
-  shell commands, so inventory caching does not hide generated inputs.
-- Discover observed generated inputs without scanning historical output trees.
-  Preserve generated-file observations across lookup eviction and later
-  non-overwriting passes, with bounded current-pass and whole-build ledgers.
-  Record dependencies during draft passes as well as final passes.
-- Prevent scheduler-managed PGF externalization from publishing whole-document
-  cache state without figure-child dependency provenance. Rebuild the parent
-  while reusing up-to-date figures through `make`, and invalidate unsafe states
-  published by earlier builds.
-- Bound retained lookup indexes and decoded PNG pixels. Drop compressed PNG
-  buffers after decoding and remove the redundant unbounded bundled-name cache.
-- Prune preview snapshots to active dependencies and cap their retained size.
-  Coalesce watch notifications in a bounded queue, use whole-build fallback on
-  overflow, and preserve source edits made during startup builds.
-- Capture bounded search-directory identities during cold builds and inspect
-  those identities without recursive enumeration on warm cache checks. Validate
-  complete source bytes and compilation generations before publishing cache
-  state. Preserve external symlink dependencies and serialize output publication.
-- Materialize compressed formats in a private content-addressed cache. Ignore
-  adjacent raw companions, track the source format and recover corrupt cache
-  entries without writing shared installations.
-- Own subprocess groups, stop descendants on CLI cancellation and limit all
-  auxiliary commands to eight concurrent children. Join background preamble
-  work before returning errors or unwinding.
-- Serialize equal and nested output folders and coordinate cleanup with active
-  builds. Validate current bibliography selection before restoring shared output,
-  track auxiliary source aliases and recover malformed owned cache metadata.
-- Replace the native BibTeX bridge archive and native zlib dependency with
-  Rust-only implementations. Remove unused PNG nonlocal-jump compatibility code.
-  Require Rust 1.89 for descriptor-owned output locks.
-- Replace native engine allocation, formatting and stdio with Rust-owned code.
-  Bound stream buffers and pushback, preserve EOF and seek behavior, and prevent
-  failed writes from growing retained buffers without limit.
-- Share checked Rust core types and state imports, and replace initialization's
-  internal C-style calls with Rust calls while preserving format-file layout.
-- Use checked Rust calls for engine rounding and termination, with property
-  tests for rounding boundaries and saturation.
-- Replace native integer prefixes with allocation-free Rust parsers. Preserve
-  base selection, consumed offsets and epoch validation, and define overflow
-  behavior without native locale or error state.
-- Check TrueType character, glyph and metric indices before array access.
-  Reserve subset glyphs once and preserve unsigned output indices.
-- Own indexed TrueType post names in Rust, check table and Pascal-string bounds,
-  and preserve custom output names beyond the former 256-name counter wrap.
-- Own OpenType name records and referenced strings, honor actual storage offsets
-  and format-1 language tags, and validate subset fields before output. Use exact
-  indexed comparisons for compact shared-string layouts.
-- Parse SFD and ToUnicode fields with checked Rust cursors. Validate map-name
-  assembly, Type1 encoding intervals and sequence capacity before writes.
-- Replace fixed backend integer scans with checked Rust grammars. Preserve base
-  selection and assignment-count rules, and reject overflowing map IDs and
-  numeric glyph names instead of narrowing them.
-- Bound regex result slots by the pattern's possible captures rather than the
-  requested count. Nonexistent captures still report `-1->`.
-- Own exact-engine arguments, reject repeat entry before global mutation, and
-  return typed normal completion while retaining process-isolated fatal exits.
-- Stream recorder rows and complete file hashes rather than retaining full
-  files or duplicate path lists. Limit output snapshots to eight hash workers.
-- Benchmark verified warm cache hits with all referenced inputs intact, and
-  retain bounded command evidence when post-exit cache checks fail.
-- Add deterministic scan-count, eviction and watcher-retention CI tests,
-  a repeatable runtime benchmark, and transparent-image PDF parity coverage.
+### Rust engine and embedding
+
+- Complete the replacement of production C utilities and internal C function
+  ABIs with Rust implementations and shared record types. This includes
+  allocation, stdio, strings, formatting, numeric scans, option parsing, regex,
+  calendar handling, compression and the BibTeX bridge. Native C/C++ library
+  builds are removed. Necessary OS interfaces and format-file layouts remain.
+- Own generated core state, arguments, buffers, caches and resource sessions per
+  invocation. Repeated calls and independent threads have separate state, while
+  nested calls on one thread are rejected. Unsafe Rust entries return typed
+  normal/fatal completion and tear down before propagating unexpected panics.
+  The former C entrypoint/static-archive integration is no longer supported.
+- Require `panic=unwind` for recoverable engine exits and teardown, including
+  matched CI release builds. Input and format files must still be trusted.
+  Ownership is not a sandbox or a guarantee that every malformed format is safe.
+- Check font-table offsets, names, glyph indices, backend numeric fields and
+  regex capacities before access or storage. Reject nonfinite/overflowing
+  conversions and unrepresentable paragraph widths with normal diagnostics,
+  rather than wrapping layout totals or aborting on debug overflow.
+
+### Builds, subprocesses and caches
+
+- Own subprocess groups through cleanup and reaping, forward CLI cancellation
+  to nested shell/PGF work and cap scheduled tools at eight children. Direct
+  engine CLI workers lease the foreground terminal and preserve STOP/CONT job
+  control. Scheduled engine and auxiliary jobs are noninteractive with null stdin.
+- Report private library-command SIGTTIN/SIGTTOU stops as I/O failures and clean
+  their owned groups without transferring the host terminal. The explicit
+  `CallerManagedProcess` policy inherits host job control and assigns descendant
+  cleanup to the host. Ordinary completed `pclose`/`system` background side
+  effects remain caller-managed.
+- Index recursive project/shared trees once per owned lookup context, reuse
+  overlapping roots and replace exponential wildcard matching with dynamic
+  programming. Preserve lookup priority, databases and newly generated files.
+  Bound lookup indexes, decoded PNG pixels, preview snapshots and watch queues.
+- Store dependency state as compact JSON. Validate complete source bytes,
+  compilation generations and lookup identities before atomic publication.
+  Old TOML states rebuild once. Comments or textual end markers no longer hide
+  source changes, and unproven generated-input/PGF child provenance prevents
+  whole-document cache reuse while up-to-date figures remain reusable by `make`.
+- Serialize equal/nested output folders, coordinate cleanup with active builds
+  and validate selected bibliography inputs before restoring cached outputs.
+  Recover malformed owned cache metadata and privately materialize compressed
+  formats without trusting adjacent raw companions or writing shared installs.
+
+### Lint, formatting and verification
+
+- Replace repeated lint/fix prefix scans with per-pass source indexes, forward
+  cursors and one-pass edit assembly. Bound checked long-line, Unicode and
+  malformed-input routes with work counters and independent differential tests.
+  Edit ordering remains `O(k log k)`, not a claim of universal linter linearity.
+- Reduce development-cache growth with disabled incremental compilation and
+  packed line-level debug information. Keep line backtraces and optional full
+  debugger information. Release builds retain fat LTO and one codegen unit.
+- Require real repeated/parallel invocation, malformed-input, cancellation and
+  standalone PTY tests, plus fixed-DPI paper/image parity and deterministic work
+  bounds. Strict paired CI retains every sample, balanced crossover units, the
+  10% regression boundary, duration/order guards and conditional exact median
+  intervals. Raw absolute MAD is diagnostic. Failed or inconclusive gates still
+  block CI, and historical verdicts are not rescored.
 
 ## 0.5.0 - 2026-10-07
 

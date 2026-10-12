@@ -32,7 +32,7 @@ The formula builds `tekai` from source. The executable includes its engine,
 LaTeX format, a pinned package/font bundle, and BibTeX. Default builds and
 checks do not need TeX Live, MacTeX, `kpsewhich`, or a runtime download.
 
-Tekai 0.5.0 supports macOS. Linux portability work is not part of this release.
+Tekai supports macOS. Linux is not currently a supported engine target.
 
 To install from a checkout instead:
 
@@ -150,13 +150,16 @@ worker group, including ordinary nested shell and PGF commands.
 
 The engine's Rust embedding API owns state and resources per invocation.
 Repeated calls and independent threads do not share mutable engine state.
-nested calls on one thread are rejected. `run_from_args` and `run_with_options`
+Nested calls on one thread are rejected. `run_from_args` and `run_with_options`
 remain unsafe APIs for trusted input and formats, not a TeX sandbox. Recovery
 and teardown require `panic=unwind`. See
 [invocation ownership](docs/development.md#invocation-ownership) for the host
 and subprocess contracts. Embeddings that own POSIX terminal job control can
 explicitly choose `PipeProcessPolicy::CallerManagedProcess`. The default private
 command policy reports terminal stops as I/O errors instead of waiting forever.
+The engine and its replaceable utilities use Rust implementations and internal
+Rust calls. Necessary OS interfaces remain. The crate provides a Rust library,
+not a TeX Live-compatible C entrypoint or static archive.
 
 ## Configuration
 
@@ -254,6 +257,13 @@ Some integration tests require the corresponding TeX auxiliary program and
 skip when it is unavailable. CI also checks the standalone `tekai-engine` binary
 feature set; the exact commands are documented in
 [docs/development.md](docs/development.md).
+
+Release preparation also requires rendered paper/image parity and the strict
+paired gate on both macOS architectures. Its 10% regression boundary, complete
+sample/integrity checks and duration/order/uncertainty guards remain blocking.
+Raw duration volatility is diagnostic, not proof of independent timing samples.
+See [release verification status](docs/performance-audit.md) for revision-scoped
+evidence rather than treating older checkpoint results as a new release pass.
 
 ## Support and security
 

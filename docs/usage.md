@@ -21,7 +21,7 @@ without `brew trust`, use `brew install NicoNekoru/tap/tekai` for the first
 installation. The existing `NicoNekoru/tap` repository remains the package
 source; no dedicated `NicoNekoru/tekai` tap is needed.
 
-The 0.5.0 release supports macOS. Linux is not currently a supported target.
+Tekai supports macOS. Linux is not currently a supported engine target.
 
 For development from a checkout:
 
@@ -148,6 +148,14 @@ tekai build paper/main.tex --job-name camera-ready
 `--job-name` must be one filename component because PDF, auxiliary, and cache
 files share that key.
 
+Scheduled engine and auxiliary-tool jobs are noninteractive and receive null
+stdin, including when their output is visible. They cannot prompt for console
+input. Direct standalone engine invocation retains terminal input through a
+foreground supervisor, including job suspension and continuation. CLI job
+cleanup stops ordinary nested shell and PGF descendants before reaping the
+worker. Supervisor SIGKILL and commands deliberately escaping the owned group
+are outside that cleanup guarantee.
+
 ## Preview builds
 
 Preview flags trade completeness or visible fidelity for latency:
@@ -223,6 +231,20 @@ output directory, `.git`, `target`, and `.tekai` trees.
 
 The experimental native renderer does not yet claim general pixel parity. See
 the [historical divergence audit](archive/pdftex-native-divergence-audit.md).
+
+The exact engine also provides unsafe Rust embedding entries with owned
+arguments and invocation-local state, environment and directory settings.
+Calls may repeat or run on independent threads, with nested same-thread entry
+rejected. Fatal diagnostics return typed completion without exiting the host,
+and unexpected panics propagate after teardown. `panic=unwind` and trusted
+input/formats are required. The former C entrypoint/static archive is unsupported.
+
+Library commands normally use private invocation-owned groups. Observed
+SIGTTIN/SIGTTOU stops report normal I/O failures without changing the host's
+terminal ownership. Embeddings that manage POSIX job control can explicitly
+select `PipeProcessPolicy::CallerManagedProcess`, accepting responsibility for
+descendants and cancellation. This differs from the CLI's externally supervised
+worker groups. See [invocation ownership](development.md#invocation-ownership).
 
 ## Configuration
 
@@ -302,17 +324,22 @@ the right place for checked-in Kpathsea roots such as `TEXINPUTS`, `BIBINPUTS`,
 Direct builds write artifacts under `out_dir`, including a
 `.tekai-<job>.state.json` dependency state. Older TOML build states are ignored
 and cause one rebuild. Auxiliary cache formats remain unchanged.
-If mode, output, environment,
-and effective inputs are unchanged, the next build skips TeX.
+For cache-eligible builds, unchanged mode, output, environment and validated
+inputs allow the next build to skip TeX.
 
 The cache is TeX-aware:
 
 - metadata is the common fast path;
 - unchanged content survives harmless mtime-only touches;
-- ordinary TeX comment text, trailing physical spaces, and content after
-  effective `\end{document}`/`\endinput` boundaries can remain cache hits;
-- catcode-sensitive or verbatim-like inputs use conservative fingerprints;
+- complete ordinary source bytes are validated, including comments, trailing
+  spaces and text after apparent `\end{document}`/`\endinput` markers;
+- lookup identities and compilation generations prevent unsafe publication;
 - bibliography and auxiliary-tool inputs are tracked separately.
+
+Generated-and-consumed inputs without complete provenance decline whole-document
+cache publication. Scheduler-managed PGF externalization rebuilds the parent
+while `make` can reuse up-to-date figures. An output-directory location alone
+does not make a generated input safe to cache.
 
 Use `--force` to bypass the settled cache. Use `clean --dry-run` before removal
 when checking which directory a config selects:
