@@ -2,13 +2,16 @@
 
 use lopdf::{dictionary, Document, Object, Stream};
 use proptest::prelude::*;
+use proptest::test_runner::{contextualize_config, TestRunner};
+use std::cell::Cell;
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tekai_engine::{EngineCompletion, InvocationError, InvocationOptions};
 
-struct Project(PathBuf);
+struct Project(PathBuf, Option<PathBuf>);
 
 impl Project {
     fn new() -> Self {
@@ -21,7 +24,7 @@ impl Project {
             ));
             match fs::create_dir(&path) {
                 Ok(()) => {
-                    let project = Self(path);
+                    let project = Self(path, None);
                     fs::create_dir(project.0.join("empty-bin")).unwrap();
                     fs::write(
                         project.0.join("good.tex"),
@@ -53,6 +56,13 @@ impl Project {
             }
         }
         panic!("cannot reserve owned invocation fixture")
+    }
+
+    fn with_engine_cache(cache: &Path) -> Self {
+        assert!(cache.is_absolute());
+        let mut project = Self::new();
+        project.1 = Some(cache.to_owned());
+        project
     }
 
     fn write_images(&self) {
@@ -93,7 +103,13 @@ impl Project {
             ("PATH", self.0.join("empty-bin").into_os_string()),
             ("TEKAI_TEXMF_MODE", OsString::from("bundled")),
             // Relative roots must follow the invocation directory, not the host.
-            ("TEKAI_ENGINE_CACHE", OsString::from("cache/engine")),
+            (
+                "TEKAI_ENGINE_CACHE",
+                self.1
+                    .as_ref()
+                    .map(|cache| cache.as_os_str().to_owned())
+                    .unwrap_or_else(|| OsString::from("cache/engine")),
+            ),
             ("TEXMFDIST", self.0.join("missing-texlive").into_os_string()),
             ("TEXMFVAR", self.0.join("missing-texlive").into_os_string()),
             (
@@ -166,6 +182,45 @@ impl Drop for Project {
         // parent directory or a cache belonging to another invocation.
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CacheEntry {
+    path: PathBuf,
+    directory: bool,
+    length: u64,
+    modified: (i64, i64),
+    change_identity: (u64, u64, i64, i64),
+}
+
+fn cache_inventory(root: &Path) -> Vec<CacheEntry> {
+    let mut pending = vec![root.to_owned()];
+    let mut entries = Vec::new();
+    while let Some(path) = pending.pop() {
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        assert!(metadata.is_file() || metadata.is_dir());
+        if metadata.is_dir() {
+            pending.extend(
+                fs::read_dir(&path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+        }
+        entries.push(CacheEntry {
+            path: path.strip_prefix(root).unwrap().to_owned(),
+            directory: metadata.is_dir(),
+            length: metadata.len(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            change_identity: (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            ),
+        });
+    }
+    entries.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+    entries
 }
 
 #[test]
@@ -329,23 +384,72 @@ fn concurrent_distinct_jobs_share_readonly_inputs_without_recorder_collisions() 
     }
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(12))]
-    #[test]
-    fn arbitrary_exit_sequences_do_not_change_a_later_success(
-        operations in prop::collection::vec(0u8..4, 1..8),
-    ) {
-        let project = Project::new();
-        for operation in operations {
-            let result = match operation {
-                0 => project.run(&["--help"], "0"),
-                1 => project.run(&["--version"], "0"),
-                2 => project.compile("bad.tex", "0"),
-                _ => project.run(&["-fmt=pdflatex", "-interaction=nonstopmode", "-halt-on-error", "missing.tex"], "0"),
-            };
-            prop_assert_eq!(result.exit_code(), if operation < 2 { 0 } else { 1 });
-        }
-        prop_assert_eq!(project.compile("good.tex", "0"), EngineCompletion::Clean);
-        prop_assert_eq!(project.creation_date(), b"D:19700101000000Z");
-    }
+#[test]
+fn arbitrary_exit_sequences_do_not_change_a_later_success() {
+    // Prepare published, immutable bundle/outline/format files once. The owner
+    // is local to this property run. Every case still creates a new project,
+    // environment and invocation, and the fixed isolation tests keep separate
+    // relative cache roots. No TeX state or resource owner is shared here.
+    let prepared = Project::new();
+    assert_eq!(prepared.compile("good.tex", "0"), EngineCompletion::Clean);
+    let cache = prepared.0.join("cache/engine").canonicalize().unwrap();
+    let installed = cache_inventory(&cache);
+    let bundles = installed
+        .iter()
+        .filter(|entry| entry.path.file_name() == Some(std::ffi::OsStr::new(".complete")))
+        .count();
+    let formats = installed
+        .iter()
+        .filter(|entry| entry.path.to_string_lossy().ends_with(".fmt.raw"))
+        .count();
+    assert_eq!(bundles, 1);
+    assert_eq!(formats, 1);
+
+    // Match proptest!'s function wrapper, including environment overrides,
+    // deterministic seeds and source-file failure persistence. In particular,
+    // PROPTEST_CASES still overrides the small local default in CI.
+    let mut config = contextualize_config(ProptestConfig::with_cases(12));
+    config.source_file = Some(file!());
+    config.test_name = Some(concat!(
+        module_path!(),
+        "::arbitrary_exit_sequences_do_not_change_a_later_success"
+    ));
+    let cases = config.cases;
+    let completed = Cell::new(0usize);
+    let mut runner = TestRunner::new(config);
+    runner
+        .run(&prop::collection::vec(0u8..4, 1..8), |operations| {
+            let project = Project::with_engine_cache(&cache);
+            for operation in operations {
+                let result = match operation {
+                    0 => project.run(&["--help"], "0"),
+                    1 => project.run(&["--version"], "0"),
+                    2 => project.compile("bad.tex", "0"),
+                    _ => project.run(
+                        &[
+                            "-fmt=pdflatex",
+                            "-interaction=nonstopmode",
+                            "-halt-on-error",
+                            "missing.tex",
+                        ],
+                        "0",
+                    ),
+                };
+                prop_assert_eq!(result.exit_code(), if operation < 2 { 0 } else { 1 });
+            }
+            prop_assert_eq!(project.compile("good.tex", "0"), EngineCompletion::Clean);
+            prop_assert_eq!(project.creation_date(), b"D:19700101000000Z");
+            prop_assert!(!project.0.join("cache").exists());
+            completed.set(completed.get() + 1);
+            Ok(())
+        })
+        .unwrap_or_else(|error| panic!("{error}\n{runner}"));
+    // Atomic republication or in-place changes would alter this inventory,
+    // including native inode/change-time identities. Reads do not change it.
+    assert_eq!(cache_inventory(&cache), installed);
+    eprintln!(
+        "exit-sequence property requested {cases} cases, observed {} successful PDFs in this process, reused {bundles} bundle and {formats} format with {} unchanged cache entries",
+        completed.get(),
+        installed.len(),
+    );
 }
