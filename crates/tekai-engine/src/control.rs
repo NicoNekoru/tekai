@@ -33,14 +33,23 @@ thread_local! {
 
 pub(crate) struct ControlSession {
     interrupt: InterruptToken,
+    profile: Option<Rc<crate::engine_profile::Collector>>,
     _thread_confined: PhantomData<Rc<()>>,
     _pinned: PhantomPinned,
 }
 
 impl ControlSession {
     pub(crate) fn new(interrupt: InterruptToken) -> Pin<Box<Self>> {
+        Self::new_with_profile(interrupt, None)
+    }
+
+    pub(crate) fn new_with_profile(
+        interrupt: InterruptToken,
+        profile: Option<Rc<crate::engine_profile::Collector>>,
+    ) -> Pin<Box<Self>> {
         Box::pin(Self {
             interrupt,
+            profile,
             _thread_confined: PhantomData,
             _pinned: PhantomPinned,
         })
@@ -66,6 +75,19 @@ impl ControlSession {
         let _guard = Guard;
         Ok(operation())
     }
+}
+
+pub(crate) fn profile_collector() -> Option<Rc<crate::engine_profile::Collector>> {
+    ACTIVE.with(|active| {
+        let pointer = active.get();
+        if pointer.is_null() {
+            None
+        } else {
+            // SAFETY The existing private scope holds the pinned owner. Only
+            // the optional Rc handle is cloned, never a mutable session borrow.
+            unsafe { &*pointer }.profile.clone()
+        }
+    })
 }
 
 fn take_request() -> bool {

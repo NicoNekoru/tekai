@@ -205,6 +205,11 @@ impl CompressionSession {
                 .ok_or(CompressionError::InvalidState("missing PDF compressor"))?;
             let old_in = compressor.total_in();
             let old_out = compressor.total_out();
+            // Only the codec call is timed. Sink writes, reset/allocation,
+            // checked bookkeeping and flushing belong to the enclosing body.
+            let mut compression_profile =
+                crate::engine_profile::span(crate::engine_profile::Phase::PdfCompression);
+            crate::engine_profile::count(crate::engine_profile::Counter::CompressionCalls, 1);
             let status = compressor
                 .compress(
                     input,
@@ -216,6 +221,8 @@ impl CompressionSession {
                     },
                 )
                 .map_err(CompressionError::Codec)?;
+            compression_profile.success();
+            drop(compression_profile);
             let total_out = compressor.total_out();
             let consumed = usize::try_from(
                 compressor
@@ -235,6 +242,14 @@ impl CompressionSession {
                     "PDF compressor returned invalid buffer counts",
                 ));
             }
+            crate::engine_profile::count(
+                crate::engine_profile::Counter::CompressionInputBytes,
+                consumed,
+            );
+            crate::engine_profile::count(
+                crate::engine_profile::Counter::CompressionOutputBytes,
+                produced,
+            );
             input = &input[consumed..];
             self.pending += produced;
             if status == Status::StreamEnd {
@@ -397,6 +412,72 @@ mod tests {
     use proptest::prelude::*;
     use std::io::Read;
     use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[test]
+    fn profile_counts_codec_calls_and_actual_compressed_byte_progress() {
+        use crate::engine_profile::Collector;
+        let profile = Collector::new();
+        let mut control = crate::control::ControlSession::new_with_profile(
+            crate::InterruptToken::default(),
+            Some(profile.clone()),
+        );
+        let mut owner = CompressionSession::new();
+        let input = b"bounded codec observation\n".repeat(20_000);
+        let mut encoded = Vec::new();
+        control
+            .as_mut()
+            .scope(|| {
+                CompressionSession::scope(owner.as_mut(), || {
+                    with_current(|session| {
+                        assert!(session.start(0).is_err());
+                        session.start(1)?;
+                        let mut sink = |bytes: &[u8]| {
+                            encoded.extend_from_slice(bytes);
+                            Ok(())
+                        };
+                        session.process(&input, false, &mut sink)?;
+                        session.process(&[], true, &mut sink)?;
+                        Ok(())
+                    })
+                    .unwrap();
+                })
+                .unwrap();
+            })
+            .unwrap();
+        drop(owner);
+        drop(control);
+        profile.finish(false);
+        let report = profile.snapshot("success");
+        let compressed = report
+            .phases()
+            .iter()
+            .find(|phase| phase.name == "pdf_compression")
+            .unwrap();
+        assert!(compressed.calls >= 2);
+        assert_eq!(compressed.failed_calls, 0);
+        for (name, expected) in [
+            ("compression_calls", compressed.calls),
+            ("compression_input_bytes", input.len() as u64),
+            ("compression_output_bytes", encoded.len() as u64),
+        ] {
+            assert_eq!(
+                report
+                    .counters()
+                    .iter()
+                    .find(|counter| counter.name == name)
+                    .unwrap()
+                    .value,
+                expected,
+                "{name}"
+            );
+        }
+        let mut decoded = Vec::new();
+        ZlibDecoder::new(encoded.as_slice())
+            .read_to_end(&mut decoded)
+            .unwrap();
+        assert_eq!(decoded, input);
+        assert!(crate::control::profile_collector().is_none());
+    }
 
     fn with_current<T>(
         action: impl FnOnce(&mut CompressionSession) -> Result<T, CompressionError>,

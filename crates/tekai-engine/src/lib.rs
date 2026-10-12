@@ -66,6 +66,7 @@ mod core_types;
 mod directory_graph;
 mod embedded;
 mod engine_options;
+pub mod engine_profile;
 mod environment;
 pub mod file_identity;
 mod float_parse;
@@ -140,6 +141,72 @@ pub unsafe fn run_with_options(
     unsafe { invocation.run(options) }
 }
 
+/// Run with fixed diagnostic observations, including complete owner teardown.
+/// The ordinary entry does not allocate a collector or read profiling clocks.
+/// Errors retain a snapshot of reached phases. Unexpected panics still unwind
+/// and propagate, without returning a snapshot or emitting any diagnostic.
+///
+/// # Safety
+/// The same trusted-input requirements as [`run_from_args`] apply.
+pub unsafe fn run_profiled_with_options(
+    arguments: Vec<Vec<u8>>,
+    options: InvocationOptions,
+) -> (
+    Result<EngineCompletion, InvocationError>,
+    engine_profile::EngineProfile,
+) {
+    profiled_invocation(arguments, options, |invocation, options| unsafe {
+        invocation.run_borrowed(options)
+    })
+}
+
+fn profiled_invocation(
+    arguments: Vec<Vec<u8>>,
+    options: InvocationOptions,
+    operation: impl FnOnce(
+        &mut Invocation,
+        InvocationOptions,
+    ) -> Result<EngineCompletion, InvocationError>,
+) -> (
+    Result<EngineCompletion, InvocationError>,
+    engine_profile::EngineProfile,
+) {
+    use engine_profile::{Collector, Phase};
+    let profile = Collector::new();
+    if invocation_state::is_active() {
+        profile.finish(true);
+        return (
+            Err(InvocationError::NestedInvocation),
+            profile.snapshot("setup_error"),
+        );
+    }
+    let mut invocation =
+        match Invocation::new_with_profile(arguments, &options, Some(profile.clone())) {
+            Ok(invocation) => invocation,
+            Err(error) => {
+                // Partially constructed fields have already dropped inside new.
+                profile.finish(true);
+                return (Err(error), profile.snapshot("setup_error"));
+            }
+        };
+    profile.transition(Phase::InvocationSetup, false);
+    let result = operation(&mut invocation, options);
+    let status = match &result {
+        Ok(EngineCompletion::Clean) => "success",
+        Ok(EngineCompletion::Warnings) => "warnings",
+        Ok(EngineCompletion::Errors) => "errors",
+        Err(InvocationError::StreamTeardown { .. }) => "teardown_error",
+        Err(_) => "setup_error",
+    };
+    profile.transition(Phase::OwnerDrop, result.is_err());
+    drop(invocation);
+    // The collector is outside every owner. No span or resource retains it
+    // after teardown, and the returned snapshot contains no borrowed payload.
+    debug_assert_eq!(std::rc::Rc::strong_count(&profile), 1);
+    profile.finish(false);
+    (result, profile.snapshot(status))
+}
+
 // Field order is teardown order. No resource may outlive the raw-buffer arena,
 // and argument bytes outlive core aliases. Routing scopes always end first.
 struct Invocation {
@@ -165,6 +232,14 @@ struct Invocation {
 
 impl Invocation {
     fn new(arguments: Vec<Vec<u8>>, options: &InvocationOptions) -> Result<Self, InvocationError> {
+        Self::new_with_profile(arguments, options, None)
+    }
+
+    fn new_with_profile(
+        arguments: Vec<Vec<u8>>,
+        options: &InvocationOptions,
+        profile: Option<std::rc::Rc<engine_profile::Collector>>,
+    ) -> Result<Self, InvocationError> {
         use invocation::resource;
         let arguments = invocation::OwnedArguments::new(arguments)?;
         Ok(Self {
@@ -185,23 +260,48 @@ impl Invocation {
             sync: synctex::SyncTexSession::new(),
             xpdf: xpdf::XpdfSession::new(),
             inclusion: pdftoepdf::PdfInclusionSession::new(),
-            control: control::ControlSession::new(options.interrupt.clone()),
+            control: match profile {
+                Some(profile) => control::ControlSession::new_with_profile(
+                    options.interrupt.clone(),
+                    Some(profile),
+                ),
+                None => control::ControlSession::new(options.interrupt.clone()),
+            },
             ipc: ipc::IpcSession::new(),
             arena: allocation::AllocationArena::new(),
             arguments,
         })
     }
 
-    unsafe fn run(self, options: InvocationOptions) -> Result<EngineCompletion, InvocationError> {
-        self.run_with_operation(options, |argc, argv| unsafe {
+    unsafe fn run(
+        mut self,
+        options: InvocationOptions,
+    ) -> Result<EngineCompletion, InvocationError> {
+        unsafe { self.run_borrowed(options) }
+    }
+
+    unsafe fn run_borrowed(
+        &mut self,
+        options: InvocationOptions,
+    ) -> Result<EngineCompletion, InvocationError> {
+        self.run_with_operation_borrowed(options, |argc, argv| unsafe {
             (*generated::pdftexextra::state()).synctexoption = ::core::ffi::c_int::MAX;
             generated::pdftexextra::maininit(argc, argv);
             generated::pdftexini::mainbody()
         })
     }
 
+    #[cfg(test)]
     fn run_with_operation(
         mut self,
+        options: InvocationOptions,
+        operation: impl FnOnce(std::ffi::c_int, *mut *mut std::ffi::c_char) -> EngineCompletion,
+    ) -> Result<EngineCompletion, InvocationError> {
+        self.run_with_operation_borrowed(options, operation)
+    }
+
+    fn run_with_operation_borrowed(
+        &mut self,
         options: InvocationOptions,
         operation: impl FnOnce(std::ffi::c_int, *mut *mut std::ffi::c_char) -> EngineCompletion,
     ) -> Result<EngineCompletion, InvocationError> {
@@ -225,7 +325,7 @@ impl Invocation {
             ipc,
             arena,
             arguments,
-        } = &mut self;
+        } = self;
         let (argc, argv) = arguments.engine_args();
         resource("core state", core.as_mut().scope(|| arena.as_mut().scope(|| {
             resource("environment", environment::EnvironmentSession::scope(environment.as_mut(), || {
@@ -251,7 +351,9 @@ impl Invocation {
                                                             xpdf::XpdfSession::scope(xpdf.as_mut(), || {
                                                                 pdftoepdf::PdfInclusionSession::scope(inclusion.as_mut(), || {
                                                                     let completion = streams.as_mut().scope(|| {
+                                                                        engine_profile::transition(engine_profile::Phase::EngineBody, false);
                                                                         let completion = termination::catch(|| operation(argc, argv)).unwrap_or_else(|completion| completion);
+                                                                        engine_profile::transition(engine_profile::Phase::Cleanup, completion == EngineCompletion::Errors);
                                                                         unsafe { stdio::flush_for_exit() };
                                                                         completion
                                                                     });
@@ -279,6 +381,125 @@ impl Invocation {
 mod entry_tests {
     use super::*;
     use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    fn profile_options() -> InvocationOptions {
+        InvocationOptions {
+            environment: vec![("TZ".into(), Some("UTC0".into()))],
+            ..InvocationOptions::default()
+        }
+    }
+
+    fn phase<'a>(
+        profile: &'a engine_profile::EngineProfile,
+        name: &str,
+    ) -> &'a engine_profile::PhaseObservation {
+        profile
+            .phases()
+            .iter()
+            .find(|phase| phase.name == name)
+            .unwrap()
+    }
+
+    #[test]
+    fn profiled_public_typed_exit_returns_after_all_owners_drop_and_is_independent() {
+        for _ in 0..2 {
+            let (result, profile) = unsafe {
+                run_profiled_with_options(
+                    vec![b"pdflatex".to_vec(), b"--version".to_vec()],
+                    profile_options(),
+                )
+            };
+            assert_eq!(result, Ok(EngineCompletion::Clean));
+            assert_eq!(profile.status(), "success");
+            assert!(!invocation_state::is_active());
+            assert!(control::profile_collector().is_none());
+            for observed in &profile.phases()[..5] {
+                assert_eq!(observed.calls, 1, "{}", observed.name);
+                assert_eq!(observed.failed_calls, 0, "{}", observed.name);
+            }
+            assert_eq!(
+                profile.phases()[..5]
+                    .iter()
+                    .map(|phase| phase.elapsed_ns.unwrap())
+                    .sum::<u64>(),
+                profile.elapsed_ns()
+            );
+            assert!(profile.counters().iter().all(|counter| counter.value == 0));
+        }
+    }
+
+    #[test]
+    fn profiled_setup_errors_leave_unreached_phases_unavailable() {
+        let (result, profile) = unsafe { run_profiled_with_options(Vec::new(), profile_options()) };
+        assert_eq!(result, Err(InvocationError::MissingProgramName));
+        assert_eq!(profile.status(), "setup_error");
+        assert_eq!(phase(&profile, "owner_construction").failed_calls, 1);
+        assert!(phase(&profile, "engine_body").elapsed_ns.is_none());
+        assert!(phase(&profile, "owner_drop").elapsed_ns.is_none());
+
+        let mut options = profile_options();
+        options
+            .environment
+            .push(("invalid=name".into(), Some("value".into())));
+        let (result, profile) =
+            unsafe { run_profiled_with_options(vec![b"pdflatex".to_vec()], options) };
+        assert!(matches!(result, Err(InvocationError::ResourceSetup { .. })));
+        assert_eq!(profile.status(), "setup_error");
+        assert_eq!(phase(&profile, "invocation_setup").failed_calls, 1);
+        assert_eq!(phase(&profile, "owner_drop").calls, 1);
+        assert!(phase(&profile, "engine_body").elapsed_ns.is_none());
+        assert!(phase(&profile, "cleanup").elapsed_ns.is_none());
+        assert!(!invocation_state::is_active());
+        assert!(control::profile_collector().is_none());
+    }
+
+    #[test]
+    fn profiled_fatal_exit_and_unexpected_panic_keep_existing_cleanup_rules() {
+        let run = |panic: bool| {
+            profiled_invocation(
+                vec![b"pdflatex".to_vec()],
+                profile_options(),
+                |invocation, options| {
+                    invocation.run_with_operation_borrowed(options, |_, _| {
+                        assert!(control::profile_collector().is_some());
+                        let stream = unsafe { stdio::tmpfile() };
+                        assert!(!stream.is_null());
+                        assert_eq!(
+                            unsafe { stdio::fwrite(c"unfinished".as_ptr().cast(), 1, 10, stream) },
+                            10
+                        );
+                        let mut observed = engine_profile::span(engine_profile::Phase::PngDecode);
+                        engine_profile::count(engine_profile::Counter::DecodeCalls, 1);
+                        observed.success();
+                        drop(observed);
+                        if panic {
+                            std::panic::resume_unwind(Box::new(0x51a7_u64));
+                        }
+                        termination::exit(1)
+                    })
+                },
+            )
+        };
+        let (result, profile) = run(false);
+        assert_eq!(result, Ok(EngineCompletion::Errors));
+        assert_eq!(profile.status(), "errors");
+        assert_eq!(phase(&profile, "engine_body").failed_calls, 1);
+        assert_eq!(phase(&profile, "cleanup").calls, 1);
+        assert_eq!(phase(&profile, "owner_drop").calls, 1);
+        assert_eq!(phase(&profile, "png_decode").calls, 1);
+        let payload = catch_unwind(AssertUnwindSafe(|| run(true))).unwrap_err();
+        assert_eq!(payload.downcast_ref::<u64>(), Some(&0x51a7));
+        assert!(!invocation_state::is_active());
+        assert!(control::profile_collector().is_none());
+        let invocation = Invocation::new(vec![b"pdflatex".to_vec()], &profile_options()).unwrap();
+        assert_eq!(
+            invocation.run_with_operation(profile_options(), |_, _| {
+                assert!(control::profile_collector().is_none());
+                EngineCompletion::Clean
+            }),
+            Ok(EngineCompletion::Clean)
+        );
+    }
 
     #[test]
     fn nested_public_entry_is_rejected_without_replacing_the_active_core() {

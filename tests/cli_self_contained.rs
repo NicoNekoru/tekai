@@ -1311,7 +1311,7 @@ fn diagnostic_cache_routes_are_stable_and_profiling_preserves_outputs() {
 }
 
 #[test]
-fn bundled_engine_rejects_oversized_png_metadata_before_payload_reads() {
+fn bundled_engine_profiles_valid_png_and_rejects_oversized_metadata() {
     fn append_chunk(png: &mut Vec<u8>, typ: &[u8; 4], payload: &[u8]) {
         png.extend_from_slice(&(payload.len() as u32).to_be_bytes());
         png.extend_from_slice(typ);
@@ -1349,6 +1349,129 @@ fn bundled_engine_rejects_oversized_png_metadata_before_payload_reads() {
     fs::write(project.0.join("image.png"), valid).unwrap();
     project.success(&["build", "main.tex", "--report-json", "--once", "--force"]);
     assert!(project.0.join("build/main.pdf").is_file());
+
+    // Reuse this prepared disk fixture. A transparent pixel forces the actual
+    // decoder route, unlike opaque RGB PNGs that can copy their IDAT stream.
+    let mut transparent = b"\x89PNG\r\n\x1a\n".to_vec();
+    append_chunk(
+        &mut transparent,
+        b"IHDR",
+        &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0],
+    );
+    append_chunk(
+        &mut transparent,
+        b"IDAT",
+        &[120, 156, 99, 96, 96, 96, 104, 0, 0, 0, 133, 0, 129],
+    );
+    append_chunk(&mut transparent, b"IEND", &[]);
+    project.write_bytes("transparent.png", &transparent);
+    project.write(
+        "profile.tex",
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\pdftrailerid{<00112233445566778899AABBCCDDEEFF><00112233445566778899AABBCCDDEEFF>}\n\\begin{document}\nProfile probe. \\includegraphics[width=1cm]{transparent.png}\n\\end{document}\n",
+    );
+    let engine_args = [
+        "__tekai-engine",
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        "-no-shell-escape",
+        "-output-directory=build",
+        "profile.tex",
+    ];
+    let run = |setting| {
+        project.run_with_env(
+            &engine_args,
+            &[
+                ("SOURCE_DATE_EPOCH", "0"),
+                ("FORCE_SOURCE_DATE", "1"),
+                ("TEKAI_ENGINE_PROFILE", setting),
+            ],
+        )
+    };
+    let plain = run("0");
+    assert!(plain.status.success(), "{plain:?}");
+    assert!(!String::from_utf8_lossy(&plain.stderr).contains("TEKAI_ENGINE_PROFILE "));
+    let plain_pdf = fs::read(project.0.join("build/profile.pdf")).unwrap();
+    for setting in ["true", "1", "1"] {
+        let output = run(setting);
+        assert!(output.status.success(), "{output:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let records = stderr
+            .lines()
+            .filter_map(|line| line.strip_prefix("TEKAI_ENGINE_PROFILE "))
+            .collect::<Vec<_>>();
+        assert!(!stderr.contains("TEKAI_PROFILE "), "{stderr}");
+        assert_eq!(records.len(), usize::from(setting == "1"), "{stderr}");
+        if let Some(record) = records.first() {
+            assert!(record.len() + "TEKAI_ENGINE_PROFILE ".len() < 4096);
+            let record: Value = serde_json::from_str(record).unwrap();
+            assert_eq!(record["schema_version"], 1);
+            assert_eq!(record["scope"], "engine_invocation");
+            assert_eq!(record["status"], "success");
+            let phases = record["phases"].as_array().unwrap();
+            assert_eq!(phases.len(), 7);
+            let lifecycle = &phases[..5];
+            assert!(
+                lifecycle
+                    .iter()
+                    .all(|phase| phase["calls"] == 1 && phase["failed_calls"] == 0)
+            );
+            assert_eq!(
+                lifecycle
+                    .iter()
+                    .map(|phase| phase["elapsed_ns"].as_u64().unwrap())
+                    .sum::<u64>(),
+                record["elapsed_ns"].as_u64().unwrap()
+            );
+            let counters = record["counters"].as_array().unwrap();
+            let count = |name| {
+                counters
+                    .iter()
+                    .find(|counter| counter["name"] == name)
+                    .unwrap()["value"]
+                    .as_u64()
+                    .unwrap()
+            };
+            assert_eq!(count("decode_calls"), 1);
+            assert!(count("decoded_bytes") > 0);
+            assert!(count("compression_calls") > 0);
+            assert!(count("compression_input_bytes") > 0);
+            assert!(count("compression_output_bytes") > 0);
+            assert!(
+                record["worker_preparation"]["elapsed_ns"]
+                    .as_u64()
+                    .is_some()
+            );
+        }
+        assert_eq!(
+            fs::read(project.0.join("build/profile.pdf")).unwrap(),
+            plain_pdf
+        );
+    }
+    assert_eq!(
+        fs::read(project.0.join("transparent.png")).unwrap(),
+        transparent
+    );
+    project.write("profile-fatal.tex", "\\errmessage{profile fatal probe}\n");
+    let fatal = project.run_with_env(
+        &[
+            "__tekai-engine",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            "profile-fatal.tex",
+        ],
+        &[("TEKAI_ENGINE_PROFILE", "1")],
+    );
+    assert_eq!(fatal.status.code(), Some(1), "{fatal:?}");
+    let stderr = String::from_utf8(fatal.stderr).unwrap();
+    let records = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("TEKAI_ENGINE_PROFILE "))
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 1, "{stderr}");
+    assert_eq!(
+        serde_json::from_str::<Value>(records[0]).unwrap()["status"],
+        "errors"
+    );
 
     for (typ, length, expected) in [
         (b"PLTE", 0u32, "invalid PNG PLTE length"),

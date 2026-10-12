@@ -154,6 +154,9 @@ fn run_embedded_engine() -> Result<()> {
 }
 
 fn run_embedded_engine_worker() -> Result<()> {
+    let preparation_started = (std::env::var_os(tekai_engine::engine_profile::ENV).as_deref()
+        == Some(OsStr::new("1")))
+    .then(std::time::Instant::now);
     tekai_engine::runtime::texmf_root().context("failed to prepare bundled TeX data")?;
     let mut args = Vec::new();
     args.push(b"pdflatex".to_vec());
@@ -180,8 +183,17 @@ fn run_embedded_engine_worker() -> Result<()> {
     )?);
     // SAFETY This child runs trusted bundled formats. Shell execution remains
     // governed by the engine options. Signal policy belongs to this CLI only.
-    let completion = unsafe { tekai_engine::run_with_options(args, options) }
-        .context("failed to enter the TeX engine")?;
+    let result = if let Some(started) = preparation_started {
+        let preparation = started.elapsed();
+        let (result, profile) = unsafe { tekai_engine::run_profiled_with_options(args, options) };
+        // All engine owners have dropped before this diagnostic write. It is
+        // worker-only, bounded, and cannot replace the engine's exit status.
+        let _ = profile.write_record(&mut std::io::stderr().lock(), Some(preparation));
+        result
+    } else {
+        unsafe { tekai_engine::run_with_options(args, options) }
+    };
+    let completion = result.context("failed to enter the TeX engine")?;
     #[cfg(unix)]
     drop(handler);
     std::process::exit(completion.exit_code())

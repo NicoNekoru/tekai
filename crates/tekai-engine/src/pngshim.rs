@@ -286,6 +286,7 @@ impl PngState {
         let cache_key = self.decode_cache_key();
         if let Some(key) = cache_key {
             if let Some(decoded) = with_cache(|cache| cache.get(&key).cloned()) {
+                crate::engine_profile::count(crate::engine_profile::Counter::CacheHits, 1);
                 self.decoded = Some(decoded);
                 self.row_cursor = 0;
                 return Ok(());
@@ -295,6 +296,12 @@ impl PngState {
             self.data = unsafe { read_file(self.file)? };
         }
 
+        // The diagnostic phase covers decoder setup, pixel allocation and
+        // inflation. File reads, post-decode transforms and cache publication
+        // remain outside it. Already decoded images never create this span.
+        let mut decode_profile =
+            crate::engine_profile::span(crate::engine_profile::Phase::PngDecode);
+        crate::engine_profile::count(crate::engine_profile::Counter::DecodeCalls, 1);
         let mut decoder = png::Decoder::new(Cursor::new(self.data.as_slice()));
         let mut transforms = png::Transformations::IDENTITY;
         if self.strip_16 {
@@ -312,6 +319,9 @@ impl PngState {
             .map_err(|err| err.to_string())?;
         data.truncate(output.buffer_size());
         drop(reader);
+        crate::engine_profile::count(crate::engine_profile::Counter::DecodedBytes, data.len());
+        decode_profile.success();
+        drop(decode_profile);
         // Keep neither the compressed file nor the decoder's temporary buffers
         // alongside the pixels. Transform changes can reread the open file.
         self.data = Vec::new();
@@ -1345,6 +1355,59 @@ mod tests {
             flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(data).unwrap();
         encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn profile_counts_actual_decode_attempts_and_excludes_live_pixel_reuse() {
+        use crate::engine_profile::Collector;
+        let profile = Collector::new();
+        let mut control = crate::control::ControlSession::new_with_profile(
+            crate::InterruptToken::default(),
+            Some(profile.clone()),
+        );
+        control
+            .as_mut()
+            .scope(|| {
+                let idat = compressed_scanline(&[0, 10, 20, 30, 128]);
+                let mut valid = PngState::new();
+                valid.data = decode_fixture(PNG_COLOR_TYPE_RGB_ALPHA, &idat, false);
+                valid.width = 1;
+                valid.height = 1;
+                valid.color_type = PNG_COLOR_TYPE_RGB_ALPHA;
+                valid.ensure_decoded().unwrap();
+                valid.ensure_decoded().unwrap();
+                assert_eq!(valid.decoded.as_ref().unwrap().data, [10, 20, 30, 128]);
+                let mut invalid = PngState::new();
+                invalid.data = decode_fixture(PNG_COLOR_TYPE_RGB_ALPHA, &idat, true);
+                invalid.width = 1;
+                invalid.height = 1;
+                invalid.color_type = PNG_COLOR_TYPE_RGB_ALPHA;
+                assert!(invalid.ensure_decoded().is_err());
+            })
+            .unwrap();
+        drop(control);
+        profile.finish(false);
+        let report = profile.snapshot("errors");
+        let decoded = report
+            .phases()
+            .iter()
+            .find(|phase| phase.name == "png_decode")
+            .unwrap();
+        assert_eq!(decoded.calls, 2);
+        assert_eq!(decoded.failed_calls, 1);
+        for (name, expected) in [("decode_calls", 2), ("decoded_bytes", 4), ("cache_hits", 0)] {
+            assert_eq!(
+                report
+                    .counters()
+                    .iter()
+                    .find(|counter| counter.name == name)
+                    .unwrap()
+                    .value,
+                expected,
+                "{name}"
+            );
+        }
+        assert!(crate::control::profile_collector().is_none());
     }
 
     #[test]
