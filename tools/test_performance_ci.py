@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 import zlib
 
 import performance_ci as ci
+from owned_process import OwnershipLost
 
 NORMAL_ENGINE_ERROR = 'Error: TeX engine failed with status exit status: 1\nTeX log: /fixture/build/main.log\n'
 MISSING_INPUT_ERROR = 'Error: TeX input missing.sty was not found; use --report-json to inspect its search paths\n'
@@ -716,7 +717,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_unicode_preview_keeps_byte_offset_with_legal_word_breaks(self):
         process = Mock()
-        process.poll.return_value = None
+        process.poll_exit.return_value = None
         process.timed_out = False
         ready = 'built /fixture/build/.tekai-hmr-warm/main.pdf\n'
         with patch.object(self.audit, 'start', return_value=process), \
@@ -781,10 +782,28 @@ class RunnerTests(unittest.TestCase):
         process = Mock(pid=12345)
         with patch('performance_ci.subprocess.Popen', return_value=process) as popen:
             owned = self.audit.start(['unused'], self.work, self.audit.env)
-        self.assertIs(owned, process)
+        self.assertIs(owned._process, process)
         self.assertTrue(popen.call_args.kwargs['start_new_session'])
         self.assertNotEqual(popen.call_args.kwargs['stdout'], subprocess.PIPE)
         self.audit.owned.clear()
+
+    def test_owner_setup_failure_starts_no_unowned_child(self):
+        with patch('performance_ci.OwnedProcess', side_effect=RuntimeError('owner setup failed')), \
+                patch('performance_ci.subprocess.Popen') as popen:
+            with self.assertRaisesRegex(RuntimeError, 'owner setup failed'):
+                self.audit.start(['unused'], self.work, self.audit.env)
+        popen.assert_not_called()
+
+    def test_interrupted_attachment_keeps_returned_native_child_owned(self):
+        with patch.object(ci.OwnedProcess, 'attach', side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            self.audit.start([sys.executable, '-c', 'import time; time.sleep(10)'], self.work, os.environ.copy())
+        self.assertEqual(len(self.audit.owned), 1)
+        process = next(iter(self.audit.owned.values()))
+        self.assertIsNotNone(process._process)
+        self.audit.close()
+        self.assertIsNotNone(process.returncode)
+        self.assertFalse(self.audit.owned)
 
     @unittest.skipUnless(os.name == 'posix', 'Owned process groups require POSIX')
     def test_interrupt_after_popen_returns_keeps_the_child_owned_and_cleaned(self):
@@ -802,9 +821,10 @@ class RunnerTests(unittest.TestCase):
             if launched and not interrupted:
                 interrupted = True
                 process = launched[0]
-                self.assertIs(self.audit.owned.get(process.pid), process)
-                self.assertEqual(process.invocation[0], sys.executable)
-                self.assertTrue(all(path.exists() for path in process.capture_paths))
+                owner = self.audit.owned.get(process.pid)
+                self.assertIs(owner._process, process)
+                self.assertEqual(owner.invocation[0], sys.executable)
+                self.assertTrue(all(path.exists() for path in owner.capture_paths))
                 raise KeyboardInterrupt
             return native_clock()
 
@@ -812,7 +832,7 @@ class RunnerTests(unittest.TestCase):
                 patch('performance_ci.time.monotonic', side_effect=clock), self.assertRaises(KeyboardInterrupt):
             self.audit.start([sys.executable, '-c', 'import time; time.sleep(10)'], self.work, self.audit.env)
         process = launched[0]
-        self.assertIs(self.audit.owned.get(process.pid), process)
+        self.assertIs(self.audit.owned.get(process.pid)._process, process)
         self.audit.close()
         self.assertIsNotNone(process.poll())
         self.assertFalse(self.audit.owned)
@@ -822,18 +842,15 @@ class RunnerTests(unittest.TestCase):
     def test_cleanup_signals_only_the_owned_process_group(self):
         process = Mock(pid=12345, observe=False)
         self.audit.owned[process.pid] = process
-        with patch('performance_ci.os.killpg') as kill:
-            self.audit.stop(process)
-            self.audit.stop(process)
-        kill.assert_called_once_with(12345, signal.SIGKILL)
-        process.wait.assert_called_once_with(timeout=5)
+        self.audit.stop(process)
+        self.audit.stop(process)
+        process.finish.assert_called_once_with()
 
     def test_cleanup_reaps_an_already_exited_group(self):
         process = Mock(pid=12345, observe=False)
         self.audit.owned[process.pid] = process
-        with patch('performance_ci.os.killpg', side_effect=ProcessLookupError()):
-            self.audit.stop(process)
-        process.wait.assert_called_once_with(timeout=5)
+        self.audit.stop(process)
+        process.finish.assert_called_once_with()
         self.assertFalse(self.audit.owned)
 
     def test_unknown_process_cannot_be_killed_by_stop(self):
@@ -841,13 +858,28 @@ class RunnerTests(unittest.TestCase):
             self.audit.stop(Mock(pid=12345))
         kill.assert_not_called()
 
-    def test_cleanup_reaps_even_if_signaling_is_denied(self):
+    def test_cleanup_retains_owner_if_group_cleanup_is_denied(self):
         process = Mock(pid=12345, observe=False)
         self.audit.owned[process.pid] = process
-        with patch('performance_ci.os.killpg', side_effect=PermissionError()):
-            with self.assertRaises(PermissionError):
-                self.audit.stop(process)
-        process.wait.assert_called_once_with(timeout=5)
+        process.finish.side_effect = PermissionError()
+        with self.assertRaises(PermissionError):
+            self.audit.stop(process)
+        process.finish.assert_called_once_with()
+        self.assertIs(self.audit.owned[process.pid], process)
+        self.audit.owned.clear()
+
+    def test_close_exhausts_other_owners_after_lost_authority_and_cleanup_error(self):
+        first = Mock(pid=12345, observe=False)
+        first.finish.side_effect = OwnershipLost('lost reservation')
+        second = Mock(pid=12346, observe=False)
+        second.finish.side_effect = RuntimeError('observer did not publish')
+        third = Mock(pid=12347, observe=False)
+        self.audit.owned = {process.pid: process for process in (first, second, third)}
+        with self.assertRaisesRegex(RuntimeError, 'lost reservation.*observer did not publish'):
+            self.audit.close()
+        for process in (first, second, third):
+            process.finish.assert_called_once_with()
+        self.assertEqual(set(self.audit.owned), {first.pid, second.pid})
         self.audit.owned.clear()
 
     def test_launch_failure_is_an_explicit_failure(self):

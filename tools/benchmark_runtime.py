@@ -62,13 +62,13 @@ TIMING_METADATA = {
     'command_timing_fields': ['start', 'capture_start', 'capture_files_open', 'popen_start', 'popen_return',
                              'capture_files_closed', 'launch_end', 'waiter_dispatch', 'waiter_accepted',
                              'completion', 'cleanup_start', 'cleanup_end'],
-    'command_scope': 'Parent capture setup through blocking-wait completion, including launch and completion scheduling.',
+    'command_scope': 'Parent capture setup through blocking WNOWAIT exit observation, including launch and completion scheduling.',
     'launch_scope': 'Parent capture setup and Popen return, not isolated loader time.',
     'popen_scope': 'Popen call and mandatory ownership registration before the diagnostic return timestamp.',
-    'cleanup_scope': 'Owned-group kill/reap, completed-wait confirmation, bounded capture reads and capture-file removal.',
+    'cleanup_scope': 'Outer-group TERM grace, owned-group kill before reap, observer publication, bounded capture reads and capture-file removal.',
     'unit_scope': 'Unit boundaries also include between-command cleanup and output verification, outside scored command sums.',
     'checkpoint_scope': 'Atomic checkpoint writes occur between units, outside command and unit timestamps.',
-    'waiter_scope': 'One owned persistent worker blocks in process.wait. Acceptance and completion include worker scheduling.',
+    'waiter_scope': 'One persistent worker blocks in waitid WNOWAIT without reaping. Acceptance and completion include worker scheduling.',
     'used_for_gate': False,
 }
 SEARCH_ENV_VARS = frozenset(('WEB2C', 'INDEXSTYLE', 'BSTINPUTS', 'TFMFONTS', 'AFMFONTS',
@@ -387,7 +387,7 @@ class CalibrationInfeasible(ValueError):
 class Supervisor(PerformanceCI):
     """Reuse PerformanceCI's tested process ownership, launch and group cleanup.
 
-    A blocking waiter timestamps completion. Popen.wait with a timeout polls at
+    A blocking WNOWAIT observer timestamps completion. Popen.wait with a timeout polls at
     up to 50 ms, distorting short cache-hit samples. Capture files keep orphaned
     children from holding pipes open. Per-command/whole-run limits bound work.
     """
@@ -409,8 +409,9 @@ class Supervisor(PerformanceCI):
             process, completed, observation = job
             try:
                 observation['accepted'] = time.monotonic()
-                observation['code'] = process.wait()
-                observation['completion'] = time.monotonic()
+                status = process.wait_for_exit()
+                observation['code'] = status.code
+                observation['completion'] = status.completion
                 observation['seconds'] = observation['completion'] - process.started_at
             except Exception as error:
                 observation['error'] = f'{type(error).__name__}: {error}'[:1024]
@@ -473,6 +474,7 @@ class Supervisor(PerformanceCI):
         process.observe = False
         process.started_at = started
         completed, observation = threading.Event(), {}
+        process.reap_barrier = completed.wait
 
         dispatch = time.monotonic()
         self._wait_jobs.put_nowait((process, completed, observation))
@@ -486,8 +488,8 @@ class Supervisor(PerformanceCI):
                     failure = deadline_reason
                     break
         finally:
-            # The inherited method kills the exact owned group even after a
-            # successful parent exit, then reaps and unregisters the process.
+            # Cleanup retains the unreaped leader through group termination,
+            # and waits for this observer's publication before the final reap.
             cleanup_start = time.monotonic()
             try:
                 self.stop(process)

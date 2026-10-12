@@ -24,6 +24,7 @@ import tarfile
 import tempfile
 
 import bundle_tex_runtime as bundle
+from owned_process import OwnedProcess
 
 REFERENCE = {
     "url": bundle.MIRROR + "/archive/pdftex.universal-darwin.tar.xz",
@@ -39,12 +40,7 @@ LOG_TAIL_BYTES = 8192
 
 
 def stop_group(process):
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    finally:
-        process.wait(timeout=REAP_TIMEOUT_SECONDS)
+    process.finish()
 
 
 def log_tail(handle):
@@ -59,24 +55,29 @@ def command(args, *, timeout=COMMAND_TIMEOUT_SECONDS, **kwargs):
         raise ValueError("Command timeout must be finite, positive and at most 300 seconds")
     if os.name != "posix":
         raise RuntimeError("The parity gate requires POSIX process groups")
+    owner = OwnedProcess()
     argv = [str(arg) for arg in args]
     # File-backed logs cannot fill a pipe or keep communicate waiting on an
     # orphan. Only bounded stdout and diagnostic tails enter Python memory.
     with tempfile.TemporaryFile(prefix="tekai-parity-stdout-") as stdout, \
             tempfile.TemporaryFile(prefix="tekai-parity-stderr-") as stderr:
-        process = subprocess.Popen(argv, stdout=stdout, stderr=stderr,
-                                   start_new_session=True, **kwargs)
+        process = None
         timed_out = False
         try:
+            process = subprocess.Popen(argv, stdout=stdout, stderr=stderr,
+                                       start_new_session=True, **kwargs)
+            owner.attach(process)
             try:
-                process.wait(timeout=timeout)
+                owner.wait_for_exit(timeout=timeout)
             except subprocess.TimeoutExpired:
                 timed_out = True
         finally:
             # Stop descendants even when the direct command already exited.
-            stop_group(process)
-        if timed_out or process.returncode:
-            reason = f"timed out after {timeout:g} seconds" if timed_out else f"exited with code {process.returncode}"
+            if process is not None:
+                owner._process = process
+                stop_group(owner)
+        if timed_out or owner.returncode:
+            reason = f"timed out after {timeout:g} seconds" if timed_out else f"exited with code {owner.returncode}"
             raise RuntimeError(f"{argv[0]} {reason}\n{log_tail(stdout)}\n{log_tail(stderr)}")
         stdout.seek(0)
         output = stdout.read(MAX_STDOUT_BYTES + 1)

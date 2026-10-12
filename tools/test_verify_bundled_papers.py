@@ -72,9 +72,9 @@ class CommandTests(unittest.TestCase):
         popen_patch = patch.object(parity.subprocess, "Popen", side_effect=launch)
         self.popen = popen_patch.start()
         self.addCleanup(popen_patch.stop)
-        kill_patch = patch.object(parity.os, "killpg")
-        self.kill = kill_patch.start()
-        self.addCleanup(kill_patch.stop)
+        owner_patch = patch.object(parity, "OwnedProcess", return_value=self.process)
+        self.owner = owner_patch.start()
+        self.addCleanup(owner_patch.stop)
 
     def test_success_returns_complete_binary_stdout_and_reaps_owned_group(self):
         env = {"PATH": ""}
@@ -89,12 +89,13 @@ class CommandTests(unittest.TestCase):
         self.assertNotEqual(self.launch_options["stderr"], subprocess.PIPE)
         self.assertTrue(self.launch_options["stdout"].closed)
         self.assertTrue(self.launch_options["stderr"].closed)
-        self.kill.assert_called_once_with(12345, signal.SIGKILL)
-        self.assertEqual(self.process.wait.call_args_list,
-                         [call(timeout=7), call(timeout=parity.REAP_TIMEOUT_SECONDS)])
+        self.owner.assert_called_once_with()
+        self.process.attach.assert_called_once_with(self.process)
+        self.process.wait_for_exit.assert_called_once_with(timeout=7)
+        self.process.finish.assert_called_once_with()
 
     def test_timeout_kills_the_group_reaps_and_reports_bounded_logs(self):
-        self.process.wait.side_effect = [subprocess.TimeoutExpired("tool", 3), None]
+        self.process.wait_for_exit.side_effect = subprocess.TimeoutExpired("tool", 3)
         self.stdout = b"early stdout " * 100 + b"stdout tail"
         self.stderr = b"early stderr " * 100 + b"stderr tail"
         with patch.object(parity, "LOG_TAIL_BYTES", 16):
@@ -105,9 +106,8 @@ class CommandTests(unittest.TestCase):
         self.assertIn("stderr tail", message)
         self.assertNotIn("early stdout early stdout", message)
         self.assertLess(len(message), 100)
-        self.kill.assert_called_once_with(12345, signal.SIGKILL)
-        self.assertEqual(self.process.wait.call_args_list,
-                         [call(timeout=3), call(timeout=parity.REAP_TIMEOUT_SECONDS)])
+        self.process.wait_for_exit.assert_called_once_with(timeout=3)
+        self.process.finish.assert_called_once_with()
 
     def test_nonzero_exit_reports_error_tails_and_reaps(self):
         self.process.returncode = 1
@@ -116,20 +116,19 @@ class CommandTests(unittest.TestCase):
             parity.command(["tool"])
         self.assertIn("complete output", str(error.exception))
         self.assertIn("bad metadata", str(error.exception))
-        self.kill.assert_called_once_with(12345, signal.SIGKILL)
-        self.assertEqual(self.process.wait.call_count, 2)
+        self.process.finish.assert_called_once_with()
+        self.assertEqual(self.process.wait_for_exit.call_count, 1)
 
-    def test_an_already_exited_group_does_not_prevent_reaping(self):
-        self.kill.side_effect = ProcessLookupError
+    def test_an_already_exited_group_finishes_before_capture_returns(self):
         self.assertEqual(parity.command(["tool"]), self.stdout)
-        self.assertEqual(self.process.wait.call_count, 2)
+        self.process.finish.assert_called_once_with()
 
     def test_interrupted_wait_still_kills_and_reaps(self):
-        self.process.wait.side_effect = [KeyboardInterrupt, None]
+        self.process.wait_for_exit.side_effect = KeyboardInterrupt
         with self.assertRaises(KeyboardInterrupt):
             parity.command(["tool"])
-        self.kill.assert_called_once_with(12345, signal.SIGKILL)
-        self.assertEqual(self.process.wait.call_count, 2)
+        self.process.finish.assert_called_once_with()
+        self.assertEqual(self.process.wait_for_exit.call_count, 1)
 
     def test_successful_output_at_the_limit_is_not_truncated(self):
         self.stdout = b"x" * 64
@@ -141,7 +140,7 @@ class CommandTests(unittest.TestCase):
         with patch.object(parity, "MAX_STDOUT_BYTES", 64):
             with self.assertRaisesRegex(RuntimeError, "stdout exceeds the 64-byte capture limit"):
                 parity.command(["tool"])
-        self.kill.assert_called_once_with(12345, signal.SIGKILL)
+        self.process.finish.assert_called_once_with()
 
     def test_invalid_deadlines_start_no_process(self):
         for timeout in (0, -1, float("nan"), float("inf"), 301):
@@ -149,21 +148,20 @@ class CommandTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "finite, positive"):
                     parity.command(["tool"], timeout=timeout)
         self.popen.assert_not_called()
-        self.kill.assert_not_called()
+        self.process.finish.assert_not_called()
 
     def test_launch_error_never_targets_a_process_group(self):
         self.popen.side_effect = PermissionError("Launch denied")
         with self.assertRaises(PermissionError):
             parity.command(["tool"])
-        self.kill.assert_not_called()
+        self.process.finish.assert_not_called()
 
-    def test_cleanup_failure_still_attempts_a_bounded_reap(self):
-        self.kill.side_effect = PermissionError("Group inspection denied")
+    def test_cleanup_failure_is_not_hidden_by_successful_capture(self):
+        self.process.finish.side_effect = PermissionError("Group inspection denied")
         with self.assertRaises(PermissionError):
             parity.command(["tool"])
-        self.assertEqual(self.process.wait.call_args_list,
-                         [call(timeout=parity.COMMAND_TIMEOUT_SECONDS),
-                          call(timeout=parity.REAP_TIMEOUT_SECONDS)])
+        self.process.wait_for_exit.assert_called_once_with(timeout=parity.COMMAND_TIMEOUT_SECONDS)
+        self.process.finish.assert_called_once_with()
 
     def test_sigterm_interrupts_the_command_cleans_up_and_restores_the_handler(self):
         original_handler = object()
@@ -179,11 +177,11 @@ class CommandTests(unittest.TestCase):
                     handler = set_handler.call_args.args[1]
                     handler(signal.SIGTERM, None)
 
-            self.process.wait.side_effect = wait
+            self.process.wait_for_exit.side_effect = wait
             with self.assertRaises(KeyboardInterrupt):
                 parity.main()
-        self.kill.assert_called_once_with(12345, signal.SIGKILL)
-        self.assertEqual(self.process.wait.call_count, 2)
+        self.process.finish.assert_called_once_with()
+        self.assertEqual(self.process.wait_for_exit.call_count, 1)
         self.assertEqual(set_handler.call_count, 2)
         set_handler.assert_called_with(signal.SIGTERM, original_handler)
 

@@ -247,6 +247,10 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.revisions.outputs.candidate_sha }}
 
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
       - name: Prepare isolated reports
         env:
           PERFORMANCE_REPORT_DIR: ${{ runner.temp }}/tekai-performance-reports
@@ -259,6 +263,13 @@ jobs:
           PROPERTY_SEED_MATERIAL: ${{ needs.revisions.outputs.candidate_sha }}-${{ runner.arch }}-release
         run: |
           mkdir -p "$PERFORMANCE_REPORT_DIR"
+          PYTHONPATH=tools python3 -B - <<'PY' | tee "$PERFORMANCE_REPORT_DIR/python-process-capabilities.txt"
+          import sys
+          from owned_process import OwnedProcess
+          OwnedProcess.require_support()
+          print(sys.version)
+          print("POSIX waitid WNOWAIT ownership capability available")
+          PY
           test ! -e "$PERFORMANCE_REPORT_DIR/performance_build.py"
           test ! -L "$PERFORMANCE_REPORT_DIR/performance_build.py"
           cp tools/performance_build.py "$PERFORMANCE_REPORT_DIR/performance_build.py"
@@ -277,15 +288,17 @@ jobs:
           uname -a | tee "$PERFORMANCE_REPORT_DIR/runner.txt"
           printf 'PROPTEST_RNG_SEED=%s\nPROPTEST_CASES=%s\nRUST_TOOLCHAIN=%s\n' "$property_seed" "$PROPTEST_CASES" "$RUST_TOOLCHAIN" | tee "$PERFORMANCE_REPORT_DIR/property-config.txt"
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.13'
+      - name: Test unreaped-leader ownership on both macOS architectures
+        run: |
+          PYTHONPATH=tools python3 -B -m unittest -v \
+            test_owned_process test_audit_runtime.NativeCaptureTests \
+            2>&1 | tee "$PERFORMANCE_REPORT_DIR/owned-process-tests.log"
 
       - name: Test native process supervision before compiling TeX
         # Linux runs every suite. This one macOS pass selects process/session,
         # descendant cleanup and file-capture behavior; both architectures run
         # engine gates. Parity capture tests use real TemporaryFiles but mock
-        # Popen/killpg. The later full parity gate exercises its real supervisor.
+        # the owned wrapper. The later full parity gate exercises its supervisor.
         if: matrix.os == 'macos-15'
         run: |
           PYTHONPATH=tools python3 -B -m unittest -v \

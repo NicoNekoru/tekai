@@ -6,7 +6,9 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -21,19 +23,22 @@ class AuditRunnerTests(unittest.TestCase):
         self.work = Path(temporary.name).resolve()
         self.args = SimpleNamespace(engine=Path('/unused/tekai'), quick=True,
                                     timeout=1, report=self.work / 'report.json')
-        with patch('audit_runtime.subprocess.check_output', return_value='Test CPU\n'):
+        with patch.object(Audit, 'run', return_value={'code': 0, 'stdout': 'Test CPU\n'}):
             self.audit = Audit(self.args, self.work)
         self.audit.rss_probe = {'available': True, 'stderr_tail': ''}
+        captures = patch.object(self.audit, 'captured', side_effect=lambda process: (*process.captured_output, False))
+        captures.start()
+        self.addCleanup(captures.stop)
 
     def test_cpu_metadata_permission_failure_keeps_architecture(self):
-        with patch('audit_runtime.subprocess.check_output', side_effect=PermissionError()), \
+        with patch.object(Audit, 'run', side_effect=PermissionError()), \
                 patch('audit_runtime.platform.machine', return_value='arm64'):
             audit = Audit(self.args, self.work)
         self.assertEqual(audit.report['machine'], 'arm64')
 
     def test_caches_are_fixture_scoped_and_search_overrides_are_cleared(self):
         with patch.dict(os.environ, {'TEXINPUTS': '/unused/shared/tree'}), \
-                patch('audit_runtime.subprocess.check_output', return_value='Test CPU'):
+                patch.object(Audit, 'run', return_value={'code': 0, 'stdout': 'Test CPU'}):
             audit = Audit(self.args, self.work)
         self.assertNotIn('TEXINPUTS', audit.env)
         self.assertEqual(Path(audit.env['TEKAI_ENGINE_CACHE']), self.work / 'runtime-cache')
@@ -42,7 +47,7 @@ class AuditRunnerTests(unittest.TestCase):
             self.assertTrue(Path(env[key]).is_relative_to(self.work / 'caches/project'))
 
     def test_process_inspection_denial_records_skip(self):
-        with patch('audit_runtime.subprocess.check_output', side_effect=PermissionError()), \
+        with patch.object(self.audit, 'run', side_effect=PermissionError()), \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertFalse(self.audit.process_inspection_available('cancel'))
         row = self.audit.report['results'][-1]
@@ -57,8 +62,8 @@ class AuditRunnerTests(unittest.TestCase):
         project.assert_not_called()
 
     def test_missing_rss_is_unavailable_rather_than_zero(self):
-        process = Mock(returncode=0)
-        process.communicate.return_value = ('output', 'time: Operation not permitted')
+        process = Mock(returncode=0, completion=time.monotonic())
+        process.captured_output = ('output', 'time: Operation not permitted')
         with patch.object(self.audit, 'start', return_value=process), \
                 patch('audit_runtime.stop_group') as stop:
             result = self.audit.run(['unused'], self.work, measured=True)
@@ -67,8 +72,8 @@ class AuditRunnerTests(unittest.TestCase):
         stop.assert_called_once_with(process)
 
     def test_rss_units_and_success_cleanup(self):
-        process = Mock(returncode=0)
-        process.communicate.return_value = ('', '1048576 maximum resident set size')
+        process = Mock(returncode=0, completion=time.monotonic())
+        process.captured_output = ('', '1048576 maximum resident set size')
         with patch.object(self.audit, 'start', return_value=process), \
                 patch('audit_runtime.stop_group') as stop:
             result = self.audit.run(['unused'], self.work, measured=True)
@@ -78,8 +83,8 @@ class AuditRunnerTests(unittest.TestCase):
 
     def test_denied_timer_does_not_replace_command_exit_status(self):
         self.audit.rss_probe = {'available': False, 'stderr_tail': 'sysctl denied'}
-        process = Mock(returncode=0)
-        process.communicate.return_value = ('output', '')
+        process = Mock(returncode=0, completion=time.monotonic())
+        process.captured_output = ('output', '')
         with patch.object(self.audit, 'start', return_value=process) as start, \
                 patch('audit_runtime.stop_group'):
             result = self.audit.run(['unused'], self.work, measured=True)
@@ -92,7 +97,7 @@ class AuditRunnerTests(unittest.TestCase):
     def test_timer_permission_probe_is_cached_and_cleans_up(self):
         self.audit.rss_probe = None
         process = Mock(returncode=1)
-        process.communicate.return_value = ('', 'sysctl denied')
+        process.captured_output = ('', 'sysctl denied')
         with patch.object(self.audit, 'start', return_value=process) as start, \
                 patch('audit_runtime.stop_group') as stop:
             self.assertFalse(self.audit.rss_timer_available())
@@ -109,7 +114,7 @@ class AuditRunnerTests(unittest.TestCase):
 
     def test_timeout_always_cleans_up_the_owned_group(self):
         process = Mock()
-        process.communicate.side_effect = subprocess.TimeoutExpired('unused', 1)
+        process.wait_for_exit.side_effect = subprocess.TimeoutExpired('unused', 1)
         with patch.object(self.audit, 'start', return_value=process), \
                 patch('audit_runtime.stop_group') as stop:
             result = self.audit.run(['unused'], self.work)
@@ -118,16 +123,50 @@ class AuditRunnerTests(unittest.TestCase):
 
     def test_cleanup_targets_only_the_process_group_it_started(self):
         process = Mock(pid=12345)
-        with patch('audit_runtime.os.killpg') as kill:
-            stop_group(process)
-        kill.assert_called_once_with(12345, signal.SIGKILL)
-        process.communicate.assert_called_once()
+        stop_group(process)
+        process.finish.assert_called_once_with()
 
     def test_cleanup_reaps_parent_if_group_already_exited(self):
         process = Mock(pid=12345)
-        with patch('audit_runtime.os.killpg', side_effect=ProcessLookupError()):
-            stop_group(process)
-        process.communicate.assert_called_once()
+        stop_group(process)
+        process.finish.assert_called_once_with()
+
+
+@unittest.skipUnless(os.name == 'posix' and hasattr(os, 'waitid'), 'POSIX waitid required')
+class NativeCaptureTests(unittest.TestCase):
+    def test_escaped_output_descriptor_cannot_hold_audit_capture_open(self):
+        with tempfile.TemporaryDirectory(prefix='test-audit-native-') as temporary:
+            root = Path(temporary)
+            args = SimpleNamespace(engine=Path(sys.executable), quick=True, timeout=1,
+                                   report=root / 'report.json')
+            with patch.object(Audit, 'run', return_value={'code': 0, 'stdout': 'Test CPU'}):
+                audit = Audit(args, root)
+            read_lease, write_lease = os.pipe()
+            native = subprocess.Popen
+
+            def launch(*args, **kwargs):
+                return native(*args, pass_fds=(read_lease,), **kwargs)
+
+            # The test owns the lease, not a borrowed numeric PID. Closing it
+            # stops the escaped fixture without PID-tree snapshots or signals.
+            code = ('import os,select\n'
+                    'pid=os.fork()\n'
+                    'if pid == 0:\n'
+                    ' os.setsid()\n'
+                    f' select.select([{read_lease}],[],[],5)\n'
+                    'else:\n print("parent output",flush=True)\n')
+            try:
+                started = time.monotonic()
+                with patch('audit_runtime.subprocess.Popen', side_effect=launch):
+                    result = audit.run([sys.executable, '-c', code], root, os.environ.copy())
+                self.assertEqual(result['code'], 0)
+                self.assertEqual(result['stdout'], 'parent output\n')
+                self.assertLess(time.monotonic() - started, 2)
+                self.assertFalse(audit.owned)
+            finally:
+                os.close(write_lease)
+                os.close(read_lease)
+                audit.close()
 
 
 if __name__ == '__main__':

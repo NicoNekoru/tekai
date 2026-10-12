@@ -552,7 +552,8 @@ class StatisticsTests(unittest.TestCase):
             for path in captures:
                 path.touch()
             process = Mock(command_id=1, capture_paths=captures, launch_timing=[10] * 5)
-            process.wait.return_value = 0
+            from owned_process import ExitObservation
+            process.wait_for_exit.side_effect = lambda: ExitObservation(0, bench.time.monotonic())
             runner = bench.Supervisor(work, 1, 100)
             with patch.object(runner, 'remaining', return_value=1), patch.object(runner, 'start', return_value=process), \
                     patch.object(runner, 'stop'), patch.object(runner, 'captured', return_value=('ok', '', False)), \
@@ -571,7 +572,10 @@ class SupervisionTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='test-paired-supervisor-')
         self.work = Path(self.temporary.name).resolve()
-        self.runner = bench.Supervisor(self.work, 1, time.monotonic() + 5)
+        # Linux killpg accepts zombie-only groups, unlike Darwin's EPERM. Its
+        # conservative TERM grace remains outside command scores but inside
+        # the test's whole-run budget, including the 12-command reuse case.
+        self.runner = bench.Supervisor(self.work, 1, time.monotonic() + 60)
 
     def tearDown(self):
         self.runner.close()
@@ -620,7 +624,7 @@ class SupervisionTests(unittest.TestCase):
             path.touch()
         process = Mock(command_id=1, capture_paths=captures)
         process.launch_timing = [time.monotonic()] * 5
-        process.wait.side_effect = OSError('controlled wait failure')
+        process.wait_for_exit.side_effect = OSError('controlled wait failure')
         with patch.object(self.runner, 'start', return_value=process), patch.object(self.runner, 'stop'):
             with self.assertRaisesRegex(bench.BenchmarkError, 'Process waiter failed'):
                 self.runner.execute([], self.work, {})

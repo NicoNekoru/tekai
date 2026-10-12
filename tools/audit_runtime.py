@@ -23,6 +23,8 @@ import tempfile
 import time
 import zlib
 
+from owned_process import OwnedProcess
+
 REPO = Path(__file__).resolve().parent.parent
 CASES = ('lookup', 'lint', 'cache', 'edit-race', 'input-identity', 'source-boundaries', 'format-cache',
          'cancel', 'preview', 'pdf', 'png', 'deep-inputs', 'aux-concurrency', 'expansion')
@@ -32,14 +34,12 @@ SEARCH_VARIABLES = (
     'TEXFONTMAPS', 'PKFONTS', 'GFFONTS', 'TEXFORMATS', 'TEXMFHOME', 'TEXMFLOCAL',
     'TEKAI_ENGINE_FORMATS',
 )
+MAX_STDOUT_BYTES = 1024 * 1024
+LOG_TAIL_BYTES = 8192
 
 
 def stop_group(process):
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    process.communicate()
+    process.finish()
 
 
 def pdf_bytes(objects):
@@ -64,11 +64,13 @@ class Audit:
     def __init__(self, args, work):
         self.args = args
         self.work = work
+        self.counter, self.owned = 0, {}
         machine = platform.machine()
         try:
-            machine = subprocess.check_output(
-                ['sysctl', '-n', 'machdep.cpu.brand_string'], text=True,
-                stderr=subprocess.DEVNULL, timeout=2).strip() or machine
+            metadata = self.run(['/usr/sbin/sysctl', '-n', 'machdep.cpu.brand_string'],
+                                work, env=os.environ.copy(), timeout=2)
+            if metadata.get('code') == 0 and not metadata.get('stdout_truncated'):
+                machine = metadata['stdout'].strip() or machine
         except (OSError, subprocess.SubprocessError):
             # CPU model metadata must not prevent scoped fixture diagnostics.
             pass
@@ -102,11 +104,51 @@ class Audit:
                     TEKAI_FORMAT_CACHE=str(cache / 'format'), **values)
 
     def start(self, command, project, env, measured=False):
+        owner = OwnedProcess()
         if measured:
             command = ['/usr/bin/time', '-l', *command]
-        return subprocess.Popen(list(map(str, command)), cwd=project, env=env,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, start_new_session=True)
+        self.counter += 1
+        prefix = self.work / f'command-{self.counter:04d}'
+        paths = prefix.with_suffix('.stdout'), prefix.with_suffix('.stderr')
+        process = None
+        with paths[0].open('wb') as stdout, paths[1].open('wb') as stderr:
+            try:
+                process = subprocess.Popen(list(map(str, command)), cwd=project, env=env,
+                                           stdout=stdout, stderr=stderr, start_new_session=True)
+            finally:
+                if process is not None:
+                    try:
+                        owner.attach(process)
+                        owner.capture_paths = paths
+                    finally:
+                        owner._process = process
+                        self.owned[process.pid] = owner
+        return owner
+
+    def stop(self, process):
+        stop_group(process)
+        self.owned.pop(process.pid, None)
+
+    def close(self):
+        errors = []
+        for process in list(self.owned.values()):
+            try:
+                self.stop(process)
+            except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+                errors.append(str(error))
+        if errors:
+            raise RuntimeError('Owned process cleanup failed: ' + ', '.join(errors))
+
+    @staticmethod
+    def captured(process):
+        stdout_path, stderr_path = process.capture_paths
+        with stdout_path.open('rb') as handle:
+            stdout = handle.read(MAX_STDOUT_BYTES + 1)
+        with stderr_path.open('rb') as handle:
+            handle.seek(max(0, stderr_path.stat().st_size - LOG_TAIL_BYTES))
+            stderr = handle.read(LOG_TAIL_BYTES)
+        return stdout[:MAX_STDOUT_BYTES].decode('utf-8', errors='replace'), \
+            stderr.decode('utf-8', errors='replace'), len(stdout) > MAX_STDOUT_BYTES
 
     def rss_timer_available(self):
         if self.rss_probe is None:
@@ -116,25 +158,27 @@ class Audit:
                 self.rss_probe = {'available': False, 'stderr_tail': str(error)}
                 return False
             try:
-                _, stderr = process.communicate(timeout=2)
+                process.wait_for_exit(timeout=2)
+                _, stderr, _ = self.captured(process)
                 available = process.returncode == 0 and 'maximum resident set size' in stderr
                 self.rss_probe = {'available': available, 'stderr_tail': stderr[-1000:]}
             except subprocess.TimeoutExpired:
                 self.rss_probe = {'available': False, 'stderr_tail': 'System timer probe timed out'}
             finally:
-                stop_group(process)
+                self.stop(process)
         return self.rss_probe['available']
 
-    def run(self, command, project, env=None, measured=False):
+    def run(self, command, project, env=None, measured=False, timeout=None):
         use_timer = measured and self.rss_timer_available()
         started = time.monotonic()
         process = self.start(command, project, env or self.environment(project), use_timer)
         try:
-            stdout, stderr = process.communicate(timeout=self.args.timeout)
+            process.wait_for_exit(timeout=self.args.timeout if timeout is None else timeout)
+            stdout, stderr, truncated = self.captured(process)
             maximum = re.search(r'(\d+)\s+maximum resident set size', stderr)
-            result = {'seconds': time.monotonic() - started, 'code': process.returncode,
+            result = {'seconds': process.completion - started, 'code': process.returncode,
                       'peak_mib': int(maximum[1]) / 1048576 if maximum else None,
-                      'stdout': stdout, 'stderr_tail': stderr[-2000:]}
+                      'stdout': stdout, 'stderr_tail': stderr[-2000:], 'stdout_truncated': truncated}
             if measured:
                 result['rss_available'] = maximum is not None
                 result['status_source'] = 'timer' if use_timer else 'command'
@@ -144,15 +188,17 @@ class Audit:
         except subprocess.TimeoutExpired:
             return {'seconds': time.monotonic() - started, 'timeout': True}
         finally:
-            stop_group(process)
+            self.stop(process)
 
     def build_command(self, project, *extra):
         return [self.args.engine, 'build', project / 'main.tex', '--out-dir',
                 project / 'build', '--quiet', '--report-json', *extra]
 
     def text(self, project):
-        return subprocess.check_output([self.pdftext, str(project / 'build/main.pdf'), '-'],
-                                       text=True, timeout=self.args.timeout)
+        result = self.run([self.pdftext, project / 'build/main.pdf', '-'], project)
+        if result.get('code') != 0 or result.get('stdout_truncated'):
+            raise RuntimeError(f'PDF text extraction failed: {result}')
+        return result['stdout']
 
     def needs_pdftext(self, case):
         if self.pdftext is not None:
@@ -162,16 +208,17 @@ class Audit:
 
     def process_inspection_available(self, case):
         try:
-            subprocess.check_output(['ps', '-p', str(os.getpid()), '-o', 'pid='],
-                                    text=True, stderr=subprocess.PIPE, timeout=2)
+            result = self.run(['ps', '-p', str(os.getpid()), '-o', 'pid='], self.work, timeout=2)
+            if result.get('code') != 0 or result.get('stdout_truncated'):
+                raise RuntimeError(str(result))
             return True
-        except (OSError, subprocess.SubprocessError) as error:
+        except (OSError, subprocess.SubprocessError, RuntimeError) as error:
             self.record(case, skipped=True, reason=f'Process inspection is unavailable: {error}')
             return False
 
     @staticmethod
     def parsed(result):
-        if result.get('code') != 0:
+        if result.get('code') != 0 or result.get('stdout_truncated'):
             raise RuntimeError(f'Fixture build failed: {result}')
         return json.loads(result['stdout'])
 
@@ -286,12 +333,14 @@ class Audit:
         try:
             deadline = time.monotonic() + self.args.timeout
             while not (project / 'build/audit.marker').exists():
-                if time.monotonic() > deadline or process.poll() is not None:
+                if time.monotonic() > deadline or process.poll_exit() is not None:
                     raise RuntimeError('Edit-race marker did not appear')
                 time.sleep(0.002)
             (project / 'main.tex').write_text(source.replace('OLD-CONTENT', 'NEW-CONTENT'))
-            stdout, stderr = process.communicate(timeout=self.args.timeout)
-            first = {'code': process.returncode, 'stdout': stdout, 'stderr_tail': stderr, 'timeout': False}
+            process.wait_for_exit(timeout=self.args.timeout)
+            stdout, stderr, truncated = self.captured(process)
+            first = {'code': process.returncode, 'stdout': stdout, 'stderr_tail': stderr,
+                     'stdout_truncated': truncated, 'timeout': False}
             generation_rejected = (
                 f'inputs or search directories changed during compilation at {project / "main.tex"}.' in stderr
                 and 'The PDF may be outdated, rerun the build' in stderr)
@@ -305,7 +354,7 @@ class Audit:
                         next_build=next_build, next_text=next_text,
                         stale_cache_hit=next_build['skipped'] and 'OLD-CONTENT' in next_text)
         finally:
-            stop_group(process)
+            self.stop(process)
 
     def cancel(self):
         if not self.process_inspection_available('cancel'):
@@ -317,8 +366,11 @@ class Audit:
         child = None
         try:
             deadline = time.monotonic() + self.args.timeout
-            while child is None and time.monotonic() < deadline and process.poll() is None:
-                lines = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,command='], text=True).splitlines()
+            while child is None and time.monotonic() < deadline and process.poll_exit() is None:
+                inspected = self.run(['ps', '-axo', 'pid=,ppid=,command='], self.work)
+                if inspected.get('code') != 0 or inspected.get('stdout_truncated'):
+                    raise RuntimeError('Cancellation process inspection failed')
+                lines = inspected['stdout'].splitlines()
                 for line in lines:
                     fields = line.strip().split(None, 2)
                     if len(fields) == 3 and fields[1] == str(process.pid) and '__tekai-engine' in fields[2]:
@@ -329,14 +381,16 @@ class Audit:
             if child is None:
                 raise RuntimeError('Cancellation fixture did not start an engine child')
             process.terminate()
-            process.communicate(timeout=self.args.timeout)
+            process.wait_for_exit(timeout=self.args.timeout)
             time.sleep(0.5)
-            snapshot = subprocess.run(['ps', '-p', str(child), '-o', 'pid=,ppid=,%cpu=,stat=,command='],
-                                      capture_output=True, text=True, check=False).stdout.strip()
+            inspected = self.run(['ps', '-p', str(child), '-o', 'pid=,ppid=,%cpu=,stat=,command='], self.work)
+            if inspected.get('stdout_truncated') or inspected.get('timeout') or inspected.get('code') not in (0, 1):
+                raise RuntimeError('Cancellation child inspection failed')
+            snapshot = inspected['stdout'].strip()
             self.record('cancel', parent_code=process.returncode,
                         child_survived=bool(snapshot), child_snapshot=snapshot)
         finally:
-            stop_group(process)
+            self.stop(process)
 
     def input_identity(self):
         if not self.needs_pdftext('input-identity'):
@@ -577,8 +631,11 @@ class Audit:
             started = time.monotonic()
             try:
                 deadline = started + self.args.timeout
-                while process.poll() is None and time.monotonic() < deadline:
-                    lines = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,command='], text=True).splitlines()
+                while process.poll_exit() is None and time.monotonic() < deadline:
+                    inspected = self.run(['ps', '-axo', 'pid=,ppid=,command='], self.work)
+                    if inspected.get('code') != 0 or inspected.get('stdout_truncated'):
+                        raise RuntimeError('Auxiliary process inspection failed')
+                    lines = inspected['stdout'].splitlines()
                     active = 0
                     for line in lines:
                         fields = line.strip().split(None, 2)
@@ -586,15 +643,16 @@ class Audit:
                             active += 1
                     peak = max(peak, active)
                     time.sleep(0.01)
-                if process.poll() is None:
+                if process.poll_exit() is None:
                     self.record('aux-concurrency', jobs=count, peak_converters=peak, timeout=True)
                 else:
-                    stdout, stderr = process.communicate()
+                    stdout, stderr, truncated = self.captured(process)
                     self.record('aux-concurrency', jobs=count, peak_converters=peak,
-                                cpu_count=os.cpu_count(), seconds=time.monotonic() - started,
-                                code=process.returncode, stdout=stdout, stderr_tail=stderr[-2000:])
+                                cpu_count=os.cpu_count(), seconds=process.completion - started,
+                                code=process.returncode, stdout=stdout, stderr_tail=stderr[-2000:],
+                                stdout_truncated=truncated)
             finally:
-                stop_group(process)
+                self.stop(process)
 
     def expansion(self):
         binary = REPO / 'target/release/examples/audit_expansion'
@@ -635,13 +693,16 @@ def main():
         audit = Audit(args, Path(temporary).resolve())
         # Bundle extraction is outside the timing samples. Keep every cache
         # writable inside this fixture, never in the user's shared cache.
-        warmup = audit.project('warmup', '\\documentclass{article}\n'
-                              '\\begin{document}Warmup\\end{document}\n')
-        result = audit.run(audit.build_command(warmup, '--once'), warmup)
-        if result.get('code') != 0:
-            raise RuntimeError(f'Isolated runtime warmup failed: {result}')
-        for case in args.case or CASES:
-            getattr(audit, case.replace('-', '_'))()
+        try:
+            warmup = audit.project('warmup', '\\documentclass{article}\n'
+                                  '\\begin{document}Warmup\\end{document}\n')
+            result = audit.run(audit.build_command(warmup, '--once'), warmup)
+            if result.get('code') != 0:
+                raise RuntimeError(f'Isolated runtime warmup failed: {result}')
+            for case in args.case or CASES:
+                getattr(audit, case.replace('-', '_'))()
+        finally:
+            audit.close()
 
 
 if __name__ == '__main__':

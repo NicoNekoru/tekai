@@ -27,6 +27,7 @@ import time
 import zlib
 
 from audit_runtime import Audit, CASES as AUDIT_CASES, png_chunk
+from owned_process import OwnedProcess
 from runtime_fixtures import document, pad, png
 
 REPO = Path(__file__).resolve().parent.parent
@@ -645,6 +646,7 @@ class PerformanceCI(Audit):
         print(f"{result['status']}: {case}", flush=True)
 
     def start(self, command, project, env, measured=False):
+        owner = OwnedProcess()
         self.counter += 1
         prefix = self.work / f'command-{self.counter:04d}'
         stdout_path, stderr_path = prefix.with_suffix('.stdout'), prefix.with_suffix('.stderr')
@@ -667,33 +669,31 @@ class PerformanceCI(Audit):
                     # This does not cover an interruption inside Popen before
                     # it returns a process to this caller.
                     try:
-                        process.__dict__.update(cleanup_attributes)
-                        process.observe = True
+                        owner.attach(process)
+                        owner.__dict__.update(cleanup_attributes)
+                        owner.observe = True
                     finally:
-                        self.owned[process.pid] = process
+                        # Owner locks/support were prepared before Popen. Even
+                        # an interrupted attach keeps the returned native child.
+                        owner._process = process
+                        self.owned[process.pid] = owner
             popen_return = time.monotonic()
         capture_files_closed = time.monotonic()
         # Diagnostic parent boundaries, never substituted for scored timings.
-        process.launch_timing = [capture_start, capture_files_open, popen_start,
-                                 popen_return, capture_files_closed]
-        process.started_at = time.monotonic()
-        return process
+        owner.launch_timing = [capture_start, capture_files_open, popen_start,
+                               popen_return, capture_files_closed]
+        owner.started_at = time.monotonic()
+        return owner
 
     def stop(self, process):
         if self.owned.get(process.pid) is not process:
             return
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        finally:
-            # Files replace pipes, so an orphan cannot keep communicate open.
-            process.wait(timeout=5)
+        process.finish()
         self.owned.pop(process.pid)
         if getattr(process, 'observe', False):
             peak = self.rss(self.captured(process)[1])
             self.report['observations'].append({'command_id': process.command_id,
-                'command': process.invocation, 'elapsed_seconds': time.monotonic() - process.started_at,
+                'command': process.invocation, 'elapsed_seconds': process.completion - process.started_at,
                 'peak_rss_mib': peak, 'rss_available': peak is not None,
                 'rss_unavailable_reason': None if peak is not None else self.timer_reason,
                 'return_code': None if process.timed_out else process.returncode,
@@ -705,7 +705,7 @@ class PerformanceCI(Audit):
         for process in list(self.owned.values()):
             try:
                 self.stop(process)
-            except (OSError, subprocess.SubprocessError) as error:
+            except (OSError, subprocess.SubprocessError, RuntimeError) as error:
                 errors.append(str(error))
         if errors:
             raise RuntimeError('Owned process cleanup failed: ' + ', '.join(errors))
@@ -752,7 +752,7 @@ class PerformanceCI(Audit):
         result = {'command_id': process.command_id}
         process.observe = observe
         try:
-            process.wait(timeout=timeout or self.args.timeout)
+            process.wait_for_exit(timeout=timeout or self.args.timeout)
         except subprocess.TimeoutExpired:
             result['timeout'] = True
             process.timed_out = True
@@ -1017,16 +1017,16 @@ class PerformanceCI(Audit):
         ready = False
         try:
             deadline = started + self.args.timeout
-            while process.poll() is None and time.monotonic() < deadline:
+            while process.poll_exit() is None and time.monotonic() < deadline:
                 _, stderr, _ = self.captured(process)
                 ready = bool(re.search(r'^(?:built|cached) .*\.tekai-hmr-warm[/\\]main\.pdf', stderr, re.M))
                 if ready:
                     break
                 time.sleep(0.02)
-            self.record('unicode-preview', prewarmed=ready, alive=process.poll() is None,
+            self.record('unicode-preview', prewarmed=ready, alive=process.poll_exit() is None,
                         stderr_tail=self.captured(process)[1])
         finally:
-            process.timed_out = not ready and process.poll() is None
+            process.timed_out = not ready and process.poll_exit() is None
             self.stop(process)
 
     def edit_race(self):
@@ -1044,11 +1044,11 @@ class PerformanceCI(Audit):
         try:
             deadline = time.monotonic() + self.args.timeout
             while not (project / 'build/audit.marker').is_file():
-                if process.poll() is not None or time.monotonic() >= deadline:
+                if process.poll_exit() is not None or time.monotonic() >= deadline:
                     raise RuntimeError('Edit-race input-consumption marker did not appear')
                 time.sleep(0.002)
             (project / 'main.tex').write_text(source.replace('OLD-CONTENT', 'NEW-CONTENT'), encoding='utf-8')
-            process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            process.wait_for_exit(timeout=max(0.001, deadline - time.monotonic()))
             stdout, stderr, truncated = self.captured(process)
             first = {'code': process.returncode, 'stdout': stdout, 'stderr_tail': stderr,
                      'stdout_truncated': truncated, 'timeout': False}
@@ -1081,7 +1081,7 @@ class PerformanceCI(Audit):
         try:
             deadline = time.monotonic() + self.args.timeout
             child = None
-            while process.poll() is None and time.monotonic() < deadline:
+            while process.poll_exit() is None and time.monotonic() < deadline:
                 child = next((row for row in self.snapshot(process)
                               if row['ppid'] == process.pid and '__tekai-engine' in row['command']), None)
                 if child:
@@ -1090,7 +1090,7 @@ class PerformanceCI(Audit):
             if child is None:
                 raise RuntimeError('Cancellation fixture did not start an engine child')
             process.terminate()
-            process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            process.wait_for_exit(timeout=max(0.001, deadline - time.monotonic()))
             # The brief grace period measures cancellation, not compiler speed.
             time.sleep(0.2)
             survivors = [row for row in self.snapshot(process, observed_child=child)
@@ -1131,10 +1131,10 @@ class PerformanceCI(Audit):
         peak = 0
         try:
             deadline = time.monotonic() + self.args.timeout
-            while process.poll() is None and time.monotonic() < deadline:
+            while process.poll_exit() is None and time.monotonic() < deadline:
                 peak = max(peak, len(list(markers.glob('active-*'))))
                 time.sleep(0.01)
-            timed_out = process.poll() is None
+            timed_out = process.poll_exit() is None
             process.timed_out = timed_out
             stdout, stderr, _ = self.captured(process)
             self.record('aux-concurrency', jobs=count, peak_converters=peak,
@@ -1219,7 +1219,7 @@ class PerformanceCI(Audit):
                                          project, self.environment(project))
                 deadline = time.monotonic() + self.args.timeout
                 matched = False
-                while process.poll() is None and time.monotonic() < deadline:
+                while process.poll_exit() is None and time.monotonic() < deadline:
                     stderr = self.captured(process)[1]
                     if watch_ready(stderr, previous_messages, index == 0) and (project / 'build/main.pdf').is_file():
                         result = self.run([self.pdftext, project / 'build/main.pdf', '-'], project)
@@ -1230,7 +1230,7 @@ class PerformanceCI(Audit):
                             break
                     time.sleep(0.05)
                 if not matched:
-                    process.timed_out = process.poll() is None
+                    process.timed_out = process.poll_exit() is None
                     break
                 completed += 1
                 if self.ps:
@@ -1239,7 +1239,7 @@ class PerformanceCI(Audit):
                         self.report.setdefault('watch_rss_observations', []).append(
                             {'edit': index, 'rss_mib': int(result['stdout'].strip()) / 1024})
             self.record('watch-retention', requested_edits=requested, completed_edits=completed,
-                        alive=process.poll() is None, retention_gate=False,
+                        alive=process.poll_exit() is None, retention_gate=False,
                         last_pdf_text=last_text, last_pdf_text_error=last_text_error,
                         stderr_tail=self.captured(process)[1])
         finally:
