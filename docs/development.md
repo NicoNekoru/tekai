@@ -735,8 +735,8 @@ is research history. It is not the supported architecture.
 2. Run the full Rust, help, and rendered-PDF gates above.
    Check the advertised minimum Rust toolchain. Preserve local optional-test
    skip evidence and the final candidate's full paired comparison on both
-   hosted architectures. Keep inconclusive performance blocking unless an
-   explicit release decision accepts and publishes that qualification.
+   hosted architectures. Failed and inconclusive performance results block
+   release.
 3. Confirm every commit subject is a single printable ASCII line.
 4. Tag `v<version>` on `main` and create the matching GitHub release.
 5. Update `Formula/tekai.rb` in `NicoNekoru/homebrew-tap` with the release URL
