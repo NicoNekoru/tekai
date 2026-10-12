@@ -517,8 +517,10 @@ time.
 
 ### Separate diagnostic profiling
 
-Full CI profiles both original executables after uploading the primary gate
-evidence. This is a fixed profiling pass with eight chronological repetitions per
+After a failed full paired CI comparison, a separate step profiles both original
+executables if their builds and comparison metadata succeeded. It runs after
+uploading the primary gate evidence. Passing full runs skip this step.
+This is a fixed profiling pass with eight chronological repetitions per
 artifact, slot and workload, a 30-second command limit and a 600-second total
 budget. It uses separate fixtures, binary copies, homes and caches. Instrumented
 timings cannot enter calibration, statistical samples or the primary decision.
@@ -541,8 +543,9 @@ Timer text shares the child's stderr channel and remains untrusted. Truncated
 or duplicate resource and phase records cannot establish valid measurements.
 
 Candidate processes can opt into a bounded `TEKAI_PROFILE ` JSON stderr record
-with `TEKAI_DIAGNOSTIC_PROFILE=1`. Protocol 2 has 18 timed phases, two explicitly
-unmeasured native phases and 12 fixed route counters, within a 16-KiB line
+with `TEKAI_DIAGNOSTIC_PROFILE=1`. Current protocol 4 retains protocol 2's
+18 timed phases, two explicitly unmeasured native phases and 12 fixed route
+counters, within a 16-KiB line
 bound. The profiler accepts legacy protocol 1 and marks its finer phases and
 counters unavailable. Phase durations are diagnostic and untrusted,
 just like optional build timing. Older baseline binaries may not support the
@@ -588,7 +591,8 @@ phases have null durations. CLI preparation has a separate timer outside the
 library elapsed time. Format loading remains part of the broad engine-body
 segment rather than a separately measured phase.
 
-Full CI also records a bounded, candidate-only image-route control. The public
+That post-failure profiling pass also records a bounded, candidate-only
+image-route control. The public
 engine command and private engine worker use the same executable copy and the
 original image fixture in each of two replicas. Eight pairs per replica balance
 both launch orders. These commands have no resource wrapper or profiling opt-in.

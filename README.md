@@ -143,10 +143,11 @@ opt-in, unsupported auxiliary workflows fail without launching a program.
 `--shell-escape` and external engines/runners are separate explicit opt-ins.
 
 Scheduled engine and auxiliary-tool jobs are noninteractive and receive null
-stdin. Direct engine CLI invocation transfers a foreground terminal to its
-supervised worker, propagates job suspension and continuation, and restores
-terminal ownership when the worker finishes. CLI cancellation cleans the owned
-worker group, including ordinary nested shell and PGF commands.
+stdin. When the CLI already owns the foreground terminal, direct engine
+invocation leases it to the supervised worker, propagates job suspension and
+continuation, and restores terminal ownership when the worker finishes. CLI
+cancellation cleans the owned worker group, including ordinary nested shell
+and PGF commands.
 
 The engine's Rust embedding API owns state and resources per invocation.
 Repeated calls and independent threads do not share mutable engine state.
