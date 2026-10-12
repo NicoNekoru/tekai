@@ -28,7 +28,7 @@ class BuildTests(unittest.TestCase):
         self.environment = {
             'CARGO_INCREMENTAL': '0', 'CARGO_BUILD_JOBS': '2', 'RUSTUP_TOOLCHAIN': 'pinned-toolchain',
             'CARGO_PROFILE_RELEASE_CODEGEN_UNITS': '1', 'CARGO_PROFILE_RELEASE_LTO': 'fat',
-            'CARGO_PROFILE_RELEASE_PANIC': 'abort',
+            'CARGO_PROFILE_RELEASE_PANIC': 'unwind',
         }
         self.session = self.prepare()
 
@@ -93,12 +93,17 @@ class BuildTests(unittest.TestCase):
         self.artifact(b'candidate bytes')
         self.finish('candidate')
         metadata = self.session.metadata()
+        self.assertEqual(metadata['release_settings'],
+                         {'codegen_units': 1, 'lto': 'fat', 'panic': 'unwind'})
         self.assertEqual(build.sha256(self.frozen / 'release' / 'tekai'), expected)
         for role in ('baseline', 'candidate'):
             self.assertEqual(metadata[role]['build_workspace'], str(self.workspace))
             self.assertEqual(metadata[role]['build_target_dir'], str(self.target))
             self.assertEqual(metadata[role]['build_artifact_path'], str(self.target / 'release' / 'tekai'))
             self.assertEqual(metadata[role]['build_command'], build.COMMAND)
+            self.assertEqual(metadata[role]['release_settings'], metadata['release_settings'])
+            self.assertEqual(metadata[role]['build_environment']['CARGO_PROFILE_RELEASE_PANIC'],
+                             'unwind')
             self.assertEqual(metadata[role]['expected_version'], '0.5.0')
             self.assertEqual(metadata[role]['package_manifest_sha256'], build.sha256(self.workspace / 'Cargo.toml'))
         self.assertEqual(metadata['baseline']['artifact_path'], str(self.frozen / 'release' / 'tekai'))
@@ -380,6 +385,53 @@ class BuildTests(unittest.TestCase):
         environment = dict(self.environment, CARGO_PROFILE_RELEASE_LTO='thin')
         with self.assertRaises(ValueError):
             self.start(environment=environment)
+
+    def test_both_start_roles_require_explicit_unwind_before_claiming_a_build(self):
+        for role in ('baseline', 'candidate'):
+            if role == 'candidate':
+                self.baseline_ready()
+            for panic in ('abort', '', 'UNWIND', None, True):
+                with self.subTest(role=role, panic=panic):
+                    environment = dict(self.environment, CARGO_PROFILE_RELEASE_PANIC=panic,
+                                       CC=build.NO_C_COMPILER, CXX=build.NO_C_COMPILER)
+                    with self.assertRaisesRegex(ValueError, 'Release settings differ'):
+                        self.start(role, environment=environment)
+                    self.assertFalse(self.session.record(role, 'start').exists())
+                    self.assertFalse(self.target.exists())
+
+    def test_final_metadata_rejects_abort_profile_in_either_artifact_record(self):
+        self.both_ready()
+        for role in ('baseline', 'candidate'):
+            path = self.session.record(role, 'finished')
+            original = path.read_text(encoding='utf-8')
+            with self.subTest(role=role):
+                record = json.loads(original)
+                record['release_settings']['panic'] = 'abort'
+                path.write_text(json.dumps(record), encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'artifact/provenance differs'):
+                    self.session.metadata()
+                path.write_text(original, encoding='utf-8')
+
+    def test_final_metadata_requires_unwind_even_when_both_environments_match(self):
+        self.both_ready()
+        paths = {role: self.session.record(role, 'finished') for role in ('baseline', 'candidate')}
+        original = {role: path.read_text(encoding='utf-8') for role, path in paths.items()}
+        for roles in (('baseline',), ('candidate',), ('baseline', 'candidate')):
+            for panic in ('abort', None):
+                with self.subTest(roles=roles, panic=panic):
+                    for role, path in paths.items():
+                        record = json.loads(original[role])
+                        if role in roles:
+                            if panic is None:
+                                record['build_environment'].pop('CARGO_PROFILE_RELEASE_PANIC')
+                            else:
+                                record['build_environment']['CARGO_PROFILE_RELEASE_PANIC'] = panic
+                        path.write_text(json.dumps(record), encoding='utf-8')
+                    with self.assertRaisesRegex(ValueError, 'Release settings differ'):
+                        self.session.metadata()
+        for role, path in paths.items():
+            path.write_text(original[role], encoding='utf-8')
+        self.assertEqual(self.session.metadata()['release_settings']['panic'], 'unwind')
 
     def test_prepare_rejects_non_owned_paths_and_preserves_existing_records(self):
         original = (self.report / 'build-session.json').read_bytes()

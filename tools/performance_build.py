@@ -2,6 +2,7 @@
 """Owned target rotation and provenance for same-path CI builds. No subprocesses."""
 
 import argparse
+from collections.abc import Mapping
 import hashlib
 import json
 import os
@@ -11,7 +12,7 @@ import sys
 
 COMMAND = 'cargo build --release --locked --bin tekai --no-default-features --timings'
 NO_C_COMPILER = '/usr/bin/false'
-SETTINGS = {'codegen_units': 1, 'lto': 'fat', 'panic': 'abort'}
+SETTINGS = {'codegen_units': 1, 'lto': 'fat', 'panic': 'unwind'}
 BUILD_ENV = ('RUSTUP_TOOLCHAIN', 'CARGO_INCREMENTAL', 'CARGO_BUILD_JOBS',
              'CARGO_PROFILE_RELEASE_CODEGEN_UNITS', 'CARGO_PROFILE_RELEASE_LTO',
              'CARGO_PROFILE_RELEASE_PANIC', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS')
@@ -24,6 +25,16 @@ VERSION = re.compile(r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def require_release_settings(environment):
+    # Matching two abort-profile records cannot make ordinary engine exits
+    # recoverable. Require the active profile independently for each side.
+    require(isinstance(environment, Mapping)
+            and environment.get('CARGO_PROFILE_RELEASE_CODEGEN_UNITS') == '1'
+            and environment.get('CARGO_PROFILE_RELEASE_LTO') == 'fat'
+            and environment.get('CARGO_PROFILE_RELEASE_PANIC') == 'unwind'
+            and environment.get('CARGO_INCREMENTAL') == '0', 'Release settings differ')
 
 
 def read(path):
@@ -140,10 +151,7 @@ class Session:
             require(read(self.report / 'target-isolation.json').get('candidate_target_fresh') is True,
                     'Baseline target isolation did not complete')
         require(isinstance(toolchain, str) and bool(toolchain.strip()), 'Missing actual toolchain')
-        require(environment.get('CARGO_PROFILE_RELEASE_CODEGEN_UNITS') == '1'
-                and environment.get('CARGO_PROFILE_RELEASE_LTO') == 'fat'
-                and environment.get('CARGO_PROFILE_RELEASE_PANIC') == 'abort'
-                and environment.get('CARGO_INCREMENTAL') == '0', 'Release settings differ')
+        require_release_settings(environment)
         compiler_enforcement = {'required': role == 'candidate',
                                 'variables': {key: environment.get(key, '') for key in ('CC', 'CXX')}}
         if role == 'candidate':
@@ -246,6 +254,7 @@ class Session:
                     and HASH.fullmatch(record['package_manifest_sha256']) is not None
                     and self.executable_hash(target) == record.get('artifact_sha256'),
                     'Current ' + role + ' artifact/provenance differs')
+            require_release_settings(record.get('build_environment'))
             if role == 'candidate':
                 require(record['compiler_enforcement'].get('variables')
                         == {'CC': NO_C_COMPILER, 'CXX': NO_C_COMPILER},

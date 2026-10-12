@@ -238,7 +238,9 @@ jobs:
       PROPTEST_CASES: ${{ (inputs.profile == 'full' || (inputs.profile == '' && github.event_name == 'schedule')) && '512' || '128' }}
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
       CARGO_PROFILE_RELEASE_LTO: fat
-      CARGO_PROFILE_RELEASE_PANIC: abort
+      # Ordinary engine exits unwind to the invocation boundary and run owned
+      # teardown. Force the same recoverable profile for both compared builds.
+      CARGO_PROFILE_RELEASE_PANIC: unwind
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
