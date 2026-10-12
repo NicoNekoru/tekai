@@ -62,10 +62,15 @@ fn direct_runner_builds_pgf_externalized_figures_from_makefile() {
     assert!(fls.contains("main-figure0.pdf"), "{fls}");
     assert!(fls.contains("main-figure1.pdf"), "{fls}");
 
-    let cached = build(&options).expect("cached PGF externalization build failed");
-    assert!(cached.skipped, "{cached:#?}");
-    assert_eq!(cached.tex_runs, 0, "{cached:#?}");
-    assert_eq!(cached.external_runs, 0, "{cached:#?}");
+    let rebuilt = build(&options).expect("PGF externalization rebuild failed");
+    // The figure cache remains reusable; generated-and-consumed files still
+    // prevent claiming a fresh whole-document cache without read receipts.
+    assert!(!rebuilt.skipped, "{rebuilt:#?}");
+    assert_eq!(rebuilt.tex_runs, 1, "{rebuilt:#?}");
+    assert_eq!(rebuilt.external_runs, 0, "{rebuilt:#?}");
+    assert!(!out_dir.join(".tekai-main.state.json").exists());
+    assert!(out_dir.join("main-figure0.pdf").is_file());
+    assert!(out_dir.join("main-figure1.pdf").is_file());
 
     let _ = fs::remove_dir_all(root);
 }
@@ -98,10 +103,12 @@ fn direct_runner_forces_pgf_list_and_make_without_shell_escape() {
     let fls = fs::read_to_string(out_dir.join("main.fls")).expect("failed to read recorder file");
     assert!(fls.contains("main-figure0.pdf"), "{fls}");
 
-    let cached = build(&options).expect("cached default PGF externalization build failed");
-    assert!(cached.skipped, "{cached:#?}");
-    assert_eq!(cached.tex_runs, 0, "{cached:#?}");
-    assert_eq!(cached.external_runs, 0, "{cached:#?}");
+    let rebuilt = build(&options).expect("default PGF externalization rebuild failed");
+    assert!(!rebuilt.skipped, "{rebuilt:#?}");
+    assert_eq!(rebuilt.tex_runs, 1, "{rebuilt:#?}");
+    assert_eq!(rebuilt.external_runs, 0, "{rebuilt:#?}");
+    assert!(!out_dir.join(".tekai-main.state.json").exists());
+    assert!(out_dir.join("main-figure0.pdf").is_file());
 
     let _ = fs::remove_dir_all(root);
 }

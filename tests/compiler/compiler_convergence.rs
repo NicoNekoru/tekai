@@ -68,10 +68,7 @@ See Figure~\ref{fig:box}.
 #[test]
 fn direct_runner_tracks_generated_output_changes_even_when_log_is_silent() {
     let _test_guard = super::lock();
-    if !command_available("pdflatex") {
-        eprintln!("skipping convergence test; pdflatex is not available");
-        return;
-    }
+    let _environment = super::compiler_cache::bundled_environment();
 
     let root = unique_temp_dir("tekai-convergence-test");
     fs::create_dir_all(&root).expect("failed to create test directory");
@@ -80,11 +77,21 @@ fn direct_runner_tracks_generated_output_changes_even_when_log_is_silent() {
     fs::write(&main, SILENT_GENERATED_CHANGE_DOC).expect("failed to write test document");
 
     let first = build(&options(&main, &out_dir)).expect("initial build failed");
-    assert_eq!(first.tex_runs, 3, "{first:#?}");
+    let log = fs::read_to_string(out_dir.join("main.log")).unwrap();
+    assert_eq!(first.tex_runs, 3, "{first:#?}\n{log}");
     assert!(!first.skipped, "{first:#?}");
 
-    let cached = build(&options(&main, &out_dir)).expect("cached build failed");
-    assert!(cached.skipped, "{cached:#?}");
+    // This stage file is generated and read back by TeX. Without consumed-byte
+    // receipts, a successful settled build must not publish a fresh cache.
+    let rebuilt = build(&options(&main, &out_dir)).expect("settled rebuild failed");
+    assert!(!rebuilt.skipped, "{rebuilt:#?}");
+    assert_eq!(rebuilt.tex_runs, 1, "{rebuilt:#?}");
+    assert!(!out_dir.join(".tekai-main.state.json").exists());
+    assert_eq!(
+        fs::read_to_string(out_dir.join("main.stage")).unwrap(),
+        "\\gdef \\stagevalue{2}\n"
+    );
+    assert!(out_dir.join("main.pdf").is_file());
 
     let _ = fs::remove_dir_all(root);
 }

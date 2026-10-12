@@ -371,7 +371,10 @@ impl BuildGeneration {
         Ok(self.validation_failure(inputs)?.is_none())
     }
 
-    fn validation_failure(&self, inputs: &[FileFingerprint]) -> Result<Option<String>> {
+    fn validation_failure<'a>(
+        &self,
+        inputs: impl IntoIterator<Item = &'a FileFingerprint>,
+    ) -> Result<Option<String>> {
         for input in inputs {
             if is_virtual_fingerprint_path(&input.path) {
                 if !input_fingerprint_is_fresh(input)? {
@@ -418,6 +421,15 @@ impl BuildGeneration {
             for input in dependencies {
                 let stable =
                     if let Some(path) = input.path.strip_prefix(LOOKUP_DIRECTORY_PATH_PREFIX) {
+                        if input
+                            .metadata
+                            .is_none_or(|metadata| metadata.identity.is_none())
+                        {
+                            // Without a change identity, this directory cannot
+                            // prove generation stability. Publication already
+                            // declines it; still validate provable dependencies.
+                            continue;
+                        }
                         // Publication needs an unchanged generation, not merely
                         // equal final membership after transient engine-time edits.
                         lookup_directory_metadata(Path::new(path))?
@@ -11876,29 +11888,6 @@ fn write_build_state(
         RawTexMode::Root,
         &owned_outputs,
     )?;
-    {
-        let observations = direct
-            .aux_session_cache
-            .generated_output_observations
-            .lock()
-            .expect("generated output observation mutex poisoned");
-        if observations.overflowed {
-            return Ok(None);
-        }
-        // A non-overwriting filecontents input can be written in an earlier
-        // pass and absent from the final recorder's OUTPUT rows. Keep bounded
-        // whole-build observations so such inputs also decline publication.
-        let main = direct.main.canonicalize().ok();
-        for input in &mut inputs {
-            if observations.paths.contains(Path::new(&input.path))
-                && !main
-                    .as_ref()
-                    .is_some_and(|main| Path::new(&input.path) == main)
-            {
-                input.metadata = None;
-            }
-        }
-    }
     append_bibtex_inputs(&mut inputs, direct.doc_dir, direct.out_dir, direct.job_name)?;
     append_biber_inputs(&mut inputs, direct.doc_dir, direct.out_dir, direct.job_name)?;
     append_index_inputs(&mut inputs, direct.doc_dir, direct.out_dir, direct.job_name)?;
@@ -11912,6 +11901,31 @@ fn write_build_state(
         Some(direct.aux_session_cache),
     )?;
     inputs.extend(extra_inputs.iter().cloned());
+    {
+        let observations = direct
+            .aux_session_cache
+            .generated_output_observations
+            .lock()
+            .expect("generated output observation mutex poisoned");
+        if observations.overflowed {
+            return Ok(None);
+        }
+        // Classify the complete dependency set, including generated scripts
+        // consumed only by auxiliary tools. Their generation-time ctime is not
+        // evidence of a user-source edit, but it cannot prove consumed bytes
+        // either. Decline publication until those reads have provenance.
+        // Whole-build observations also retain earlier-pass filecontents.
+        let main = direct.main.canonicalize().ok();
+        for input in &mut inputs {
+            if observations.paths.contains(Path::new(&input.path))
+                && !main
+                    .as_ref()
+                    .is_some_and(|main| Path::new(&input.path) == main)
+            {
+                input.metadata = None;
+            }
+        }
+    }
     if !append_direct_output_input_choices(&mut inputs, direct.doc_dir, direct.out_dir)? {
         return Ok(None);
     }
@@ -11967,16 +11981,27 @@ fn publish_generation_state(
     mut inputs: Vec<FileFingerprint>,
     generation: &BuildGeneration,
 ) -> Result<Option<BuildState>> {
-    if !generation_can_publish(&inputs, generation) {
-        // Incomplete lookup coverage must never become a cache hit.
-        return Ok(None);
-    }
-    let dependencies = generation.lookup_inputs.as_ref().unwrap();
-    if let Some(path) = generation.validation_failure(&inputs)? {
+    let can_publish = generation_can_publish(&inputs, generation);
+    // Missing generated-read provenance declines caching without hiding edits
+    // to ordinary sources or changes in known lookup dependencies. Borrow the
+    // provable subset rather than clone fingerprints for this validation.
+    let checked_inputs = inputs.iter().filter(|input| {
+        can_publish
+            || is_virtual_fingerprint_path(&input.path)
+            || input
+                .metadata
+                .is_some_and(|metadata| metadata.identity.is_some())
+    });
+    if let Some(path) = generation.validation_failure(checked_inputs)? {
         bail!(
             "inputs or search directories changed during compilation at {path}. The PDF may be outdated, rerun the build"
         );
     }
+    if !can_publish {
+        // Incomplete lookup or generated-read coverage never becomes a hit.
+        return Ok(None);
+    }
+    let dependencies = generation.lookup_inputs.as_ref().unwrap();
     inputs.extend(dependencies.iter().cloned());
     write_build_state_from_fingerprints(state_path, mode_key, pdf_path, inputs).map(Some)
 }
@@ -13979,6 +14004,123 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn generated_auxiliary_inputs_are_classified_after_all_dependency_appends() {
+        for recorded_in_final_pass in [true, false] {
+            let root = unique_temp_dir("tekai-generated-auxiliary-provenance");
+            let out_dir = root.join("out");
+            fs::create_dir_all(&out_dir).unwrap();
+            let root = root.canonicalize().unwrap();
+            let out_dir = root.join("out");
+            let main = root.join("main.tex");
+            let user_input = out_dir.join("user.tex");
+            fs::write(&main, "main source").unwrap();
+            fs::write(&user_input, "user source").unwrap();
+            let generation = BuildGeneration {
+                started_ns: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                lookup_inputs: Some(Vec::new()),
+                owned_format_directories: Vec::new(),
+            };
+            let script = out_dir.join("diagram.mp");
+            let figure = out_dir.join("diagram.1");
+            fs::write(&script, "beginfig(1); endfig;\n").unwrap();
+            fs::write(&figure, "generated figure").unwrap();
+            let job = metapost_job(&out_dir, script.clone()).unwrap();
+            write_metapost_state(&job, "signature").unwrap();
+            let fls = out_dir.join("main.fls");
+            fs::write(
+                &fls,
+                format!(
+                    "INPUT {}\nINPUT {}\n{}",
+                    main.display(),
+                    user_input.display(),
+                    if recorded_in_final_pass {
+                        format!("OUTPUT {}\n", script.display())
+                    } else {
+                        String::new()
+                    }
+                ),
+            )
+            .unwrap();
+            let session = AuxToolSessionCache::default();
+            session
+                .generated_output_observations
+                .lock()
+                .unwrap()
+                .insert(script.canonicalize().unwrap());
+            let extra = if recorded_in_final_pass {
+                // MetaPost's recorder discovers a generated script, while its
+                // own state adds that input after ordinary TeX dependencies.
+                Vec::new()
+            } else {
+                // Earlier-pass output can also arrive through extra_inputs
+                // after the final recorder no longer mentions that output.
+                vec![fingerprint_path_reusing(&script, None).unwrap().unwrap()]
+            };
+            let options = BuildOptions {
+                out_dir: out_dir.clone(),
+                ..BuildOptions::for_main(&main)
+            };
+            let direct = DirectContext {
+                doc_dir: &root,
+                out_dir: &out_dir,
+                job_name: "main",
+                main: &main,
+                options: &options,
+                aux_session_cache: &session,
+            };
+            let state = out_dir.join(".tekai-main.state.json");
+            assert!(
+                write_build_state(
+                    &state,
+                    "mode",
+                    &out_dir.join("main.pdf"),
+                    direct,
+                    None,
+                    &extra,
+                    &generation
+                )
+                .unwrap()
+                .is_none()
+            );
+            assert!(!state.exists());
+            // Publication classification must not corrupt the auxiliary cache.
+            assert!(
+                external_tool_cache_is_fresh_for_outputs(
+                    &job.state_path,
+                    "signature",
+                    &job.output_paths
+                )
+                .unwrap()
+            );
+            // Files in output directories are still real source dependencies
+            // unless an exact generation observation proves otherwise.
+            let source = fingerprint_path_reusing(&user_input, None)
+                .unwrap()
+                .unwrap();
+            assert!(generation.validate(std::slice::from_ref(&source)).unwrap());
+            fs::write(&user_input, "edited source").unwrap();
+            assert!(!generation.validate(&[source]).unwrap());
+            let error = write_build_state(
+                &state,
+                "mode",
+                &out_dir.join("main.pdf"),
+                direct,
+                None,
+                &extra,
+                &generation,
+            )
+            .expect_err("unproven generated inputs must not hide an edited user source");
+            assert!(error.to_string().contains("changed during compilation"));
+            assert!(!state.exists());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn streaming_hash_never_returns_partial_fingerprints_after_read_errors() {
         struct FailedReader(bool);
@@ -15342,9 +15484,11 @@ mod tests {
             .unwrap()
             .unwrap();
         input.metadata.as_mut().unwrap().identity = None;
+        let mut directory = lookup_dependency_fingerprint(&root).unwrap();
+        directory.metadata.as_mut().unwrap().identity = None;
         let generation = BuildGeneration {
             started_ns: u128::MAX,
-            lookup_inputs: Some(Vec::new()),
+            lookup_inputs: Some(vec![directory]),
             owned_format_directories: Vec::new(),
         };
         let state = root.join("state.json");

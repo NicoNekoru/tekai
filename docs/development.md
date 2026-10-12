@@ -210,6 +210,15 @@ A new build or one-shot `locate` sees external edits.
 Call `lookup::reset` before a new scheduler-resolution session when using the
 engine crate directly. Never cache negative filesystem lookups across builds.
 
+Whole-document cache publication requires evidence that every dependency was
+stable during compilation. Files generated and consumed within a build do not
+yet have consumed-byte receipts, so those documents rebuild even when their
+outputs settle. This includes custom stage files and auxiliary-tool scripts
+such as generated MetaPost input. Auxiliary caches can still reuse unchanged
+figures and tool output. Generated-input classification runs after all TeX,
+auxiliary-tool and format dependencies have been collected. A file's location
+under the output directory alone never makes it a trusted generated artifact.
+
 Retained data has explicit admission and eviction rules.
 
 | Data | Retention budget | Lifecycle or fallback |
