@@ -27,6 +27,7 @@ pub(crate) fn signal_owned_group(group: Pid, signal: Signal) -> io::Result<()> {
 #[cfg(target_os = "macos")]
 mod darwin {
     use super::*;
+    use rustix::process::{waitid, WaitId, WaitIdOptions};
     use std::mem::{size_of, size_of_val, MaybeUninit};
 
     // sys/proc_info.h defines PROC_PGRP_ONLY as 2. libc supplies the functions
@@ -82,6 +83,32 @@ mod darwin {
         Some(count)
     }
 
+    fn fresh_exit_code(leader: Pid) -> rustix::io::Result<Option<i32>> {
+        loop {
+            match waitid(
+                WaitId::Pid(leader),
+                WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG,
+            ) {
+                Err(rustix::io::Errno::INTR) => continue,
+                result => return result.map(|status| status.map(|status| status.raw_code())),
+            }
+        }
+    }
+
+    fn unavailable_metadata_is_exited_leader(
+        group: Pid,
+        pid: i32,
+        observe: impl FnOnce(Pid) -> rustix::io::Result<Option<i32>>,
+    ) -> bool {
+        // P_PID selects this exact direct child. No PID from the membership
+        // list may acquire either wait ownership or signalling authority.
+        pid == group.as_raw_pid()
+            && matches!(
+                observe(group),
+                Ok(Some(libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED))
+            )
+    }
+
     pub(super) fn only_zombies(group: Pid) -> bool {
         let mut first = [0i32; MAX_MEMBERS];
         let Some(count) = list(group, &mut first) else {
@@ -103,6 +130,13 @@ mod darwin {
                 )
             };
             if bytes as usize != size_of::<libc::proc_bsdinfo>() {
+                // Protected system executables can deny BSDINFO even for the
+                // parent's reserved zombie. A fresh exit-only WNOWAIT query
+                // proves only this exact leader is dead and leaves it unreaped.
+                // Every other member still requires its complete SDK record.
+                if unavailable_metadata_is_exited_leader(group, pid, fresh_exit_code) {
+                    continue;
+                }
                 return false;
             }
             // SAFETY The record began initialized and the successful call
@@ -131,6 +165,56 @@ mod darwin {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn unavailable_metadata_requires_fresh_exact_leader_exit() {
+            let group = Pid::from_raw(7123).unwrap();
+            for code in [libc::CLD_EXITED, libc::CLD_KILLED, libc::CLD_DUMPED] {
+                assert!(unavailable_metadata_is_exited_leader(
+                    group,
+                    7123,
+                    |selected| {
+                        assert_eq!(selected, group);
+                        Ok(Some(code))
+                    }
+                ));
+                assert!(!unavailable_metadata_is_exited_leader(group, 9123, |_| {
+                    panic!("a nonleader must never acquire exit-proof authority")
+                }));
+            }
+            for code in [
+                libc::CLD_STOPPED,
+                libc::CLD_TRAPPED,
+                libc::CLD_CONTINUED,
+                0,
+                -1,
+            ] {
+                assert!(!unavailable_metadata_is_exited_leader(group, 7123, |_| {
+                    Ok(Some(code))
+                }));
+            }
+            assert!(!unavailable_metadata_is_exited_leader(group, 7123, |_| Ok(
+                None
+            )));
+            for error in [
+                rustix::io::Errno::CHILD,
+                rustix::io::Errno::PERM,
+                rustix::io::Errno::IO,
+            ] {
+                assert!(!unavailable_metadata_is_exited_leader(
+                    group,
+                    7123,
+                    |_| Err(error)
+                ));
+            }
+            let current = rustix::process::getpid();
+            assert_eq!(fresh_exit_code(current), Err(rustix::io::Errno::CHILD));
+            assert!(!unavailable_metadata_is_exited_leader(
+                current,
+                current.as_raw_pid(),
+                fresh_exit_code,
+            ));
+        }
 
         #[test]
         fn membership_counts_reject_errors_malformed_and_full_lists() {
@@ -256,6 +340,16 @@ mod tests {
         assert!(darwin::only_zombies(worker.group));
         signal_owned_group(worker.group, Signal::KILL).unwrap();
         assert_eq!(worker.reap().code(), Some(7));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn completed_protected_system_leader_keeps_status_through_group_cleanup() {
+        let mut worker = OwnedGroup::spawn("exec /bin/ps -p $$ -o pid=");
+        worker.observe_exit();
+        assert!(darwin::only_zombies(worker.group));
+        signal_owned_group(worker.group, Signal::KILL).unwrap();
+        assert_eq!(worker.reap().code(), Some(0));
     }
 
     #[test]

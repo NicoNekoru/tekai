@@ -499,6 +499,19 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn completed_protected_system_worker_preserves_status() {
+        let status = supervise(Command::new("/bin/ps").args([
+            "-p",
+            &std::process::id().to_string(),
+            "-o",
+            "pid=",
+        ]))
+        .expect("completed protected worker cleanup");
+        assert!(status.success(), "protected worker status {status}");
+    }
+
     #[test]
     fn failed_spawn_and_worker_sigkill_are_ordinary_results() {
         assert!(supervise(&mut Command::new("/tekai-test-missing-worker")).is_err());

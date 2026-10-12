@@ -1987,6 +1987,44 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn teardown_reaps_a_completed_protected_system_pipe_child() {
+        use std::time::{Duration, Instant};
+
+        let mut session = StreamSession::new();
+        let process = session.as_mut().scope(|| unsafe {
+            let handle = popen(c"exec /bin/ps -p $$ -o pid=".as_ptr(), c"r".as_ptr());
+            assert!(!handle.is_null());
+            let Backing::ReadPipe(child, _) = &(*handle).backing else {
+                panic!("expected owned read pipe")
+            };
+            Pid::from_raw(child.id() as i32).unwrap()
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match waitid(
+                WaitId::Pid(process),
+                WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG,
+            ) {
+                Ok(Some(status)) => {
+                    assert_eq!(status.exit_status(), Some(0));
+                    break;
+                }
+                Ok(None) | Err(rustix::io::Errno::INTR) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "protected pipe child did not exit"
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("cannot observe protected pipe child {error}"),
+            }
+        }
+        session.as_mut().finish().expect("protected pipe cleanup");
+        assert_pipe_child_reaped(process.as_raw_pid() as u32);
+    }
+
     fn supervised_pipe_test(operation: impl FnOnce(std::sync::mpsc::Sender<Pid>) + Send + 'static) {
         use std::sync::mpsc::{channel, RecvTimeoutError};
         use std::time::Duration;
