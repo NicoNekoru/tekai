@@ -1254,3 +1254,53 @@ A final candidate-only recheck after the generated-file alias fixes measured
 49.0 MiB peak RSS for 32 PNGs. Preview RSS stayed between 29.4 and 30.9 MiB
 through all 25 rotating includes. Those samples are recorded separately in
 `target/runtime-performance/final-candidate.json`.
+
+## Complete invocation ownership, 12 October 2026
+
+[Run 38297069939](https://github.com/NicoNekoru/tekai/actions/runs/38297069939)
+tested `eae2f2f6ae110f8d0f4378ee5346a0994da2f0f7` against actual `main` at
+`0b6e92e1a33c219965cddac9e00393c6a451d5a5`. Both free macOS architectures
+passed core Rust checks, the real BasicTeX lookup case, both standalone CLI
+cases, all 170 release runtime assertions without skips and all 99 reference
+pages with matching pixels and extracted text. The Rust 1.89 compile check and
+both Linux Python suites also passed. Candidate builds disabled C and C++
+compilers. The matched release profiles used unwind, fat LTO and one codegen
+unit. Invocation ownership and correctness do not override a timing failure.
+
+| Strict paired case | ARM median ratio | Intel median ratio | Verdict |
+| --- | ---: | ---: | --- |
+| CLI startup | 0.9780 | 0.9111 | Both passed |
+| Nested lookup | 0.1862 | 0.2227 | Both passed |
+| Image compilation | 1.1283 | 1.3445 | Both failed |
+| Warm build cache | 0.9517 | 0.8695 | Both passed |
+
+Every case completed 128 pairs and 32 balanced crossover units. Image
+compilation's adjusted interval was 1.1185 to 1.1607 on ARM and 1.3071 to
+1.3867 on Intel, wholly above the unchanged 1.10 limit. Both reports exited 1,
+with no execution errors, partial batches or order-bias failures. This was a
+demonstrated regression, not an inconclusive result or a volatility veto.
+No samples were discarded or rescored. No release was made.
+
+Separate profiling passed its integrity checks but neither binary emitted
+image-phase observations. A local ARM diagnostic with the original image
+fixture collected 24 alternating baseline/candidate pairs and 16 candidate
+public/worker pairs. The descriptive public ratio was 1.0556. Candidate public
+and worker medians were 73.635 and 70.200 milliseconds. These observations
+suggest local supervision cost, but do not establish the hosted cause or
+replace the strict gate. Amplified stack captures showed PNG decoding and PDF
+compression on both revisions, without constructor or teardown dominance.
+The fixture did not decode the same image twice, and RGBA packing already
+vectorized. No cache-budget or supervision bypass was justified by these
+captures.
+
+The Intel invocation property target took 1821.75 seconds. Its arbitrary-exit
+property expanded the immutable bundled TeX installation into a fresh disk
+cache in every one of CI's 128 cases. Local defaults had exercised 12 cases.
+`462e9a2` retains the full configured case count, seed and failure persistence,
+but prepares that property's immutable disk fixture once. Every case still
+creates fresh engine state, project files, outputs and invocation environment.
+The four fixed isolation tests retain independent caches. Locally, the exact
+Intel seed passed all 128 cases in 59.48 seconds, with the complete cache
+inventory unchanged. The four fixed tests, strict targeted Clippy and Rust
+1.89 compilation also passed. This test-only change does not address the
+production image regression.
