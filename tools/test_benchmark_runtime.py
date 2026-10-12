@@ -41,6 +41,40 @@ def samples(ratios, seconds=1, case_index=0):
             for index, ratio in enumerate(ratios)]
 
 
+def model_median(values):
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def model_relative_mad(values):
+    median = model_median(values)
+    return model_median([abs(value - median) for value in values]) / median
+
+
+def model_unit_ratios(rows):
+    # Independent arithmetic oracle. Production combines log differences;
+    # bounded generated timings let this reference multiply raw times directly.
+    return [(math.prod(row['candidate']['seconds'] for row in rows[start:start + 4])
+             / math.prod(row['baseline']['seconds'] for row in rows[start:start + 4])) ** 0.25
+            for start in range(0, len(rows), 4)]
+
+
+def model_log_ratio_lag1(ratios):
+    values = [math.log(value) for value in ratios]
+    before, after = values[:-1], values[1:]
+    if not before or min(before) == max(before) or min(after) == max(after):
+        return None
+    before_mean, after_mean = sum(before) / len(before), sum(after) / len(after)
+    before_centered = [value - before_mean for value in before]
+    after_centered = [value - after_mean for value in after]
+    denominator = math.sqrt(sum(value * value for value in before_centered)
+                            * sum(value * value for value in after_centered))
+    if denominator == 0:
+        return None
+    return sum(left * right for left, right in zip(before_centered, after_centered)) / denominator
+
+
 def calibration_pilots(baseline_rates, candidate_rates=None, slot_rates=None):
     rates = slot_rates or {slot: {'baseline': baseline_rates, 'candidate': candidate_rates or baseline_rates}
                           for slot in bench.SLOTS}
@@ -116,21 +150,134 @@ class StatisticsTests(unittest.TestCase):
         self.assertEqual(analysis['status'], 'inconclusive')
         self.assertIn('crosses', analysis['reasons'][0])
 
-    def test_high_variability_and_order_bias_cannot_fail_a_gate(self):
-        noisy = samples([1.3] * 40)
-        for index, sample in enumerate(noisy):
-            factor = 0.5 if index % 2 else 1.5
-            for label in bench.LABELS:
-                sample[label]['seconds'] *= factor
-        result = bench.analyze_pairs(noisy, 0.10, 0.25)
-        self.assertEqual(result['status'], 'inconclusive')
-        self.assertTrue(any('noise limit' in reason for reason in result['reasons']))
+    def test_common_mode_absolute_volatility_does_not_veto_ratio_decisions(self):
+        for ratio, status in ((1, 'pass'), (1.3, 'fail')):
+            noisy = samples([ratio] * 128, seconds=2)
+            for index, sample in enumerate(noisy):
+                # Large common-mode changes are repeatable within a complete
+                # unit. They cancel in the artifact contrast, not raw times.
+                factor = (0.5, 2)[(index // 4) % 2]
+                for label in bench.LABELS:
+                    sample[label]['seconds'] *= factor
+            with self.subTest(ratio=ratio):
+                original = json.dumps(noisy, sort_keys=True)
+                result = bench.analyze_pairs(noisy, 0.10, 0.25)
+                self.assertEqual(result['status'], status)
+                self.assertEqual(result['reasons'], [])
+                self.assertTrue(all(value > 0.10 for value in result['relative_mad'].values()))
+                self.assertTrue(any('diagnostic limit' in warning for warning in result['warnings']))
+                self.assertFalse(result['volatility']['used_for_gate'])
+                self.assertEqual(len(result['paired_ratios']), 128)
+                self.assertEqual(result['inference_unit_count'], 32)
+                self.assertTrue(all(math.isclose(value, ratio, rel_tol=1e-12)
+                                    for value in result['inference_unit_ratios']))
+                self.assertEqual(json.dumps(noisy, sort_keys=True), original)
+
+    def test_order_bias_still_keeps_a_gate_inconclusive(self):
         order_biased = samples([1] * 40)
         for row in order_biased:
             row['candidate']['seconds'] = 1.5 if row['order'][0] == 'baseline' else 1.2
         result = bench.analyze_pairs(order_biased, 0.10, 0.25)
         self.assertEqual(result['status'], 'inconclusive')
         self.assertTrue(any('order-bias' in reason for reason in result['reasons']))
+
+    def test_volatility_reports_slot_statistics_without_pooling_cells(self):
+        rows = samples([1] * 40, seconds=2)
+        for index, row in enumerate(rows):
+            row['baseline']['seconds'] *= 1 if row['slot'] == 's0' else 3
+            row['candidate']['seconds'] *= (1, 1.5, 2)[index // 4 % 3]
+        result = bench.analyze_pairs(rows, 0.10, 0.25)
+        volatility = result['volatility']
+        self.assertFalse(volatility['used_for_gate'])
+        self.assertEqual(set(volatility['slot_statistics']), {'s0', 's1'})
+        for slot in ('s0', 's1'):
+            for label in ('baseline', 'candidate'):
+                values = [row[label]['seconds'] for row in rows if row['slot'] == slot]
+                actual = volatility['slot_statistics'][slot][label]
+                self.assertEqual(actual['count'], 20)
+                self.assertAlmostEqual(actual['median_seconds'], model_median(values))
+                self.assertAlmostEqual(actual['relative_mad'], model_relative_mad(values))
+        reference = model_unit_ratios(rows)
+        self.assertAlmostEqual(volatility['unit_ratio_relative_mad'], model_relative_mad(reference))
+        self.assertAlmostEqual(volatility['unit_log_ratio_lag1'], model_log_ratio_lag1(reference))
+        json.dumps(result, allow_nan=False)
+
+    def test_lag1_is_pearson_of_consecutive_log_ratios_or_explicitly_undefined(self):
+        for ratios in ([1], [1, 1], [1] * 32, [1.1] * 32,
+                       [1.1, 1.1, 1.1, 1.2], [1.2, 1.1, 1.1, 1.1],
+                       [math.exp(index / 100) for index in range(10)],
+                       [1, 1.2] * 16, [1.01, 0.98, 1.03, 1, 1.04, 0.99, 1.02]):
+            rows = samples([ratio for ratio in ratios for _ in range(4)], seconds=2)
+            with self.subTest(ratios=ratios):
+                result = bench.analyze_pairs(rows, 0.10, 0.25)
+                expected = model_log_ratio_lag1(ratios)
+                actual = result['volatility']['unit_log_ratio_lag1']
+                if expected is None:
+                    self.assertIsNone(actual)
+                else:
+                    self.assertAlmostEqual(actual, expected, places=12)
+                    self.assertGreaterEqual(actual, -1)
+                    self.assertLessEqual(actual, 1)
+                json.dumps(result, allow_nan=False)
+
+    def test_chronological_segments_are_bounded_nonempty_and_retain_every_unit(self):
+        for unit_count in (1, 2, 3, 4, 5, 10, 31, 32):
+            ratios = [1 + index / 1000 for index in range(unit_count)]
+            rows = samples([ratio for ratio in ratios for _ in range(4)], seconds=2)
+            with self.subTest(units=unit_count):
+                result = bench.analyze_pairs(rows, 0.10, 0.25)
+                segments = result['volatility']['chronological_segments']
+                self.assertEqual(len(segments), min(4, unit_count))
+                self.assertLessEqual(max(segment['unit_count'] for segment in segments)
+                                     - min(segment['unit_count'] for segment in segments), 1)
+                next_unit = 0
+                for segment in segments:
+                    self.assertEqual(segment['first_unit_index'], next_unit)
+                    self.assertGreater(segment['unit_count'], 0)
+                    end = next_unit + segment['unit_count']
+                    self.assertAlmostEqual(segment['median_ratio'], model_median(ratios[next_unit:end]))
+                    next_unit = end
+                self.assertEqual(next_unit, unit_count)
+                self.assertEqual(result['inference_unit_count'], unit_count)
+                self.assertEqual(len(result['paired_ratios']), len(rows))
+
+    def test_serial_correlation_is_characterized_without_certifying_independence(self):
+        # Deterministic correlated sequences are not independent draws from a
+        # stable-median population. A low ratio MAD does not establish the
+        # assumptions of the sign interval or prove its nominal coverage.
+        ratios = [0.99] * 8 + [1] * 8 + [1.01] * 8 + [1.02] * 8
+        rows = samples([ratio for ratio in ratios for _ in range(4)], seconds=2)
+        result = bench.analyze_pairs(rows, 0.10, 0.25)
+        volatility = result['volatility']
+        self.assertFalse(volatility['used_for_gate'])
+        self.assertAlmostEqual(volatility['unit_log_ratio_lag1'], model_log_ratio_lag1(ratios), places=12)
+        for segment, expected in zip(volatility['chronological_segments'], (0.99, 1, 1.01, 1.02)):
+            self.assertAlmostEqual(segment['median_ratio'], expected)
+        self.assertEqual(result['status'], 'pass')
+        self.assertEqual(result['reasons'], [])
+
+    def test_differential_drift_survives_crossover_balance_as_a_diagnostic(self):
+        # Common factors cancel, but a changing candidate-only factor does
+        # not. This deterministic construction characterizes the limitation;
+        # its computed interval is conditional on assumptions it cannot prove.
+        ratios = [math.exp(-0.03 + index * 0.003) for index in range(32)]
+        rows = samples([ratio for ratio in ratios for _ in range(4)], seconds=2)
+        for index, row in enumerate(rows):
+            factor = 1 + (index // 4) / 10
+            for label in bench.LABELS:
+                row[label]['seconds'] *= factor
+        result = bench.analyze_pairs(rows, 0.10, 0.25)
+        reference = model_unit_ratios(rows)
+        self.assertTrue(all(math.isclose(actual, expected, rel_tol=1e-12)
+                            for actual, expected in zip(result['inference_unit_ratios'], reference)))
+        volatility = result['volatility']
+        self.assertFalse(volatility['used_for_gate'])
+        self.assertAlmostEqual(volatility['unit_log_ratio_lag1'], 1, places=12)
+        self.assertLess(volatility['chronological_segments'][0]['median_ratio'],
+                        volatility['chronological_segments'][-1]['median_ratio'])
+        self.assertTrue(result['warnings'])
+        self.assertEqual(result['reasons'], [])
+        self.assertEqual(result['status'], 'pass')
 
     def test_small_sample_and_short_batch_are_inconclusive(self):
         self.assertEqual(self.analyze([1.2] * 12)['status'], 'inconclusive')
@@ -264,9 +411,9 @@ class StatisticsTests(unittest.TestCase):
         generated = random.Random(20261011)
         for example in range(64):
             artifact = generated.choice((0.7, 1.0, 1.05, 1.2))
-            case_index = generated.randrange(3)
-            slot_effects = {slot: 1 + generated.randrange(10) / 1000 for slot in ('s0', 's1')}
-            replica_effects = {replica: 1 + generated.randrange(10) / 1000 for replica in ('r0', 'r1')}
+            case_index = generated.randrange(4)
+            slot_effects = {slot: generated.choice((0.5, 1, 2)) for slot in ('s0', 's1')}
+            replica_effects = {replica: generated.choice((0.5, 1, 2)) for replica in ('r0', 'r1')}
             # The profile is arbitrary within each slot and repeats across the
             # complementary quads. It is not a separable global position effect.
             position_effects = {slot: [1 + generated.randrange(10) / 1000 for _ in range(4)] for slot in ('s0', 's1')}
@@ -274,19 +421,69 @@ class StatisticsTests(unittest.TestCase):
             if noisy:
                 position_effects['s0'][:2] = (0.8, 1.2)
                 position_effects['s1'][2:] = (0.8, 1.2)
-            rows = samples([1] * 128, seconds=2, case_index=case_index)
+            # Common-mode unit effects may vary widely. Algebraic cancellation
+            # is tested here; synthetic deterministic timings cannot establish
+            # independent units or the stable-median assumption in real runs.
+            unit_effects = [generated.choice((0.5, 1, 2)) for _ in range(32)]
+            rows = samples([1] * 128, seconds=16, case_index=case_index)
             for index, row in enumerate(rows):
                 for position, label in enumerate(row['order']):
                     quad_position = (index % 2) * 2 + position
-                    row[label]['seconds'] = 2 * slot_effects[row['slot']] * replica_effects[row['replicas'][label]] \
+                    row[label]['seconds'] = 16 * unit_effects[index // 4] * slot_effects[row['slot']] * replica_effects[row['replicas'][label]] \
                         * position_effects[row['slot']][quad_position] * (artifact if label == 'candidate' else 1)
             with self.subTest(example=example, artifact=artifact, case=case_index):
+                original = json.dumps(rows, sort_keys=True)
+                reference = model_unit_ratios(rows)
+                pair_reference = [row['candidate']['seconds'] / row['baseline']['seconds'] for row in rows]
+                order_reference = {label: model_median([ratio for row, ratio in zip(rows, pair_reference)
+                                                       if row['order'][0] == label])
+                                   for label in ('baseline', 'candidate')}
+                order_bias = max(order_reference.values()) / min(order_reference.values()) - 1
                 result = bench.analyze_pairs(rows, 0.10, 1, case_index=case_index)
                 self.assertEqual(result['inference_unit_count'], 32)
+                self.assertEqual(len(result['paired_ratios']), 128)
                 self.assertTrue(all(math.isclose(value, artifact, rel_tol=1e-12) for value in result['inference_unit_ratios']))
-                self.assertEqual(result['status'], 'inconclusive' if noisy else ('fail' if artifact > 1.10 else 'pass'))
-                if noisy:
-                    self.assertTrue(any('noise limit' in reason for reason in result['reasons']))
+                self.assertTrue(all(math.isclose(actual, expected, rel_tol=1e-12)
+                                    for actual, expected in zip(result['inference_unit_ratios'], reference)))
+                self.assertEqual(result['paired_ratios'], pair_reference)
+                self.assertAlmostEqual(result['order_bias'], order_bias)
+                self.assertEqual(result['status'], 'inconclusive' if order_bias > 0.05
+                                 else ('fail' if artifact > 1.10 else 'pass'))
+                self.assertFalse(any('noise limit' in reason or 'median absolute deviation' in reason
+                                     for reason in result['reasons']))
+                if order_bias > 0.05:
+                    self.assertTrue(any('order-bias' in reason for reason in result['reasons']))
+                self.assertFalse(result['volatility']['used_for_gate'])
+                self.assertEqual(json.dumps(rows, sort_keys=True), original)
+
+    def test_markdown_separates_diagnostic_warnings_from_the_prospective_gate(self):
+        rows = samples([1] * 40, seconds=2)
+        for index, row in enumerate(rows):
+            for label in ('baseline', 'candidate'):
+                row[label]['seconds'] *= (0.5, 2)[index // 4 % 2]
+        analysis = bench.analyze_pairs(rows, 0.10, 0.25)
+        report = {'gate': True, 'status': analysis['status'], 'errors': [],
+                  'results': [{'case': 'synthetic-common-mode', 'analysis': analysis}],
+                  'policy': {'decision_policy': bench.DECISION_POLICY,
+                             'relative_threshold': 0.10,
+                             'method': 'Exact complete-unit ratio intervals with multiplicity adjustment.',
+                             'assumptions': 'Independent complete units with a stable population median.'}}
+        with tempfile.TemporaryDirectory(prefix='test-paired-volatility-report-') as temporary:
+            path = Path(temporary) / 'report.json'
+            bench.persist(report, path)
+            self.assertEqual(json.loads(path.read_text()), report)
+            markdown = path.with_suffix('.md').read_text()
+        self.assertIn('Policy `paired-relative-gate-v2`.', markdown)
+        self.assertIn('Outcome `pass`.', markdown)
+        self.assertIn('Practical slowdown threshold 10.0%', markdown)
+        self.assertIn('## Volatility diagnostics', markdown)
+        self.assertIn('diagnostic only', markdown)
+        self.assertIn('cannot certify those assumptions', markdown)
+        self.assertIn('independent complete crossover units with a stable population median', markdown)
+        self.assertIn('Log-ratio lag 1', markdown)
+        self.assertIn('undefined', markdown)
+        self.assertIn('### Diagnostic warnings', markdown)
+        self.assertIn(analysis['warnings'][0], markdown)
 
     def test_incomplete_malformed_cells_and_indices_are_not_inference_units(self):
         for field, value in (('slot', 's1'), ('replicas', {'baseline': 'r1', 'candidate': 'r0'}),
@@ -1377,6 +1574,15 @@ class FixtureTests(unittest.TestCase):
                     self.assertEqual(bench.main(argv), expected)
                 report = json.loads(output.read_text())
                 self.assertEqual(report['schema_version'], 6)
+                self.assertEqual(report['policy']['decision_policy'], 'paired-relative-gate-v2')
+                self.assertEqual(report['policy']['relative_threshold'], 0.10)
+                self.assertEqual(report['policy']['familywise_confidence'], 0.95)
+                self.assertEqual(report['policy']['diagnostic_relative_mad_limit'], 0.10)
+                self.assertFalse(report['policy']['absolute_variability_used_for_gate'])
+                self.assertNotIn('noise_relative_mad_limit', report['policy'])
+                self.assertIn('conditional on independent complete units with a stable population median',
+                              report['policy']['method'])
+                self.assertIn('serial dependence', report['policy']['assumptions'])
                 self.assertEqual(report['policy']['calibration_pairs'], 2)
                 self.assertEqual(report['policy']['calibration_iterations'], 32)
                 self.assertEqual(report['policy']['calibration_method'], 'balanced-batched-slot-pilot-v1')

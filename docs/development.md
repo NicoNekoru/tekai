@@ -281,7 +281,7 @@ including every decoded color and alpha pixel in the image case.
 CI also records each built artifact's SHA-256. The benchmark and attribution
 controls bind any supplied build hash to the measured executable's bytes.
 
-Schema 6 declares four cases, CLI startup through `--version`, nested lookup
+Report schema 6 declares four cases, CLI startup through `--version`, nested lookup
 with 1000 unused folders, eight transparent images and warmed build-cache hits
 with 1024 genuinely referenced `.tex` dependencies. The cache document includes
 every dependency by its relative path across 32 directories. Unused padding
@@ -328,7 +328,7 @@ The sample count comes from a prospective exact binomial power calculation,
 not trimming or rescoring previous CI samples. Let `q` be the probability that
 an independent complete unit ratio is at or below the fixed 1.10 boundary.
 The table shows the probability that the interval alone supports a pass,
-assuming a stable distribution and ignoring the separate noise and order guards.
+assuming a stable distribution and ignoring the separate duration and order guards.
 It does not estimate `q` on a hosted runner or guarantee CI success.
 
 | Probability `q` | Previous 10 units | Current 32 units |
@@ -370,15 +370,34 @@ input-path hash. Cache-hit batches must retain that same state. This catches
 unexpected rewrites or missing dependency work without putting oracle reads
 inside scored command durations.
 
-The declared slowdown boundary is 10 percent. A statistically demonstrated
-regression returns exit 1. Insufficient precision, excessive variability or
-order bias returns exit 2, not success. CI rejects both. Exit 0 requires all
-cases to pass. The 10 percent per-artifact variability guard retains all 128
-batches per artifact. The 5 percent order-bias guard uses uncanceled ratios
-within each slot. The intervals assume independent units and a stable median
-effect across slots. Crossover cannot remove arbitrary copy or cache effects,
-changing position profiles or serial dependence. A passing hosted-runner
-comparison cannot prove universal performance.
+Decision policy `paired-relative-gate-v2` keeps the 10 percent slowdown boundary.
+A supported regression returns exit 1. Insufficient precision, short batches
+or order bias returns exit 2, not success. CI rejects both. Exit 0 requires all
+cases to pass. The 5 percent order-bias guard uses uncanceled ratios within each
+slot. The exact interval's coverage assumes independent complete units and a
+stable population median. Crossover cannot remove arbitrary copy or cache
+effects, changing position profiles or serial dependence. A passing
+hosted-runner comparison cannot prove universal performance.
+
+Absolute-duration volatility is diagnostic under this policy. The previous
+blocking 10 percent pooled per-artifact MAD rule mixed slots and time, even
+when the balanced ratio canceled repeatable nuisance factors. The report still
+retains all 128 batch durations per artifact and warns above 10 percent. It
+also reports each slot's median and MAD, complete-unit ratio MAD, lag-one
+correlation of chronological log ratios, and at most four chronological segment
+medians. Undefined correlation is `null`, not zero. These observations cannot
+certify independence, invalidate an interval by themselves, or establish leak
+freedom. No new volatility threshold replaces the old veto.
+
+The report format remains schema 6 because the added diagnostics are compatible
+with its complete-report and raw-journal bindings. The explicit decision-policy
+identifier records the changed verdict rules. Historical reports retain their
+original policy and outcomes. Prospective generated-model tests cover canceled
+slot/position factors, shared volatility, true slowdowns and unchanged blocking
+guards. Correlated and drifting ratio models characterize the method's limits.
+They do not prove that hosted observations satisfy its assumptions. Investigate
+such concerns before relying on nominal coverage for a release claim. Do not
+trim observations, extend sampling after seeing results or retry until green.
 Binary/input hashes, output controls and owned-process deadlines are checked
 separately. Reports are saved in `target/runtime-performance/report.json` and
 its Markdown companion by default. Unit-boundary parent CPU, GC and resident

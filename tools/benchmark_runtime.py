@@ -52,9 +52,10 @@ CALIBRATION_HEADROOM = 2.0
 CALIBRATION_PAIRS = 2
 CALIBRATION_ITERATIONS = 32
 MAX_ITERATIONS = 512
-NOISE_LIMIT = 0.10
+DIAGNOSTIC_MAD_LIMIT = 0.10
 ORDER_BIAS_LIMIT = 0.05
 FAMILY_ALPHA = 0.05
+DECISION_POLICY = 'paired-relative-gate-v2'
 TIMING_METADATA = {
     'clock': 'time.monotonic', 'unit': 'seconds',
     'parent_timing_fields': ['start', 'launch_end', 'completion'],
@@ -160,6 +161,44 @@ def relative_mad(values):
     return result
 
 
+def volatility_diagnostics(samples, unit_ratios):
+    """Describe absolute variation and ordered ratios without changing inference.
+
+    Pooled durations mix slots and time, while inference compares complete
+    crossover units. Neither a small MAD nor a small correlation certifies
+    independent units or a stable population median.
+    """
+    slots = {}
+    for slot in SLOTS:
+        slots[slot] = {}
+        for label in LABELS:
+            values = [sample[label]['seconds'] for sample in samples if sample['slot'] == slot]
+            slots[slot][label] = {'count': len(values), 'median_seconds': statistics.median(values),
+                                  'relative_mad': relative_mad(values)}
+    logs = [math.log(value) for value in unit_ratios]
+    lag_one = None
+    if len(logs) > 2:
+        left, right = logs[:-1], logs[1:]
+        if min(left) != max(left) and min(right) != max(right):
+            left_mean, right_mean = math.fsum(left) / len(left), math.fsum(right) / len(right)
+            left = [value - left_mean for value in left]
+            right = [value - right_mean for value in right]
+            denominator = math.sqrt(math.fsum(value * value for value in left)) \
+                * math.sqrt(math.fsum(value * value for value in right))
+            if denominator > 0:
+                lag_one = max(-1.0, min(1.0, math.fsum(x * y for x, y in zip(left, right)) / denominator))
+    segments = []
+    segment_count = min(4, len(unit_ratios))
+    for index in range(segment_count):
+        start = index * len(unit_ratios) // segment_count
+        end = (index + 1) * len(unit_ratios) // segment_count
+        segments.append({'first_unit_index': start, 'unit_count': end - start,
+                         'median_ratio': statistics.median(unit_ratios[start:end])})
+    return {'used_for_gate': False, 'slot_statistics': slots,
+            'unit_ratio_relative_mad': relative_mad(unit_ratios),
+            'unit_log_ratio_lag1': lag_one, 'chronological_segments': segments}
+
+
 def calibration_details(pilots, min_seconds, ceiling):
     """Normalize complete fixed pilots without consuming inference or telemetry."""
     def positive_seconds(value):
@@ -234,7 +273,7 @@ def calibrated_iterations(pilots, min_seconds, ceiling):
 
 
 def analyze_pairs(samples, threshold, min_seconds, case_count=len(CASES), case_index=0):
-    """Keep insufficient precision and unstable measurements inconclusive."""
+    """Gate relative uncertainty, duration and order; report absolute volatility."""
     if not math.isfinite(threshold) or not 0 < threshold <= 1:
         raise ValueError('Practical threshold must be finite and in (0, 1]')
     if not math.isfinite(min_seconds) or min_seconds <= 0 or type(case_count) is not int or case_count < 1:
@@ -303,8 +342,6 @@ def analyze_pairs(samples, threshold, min_seconds, case_count=len(CASES), case_i
     issues = []
     if any(min(items) < min_seconds for items in values.values()):
         issues.append('At least one batch is shorter than the predeclared minimum duration')
-    if any(value > NOISE_LIMIT for value in noise.values()):
-        issues.append('Per-binary relative median absolute deviation exceeds the noise limit')
     if order_bias > ORDER_BIAS_LIMIT:
         issues.append('Baseline-first and candidate-first ratios differ beyond the order-bias limit')
     if interval is None:
@@ -319,9 +356,14 @@ def analyze_pairs(samples, threshold, min_seconds, case_count=len(CASES), case_i
     else:
         status = 'inconclusive'
         issues.append('Median-ratio uncertainty interval crosses the practical slowdown boundary')
+    warnings = []
+    if any(value > DIAGNOSTIC_MAD_LIMIT for value in noise.values()):
+        warnings.append('Pooled per-binary relative median absolute deviation exceeds the diagnostic limit; '
+                        'absolute variability does not determine the paired gate')
     return {'status': status, 'median_ratio': median_ratio,
             'paired_ratios': ratios, 'inference_unit_ratios': blocks, 'inference_unit_count': len(blocks),
             'median_ratio_interval': interval, 'relative_mad': noise,
+            'volatility': volatility_diagnostics(samples, blocks), 'warnings': warnings,
             'order_median_ratios': order_medians, 'order_bias': order_bias,
             'reasons': issues, 'practical_slowdown_boundary': boundary}
 
@@ -955,15 +997,44 @@ def persist(report, path):
         ratio = f"{analysis['median_ratio']:.4f}" if 'median_ratio' in analysis else 'unavailable'
         lines.append(f"| {case['case']} | {analysis.get('status', 'incomplete')} | {ratio} | {bounds} |")
     lines.extend(['', '## Decision policy', '', report['policy']['method'], '',
+                  'Policy `' + report['policy'].get('decision_policy', 'legacy-policy') + '`.', '',
                   f"Practical slowdown threshold {report['policy']['relative_threshold']:.1%}.", '',
                   'A pass supports only these warm, generated workloads on this runner. '
                   'It does not establish universal speed, peak memory, asymptotic complexity or fidelity.', '',
                   'Intervals assume independent complete crossover units with a stable population median. '
                   'Shared-runner drift and scheduling correlations can violate that assumption. '
-                  'Noise checks detect some violations, not all of them.', '', report['policy']['assumptions'], ''])
+                  'Volatility diagnostics describe these risks and cannot certify those assumptions.', '',
+                  report['policy']['assumptions'], ''])
     for case in report['results']:
         lines.extend(f"- {case['case']}, {reason}" for reason in case.get('analysis', {}).get('reasons', []))
     lines.extend('- ' + error for error in report['errors'])
+    diagnostic_cases = [case for case in report['results'] if isinstance(case.get('analysis', {}).get('volatility'), dict)]
+    if diagnostic_cases:
+        lines.extend(['', '## Volatility diagnostics', '',
+                      'These observations and the 10% pooled-MAD warning are diagnostic only. '
+                      'They neither change the gate nor establish independence or leak freedom.', '',
+                      '| Case | Pooled MAD baseline / candidate | Unit-ratio MAD | Log-ratio lag 1 | Chronological segment medians |',
+                      '| --- | --- | ---: | ---: | --- |'])
+        for case in diagnostic_cases:
+            analysis = case['analysis']
+            noise, volatility = analysis['relative_mad'], analysis['volatility']
+            lag_one = volatility['unit_log_ratio_lag1']
+            lag_text = f'{lag_one:.3f}' if lag_one is not None else 'undefined'
+            segments = ', '.join(f"{segment['median_ratio']:.4f}" for segment in volatility['chronological_segments'])
+            lines.append(f"| {case['case']} | {noise['baseline']:.2%} / {noise['candidate']:.2%} | "
+                         f"{volatility['unit_ratio_relative_mad']:.2%} | {lag_text} | {segments} |")
+        lines.extend(['', 'Slot medians are batch seconds with the same fixed iteration count.', '',
+                      '| Case | Slot | Batches per artifact | Median baseline / candidate seconds | MAD baseline / candidate |',
+                      '| --- | --- | ---: | --- | --- |'])
+        for case in diagnostic_cases:
+            for slot, stats in case['analysis']['volatility']['slot_statistics'].items():
+                baseline, candidate = stats['baseline'], stats['candidate']
+                lines.append(f"| {case['case']} | {slot} | {baseline['count']} | "
+                             f"{baseline['median_seconds']:.4f} / {candidate['median_seconds']:.4f} | "
+                             f"{baseline['relative_mad']:.2%} / {candidate['relative_mad']:.2%} |")
+        lines.extend(['', '### Diagnostic warnings', ''])
+        for case in diagnostic_cases:
+            lines.extend(f"- {case['case']}, {warning}" for warning in case['analysis'].get('warnings', []))
     atomic_text(path.with_suffix('.md'), '\n'.join(lines) + '\n')
 
 
@@ -1157,7 +1228,8 @@ def main(argv=None):
                   'parent_minus_reported_seconds_scope': 'Diagnostic residual includes parent capture setup, launch, '
                       'CLI/configuration setup, untimed compiler prelude and destruction, serialization, exit and '
                       'completion scheduling. It does not isolate loader time.'}},
-              'policy': {'relative_threshold': args.threshold, 'familywise_confidence': 1 - FAMILY_ALPHA,
+              'policy': {'decision_policy': DECISION_POLICY,
+                         'relative_threshold': args.threshold, 'familywise_confidence': 1 - FAMILY_ALPHA,
                          'checkpoint_unit': 'complete-inference-unit', 'maximum_report_bytes': MAX_REPORT_BYTES,
                          'checkpoint_storage': 'compact-checkpoints-with-append-only-command-journal-v1',
                          'raw_command_memory_scope': 'Completed batches leave memory after journal append. '
@@ -1183,15 +1255,18 @@ def main(argv=None):
                          'calibration_iterations': CALIBRATION_ITERATIONS,
                          'calibration_method': 'balanced-batched-slot-pilot-v1',
                          'per_command_deadline_seconds': args.timeout, 'whole_run_deadline_seconds': args.budget,
-                         'noise_relative_mad_limit': NOISE_LIMIT, 'order_bias_limit': ORDER_BIAS_LIMIT,
+                         'diagnostic_relative_mad_limit': DIAGNOSTIC_MAD_LIMIT,
+                         'absolute_variability_used_for_gate': False, 'order_bias_limit': ORDER_BIAS_LIMIT,
                          'method': 'Four logical within-slot pairs form one complementary eight-batch crossover unit. '
                          'Its artifact ratio is the fourth root of the product of four candidate times divided by '
                          'the product of four baseline times. Exact binomial sign/order-statistic intervals bound '
                          'the population median of complete unit ratios, '
                          'with Bonferroni correction across the four predeclared cases. '
-                         'Fail requires the entire interval above the practical boundary and no noise flags. '
-                         'Pass requires the entire interval at or below it and no noise flags. '
-                         'Otherwise the comparison is inconclusive.',
+                         'Fail requires the entire interval above the practical boundary and no duration or order issues. '
+                         'Pass requires the entire interval at or below it and no duration or order issues. '
+                         'Otherwise the comparison is inconclusive. Pooled absolute MAD and ordered volatility '
+                         'diagnostics do not change this relative gate. The stated coverage is conditional on '
+                         'independent complete units with a stable population median.',
                          'assumptions': 'Complementary quads balance repeatable slot-by-quad-position factors '
                          'that are additive in log time, equivalently multiplicative elapsed-time factors. '
                          'Crossed neutral slots and replicas balance path factors additive in log time, not arbitrary '

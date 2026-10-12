@@ -53,11 +53,13 @@ def prospective_power_study():
         plans.append({'inference_units': n, 'logical_pairs': 4 * n, **plan,
                       'units_at_or_below_boundary_needed_for_pass': n - k + 1, 'rows': rows})
     return {'method': 'exact-prospective-binomial-v1', 'uses_observed_samples': False, 'used_for_gate': False,
-            'scope': 'Hypothetical interval decisions conditional on every unchanged operational guard passing.',
+            'scope': 'Hypothetical interval decisions conditional on duration, order and integrity guards passing. '
+                'Absolute MAD is diagnostic only under paired-relative-gate-v2.',
             'assumptions': 'Complete unit ratios are independent and identically distributed with a stable '
                 'continuous distribution. q is a specified probability that a unit ratio is at or below '
                 'the fixed practical boundary, not an estimate from this or any historical run. '
-                'Serial dependence, drift and noise/order/duration guards can reduce actual decision probability.',
+                'Serial dependence and drift can invalidate nominal coverage; order/duration guards can '
+                'reduce actual decision probability. Diagnostic variability cannot certify these assumptions.',
             'familywise_confidence': 0.95, 'predeclared_cases': PREDECLARED_CASES, 'plans': plans}
 
 
