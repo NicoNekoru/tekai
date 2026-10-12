@@ -3434,37 +3434,19 @@ fn pgf_externalize_scan_from_source_with_cache(
     includeonly: Option<&HashSet<String>>,
     source_cache: &TexSourceReadCache,
 ) -> Result<PgfExternalizeScan> {
-    let source_path = canonical_tex_source_path(source_path)?;
-    if !visited.insert(source_path.clone()) {
-        return Ok(PgfExternalizeScan::default());
-    }
-    let source = read_cached_tex_source(source_cache, &source_path)?;
-    let mut scan = pgf_externalize_scan(&source);
-
-    for include in active_include_source_dependencies(&source, includeonly) {
-        if let Some(path) = resolve_local_tex_source_dependency(doc_dir, &include)? {
-            scan.merge(pgf_externalize_scan_from_source_with_cache(
-                doc_dir,
-                &path,
-                visited,
-                includeonly,
-                source_cache,
-            )?);
-        }
-    }
-
-    for input in tex_input_like_source_dependencies(&source) {
-        if let Some(path) = resolve_local_tex_source_dependency(doc_dir, &input)? {
-            scan.merge(pgf_externalize_scan_from_source_with_cache(
-                doc_dir,
-                &path,
-                visited,
-                includeonly,
-                source_cache,
-            )?);
-        }
-    }
-
+    let mut scan = PgfExternalizeScan::default();
+    walk_tex_source_graph(
+        doc_dir,
+        source_path,
+        includeonly,
+        source_cache,
+        visited,
+        |_, analysis| {
+            scan.merge(analysis.pgf_externalize.clone());
+            Ok(())
+        },
+        |_| Ok(()),
+    )?;
     Ok(scan)
 }
 
@@ -3634,53 +3616,196 @@ impl Default for SourceSeedState {
     }
 }
 
+enum SourceSeedWork {
+    Source(PathBuf),
+    Resolved {
+        path: PathBuf,
+        description: &'static str,
+    },
+    Class(String),
+    Package(String),
+    Resources(Arc<TexSourceAnalysis>),
+    Dependency {
+        dependency: TexSourceDependency,
+        settings: Arc<SvgIncludeSettings>,
+    },
+    RestoreSource {
+        graphic_paths: usize,
+        svg_paths: usize,
+        graphic_extensions: Option<Vec<String>>,
+        svg_settings: SvgIncludeSettings,
+    },
+    RestoreDependency {
+        graphic_paths: usize,
+        svg_paths: usize,
+        svg_settings: SvgIncludeSettings,
+    },
+}
+
 fn collect_source_seed_dependency_paths(
     context: SourceSeedContext<'_>,
     source_path: &Path,
     state: &mut SourceSeedState,
 ) -> Result<()> {
-    let source_path = canonical_tex_source_path(source_path)?;
-    if !state.visited.insert(source_path.clone()) {
-        return Ok(());
-    }
-    state.paths.push(source_path.clone());
-
-    let analysis = read_cached_tex_source_analysis(context.source_cache, &source_path)?;
-    let original_graphic_path_count = state.graphic_paths.len();
-    state.graphic_paths.extend(
-        analysis
-            .graphicspath_entries
-            .iter()
-            .cloned()
-            .map(PathBuf::from),
-    );
-    let original_svg_path_count = state.svg_paths.len();
-    state.svg_paths.extend(
-        analysis
-            .graphicspath_entries
-            .iter()
-            .cloned()
-            .map(PathBuf::from),
-    );
-    state
-        .svg_paths
-        .extend(analysis.svgpath_entries.iter().cloned().map(PathBuf::from));
-    let original_graphic_extensions = state.graphic_extensions.clone();
-    if let Some(declared) = &analysis.declared_graphics_extensions {
-        state.graphic_extensions = Some(declared.clone());
-    }
-    let original_svg_settings = state.svg_settings.clone();
-
-    for payload in &analysis.class_payloads {
-        if let Some(path) = resolve_source_class_input(context.doc_dir, payload)? {
-            collect_resolved_source_seed_dependency_path(context, &path, state, "document class")?;
+    let mut pending = vec![SourceSeedWork::Source(source_path.to_path_buf())];
+    while let Some(work) = pending.pop() {
+        match work {
+            SourceSeedWork::Source(source_path) => {
+                let source_path = canonical_tex_source_path(&source_path)?;
+                if !state.visited.insert(source_path.clone()) {
+                    continue;
+                }
+                state.paths.push(source_path.clone());
+                let analysis = read_cached_tex_source_analysis(context.source_cache, &source_path)?;
+                pending.push(SourceSeedWork::RestoreSource {
+                    graphic_paths: state.graphic_paths.len(),
+                    svg_paths: state.svg_paths.len(),
+                    graphic_extensions: state.graphic_extensions.clone(),
+                    svg_settings: state.svg_settings.clone(),
+                });
+                state.graphic_paths.extend(
+                    analysis
+                        .graphicspath_entries
+                        .iter()
+                        .cloned()
+                        .map(PathBuf::from),
+                );
+                state.svg_paths.extend(
+                    analysis
+                        .graphicspath_entries
+                        .iter()
+                        .cloned()
+                        .map(PathBuf::from),
+                );
+                state
+                    .svg_paths
+                    .extend(analysis.svgpath_entries.iter().cloned().map(PathBuf::from));
+                if let Some(declared) = &analysis.declared_graphics_extensions {
+                    state.graphic_extensions = Some(declared.clone());
+                }
+                // Classes and packages recurse before this source's resources
+                // and includes. Their child scopes restore before continuing.
+                pending.push(SourceSeedWork::Resources(Arc::clone(&analysis)));
+                pending.extend(
+                    analysis
+                        .package_payloads
+                        .iter()
+                        .rev()
+                        .cloned()
+                        .map(SourceSeedWork::Package),
+                );
+                pending.extend(
+                    analysis
+                        .class_payloads
+                        .iter()
+                        .rev()
+                        .cloned()
+                        .map(SourceSeedWork::Class),
+                );
+            }
+            SourceSeedWork::Resolved { path, description } => {
+                let path = path.canonicalize().with_context(|| {
+                    format!(
+                        "failed to canonicalize {description} dependency {}",
+                        path.display()
+                    )
+                })?;
+                if source_seed_dependency_is_recursable(context.doc_dir, &path) {
+                    pending.push(SourceSeedWork::Source(path));
+                } else {
+                    state.paths.push(path);
+                }
+            }
+            SourceSeedWork::Class(payload) => {
+                if let Some(path) = resolve_source_class_input(context.doc_dir, &payload)? {
+                    pending.push(SourceSeedWork::Resolved {
+                        path,
+                        description: "document class",
+                    });
+                }
+            }
+            SourceSeedWork::Package(payload) => {
+                if let Some(path) = resolve_source_package_input(context.doc_dir, &payload)? {
+                    pending.push(SourceSeedWork::Resolved {
+                        path,
+                        description: "package",
+                    });
+                }
+            }
+            SourceSeedWork::Resources(analysis) => {
+                collect_source_seed_resources(context, &analysis, state)?;
+                let settings = Arc::new(
+                    svg_settings_after_setups(&state.svg_settings, &analysis.svg_setup_refs)
+                        .unwrap_or_else(|| {
+                            let mut settings = state.svg_settings.clone();
+                            settings.inkscape_enabled = false;
+                            settings
+                        }),
+                );
+                let dependencies = active_include_dependencies(&analysis, context.includeonly)
+                    .into_iter()
+                    .chain(analysis.input_dependencies.iter().cloned())
+                    .collect::<Vec<_>>();
+                for dependency in dependencies.into_iter().rev() {
+                    pending.push(SourceSeedWork::Dependency {
+                        dependency,
+                        settings: Arc::clone(&settings),
+                    });
+                }
+            }
+            SourceSeedWork::Dependency {
+                dependency,
+                settings,
+            } => {
+                if let Some(path) =
+                    resolve_local_tex_source_dependency(context.doc_dir, &dependency)?
+                {
+                    pending.push(SourceSeedWork::RestoreDependency {
+                        graphic_paths: state.graphic_paths.len(),
+                        svg_paths: state.svg_paths.len(),
+                        svg_settings: state.svg_settings.clone(),
+                    });
+                    if let Some(local_graphic_path) = dependency.local_graphic_path {
+                        state.graphic_paths.push(local_graphic_path.clone());
+                        state.svg_paths.push(local_graphic_path);
+                    }
+                    state.svg_settings = (*settings).clone();
+                    pending.push(SourceSeedWork::Resolved {
+                        path,
+                        description: "TeX dependency",
+                    });
+                }
+            }
+            SourceSeedWork::RestoreSource {
+                graphic_paths,
+                svg_paths,
+                graphic_extensions,
+                svg_settings,
+            } => {
+                state.graphic_paths.truncate(graphic_paths);
+                state.svg_paths.truncate(svg_paths);
+                state.graphic_extensions = graphic_extensions;
+                state.svg_settings = svg_settings;
+            }
+            SourceSeedWork::RestoreDependency {
+                graphic_paths,
+                svg_paths,
+                svg_settings,
+            } => {
+                state.graphic_paths.truncate(graphic_paths);
+                state.svg_paths.truncate(svg_paths);
+                state.svg_settings = svg_settings;
+            }
         }
     }
-    for payload in &analysis.package_payloads {
-        if let Some(path) = resolve_source_package_input(context.doc_dir, payload)? {
-            collect_resolved_source_seed_dependency_path(context, &path, state, "package")?;
-        }
-    }
+    Ok(())
+}
+
+fn collect_source_seed_resources(
+    context: SourceSeedContext<'_>,
+    analysis: &TexSourceAnalysis,
+    state: &mut SourceSeedState,
+) -> Result<()> {
     for payload in &analysis.bibliography_payloads {
         if let Some(path) = resolve_source_bibliography_input(context.doc_dir, payload)? {
             state.paths.push(path.canonicalize().with_context(|| {
@@ -3768,38 +3893,6 @@ fn collect_source_seed_dependency_paths(
             })?);
         }
     }
-    let inherited_svg_settings =
-        svg_settings_after_setups(&state.svg_settings, &analysis.svg_setup_refs).unwrap_or_else(
-            || {
-                let mut settings = state.svg_settings.clone();
-                settings.inkscape_enabled = false;
-                settings
-            },
-        );
-    for dependency in active_include_dependencies(&analysis, context.includeonly)
-        .into_iter()
-        .chain(analysis.input_dependencies.iter().cloned())
-    {
-        if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, &dependency)? {
-            let dependency_graphic_path_count = state.graphic_paths.len();
-            let dependency_svg_path_count = state.svg_paths.len();
-            let dependency_svg_settings = state.svg_settings.clone();
-            if let Some(local_graphic_path) = dependency.local_graphic_path {
-                state.graphic_paths.push(local_graphic_path.clone());
-                state.svg_paths.push(local_graphic_path);
-            }
-            state.svg_settings = inherited_svg_settings.clone();
-            collect_resolved_source_seed_dependency_path(context, &path, state, "TeX dependency")?;
-            state.graphic_paths.truncate(dependency_graphic_path_count);
-            state.svg_paths.truncate(dependency_svg_path_count);
-            state.svg_settings = dependency_svg_settings;
-        }
-    }
-
-    state.graphic_paths.truncate(original_graphic_path_count);
-    state.svg_paths.truncate(original_svg_path_count);
-    state.graphic_extensions = original_graphic_extensions;
-    state.svg_settings = original_svg_settings;
     Ok(())
 }
 
@@ -3808,53 +3901,49 @@ fn collect_source_seed_aux_dependency_paths(
     aux_path: &Path,
     state: &mut SourceSeedState,
 ) -> Result<()> {
-    let aux_path = aux_path.canonicalize().with_context(|| {
-        format!(
-            "failed to canonicalize external aux dependency {}",
-            aux_path.display()
-        )
-    })?;
-    if !state.aux_visited.insert(aux_path.clone()) {
-        return Ok(());
+    enum Work {
+        Aux(PathBuf),
+        Input { base_dir: PathBuf, payload: String },
     }
-    state.paths.push(aux_path.clone());
-
-    let source = fs::read_to_string(&aux_path).with_context(|| {
-        format!(
-            "failed to read external aux dependency {}",
-            aux_path.display()
-        )
-    })?;
-    let base_dir = aux_path.parent().unwrap_or(context.doc_dir);
-    for payload in source_aux_input_payloads(&source) {
-        let input_path = Path::new(&payload);
-        if !safe_relative_path(input_path) {
-            continue;
+    let mut pending = vec![Work::Aux(aux_path.to_path_buf())];
+    while let Some(work) = pending.pop() {
+        match work {
+            Work::Aux(aux_path) => {
+                let aux_path = aux_path.canonicalize().with_context(|| {
+                    format!(
+                        "failed to canonicalize external aux dependency {}",
+                        aux_path.display()
+                    )
+                })?;
+                if !state.aux_visited.insert(aux_path.clone()) {
+                    continue;
+                }
+                state.paths.push(aux_path.clone());
+                let source = fs::read_to_string(&aux_path).with_context(|| {
+                    format!(
+                        "failed to read external aux dependency {}",
+                        aux_path.display()
+                    )
+                })?;
+                let base_dir = aux_path.parent().unwrap_or(context.doc_dir);
+                for payload in source_aux_input_payloads(&source).into_iter().rev() {
+                    pending.push(Work::Input {
+                        base_dir: base_dir.to_path_buf(),
+                        payload,
+                    });
+                }
+            }
+            Work::Input { base_dir, payload } => {
+                let input_path = Path::new(&payload);
+                if !safe_relative_path(input_path) {
+                    continue;
+                }
+                let nested = base_dir.join(input_path);
+                if nested.is_file() {
+                    pending.push(Work::Aux(nested));
+                }
+            }
         }
-        let nested = base_dir.join(input_path);
-        if nested.is_file() {
-            collect_source_seed_aux_dependency_paths(context, &nested, state)?;
-        }
-    }
-    Ok(())
-}
-
-fn collect_resolved_source_seed_dependency_path(
-    context: SourceSeedContext<'_>,
-    path: &Path,
-    state: &mut SourceSeedState,
-    description: &str,
-) -> Result<()> {
-    let path = path.canonicalize().with_context(|| {
-        format!(
-            "failed to canonicalize {description} dependency {}",
-            path.display()
-        )
-    })?;
-    if source_seed_dependency_is_recursable(context.doc_dir, &path) {
-        collect_source_seed_dependency_paths(context, &path, state)?;
-    } else {
-        state.paths.push(path);
     }
     Ok(())
 }
@@ -4062,48 +4151,104 @@ fn resolve_source_kpathsea_input(
     resolve_kpathsea_input(doc_dir, payload, extension)
 }
 
+#[derive(Clone)]
+enum SourceGraphWork {
+    Source(PathBuf),
+    Dependency {
+        dependency: TexSourceDependency,
+        include: bool,
+    },
+}
+
+// Resolve children only when their DFS turn arrives. Reversing the queued
+// siblings preserves the recursive walk's include-before-input encounter
+// order, canonical first visit, and error/side-effect ordering.
+fn walk_tex_source_graph(
+    doc_dir: &Path,
+    source_path: &Path,
+    includeonly: Option<&HashSet<String>>,
+    source_cache: &TexSourceReadCache,
+    visited: &mut HashSet<PathBuf>,
+    mut source_visit: impl FnMut(&Path, &TexSourceAnalysis) -> Result<()>,
+    mut include_visit: impl FnMut(&TexSourceDependency) -> Result<()>,
+) -> Result<()> {
+    let mut pending = vec![SourceGraphWork::Source(source_path.to_path_buf())];
+    while let Some(work) = pending.pop() {
+        match work {
+            SourceGraphWork::Source(path) => {
+                let path = canonical_tex_source_path(&path)?;
+                if !visited.insert(path.clone()) {
+                    continue;
+                }
+                let analysis = read_cached_tex_source_analysis(source_cache, &path)?;
+                source_visit(&path, &analysis)?;
+                for dependency in analysis.input_dependencies.iter().rev() {
+                    pending.push(SourceGraphWork::Dependency {
+                        dependency: dependency.clone(),
+                        include: false,
+                    });
+                }
+                for dependency in active_include_dependencies(&analysis, includeonly)
+                    .into_iter()
+                    .rev()
+                {
+                    pending.push(SourceGraphWork::Dependency {
+                        dependency,
+                        include: true,
+                    });
+                }
+            }
+            SourceGraphWork::Dependency {
+                dependency,
+                include,
+            } => {
+                if include {
+                    include_visit(&dependency)?;
+                }
+                if let Some(path) = resolve_local_tex_source_dependency(doc_dir, &dependency)? {
+                    pending.push(SourceGraphWork::Source(path));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn source_preflight_scan_from_source(
     context: SourcePreflightContext<'_>,
     source_path: &Path,
     visited: &mut HashSet<PathBuf>,
     scan: &mut SourcePreflightScan,
 ) -> Result<()> {
-    let source_path = canonical_tex_source_path(source_path)?;
-    if !visited.insert(source_path.clone()) {
-        return Ok(());
-    }
-    let analysis = read_cached_tex_source_analysis(context.source_cache, &source_path)?;
-
-    if context.options.collect_features {
-        scan.features.merge(analysis.features.clone());
-    }
-    if context.options.collect_pgf_externalize {
-        scan.pgf_externalize.merge(analysis.pgf_externalize.clone());
-    }
-
-    for include in active_include_dependencies(&analysis, context.includeonly) {
-        if context.options.prepare_output_subdirs
-            && let Some(parent) = safe_relative_parent(Path::new(&include.payload))
-        {
-            fs::create_dir_all(context.out_dir.join(parent)).with_context(|| {
-                format!(
-                    "failed to create output include directory for {}",
-                    include.payload
-                )
-            })?;
-        }
-        if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, &include)? {
-            source_preflight_scan_from_source(context, &path, visited, scan)?;
-        }
-    }
-
-    for input in &analysis.input_dependencies {
-        if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, input)? {
-            source_preflight_scan_from_source(context, &path, visited, scan)?;
-        }
-    }
-
-    Ok(())
+    walk_tex_source_graph(
+        context.doc_dir,
+        source_path,
+        context.includeonly,
+        context.source_cache,
+        visited,
+        |_, analysis| {
+            if context.options.collect_features {
+                scan.features.merge(analysis.features.clone());
+            }
+            if context.options.collect_pgf_externalize {
+                scan.pgf_externalize.merge(analysis.pgf_externalize.clone());
+            }
+            Ok(())
+        },
+        |include| {
+            if context.options.prepare_output_subdirs
+                && let Some(parent) = safe_relative_parent(Path::new(&include.payload))
+            {
+                fs::create_dir_all(context.out_dir.join(parent)).with_context(|| {
+                    format!(
+                        "failed to create output include directory for {}",
+                        include.payload
+                    )
+                })?;
+            }
+            Ok(())
+        },
+    )
 }
 
 fn source_features(doc_dir: &Path, main: &Path) -> Result<SourceFeatures> {
@@ -4129,37 +4274,19 @@ fn source_features_from_source(
     includeonly: Option<&HashSet<String>>,
     source_cache: &TexSourceReadCache,
 ) -> Result<SourceFeatures> {
-    let source_path = canonical_tex_source_path(source_path)?;
-    if !visited.insert(source_path.clone()) {
-        return Ok(SourceFeatures::default());
-    }
-    let analysis = read_cached_tex_source_analysis(source_cache, &source_path)?;
-
-    let mut features = analysis.features.clone();
-    for include in active_include_dependencies(&analysis, includeonly) {
-        if let Some(path) = resolve_local_tex_source_dependency(doc_dir, &include)? {
-            features.merge(source_features_from_source(
-                doc_dir,
-                &path,
-                visited,
-                includeonly,
-                source_cache,
-            )?);
-        }
-    }
-
-    for input in &analysis.input_dependencies {
-        if let Some(path) = resolve_local_tex_source_dependency(doc_dir, input)? {
-            features.merge(source_features_from_source(
-                doc_dir,
-                &path,
-                visited,
-                includeonly,
-                source_cache,
-            )?);
-        }
-    }
-
+    let mut features = SourceFeatures::default();
+    walk_tex_source_graph(
+        doc_dir,
+        source_path,
+        includeonly,
+        source_cache,
+        visited,
+        |_, analysis| {
+            features.merge(analysis.features.clone());
+            Ok(())
+        },
+        |_| Ok(()),
+    )?;
     Ok(features)
 }
 
@@ -5481,47 +5608,57 @@ fn collect_ordered_source_bibtex_preflight(
     preflight: &mut SourceBibtexPreflight,
     is_root: bool,
 ) -> Result<()> {
-    let source_path = canonical_tex_source_path(source_path)?;
-    if !visited.insert(source_path.clone()) {
-        return Ok(());
+    enum Work {
+        Source {
+            path: PathBuf,
+            root: bool,
+        },
+        Event {
+            event: OrderedSourceBibtexEvent,
+            root: bool,
+        },
     }
-    let source = read_cached_tex_source(source_cache, &source_path)?;
-    for event in ordered_source_bibtex_events(&source) {
-        match event {
-            OrderedSourceBibtexEvent::Citation(payload) => {
-                preflight.events.push(SourceBibtexEvent::Citation(payload));
-            }
-            OrderedSourceBibtexEvent::BibData(payload) => {
-                if !is_root {
-                    preflight.unsupported = true;
-                }
-                preflight.events.push(SourceBibtexEvent::BibData(payload));
-            }
-            OrderedSourceBibtexEvent::BibStyle(payload) => {
-                if !is_root {
-                    preflight.unsupported = true;
-                }
-                preflight.events.push(SourceBibtexEvent::BibStyle(payload));
-            }
-            OrderedSourceBibtexEvent::Input(dependency) => {
-                if !include_dependency_is_active(&dependency, includeonly) {
+    let mut pending = vec![Work::Source {
+        path: source_path.to_path_buf(),
+        root: is_root,
+    }];
+    while let Some(work) = pending.pop() {
+        match work {
+            Work::Source { path, root } => {
+                let path = canonical_tex_source_path(&path)?;
+                if !visited.insert(path.clone()) {
                     continue;
                 }
-                if let Some(path) = resolve_local_tex_source_dependency(doc_dir, &dependency)? {
-                    collect_ordered_source_bibtex_preflight(
-                        doc_dir,
-                        &path,
-                        includeonly,
-                        source_cache,
-                        visited,
-                        preflight,
-                        false,
-                    )?;
+                let source = read_cached_tex_source(source_cache, &path)?;
+                pending.extend(
+                    ordered_source_bibtex_events(&source)
+                        .into_iter()
+                        .rev()
+                        .map(|event| Work::Event { event, root }),
+                );
+            }
+            Work::Event { event, root } => match event {
+                OrderedSourceBibtexEvent::Citation(payload) => {
+                    preflight.events.push(SourceBibtexEvent::Citation(payload));
                 }
-            }
-            OrderedSourceBibtexEvent::Unsupported => {
-                preflight.unsupported = true;
-            }
+                OrderedSourceBibtexEvent::BibData(payload) => {
+                    preflight.unsupported |= !root;
+                    preflight.events.push(SourceBibtexEvent::BibData(payload));
+                }
+                OrderedSourceBibtexEvent::BibStyle(payload) => {
+                    preflight.unsupported |= !root;
+                    preflight.events.push(SourceBibtexEvent::BibStyle(payload));
+                }
+                OrderedSourceBibtexEvent::Input(dependency) => {
+                    if include_dependency_is_active(&dependency, includeonly)
+                        && let Some(path) =
+                            resolve_local_tex_source_dependency(doc_dir, &dependency)?
+                    {
+                        pending.push(Work::Source { path, root: false });
+                    }
+                }
+                OrderedSourceBibtexEvent::Unsupported => preflight.unsupported = true,
+            },
         }
     }
     Ok(())
@@ -8217,69 +8354,82 @@ fn collect_eps_conversion_jobs_from_source(
     graphic_extensions: &mut Option<Vec<String>>,
     jobs: &mut Vec<EpsConversionJob>,
 ) -> Result<()> {
-    let source_path = canonical_tex_source_path(source_path)?;
-    if !visited.insert(source_path.clone()) {
-        return Ok(());
+    enum Work {
+        Source(PathBuf),
+        Dependency(TexSourceDependency),
+        RestoreSource {
+            paths: usize,
+            extensions: Option<Vec<String>>,
+        },
+        RestoreDependency(usize),
     }
-    let analysis = read_cached_tex_source_analysis(context.source_cache, &source_path)?;
-
-    let original_graphic_path_count = graphic_paths.len();
-    graphic_paths.extend(
-        analysis
-            .graphicspath_entries
-            .iter()
-            .cloned()
-            .map(PathBuf::from),
-    );
-    let original_graphic_extensions = graphic_extensions.clone();
-    if let Some(declared) = &analysis.declared_graphics_extensions {
-        *graphic_extensions = Some(declared.clone());
-    }
-
-    for graphic in &analysis.includegraphics_payloads {
-        push_eps_conversion_job_for_graphic(
-            context,
-            graphic_paths,
-            graphic_extensions.as_deref(),
-            graphic,
-            jobs,
-        )?;
-    }
-    for animation in &analysis.animategraphics_refs {
-        for graphic in animategraphics_frame_payloads(animation) {
-            push_eps_conversion_job_for_graphic(
-                context,
-                graphic_paths,
-                graphic_extensions.as_deref(),
-                &graphic,
-                jobs,
-            )?;
-        }
-    }
-
-    for dependency in active_include_dependencies(&analysis, context.includeonly)
-        .into_iter()
-        .chain(analysis.input_dependencies.iter().cloned())
-    {
-        if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, &dependency)? {
-            let dependency_graphic_path_count = graphic_paths.len();
-            if let Some(local_graphic_path) = dependency.local_graphic_path {
-                graphic_paths.push(local_graphic_path);
+    let mut pending = vec![Work::Source(source_path.to_path_buf())];
+    while let Some(work) = pending.pop() {
+        match work {
+            Work::Source(path) => {
+                let path = canonical_tex_source_path(&path)?;
+                if !visited.insert(path.clone()) {
+                    continue;
+                }
+                let analysis = read_cached_tex_source_analysis(context.source_cache, &path)?;
+                pending.push(Work::RestoreSource {
+                    paths: graphic_paths.len(),
+                    extensions: graphic_extensions.clone(),
+                });
+                graphic_paths.extend(
+                    analysis
+                        .graphicspath_entries
+                        .iter()
+                        .cloned()
+                        .map(PathBuf::from),
+                );
+                if let Some(declared) = &analysis.declared_graphics_extensions {
+                    *graphic_extensions = Some(declared.clone());
+                }
+                for graphic in &analysis.includegraphics_payloads {
+                    push_eps_conversion_job_for_graphic(
+                        context,
+                        graphic_paths,
+                        graphic_extensions.as_deref(),
+                        graphic,
+                        jobs,
+                    )?;
+                }
+                for animation in &analysis.animategraphics_refs {
+                    for graphic in animategraphics_frame_payloads(animation) {
+                        push_eps_conversion_job_for_graphic(
+                            context,
+                            graphic_paths,
+                            graphic_extensions.as_deref(),
+                            &graphic,
+                            jobs,
+                        )?;
+                    }
+                }
+                let dependencies = active_include_dependencies(&analysis, context.includeonly)
+                    .into_iter()
+                    .chain(analysis.input_dependencies.iter().cloned())
+                    .collect::<Vec<_>>();
+                pending.extend(dependencies.into_iter().rev().map(Work::Dependency));
             }
-            collect_eps_conversion_jobs_from_source(
-                context,
-                &path,
-                visited,
-                graphic_paths,
-                graphic_extensions,
-                jobs,
-            )?;
-            graphic_paths.truncate(dependency_graphic_path_count);
+            Work::Dependency(dependency) => {
+                if let Some(path) =
+                    resolve_local_tex_source_dependency(context.doc_dir, &dependency)?
+                {
+                    pending.push(Work::RestoreDependency(graphic_paths.len()));
+                    if let Some(local_graphic_path) = dependency.local_graphic_path {
+                        graphic_paths.push(local_graphic_path);
+                    }
+                    pending.push(Work::Source(path));
+                }
+            }
+            Work::RestoreSource { paths, extensions } => {
+                graphic_paths.truncate(paths);
+                *graphic_extensions = extensions;
+            }
+            Work::RestoreDependency(paths) => graphic_paths.truncate(paths),
         }
     }
-
-    graphic_paths.truncate(original_graphic_path_count);
-    *graphic_extensions = original_graphic_extensions;
     Ok(())
 }
 
@@ -8320,69 +8470,91 @@ fn collect_svg_conversion_jobs_from_source(
     inherited_settings: &SvgIncludeSettings,
     jobs: &mut Vec<SvgConversionJob>,
 ) -> Result<()> {
-    let source_path = canonical_tex_source_path(source_path)?;
-    if !visited.insert(source_path.clone()) {
-        return Ok(());
+    enum Work {
+        Source {
+            path: PathBuf,
+            settings: Arc<SvgIncludeSettings>,
+        },
+        Dependency {
+            dependency: TexSourceDependency,
+            settings: Arc<SvgIncludeSettings>,
+        },
+        RestorePaths(usize),
     }
-    let analysis = read_cached_tex_source_analysis(context.source_cache, &source_path)?;
-
-    let original_svg_path_count = svg_paths.len();
-    svg_paths.extend(
-        analysis
-            .graphicspath_entries
-            .iter()
-            .cloned()
-            .map(PathBuf::from),
-    );
-    svg_paths.extend(analysis.svgpath_entries.iter().cloned().map(PathBuf::from));
-
-    for svg in &analysis.includesvg_refs {
-        let Some(settings) =
-            svg_settings_for_include(inherited_settings, &analysis.svg_setup_refs, svg)
-        else {
-            continue;
-        };
-        if let Some(job) = svg_conversion_job_from_ref(
-            context.doc_dir,
-            context.out_dir,
-            svg_paths,
-            svg,
-            &settings,
-        )? {
-            jobs.push(job);
-        }
-    }
-    let inherited_dependency_settings =
-        svg_settings_after_setups(inherited_settings, &analysis.svg_setup_refs).unwrap_or_else(
-            || {
-                let mut settings = inherited_settings.clone();
-                settings.inkscape_enabled = false;
-                settings
-            },
-        );
-
-    for dependency in active_include_dependencies(&analysis, context.includeonly)
-        .into_iter()
-        .chain(analysis.input_dependencies.iter().cloned())
-    {
-        if let Some(path) = resolve_local_tex_source_dependency(context.doc_dir, &dependency)? {
-            let dependency_svg_path_count = svg_paths.len();
-            if let Some(local_graphic_path) = dependency.local_graphic_path {
-                svg_paths.push(local_graphic_path);
+    let mut pending = vec![Work::Source {
+        path: source_path.to_path_buf(),
+        settings: Arc::new(inherited_settings.clone()),
+    }];
+    while let Some(work) = pending.pop() {
+        match work {
+            Work::Source { path, settings } => {
+                let path = canonical_tex_source_path(&path)?;
+                if !visited.insert(path.clone()) {
+                    continue;
+                }
+                let analysis = read_cached_tex_source_analysis(context.source_cache, &path)?;
+                pending.push(Work::RestorePaths(svg_paths.len()));
+                svg_paths.extend(
+                    analysis
+                        .graphicspath_entries
+                        .iter()
+                        .cloned()
+                        .map(PathBuf::from),
+                );
+                svg_paths.extend(analysis.svgpath_entries.iter().cloned().map(PathBuf::from));
+                for svg in &analysis.includesvg_refs {
+                    let Some(settings) =
+                        svg_settings_for_include(&settings, &analysis.svg_setup_refs, svg)
+                    else {
+                        continue;
+                    };
+                    if let Some(job) = svg_conversion_job_from_ref(
+                        context.doc_dir,
+                        context.out_dir,
+                        svg_paths,
+                        svg,
+                        &settings,
+                    )? {
+                        jobs.push(job);
+                    }
+                }
+                let dependency_settings = Arc::new(
+                    svg_settings_after_setups(&settings, &analysis.svg_setup_refs).unwrap_or_else(
+                        || {
+                            let mut settings = (*settings).clone();
+                            settings.inkscape_enabled = false;
+                            settings
+                        },
+                    ),
+                );
+                let dependencies = active_include_dependencies(&analysis, context.includeonly)
+                    .into_iter()
+                    .chain(analysis.input_dependencies.iter().cloned())
+                    .collect::<Vec<_>>();
+                for dependency in dependencies.into_iter().rev() {
+                    pending.push(Work::Dependency {
+                        dependency,
+                        settings: Arc::clone(&dependency_settings),
+                    });
+                }
             }
-            collect_svg_conversion_jobs_from_source(
-                context,
-                &path,
-                visited,
-                svg_paths,
-                &inherited_dependency_settings,
-                jobs,
-            )?;
-            svg_paths.truncate(dependency_svg_path_count);
+            Work::Dependency {
+                dependency,
+                settings,
+            } => {
+                if let Some(path) =
+                    resolve_local_tex_source_dependency(context.doc_dir, &dependency)?
+                {
+                    pending.push(Work::RestorePaths(svg_paths.len()));
+                    if let Some(local_graphic_path) = dependency.local_graphic_path {
+                        svg_paths.push(local_graphic_path);
+                    }
+                    pending.push(Work::Source { path, settings });
+                }
+            }
+            Work::RestorePaths(paths) => svg_paths.truncate(paths),
         }
     }
-
-    svg_paths.truncate(original_svg_path_count);
     Ok(())
 }
 
@@ -17564,6 +17736,322 @@ mod tests {
         assert_eq!(second.features.graphic_command_count, 2);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    struct SourceGraphFixture(PathBuf);
+
+    impl SourceGraphFixture {
+        fn new(name: &str) -> Self {
+            let root = unique_temp_dir(name);
+            fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+    }
+
+    impl Drop for SourceGraphFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn source_graph_recursive_model(
+        graph: &[Vec<(usize, bool, bool)>],
+        node: usize,
+        allowed: Option<&HashSet<usize>>,
+        visited: &mut HashSet<usize>,
+        order: &mut Vec<usize>,
+    ) {
+        if !visited.insert(node) {
+            return;
+        }
+        order.push(node);
+        for include in [true, false] {
+            for &(child, is_include, _) in &graph[node] {
+                if include == is_include
+                    && (!include || allowed.is_none_or(|allowed| allowed.contains(&child)))
+                {
+                    source_graph_recursive_model(graph, child, allowed, visited, order);
+                }
+            }
+        }
+    }
+
+    fn source_bibtex_recursive_model(
+        graph: &[Vec<(usize, bool, bool)>],
+        node: usize,
+        allowed: Option<&HashSet<usize>>,
+        visited: &mut HashSet<usize>,
+        events: &mut Vec<SourceBibtexEvent>,
+    ) {
+        if !visited.insert(node) {
+            return;
+        }
+        events.push(SourceBibtexEvent::Citation(format!("before{node}")));
+        for &(child, include, _) in &graph[node] {
+            if !include || allowed.is_none_or(|allowed| allowed.contains(&child)) {
+                source_bibtex_recursive_model(graph, child, allowed, visited, events);
+            }
+        }
+        if node % 2 == 1 {
+            events.push(SourceBibtexEvent::BibData(format!("refs{node}")));
+        }
+        events.push(SourceBibtexEvent::Citation(format!("after{node}")));
+    }
+
+    #[cfg(unix)]
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+
+        #[test]
+        fn source_graph_work_stacks_match_bounded_recursive_model(
+            count in 1usize..10,
+            edges in proptest::collection::vec((0usize..10, 0usize..10, proptest::prelude::any::<bool>(), proptest::prelude::any::<bool>()), 0..40),
+            enabled in proptest::collection::vec(proptest::prelude::any::<bool>(), 10..11),
+            use_includeonly in proptest::prelude::any::<bool>(),
+        ) {
+            let fixture = SourceGraphFixture::new("tekai-source-graph-model");
+            let root = fixture.0.canonicalize().unwrap();
+            fs::create_dir_all(root.join("aux")).unwrap();
+            let mut graph = vec![Vec::new(); count];
+            for (from, to, include, alias) in edges {
+                graph[from % count].push((to % count, include, alias));
+            }
+            let cache = TexSourceReadCache::default();
+            let paths = (0..count).map(|node| root.join(format!("n{node}.tex"))).collect::<Vec<_>>();
+            let aux_paths = (0..count).map(|node| root.join("aux").join(format!("n{node}.aux"))).collect::<Vec<_>>();
+            for node in 0..count {
+                fs::write(&paths[node], "").unwrap();
+                std::os::unix::fs::symlink(&paths[node], root.join(format!("alias{node}.tex"))).unwrap();
+                let mut analysis = (*read_cached_tex_source_analysis(&cache, &paths[node]).unwrap()).clone();
+                for &(child, include, alias) in &graph[node] {
+                    let payload = format!("{}{child}", if alias { "alias" } else { "n" });
+                    let mut dependency = tex_source_dependency(payload);
+                    dependency.obey_includeonly = include;
+                    dependency.local_graphic_path = Some(PathBuf::from(format!("scope-{node}/")));
+                    if include { analysis.include_dependencies.push(dependency); }
+                    else { analysis.input_dependencies.push(dependency); }
+                }
+                analysis.features.graphic_command_count = node + 1;
+                cache.analyses.lock().unwrap().insert(paths[node].clone(), Arc::new(analysis));
+                let mut aux_source = String::new();
+                for include in [true, false] {
+                    for &(child, is_include, alias) in &graph[node] {
+                        if include == is_include {
+                            writeln!(&mut aux_source, "\\@input{{{}{child}.aux}}", if alias { "alias" } else { "n" }).unwrap();
+                        }
+                    }
+                }
+                fs::write(&aux_paths[node], aux_source).unwrap();
+                std::os::unix::fs::symlink(&aux_paths[node], root.join("aux").join(format!("alias{node}.aux"))).unwrap();
+            }
+            let allowed = (0..count).filter(|&node| enabled[node]).collect::<HashSet<_>>();
+            let includeonly = use_includeonly.then(|| allowed.iter().flat_map(|node| [format!("n{node}"), format!("alias{node}")]).collect::<HashSet<_>>());
+            let mut expected = Vec::new();
+            source_graph_recursive_model(&graph, 0, use_includeonly.then_some(&allowed), &mut HashSet::new(), &mut expected);
+            let expected_paths = expected.iter().map(|&node| paths[node].clone()).collect::<Vec<_>>();
+            let mut actual = Vec::new();
+            walk_tex_source_graph(&root, &paths[0], includeonly.as_ref(), &cache, &mut HashSet::new(),
+                |path, _| { actual.push(path.to_path_buf()); Ok(()) }, |_| Ok(())).unwrap();
+            proptest::prop_assert_eq!(&actual, &expected_paths);
+
+            let context = SourceSeedContext { doc_dir: &root, includeonly: includeonly.as_ref(), source_cache: &cache };
+            let mut state = SourceSeedState::default();
+            state.graphic_paths.push(PathBuf::from("initial-graphics/"));
+            state.svg_paths.push(PathBuf::from("initial-svg/"));
+            state.graphic_extensions = Some(vec!["eps".to_string()]);
+            let initial_settings = state.svg_settings.clone();
+            collect_source_seed_dependency_paths(context, &paths[0], &mut state).unwrap();
+            proptest::prop_assert_eq!(&state.paths, &expected_paths);
+            proptest::prop_assert_eq!(&state.graphic_paths, &[PathBuf::from("initial-graphics/")]);
+            proptest::prop_assert_eq!(&state.svg_paths, &[PathBuf::from("initial-svg/")]);
+            proptest::prop_assert_eq!(&state.graphic_extensions, &Some(vec!["eps".to_string()]));
+            proptest::prop_assert_eq!(&state.svg_settings, &initial_settings);
+            let features = source_features_with_includeonly(&root, &paths[0], includeonly.as_ref(), &cache).unwrap();
+            proptest::prop_assert_eq!(features.graphic_command_count, expected.iter().map(|node| node + 1).sum::<usize>());
+
+            let conversion = SourceConversionContext { doc_dir: &root, out_dir: &root, includeonly: includeonly.as_ref(), source_cache: &cache };
+            let expected_set = expected_paths.iter().cloned().collect::<HashSet<_>>();
+            let mut visited = HashSet::new();
+            collect_eps_conversion_jobs_from_source(conversion, &paths[0], &mut visited, &mut Vec::new(), &mut None, &mut Vec::new()).unwrap();
+            proptest::prop_assert_eq!(&visited, &expected_set);
+            visited.clear();
+            collect_svg_conversion_jobs_from_source(conversion, &paths[0], &mut visited, &mut Vec::new(), &default_svg_include_settings(), &mut Vec::new()).unwrap();
+            proptest::prop_assert_eq!(&visited, &expected_set);
+
+            let mut aux_expected = Vec::new();
+            source_graph_recursive_model(&graph, 0, None, &mut HashSet::new(), &mut aux_expected);
+            let mut aux_state = SourceSeedState::default();
+            collect_source_seed_aux_dependency_paths(context, &aux_paths[0], &mut aux_state).unwrap();
+            proptest::prop_assert_eq!(aux_state.paths, aux_expected.iter().map(|&node| aux_paths[node].clone()).collect::<Vec<_>>());
+
+            for node in 0..count {
+                let mut source = format!("\\cite{{before{node}}}\n");
+                for &(child, include, alias) in &graph[node] {
+                    writeln!(&mut source, "\\{}{{{}{child}}}", if include { "include" } else { "input" }, if alias { "alias" } else { "n" }).unwrap();
+                }
+                if node % 2 == 1 { writeln!(&mut source, "\\bibliography{{refs{node}}}").unwrap(); }
+                writeln!(&mut source, "\\cite{{after{node}}}").unwrap();
+                fs::write(&paths[node], source).unwrap();
+            }
+            let mut expected_events = Vec::new();
+            let mut bibtex_visited = HashSet::new();
+            source_bibtex_recursive_model(&graph, 0, use_includeonly.then_some(&allowed), &mut bibtex_visited, &mut expected_events);
+            let mut preflight = SourceBibtexPreflight::default();
+            collect_ordered_source_bibtex_preflight(&root, &paths[0], includeonly.as_ref(), &TexSourceReadCache::default(), &mut HashSet::new(), &mut preflight, true).unwrap();
+            proptest::prop_assert_eq!(preflight.events, expected_events);
+            proptest::prop_assert_eq!(preflight.unsupported, bibtex_visited.iter().any(|node| node % 2 == 1));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_graph_import_scopes_restore_settings_and_first_alias_visit() {
+        let fixture = SourceGraphFixture::new("tekai-source-graph-scopes");
+        let root = fixture.0.canonicalize().unwrap();
+        for directory in ["a", "b", "rootfig", "out"] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        let main = root.join("main.tex");
+        let shared = root.join("shared.tex");
+        fs::write(&main, "\\graphicspath{{rootfig/}}\n\\DeclareGraphicsExtensions{.pdf}\n\\svgsetup{inkscapeformat=png,inkscapelatex=false}\n\\includefrom{a/}{shared}\n\\includefrom{b/}{shared}\n\\input{sibling}\n").unwrap();
+        fs::write(&shared, "\\DeclareGraphicsExtensions{.eps}\n\\includegraphics{icon}\n\\svgsetup{inkscapeformat=pdf,inkscapelatex=true}\n\\includesvg{imported}\n").unwrap();
+        fs::write(
+            root.join("sibling.tex"),
+            "\\includegraphics{icon}\n\\includesvg{icon}\n",
+        )
+        .unwrap();
+        for directory in ["a", "b"] {
+            std::os::unix::fs::symlink(&shared, root.join(directory).join("shared.tex")).unwrap();
+            fs::write(root.join(directory).join("icon.eps"), "%!PS\n").unwrap();
+            fs::write(root.join(directory).join("imported.svg"), "<svg/>").unwrap();
+        }
+        fs::write(root.join("rootfig/icon.pdf"), "%PDF\n").unwrap();
+        fs::write(root.join("rootfig/icon.svg"), "<svg/>").unwrap();
+        let state = source_seed_dependency_state(&main).unwrap();
+        assert!(state.paths.contains(&root.join("a/icon.eps")));
+        assert!(state.paths.contains(&root.join("a/imported.svg")));
+        assert!(!state.paths.contains(&root.join("b/icon.eps")));
+        assert!(!state.paths.contains(&root.join("b/imported.svg")));
+        assert!(state.paths.contains(&root.join("rootfig/icon.pdf")));
+        assert!(state.paths.contains(&root.join("rootfig/icon.svg")));
+        assert_eq!(
+            state.paths.iter().filter(|path| **path == shared).count(),
+            1
+        );
+        let eps = eps_conversion_jobs_from_source(&root, &root.join("out"), &main).unwrap();
+        assert_eq!(eps.len(), 1);
+        assert_eq!(eps[0].input_path, root.join("a/icon.eps"));
+        let svg = svg_conversion_jobs_from_source(&root, &root.join("out"), &main).unwrap();
+        assert_eq!(svg.len(), 2);
+        let imported = svg
+            .iter()
+            .find(|job| job.input_path == root.join("a/imported.svg"))
+            .unwrap();
+        assert_eq!(imported.output_path.extension().unwrap(), "pdf");
+        assert!(imported.output_tex_path.is_some());
+        let sibling = svg
+            .iter()
+            .find(|job| job.input_path == root.join("rootfig/icon.svg"))
+            .unwrap();
+        assert_eq!(sibling.output_path.extension().unwrap(), "png");
+        assert!(sibling.output_tex_path.is_none());
+    }
+
+    #[test]
+    fn source_graph_deep_source_and_aux_chains_use_small_fixed_stack() {
+        let fixture = SourceGraphFixture::new("tekai-source-graph-deep");
+        let root = fixture.0.canonicalize().unwrap();
+        const DEPTH: usize = 4096;
+        fs::create_dir_all(root.join("out")).unwrap();
+        fs::write(root.join("figure.pdf"), "%PDF\n").unwrap();
+        for index in 0..DEPTH {
+            let source = if index + 1 < DEPTH {
+                format!(
+                    "\\input{{part{}}}\n{}",
+                    index + 1,
+                    if index == 0 {
+                        "\\externaldocument{aux0}\n"
+                    } else {
+                        ""
+                    }
+                )
+            } else {
+                "\\includegraphics{figure.pdf}\n\\tikzexternalize\n\\cite{deep}\n".to_string()
+            };
+            fs::write(root.join(format!("part{index}.tex")), source).unwrap();
+            let aux = if index + 1 < DEPTH {
+                format!("\\@input{{aux{}.aux}}\n", index + 1)
+            } else {
+                "\\relax\n".to_string()
+            };
+            fs::write(root.join(format!("aux{index}.aux")), aux).unwrap();
+        }
+        std::thread::Builder::new()
+            .name("bounded-source-graph".to_string())
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                let main = root.join("part0.tex");
+                let state = source_seed_dependency_state(&main).unwrap();
+                assert_eq!(state.visited.len(), DEPTH);
+                assert_eq!(state.aux_visited.len(), DEPTH);
+                assert_eq!(state.paths.len(), DEPTH * 2 + 1);
+                let cache = TexSourceReadCache::default();
+                let features =
+                    source_features_with_includeonly(&root, &main, None, &cache).unwrap();
+                assert_eq!(features.graphic_command_count, 1);
+                let scan = source_preflight_scan(
+                    &root,
+                    &root.join("out"),
+                    &main,
+                    None,
+                    &cache,
+                    SourcePreflightOptions {
+                        collect_features: true,
+                        collect_pgf_externalize: true,
+                        prepare_output_subdirs: true,
+                    },
+                )
+                .unwrap();
+                assert!(scan.pgf_externalize.uses_externalize);
+                assert_eq!(scan.features.graphic_command_count, 1);
+                let context = SourceConversionContext {
+                    doc_dir: &root,
+                    out_dir: &root,
+                    includeonly: None,
+                    source_cache: &cache,
+                };
+                assert!(
+                    eps_conversion_jobs_with_context(context, &main)
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    svg_conversion_jobs_with_context(context, &main)
+                        .unwrap()
+                        .is_empty()
+                );
+                let mut preflight = SourceBibtexPreflight::default();
+                let mut visited = HashSet::new();
+                collect_ordered_source_bibtex_preflight(
+                    &root,
+                    &main,
+                    None,
+                    &cache,
+                    &mut visited,
+                    &mut preflight,
+                    true,
+                )
+                .unwrap();
+                assert_eq!(visited.len(), DEPTH);
+                assert_eq!(
+                    preflight.events,
+                    [SourceBibtexEvent::Citation("deep".to_string())]
+                );
+                assert!(!preflight.unsupported);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]
