@@ -138,6 +138,196 @@ struct TextEdit {
     replacement: String,
 }
 
+/// Byte coordinates for every scalar and line, built once per fix pass.
+/// Columns count Unicode scalars, including CR before LF, as diagnostics do.
+struct SourceIndex<'a> {
+    source: &'a str,
+    scalar_bytes: Vec<usize>,
+    lines: Vec<(usize, usize)>,
+}
+
+impl<'a> SourceIndex<'a> {
+    fn new(source: &'a str) -> Self {
+        let mut scalar_bytes = Vec::new();
+        let mut lines = Vec::new();
+        let mut line_start = 0;
+        for (byte, scalar) in source.char_indices() {
+            #[cfg(test)]
+            record_scan_steps(1);
+            let index = scalar_bytes.len();
+            scalar_bytes.push(byte);
+            if scalar == '\n' {
+                lines.push((line_start, index));
+                line_start = index + 1;
+            }
+        }
+        scalar_bytes.push(source.len());
+        lines.push((line_start, scalar_bytes.len() - 1));
+        Self {
+            source,
+            scalar_bytes,
+            lines,
+        }
+    }
+
+    fn line_bounds(&self, line: usize) -> Option<(usize, usize)> {
+        let &(start, end) = self.lines.get(line.checked_sub(1)?)?;
+        Some((self.scalar_bytes[start], self.scalar_bytes[end]))
+    }
+
+    fn byte_offset(&self, line: usize, column: usize) -> Option<usize> {
+        let &(start, end) = self.lines.get(line.checked_sub(1)?)?;
+        let scalar = start.checked_add(column.checked_sub(1)?)?;
+        (scalar <= end).then(|| self.scalar_bytes[scalar])
+    }
+}
+
+/// A forward scan retains its scalar column and preceding-backslash parity.
+/// Parser jumps consume the skipped span once rather than rescanning prefixes.
+struct LineCursor<'a> {
+    line: &'a str,
+    byte: usize,
+    column: usize,
+    escaped: bool,
+    missing_name_close_from: Option<usize>,
+    brace_matches: Option<DelimiterMatches>,
+}
+
+impl<'a> LineCursor<'a> {
+    fn new(line: &'a str) -> Self {
+        Self {
+            line,
+            byte: 0,
+            column: 1,
+            escaped: false,
+            missing_name_close_from: None,
+            brace_matches: None,
+        }
+    }
+
+    fn advance_to(&mut self, end: usize) {
+        for scalar in self.line[self.byte..end].chars() {
+            #[cfg(test)]
+            record_scan_steps(1);
+            self.column += 1;
+            self.escaped = scalar == '\\' && !self.escaped;
+        }
+        self.byte = end;
+    }
+
+    fn advance(&mut self) {
+        self.advance_to(self.byte + char_width_at(self.line, self.byte));
+    }
+
+    fn braced_name(&mut self, start: usize) -> Option<(String, usize)> {
+        if self
+            .missing_name_close_from
+            .is_some_and(|failed| start >= failed)
+        {
+            return None;
+        }
+        let rest = self.line.get(start..)?;
+        let Some(close) = rest.find('}') else {
+            #[cfg(test)]
+            record_scan_steps(rest.len());
+            // Every later name probe sees a suffix of the same failed search.
+            self.missing_name_close_from = Some(start);
+            return None;
+        };
+        #[cfg(test)]
+        record_scan_steps(close + 1);
+        let name = &rest[..close];
+        (!name.is_empty()).then(|| (name.to_owned(), start + close + 1))
+    }
+
+    fn braced_end(&mut self, open: usize) -> Option<usize> {
+        if !self.line.get(open..)?.starts_with('{') {
+            return None;
+        }
+        self.brace_matches
+            .get_or_insert_with(|| {
+                DelimiterMatches::new(self.line.char_indices(), self.line.len(), '{', '}')
+            })
+            .end(open)
+    }
+}
+
+/// Pair one delimiter family in a single escape-aware stack traversal. A zero
+/// table entry means no pair. Every real end is at least one, so byte/scalar
+/// coordinates can use the same compact table representation.
+struct DelimiterMatches {
+    ends: Vec<usize>,
+}
+
+impl DelimiterMatches {
+    fn new(
+        scalars: impl Iterator<Item = (usize, char)>,
+        length: usize,
+        left: char,
+        right: char,
+    ) -> Self {
+        #[cfg(test)]
+        record_scan_steps(length);
+        let mut ends = vec![0; length];
+        let mut stack = Vec::new();
+        let mut escaped = false;
+        for (index, scalar) in scalars {
+            #[cfg(test)]
+            record_scan_steps(1);
+            if !escaped {
+                if scalar == left {
+                    stack.push(index);
+                } else if scalar == right
+                    && let Some(open) = stack.pop()
+                {
+                    // All supported delimiters are one-byte ASCII scalars.
+                    ends[open] = index + 1;
+                }
+            }
+            escaped = scalar == '\\' && !escaped;
+        }
+        Self { ends }
+    }
+
+    fn end(&self, open: usize) -> Option<usize> {
+        self.ends.get(open).copied().filter(|&end| end != 0)
+    }
+}
+
+#[derive(Default)]
+struct VerbatimMatches {
+    square: Option<DelimiterMatches>,
+    braces: Option<DelimiterMatches>,
+}
+
+impl VerbatimMatches {
+    fn end(&mut self, chars: &[char], open: usize, left: char, right: char) -> Option<usize> {
+        if chars.get(open) != Some(&left) {
+            return None;
+        }
+        let cache = if left == '[' {
+            &mut self.square
+        } else {
+            &mut self.braces
+        };
+        cache
+            .get_or_insert_with(|| {
+                DelimiterMatches::new(chars.iter().copied().enumerate(), chars.len(), left, right)
+            })
+            .end(open)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static SCAN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_scan_steps(count: usize) {
+    SCAN_STEPS.with(|steps| steps.set(steps.get() + count));
+}
+
 impl Diagnostic {
     fn warning(
         path: &Path,
@@ -278,7 +468,7 @@ struct EnvEvent {
 struct LintLine<'a> {
     source: &'a str,
     scan: &'a str,
-    math_mode_before: Option<&'a MathMode>,
+    display_math_indent: Option<usize>,
 }
 
 pub fn lint_paths(paths: &[PathBuf], config: &LintConfig) -> Result<Vec<Diagnostic>> {
@@ -370,6 +560,7 @@ fn fix_source(path: &Path, source: &str, config: &LintConfig) -> (String, usize)
 }
 
 fn fix_source_once(path: &Path, source: &str, config: &LintConfig) -> (String, usize) {
+    let index = SourceIndex::new(source);
     let diagnostics = lint_source(path, source, config);
     let suppressions = lint_suppressions(source);
     let verbatim_lines = verbatim_content_lines(source);
@@ -387,7 +578,7 @@ fn fix_source_once(path: &Path, source: &str, config: &LintConfig) -> (String, u
         {
             continue;
         }
-        let Some((start, end)) = line_bounds(source, diagnostic.line) else {
+        let Some((start, end)) = index.line_bounds(diagnostic.line) else {
             continue;
         };
         let line = &source[start..end];
@@ -411,7 +602,7 @@ fn fix_source_once(path: &Path, source: &str, config: &LintConfig) -> (String, u
         let Some(expected) = expected_indentation_units(&diagnostic.message) else {
             continue;
         };
-        let Some((start, end)) = line_bounds(source, diagnostic.line) else {
+        let Some((start, end)) = index.line_bounds(diagnostic.line) else {
             continue;
         };
         let line = &source[start..end];
@@ -440,7 +631,7 @@ fn fix_source_once(path: &Path, source: &str, config: &LintConfig) -> (String, u
             });
     if !has_structural_math_error && !suppressions.has_math_suppression() {
         add_dollar_math_edits(
-            source,
+            &index,
             &diagnostics,
             "math/inline-dollar",
             "$",
@@ -449,7 +640,7 @@ fn fix_source_once(path: &Path, source: &str, config: &LintConfig) -> (String, u
             &mut edits,
         );
         add_dollar_math_edits(
-            source,
+            &index,
             &diagnostics,
             "math/display-dollar",
             "$$",
@@ -466,15 +657,29 @@ fn fix_source_once(path: &Path, source: &str, config: &LintConfig) -> (String, u
     }
 
     let fixes_applied = edits.len();
-    let mut fixed = source.to_string();
-    for edit in edits.into_iter().rev() {
-        fixed.replace_range(edit.start..edit.end, &edit.replacement);
+    (apply_text_edits(source, &edits), fixes_applied)
+}
+
+/// Edits are sorted, deduplicated and nonoverlapping before reaching here.
+/// Equal-position insertions retain their stable order, matching reverse edits.
+fn apply_text_edits(source: &str, edits: &[TextEdit]) -> String {
+    let mut fixed = String::with_capacity(source.len());
+    let mut cursor = 0;
+    for edit in edits {
+        #[cfg(test)]
+        record_scan_steps(edit.start - cursor + edit.replacement.len());
+        fixed.push_str(&source[cursor..edit.start]);
+        fixed.push_str(&edit.replacement);
+        cursor = edit.end;
     }
-    (fixed, fixes_applied)
+    #[cfg(test)]
+    record_scan_steps(source.len() - cursor);
+    fixed.push_str(&source[cursor..]);
+    fixed
 }
 
 fn add_dollar_math_edits(
-    source: &str,
+    index: &SourceIndex<'_>,
     diagnostics: &[Diagnostic],
     rule: &str,
     token: &str,
@@ -491,19 +696,18 @@ fn add_dollar_math_edits(
     }
 
     let mut candidate_edits = Vec::new();
-    for (index, diagnostic) in matching.into_iter().enumerate() {
-        let Some(start) = byte_offset_for_line_column(source, diagnostic.line, diagnostic.column)
-        else {
+    for (ordinal, diagnostic) in matching.into_iter().enumerate() {
+        let Some(start) = index.byte_offset(diagnostic.line, diagnostic.column) else {
             return;
         };
         let end = start + token.len();
-        if source.get(start..end) != Some(token) {
+        if index.source.get(start..end) != Some(token) {
             return;
         }
         candidate_edits.push(TextEdit {
             start,
             end,
-            replacement: if index % 2 == 0 { opener } else { closer }.to_string(),
+            replacement: if ordinal % 2 == 0 { opener } else { closer }.to_string(),
         });
     }
     edits.extend(candidate_edits);
@@ -516,13 +720,6 @@ fn expected_indentation_units(message: &str) -> Option<usize> {
         .0
         .parse()
         .ok()
-}
-
-fn indentation_prefix(config: &LintConfig, level: usize) -> String {
-    match config.indent_style {
-        IndentStyle::Spaces => " ".repeat(level * config.indent_size),
-        IndentStyle::Tabs => "\t".repeat(level),
-    }
 }
 
 fn normalize_indentation_style(prefix: &str, config: &LintConfig) -> String {
@@ -543,40 +740,6 @@ fn leading_indentation_end(line: &str) -> usize {
     line.char_indices()
         .find_map(|(index, ch)| (!matches!(ch, ' ' | '\t')).then_some(index))
         .unwrap_or(line.len())
-}
-
-fn line_bounds(source: &str, line: usize) -> Option<(usize, usize)> {
-    if line == 0 {
-        return None;
-    }
-    let start = if line == 1 {
-        0
-    } else {
-        source
-            .match_indices('\n')
-            .nth(line - 2)
-            .map(|(index, _)| index + 1)?
-    };
-    let end = source[start..]
-        .find('\n')
-        .map(|offset| start + offset)
-        .unwrap_or(source.len());
-    Some((start, end))
-}
-
-fn byte_offset_for_line_column(source: &str, line: usize, column: usize) -> Option<usize> {
-    if column == 0 {
-        return None;
-    }
-    let (start, end) = line_bounds(source, line)?;
-    let content = &source[start..end];
-    if column == content.chars().count() + 1 {
-        return Some(end);
-    }
-    content
-        .char_indices()
-        .nth(column - 1)
-        .map(|(offset, _)| start + offset)
 }
 
 fn verbatim_content_lines(source: &str) -> HashSet<usize> {
@@ -680,7 +843,10 @@ pub fn lint_source(path: &Path, source: &str, config: &LintConfig) -> Vec<Diagno
             continue;
         }
 
-        let math_mode_before = state.math_mode.clone();
+        // Only this scalar result depends on the pre-scan mode. Retaining it
+        // avoids cloning a potentially deep owned math-environment stack.
+        let display_math_indent =
+            display_math_indent_extra(state.math_mode.as_ref(), uncommented, config);
         lint_math(
             path,
             uncommented,
@@ -694,7 +860,7 @@ pub fn lint_source(path: &Path, source: &str, config: &LintConfig) -> Vec<Diagno
             LintLine {
                 source: line,
                 scan: uncommented,
-                math_mode_before: math_mode_before.as_ref(),
+                display_math_indent,
             },
             line_no,
             config,
@@ -1006,16 +1172,18 @@ fn is_prose_line(line: &str) -> bool {
 }
 
 fn updated_brace_depth(line: &str, mut depth: usize) -> usize {
-    let bytes = line.as_bytes();
-    for (index, byte) in bytes.iter().enumerate() {
-        if is_escaped(bytes, index) {
-            continue;
+    let mut escaped = false;
+    for byte in line.bytes() {
+        #[cfg(test)]
+        record_scan_steps(1);
+        if !escaped {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
         }
-        match byte {
-            b'{' => depth += 1,
-            b'}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
+        escaped = byte == b'\\' && !escaped;
     }
     depth
 }
@@ -1101,33 +1269,34 @@ fn lint_math(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let bytes = line.as_bytes();
-    let mut byte = 0;
-    while byte < bytes.len() {
-        let column = column_for_byte(line, byte);
+    let mut cursor = LineCursor::new(line);
+    while cursor.byte < bytes.len() {
+        let byte = cursor.byte;
+        let column = cursor.column;
         if bytes[byte] == b'\\' {
             if config.prefer_prime_command
                 && state.math_mode.is_some()
-                && let Some(end) = math_text_command_payload_end(line, byte)
+                && let Some(end) = math_text_command_payload_end(&mut cursor, byte)
             {
-                byte = end;
+                cursor.advance_to(end);
                 continue;
             }
             if starts_with_at(bytes, byte, br"\begin{")
-                && let Some((name, end)) = read_braced_name(line, byte + br"\begin{".len())
+                && let Some((name, end)) = cursor.braced_name(byte + br"\begin{".len())
             {
                 if is_math_environment(&name) {
                     open_math_environment(path, line_no, column, name, state, diagnostics);
                 }
-                byte = end;
+                cursor.advance_to(end);
                 continue;
             }
             if starts_with_at(bytes, byte, br"\end{")
-                && let Some((name, end)) = read_braced_name(line, byte + br"\end{".len())
+                && let Some((name, end)) = cursor.braced_name(byte + br"\end{".len())
             {
                 if is_math_environment(&name) {
                     close_math_environment(path, line_no, column, &name, state, diagnostics);
                 }
-                byte = end;
+                cursor.advance_to(end);
                 continue;
             }
             if state.math_mode.is_some()
@@ -1140,7 +1309,7 @@ fn lint_math(
                     line: line_no,
                     column,
                 });
-                byte = end;
+                cursor.advance_to(end);
                 continue;
             }
             if state.math_mode.is_some()
@@ -1148,10 +1317,10 @@ fn lint_math(
                 && let Some((fence, end)) = math_fence_after_command(line, byte + br"\right".len())
             {
                 close_math_fence(path, line_no, column, fence, state, diagnostics);
-                byte = end;
+                cursor.advance_to(end);
                 continue;
             }
-            if !is_escaped(bytes, byte) && starts_with_at(bytes, byte, br"\(") {
+            if !cursor.escaped && starts_with_at(bytes, byte, br"\(") {
                 open_command_math(
                     path,
                     line_no,
@@ -1163,10 +1332,10 @@ fn lint_math(
                     state,
                     diagnostics,
                 );
-                byte += 2;
+                cursor.advance_to(byte + 2);
                 continue;
             }
-            if !is_escaped(bytes, byte) && starts_with_at(bytes, byte, br"\)") {
+            if !cursor.escaped && starts_with_at(bytes, byte, br"\)") {
                 close_command_math(
                     path,
                     line_no,
@@ -1176,10 +1345,10 @@ fn lint_math(
                     state,
                     diagnostics,
                 );
-                byte += 2;
+                cursor.advance_to(byte + 2);
                 continue;
             }
-            if !is_escaped(bytes, byte) && starts_with_at(bytes, byte, br"\[") {
+            if !cursor.escaped && starts_with_at(bytes, byte, br"\[") {
                 open_command_math(
                     path,
                     line_no,
@@ -1191,10 +1360,10 @@ fn lint_math(
                     state,
                     diagnostics,
                 );
-                byte += 2;
+                cursor.advance_to(byte + 2);
                 continue;
             }
-            if !is_escaped(bytes, byte) && starts_with_at(bytes, byte, br"\]") {
+            if !cursor.escaped && starts_with_at(bytes, byte, br"\]") {
                 close_command_math(
                     path,
                     line_no,
@@ -1204,12 +1373,12 @@ fn lint_math(
                     state,
                     diagnostics,
                 );
-                byte += 2;
+                cursor.advance_to(byte + 2);
                 continue;
             }
         }
 
-        if bytes[byte] == b'$' && !is_escaped(bytes, byte) {
+        if bytes[byte] == b'$' && !cursor.escaped {
             if byte + 1 < bytes.len() && bytes[byte + 1] == b'$' {
                 if config.prefer_bracket_display_math {
                     diagnostics.push(Diagnostic::warning(
@@ -1232,7 +1401,7 @@ fn lint_math(
                     state,
                     diagnostics,
                 );
-                byte += 2;
+                cursor.advance_to(byte + 2);
                 continue;
             }
             if config.prefer_paren_inline_math {
@@ -1256,14 +1425,14 @@ fn lint_math(
                 state,
                 diagnostics,
             );
-            byte += 1;
+            cursor.advance_to(byte + 1);
             continue;
         }
 
         if bytes[byte] == b'\''
             && config.prefer_prime_command
             && state.math_mode.is_some()
-            && !is_escaped(bytes, byte)
+            && !cursor.escaped
         {
             diagnostics.push(Diagnostic::warning(
                 path,
@@ -1278,7 +1447,7 @@ fn lint_math(
             ));
         }
 
-        byte += char_width_at(line, byte);
+        cursor.advance();
     }
 }
 
@@ -1678,7 +1847,7 @@ fn lint_environments_and_indent(
     }
 
     let events = env_events(line.scan);
-    let display_math_indent = display_math_indent_extra(line.math_mode_before, line.scan, config);
+    let display_math_indent = line.display_math_indent;
     if state
         .math_mode
         .as_ref()
@@ -1708,12 +1877,11 @@ fn lint_environments_and_indent(
         let continuation_depth = state.brace_depth.saturating_sub(closing_braces);
         let expected_level =
             (actual_width / width).clamp(base_level, base_level + continuation_depth);
-        let expected = indentation_prefix(config, expected_level);
         let expected_width = expected_level * width;
         if actual_width != expected_width {
             let (expected_units, actual_units, unit_name, help) = match config.indent_style {
                 IndentStyle::Spaces => (
-                    expected.len(),
+                    expected_level * config.indent_size,
                     actual_width,
                     "spaces",
                     format!(
@@ -1823,7 +1991,7 @@ fn lint_verbatim_line(
             LintLine {
                 source: line,
                 scan: line,
-                math_mode_before: None,
+                display_math_indent: display_math_indent_extra(None, line, config),
             },
             line_no,
             config,
@@ -1911,24 +2079,36 @@ fn line_starts_with_display_dollar(line: &str) -> bool {
 
 fn mask_inline_verbatim(line: &str) -> String {
     let mut chars: Vec<char> = line.chars().collect();
+    let mut matches = VerbatimMatches::default();
     let mut index = 0;
+    let mut escaped = false;
     while index < chars.len() {
+        #[cfg(test)]
+        record_scan_steps(1);
         if chars[index] == '\\'
-            && !is_escaped_chars(&chars, index)
-            && let Some(end) = inline_verbatim_span_end(&chars, index)
+            && !escaped
+            && let Some(end) = inline_verbatim_span_end(&chars, index, &mut matches)
         {
+            #[cfg(test)]
+            record_scan_steps(end - index);
             for ch in &mut chars[index..end] {
                 *ch = ' ';
             }
             index = end;
+            escaped = false;
             continue;
         }
+        escaped = chars[index] == '\\' && !escaped;
         index += 1;
     }
     chars.into_iter().collect()
 }
 
-fn inline_verbatim_span_end(chars: &[char], start: usize) -> Option<usize> {
+fn inline_verbatim_span_end(
+    chars: &[char],
+    start: usize,
+    matches: &mut VerbatimMatches,
+) -> Option<usize> {
     if starts_with_command_chars(chars, start, r"\verb") {
         let mut delimiter = start + r"\verb".chars().count();
         if chars.get(delimiter) == Some(&'*') {
@@ -1941,7 +2121,7 @@ fn inline_verbatim_span_end(chars: &[char], start: usize) -> Option<usize> {
         let mut delimiter = start + r"\lstinline".chars().count();
         delimiter = skip_ascii_whitespace_chars(chars, delimiter);
         if chars.get(delimiter) == Some(&'[') {
-            delimiter = bracketed_chars_end(chars, delimiter)?;
+            delimiter = matches.end(chars, delimiter, '[', ']')?;
             delimiter = skip_ascii_whitespace_chars(chars, delimiter);
         }
         return delimited_inline_span_end(chars, delimiter);
@@ -1952,10 +2132,10 @@ fn inline_verbatim_span_end(chars: &[char], start: usize) -> Option<usize> {
             let mut delimiter = start + command.chars().count();
             delimiter = skip_ascii_whitespace_chars(chars, delimiter);
             if chars.get(delimiter) == Some(&'[') {
-                delimiter = bracketed_chars_end(chars, delimiter)?;
+                delimiter = matches.end(chars, delimiter, '[', ']')?;
                 delimiter = skip_ascii_whitespace_chars(chars, delimiter);
             }
-            delimiter = braced_chars_end(chars, delimiter)?;
+            delimiter = matches.end(chars, delimiter, '{', '}')?;
             delimiter = skip_ascii_whitespace_chars(chars, delimiter);
             return delimited_inline_span_end(chars, delimiter);
         }
@@ -1995,14 +2175,17 @@ fn skip_ascii_whitespace_chars(chars: &[char], mut index: usize) -> usize {
     index
 }
 
+#[cfg(test)]
 fn bracketed_chars_end(chars: &[char], open: usize) -> Option<usize> {
     balanced_chars_end(chars, open, '[', ']')
 }
 
+#[cfg(test)]
 fn braced_chars_end(chars: &[char], open: usize) -> Option<usize> {
     balanced_chars_end(chars, open, '{', '}')
 }
 
+#[cfg(test)]
 fn balanced_chars_end(chars: &[char], open: usize, left: char, right: char) -> Option<usize> {
     if chars.get(open) != Some(&left) {
         return None;
@@ -2031,37 +2214,39 @@ fn leading_closing_indent_events(events: &[EnvEvent], ignored: &HashSet<&str>) -
 fn env_events(line: &str) -> Vec<EnvEvent> {
     let bytes = line.as_bytes();
     let mut events = Vec::new();
-    let mut byte = 0;
-    while byte < bytes.len() {
-        if bytes[byte] == b'\\' && !is_escaped(bytes, byte) {
+    let mut cursor = LineCursor::new(line);
+    while cursor.byte < bytes.len() {
+        let byte = cursor.byte;
+        if bytes[byte] == b'\\' && !cursor.escaped {
             if starts_with_at(bytes, byte, br"\begin{")
-                && let Some((name, end)) = read_braced_name(line, byte + br"\begin{".len())
+                && let Some((name, end)) = cursor.braced_name(byte + br"\begin{".len())
             {
                 events.push(EnvEvent {
                     kind: EnvKind::Begin,
                     name,
-                    column: column_for_byte(line, byte),
+                    column: cursor.column,
                 });
-                byte = end;
+                cursor.advance_to(end);
                 continue;
             }
             if starts_with_at(bytes, byte, br"\end{")
-                && let Some((name, end)) = read_braced_name(line, byte + br"\end{".len())
+                && let Some((name, end)) = cursor.braced_name(byte + br"\end{".len())
             {
                 events.push(EnvEvent {
                     kind: EnvKind::End,
                     name,
-                    column: column_for_byte(line, byte),
+                    column: cursor.column,
                 });
-                byte = end;
+                cursor.advance_to(end);
                 continue;
             }
         }
-        byte += char_width_at(line, byte);
+        cursor.advance();
     }
     events
 }
 
+#[cfg(test)]
 fn read_braced_name(line: &str, start: usize) -> Option<(String, usize)> {
     let rest = line.get(start..)?;
     let close = rest.find('}')?;
@@ -2072,7 +2257,11 @@ fn read_braced_name(line: &str, start: usize) -> Option<(String, usize)> {
     Some((name.to_string(), start + close + 1))
 }
 
-fn math_text_command_payload_end(line: &str, command_start: usize) -> Option<usize> {
+fn math_text_command_payload_end(
+    cursor: &mut LineCursor<'_>,
+    command_start: usize,
+) -> Option<usize> {
+    let line = cursor.line;
     let commands = [
         r"\text",
         r"\textnormal",
@@ -2099,7 +2288,7 @@ fn math_text_command_payload_end(line: &str, command_start: usize) -> Option<usi
             continue;
         }
         let payload_start = skip_ascii_whitespace(line, after_command);
-        return balanced_braced_end(line, payload_start);
+        return cursor.braced_end(payload_start);
     }
     None
 }
@@ -2115,6 +2304,7 @@ fn skip_ascii_whitespace(line: &str, mut byte: usize) -> usize {
     byte
 }
 
+#[cfg(test)]
 fn balanced_braced_end(line: &str, open: usize) -> Option<usize> {
     if !line[open..].starts_with('{') {
         return None;
@@ -2148,13 +2338,14 @@ fn tex_comment_text(line: &str) -> Option<&str> {
 }
 
 fn comment_start_byte(line: &str) -> Option<usize> {
-    let bytes = line.as_bytes();
-    let mut byte = 0;
-    while byte < bytes.len() {
-        if bytes[byte] == b'%' && !is_escaped(bytes, byte) {
+    let mut escaped = false;
+    for (byte, scalar) in line.char_indices() {
+        #[cfg(test)]
+        record_scan_steps(1);
+        if scalar == '%' && !escaped {
             return Some(byte);
         }
-        byte += char_width_at(line, byte);
+        escaped = scalar == '\\' && !escaped;
     }
     None
 }
@@ -2172,6 +2363,7 @@ fn starts_with_latex_command(haystack: &[u8], index: usize, command: &[u8]) -> b
             .is_none_or(|byte| !byte.is_ascii_alphabetic())
 }
 
+#[cfg(test)]
 fn is_escaped(bytes: &[u8], index: usize) -> bool {
     let mut count = 0;
     let mut cursor = index;
@@ -2182,6 +2374,7 @@ fn is_escaped(bytes: &[u8], index: usize) -> bool {
     count % 2 == 1
 }
 
+#[cfg(test)]
 fn is_escaped_chars(chars: &[char], index: usize) -> bool {
     let mut count = 0;
     let mut cursor = index;
@@ -2196,6 +2389,7 @@ fn char_width_at(line: &str, byte: usize) -> usize {
     line[byte..].chars().next().map(char::len_utf8).unwrap_or(1)
 }
 
+#[cfg(test)]
 fn column_for_byte(line: &str, byte: usize) -> usize {
     line[..byte].chars().count() + 1
 }
@@ -2204,6 +2398,175 @@ fn column_for_byte(line: &str, byte: usize) -> usize {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    // Retain bounded prefix/reverse-edit models independently of indexed and
+    // streaming implementations. These are deliberately not production paths.
+    fn oracle_byte_offset(source: &str, line: usize, column: usize) -> Option<usize> {
+        let start = if line == 1 {
+            0
+        } else {
+            source
+                .match_indices('\n')
+                .nth(line.checked_sub(2)?)
+                .map(|(byte, _)| byte + 1)?
+        };
+        let end = source[start..]
+            .find('\n')
+            .map_or(source.len(), |byte| start + byte);
+        let content = &source[start..end];
+        if column == content.chars().count() + 1 {
+            Some(end)
+        } else {
+            content
+                .char_indices()
+                .nth(column.checked_sub(1)?)
+                .map(|(byte, _)| start + byte)
+        }
+    }
+
+    fn oracle_mask_inline_verbatim(line: &str) -> String {
+        let mut chars: Vec<char> = line.chars().collect();
+        let mut index = 0;
+        while index < chars.len() {
+            if chars[index] == '\\'
+                && !is_escaped_chars(&chars, index)
+                && let Some(end) = oracle_inline_verbatim_span_end(&chars, index)
+            {
+                chars[index..end].fill(' ');
+                index = end;
+            } else {
+                index += 1;
+            }
+        }
+        chars.into_iter().collect()
+    }
+
+    fn oracle_inline_verbatim_span_end(chars: &[char], start: usize) -> Option<usize> {
+        if starts_with_command_chars(chars, start, r"\verb") {
+            let mut delimiter = start + r"\verb".chars().count();
+            if chars.get(delimiter) == Some(&'*') {
+                delimiter += 1;
+            }
+            return delimited_inline_span_end(chars, delimiter);
+        }
+        if starts_with_command_chars(chars, start, r"\lstinline") {
+            let mut delimiter =
+                skip_ascii_whitespace_chars(chars, start + r"\lstinline".chars().count());
+            if chars.get(delimiter) == Some(&'[') {
+                delimiter =
+                    skip_ascii_whitespace_chars(chars, bracketed_chars_end(chars, delimiter)?);
+            }
+            return delimited_inline_span_end(chars, delimiter);
+        }
+        for command in [r"\mintinline", r"\mint"] {
+            if starts_with_command_chars(chars, start, command) {
+                let mut delimiter =
+                    skip_ascii_whitespace_chars(chars, start + command.chars().count());
+                if chars.get(delimiter) == Some(&'[') {
+                    delimiter =
+                        skip_ascii_whitespace_chars(chars, bracketed_chars_end(chars, delimiter)?);
+                }
+                delimiter = skip_ascii_whitespace_chars(chars, braced_chars_end(chars, delimiter)?);
+                return delimited_inline_span_end(chars, delimiter);
+            }
+        }
+        None
+    }
+
+    fn oracle_math_text_payload_end(line: &str, command_start: usize) -> Option<usize> {
+        for command in [
+            r"\text",
+            r"\textnormal",
+            r"\textrm",
+            r"\textit",
+            r"\textbf",
+            r"\textsf",
+            r"\texttt",
+            r"\mbox",
+            r"\hbox",
+        ] {
+            if !starts_with_at(line.as_bytes(), command_start, command.as_bytes()) {
+                continue;
+            }
+            let after = command_start + command.len();
+            if line[after..]
+                .chars()
+                .next()
+                .is_some_and(|scalar| scalar.is_ascii_alphabetic())
+            {
+                continue;
+            }
+            return balanced_braced_end(line, skip_ascii_whitespace(line, after));
+        }
+        None
+    }
+
+    fn oracle_env_events(line: &str) -> Vec<(EnvKind, String, usize)> {
+        let bytes = line.as_bytes();
+        let mut events = Vec::new();
+        let mut byte = 0;
+        while byte < bytes.len() {
+            if bytes[byte] == b'\\' && !is_escaped(bytes, byte) {
+                let mut parsed = false;
+                for (command, kind) in [
+                    (br"\begin{".as_slice(), EnvKind::Begin),
+                    (br"\end{".as_slice(), EnvKind::End),
+                ] {
+                    if starts_with_at(bytes, byte, command)
+                        && let Some((name, end)) = read_braced_name(line, byte + command.len())
+                    {
+                        events.push((kind, name, column_for_byte(line, byte)));
+                        byte = end;
+                        parsed = true;
+                        break;
+                    }
+                }
+                if parsed {
+                    continue;
+                }
+            }
+            byte += char_width_at(line, byte);
+        }
+        events
+    }
+
+    fn oracle_brace_depth(line: &str, mut depth: usize) -> usize {
+        for (index, byte) in line.bytes().enumerate() {
+            if !is_escaped(line.as_bytes(), index) {
+                match byte {
+                    b'{' => depth += 1,
+                    b'}' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        }
+        depth
+    }
+
+    fn scanner_fragments() -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec(
+            prop_oneof![
+                Just("\\".to_owned()),
+                Just("\\\\".to_owned()),
+                Just("\\\\\\".to_owned()),
+                Just("é界🦀\r\n".to_owned()),
+                Just("$x$ {}%".to_owned()),
+                Just(r"\begin{equation}".to_owned()),
+                Just(r"\end{equation}".to_owned()),
+                Just(r"\verb|$x$é|".to_owned()),
+                Just(r"\verb*+\begin{x}+".to_owned()),
+                Just(r"\lstinline[language=TeX]|🦀%$|".to_owned()),
+                Just(r"\mintinline[breaklines]{tex}{é\{x\}}".to_owned()),
+                Just(r"\begin{".to_owned()),
+                Just(r"\text{".to_owned()),
+                Just(r"\lstinline[".to_owned()),
+                Just(r"\mintinline{".to_owned()),
+                Just("[{}]".to_owned()),
+                any::<char>().prop_map(|scalar| scalar.to_string()),
+            ],
+            0..32,
+        )
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig {
@@ -2223,9 +2586,10 @@ mod tests {
             ),
         ) {
             let source: String = chars.into_iter().collect();
+            let index = SourceIndex::new(&source);
             let (mut line, mut column) = (1, 1);
             for (offset, ch) in source.char_indices() {
-                prop_assert_eq!(byte_offset_for_line_column(&source, line, column), Some(offset));
+                prop_assert_eq!(index.byte_offset(line, column), Some(offset));
                 if ch == '\n' {
                     line += 1;
                     column = 1;
@@ -2233,11 +2597,77 @@ mod tests {
                     column += 1;
                 }
             }
-            prop_assert_eq!(byte_offset_for_line_column(&source, line, column), Some(source.len()));
-            prop_assert_eq!(byte_offset_for_line_column(&source, line, column + 1), None);
-            prop_assert_eq!(byte_offset_for_line_column(&source, line + 1, 1), None);
-            prop_assert_eq!(byte_offset_for_line_column(&source, 0, 1), None);
-            prop_assert_eq!(byte_offset_for_line_column(&source, 1, 0), None);
+            prop_assert_eq!(index.byte_offset(line, column), Some(source.len()));
+            prop_assert_eq!(index.byte_offset(line, column + 1), None);
+            prop_assert_eq!(index.byte_offset(line + 1, 1), None);
+            prop_assert_eq!(index.byte_offset(0, 1), None);
+            prop_assert_eq!(index.byte_offset(1, 0), None);
+        }
+
+        #[test]
+        fn property_indexed_coordinates_match_bounded_prefix_oracle(
+            chars in prop::collection::vec(any::<char>(), 0..128),
+            line in 0usize..132, column in 0usize..132,
+        ) {
+            let source: String = chars.into_iter().collect();
+            let index = SourceIndex::new(&source);
+            prop_assert_eq!(index.byte_offset(line, column), oracle_byte_offset(&source, line, column));
+        }
+
+        #[test]
+        fn property_forward_cursors_masks_and_events_match_bounded_oracles(
+            fragments in scanner_fragments(), jumps in prop::collection::vec(0usize..1024, 0..32),
+            initial_depth in 0usize..16,
+        ) {
+            let source = fragments.concat();
+            let boundaries = source.char_indices().map(|(byte, _)| byte).chain([source.len()]).collect::<Vec<_>>();
+            let mut selected = jumps.into_iter().map(|jump| boundaries[jump % boundaries.len()]).collect::<Vec<_>>();
+            selected.extend([0, source.len()]);
+            selected.sort_unstable();
+            selected.dedup();
+            let mut cursor = LineCursor::new(&source);
+            for byte in selected {
+                cursor.advance_to(byte);
+                prop_assert_eq!(cursor.byte, byte);
+                prop_assert_eq!(cursor.column, column_for_byte(&source, byte));
+                prop_assert_eq!(cursor.escaped, is_escaped(source.as_bytes(), byte));
+            }
+            prop_assert_eq!(mask_inline_verbatim(&source), oracle_mask_inline_verbatim(&source));
+            let mut names = LineCursor::new(&source);
+            let mut payloads = LineCursor::new(&source);
+            for &byte in &boundaries {
+                prop_assert_eq!(names.braced_name(byte), read_braced_name(&source, byte));
+                prop_assert_eq!(math_text_command_payload_end(&mut payloads, byte), oracle_math_text_payload_end(&source, byte));
+            }
+            prop_assert_eq!(comment_start_byte(&source), source.char_indices().find_map(|(byte, scalar)| (scalar == '%' && !is_escaped(source.as_bytes(), byte)).then_some(byte)));
+            let events = env_events(&source).into_iter().map(|event| (event.kind, event.name, event.column)).collect::<Vec<_>>();
+            prop_assert_eq!(events, oracle_env_events(&source));
+            prop_assert_eq!(updated_brace_depth(&source, initial_depth), oracle_brace_depth(&source, initial_depth));
+        }
+
+        #[test]
+        fn property_forward_edits_match_bounded_reverse_replacement_oracle(
+            chars in prop::collection::vec(any::<char>(), 0..128),
+            changes in prop::collection::vec((0usize..8, 0usize..8, ".{0,16}"), 0..32),
+        ) {
+            let source: String = chars.into_iter().collect();
+            let boundaries = source.char_indices().map(|(byte, _)| byte).chain([source.len()]).collect::<Vec<_>>();
+            let mut cursor = 0;
+            let mut edits = Vec::new();
+            for (gap, removed, replacement) in changes {
+                let start = (cursor + gap).min(boundaries.len() - 1);
+                let end = (start + removed).min(boundaries.len() - 1);
+                edits.push(TextEdit { start: boundaries[start], end: boundaries[end], replacement });
+                cursor = end;
+            }
+            edits.sort_by_key(|edit| (edit.start, edit.end));
+            edits.dedup();
+            prop_assert!(edits.windows(2).all(|pair| pair[0].end <= pair[1].start));
+            let mut expected = source.clone();
+            for edit in edits.iter().rev() {
+                expected.replace_range(edit.start..edit.end, &edit.replacement);
+            }
+            prop_assert_eq!(apply_text_edits(&source, &edits), expected);
         }
 
         #[test]
@@ -2263,6 +2693,79 @@ mod tests {
             let (again, edits) = fix_source(path, &fixed, &config);
             prop_assert_eq!(again, fixed);
             prop_assert_eq!(edits, 0);
+        }
+    }
+
+    #[test]
+    fn heavy_fix_and_scan_fixtures_have_bounded_forward_work() {
+        let path = Path::new("heavy.tex");
+        let config = LintConfig::default();
+        for size in [5_000, 80_000] {
+            let source = "$x$\n".repeat(size);
+            SCAN_STEPS.with(|steps| steps.set(0));
+            let (fixed, count) = fix_source(path, &source, &config);
+            assert_eq!(count, 2 * size);
+            assert_eq!(fixed, "\\(x\\)\n".repeat(size));
+            let work = SCAN_STEPS.with(std::cell::Cell::get);
+            assert!(
+                work <= 80 * source.len(),
+                "nonlinear indexed/cursor/edit work: {work}"
+            );
+
+            for line in ["\\".repeat(size), "é界🦀".repeat(size)] {
+                SCAN_STEPS.with(|steps| steps.set(0));
+                let diagnostics = lint_source(path, &line, &config);
+                assert_eq!(diagnostics.len(), 1);
+                assert_eq!(diagnostics[0].rule, "line/length");
+                assert_eq!(diagnostics[0].column, 121);
+                let work = SCAN_STEPS.with(std::cell::Cell::get);
+                assert!(
+                    work <= 12 * line.len(),
+                    "nonlinear forward line work: {work}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deep_math_environment_lines_do_not_copy_stacks_or_build_indentation_prefixes() {
+        let size = 4096;
+        let mut source = "\\begin{aligned}\n".repeat(size);
+        source.push_str(&"\\end{aligned}\n".repeat(size));
+        SCAN_STEPS.with(|steps| steps.set(0));
+        let diagnostics = lint_source(Path::new("nested.tex"), &source, &LintConfig::default());
+        assert_eq!(diagnostics.len(), 2 * (size - 1));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.rule == "indent/size")
+        );
+        assert_eq!(diagnostics[1].message, "expected 4 leading spaces, found 0");
+        assert!(SCAN_STEPS.with(std::cell::Cell::get) <= 12 * source.len());
+    }
+
+    #[test]
+    fn malformed_name_and_balanced_arguments_have_bounded_forward_work() {
+        let config = LintConfig {
+            prefer_prime_command: true,
+            ..LintConfig::default()
+        };
+        for size in [5_000, 80_000] {
+            for source in [
+                r"\begin{".repeat(size),
+                format!("${}", r"\text{".repeat(size)),
+                r"\lstinline[".repeat(size),
+                r"\mintinline{".repeat(size),
+            ] {
+                SCAN_STEPS.with(|steps| steps.set(0));
+                let diagnostics = lint_source(Path::new("malformed.tex"), &source, &config);
+                assert!(!diagnostics.is_empty());
+                let work = SCAN_STEPS.with(std::cell::Cell::get);
+                assert!(
+                    work <= 32 * source.len(),
+                    "nonlinear malformed-argument scans: {work}"
+                );
+            }
         }
     }
 
