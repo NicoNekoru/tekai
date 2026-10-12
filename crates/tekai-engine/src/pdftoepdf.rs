@@ -10,8 +10,14 @@ pub use crate::generated::pdftex0::{
 };
 
 use libc::{c_char, c_float, c_int, c_long, c_void};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
+use std::marker::{PhantomData, PhantomPinned};
+use std::pin::Pin;
 use std::ptr;
+use std::ptr::NonNull;
+use std::rc::Rc;
 
 use crate::utils::{
     pdf_out, pdf_printf_args, pdf_write_bytes, pdftex_fail_args, pdftex_warn_args, tex_printf_args,
@@ -51,12 +57,22 @@ struct UsedEncoding {
 
 #[repr(C)]
 struct PdfDocument {
-    file_name: *mut c_char,
+    file_name: CString,
     doc: *mut PDFDoc,
     xref: *mut XRef,
     in_obj_list: *mut InObj,
     occurrences: c_int,
     next: *mut PdfDocument,
+}
+
+impl Drop for PdfDocument {
+    fn drop(&mut self) {
+        // Explicit deletion and partial-failure teardown both release the
+        // decoder, without writing references, encodings, or PDF trailers.
+        unsafe {
+            xpdf_doc_delete(self.doc);
+        }
+    }
 }
 
 struct Obj {
@@ -103,11 +119,208 @@ extern "C" {
 
 }
 
-static mut IN_OBJ_LIST: *mut InObj = ptr::null_mut();
-static mut ENCODING_LIST: *mut UsedEncoding = ptr::null_mut();
-static mut PDF_DOCUMENTS: *mut PdfDocument = ptr::null_mut();
-static mut XREF: *mut XRef = ptr::null_mut();
-static mut IS_INIT: c_int = 0;
+pub(crate) struct PdfInclusionSession {
+    in_obj_list: Cell<*mut InObj>,
+    encoding_list: Cell<*mut UsedEncoding>,
+    documents_head: Cell<*mut PdfDocument>,
+    xref: Cell<*mut XRef>,
+    initialized: Cell<c_int>,
+    nodes: RefCell<HashMap<usize, NonNull<InObj>>>,
+    encodings: RefCell<HashMap<usize, NonNull<UsedEncoding>>>,
+    documents: RefCell<HashMap<usize, NonNull<PdfDocument>>>,
+    _thread: PhantomData<Rc<()>>,
+    _pinned: PhantomPinned,
+}
+
+thread_local! {
+    static ACTIVE: Cell<Option<NonNull<PdfInclusionSession>>> = const { Cell::new(None) };
+}
+
+impl PdfInclusionSession {
+    pub(crate) fn new() -> Pin<Box<Self>> {
+        Box::pin(Self {
+            in_obj_list: Cell::new(ptr::null_mut()),
+            encoding_list: Cell::new(ptr::null_mut()),
+            documents_head: Cell::new(ptr::null_mut()),
+            xref: Cell::new(ptr::null_mut()),
+            initialized: Cell::new(0),
+            nodes: RefCell::new(HashMap::new()),
+            encodings: RefCell::new(HashMap::new()),
+            documents: RefCell::new(HashMap::new()),
+            _thread: PhantomData,
+            _pinned: PhantomPinned,
+        })
+    }
+
+    /// Must run inside XpdfSession's scope. The private guard releases decoder
+    /// handles before unregistering, even if the inclusion action unwinds.
+    pub(crate) fn scope<T>(session: Pin<&mut Self>, action: impl FnOnce() -> T) -> T {
+        assert!(
+            crate::xpdf::has_scope(),
+            "PDF inclusion requires an outer decoder scope"
+        );
+        struct Unregister(NonNull<PdfInclusionSession>);
+        impl Drop for Unregister {
+            fn drop(&mut self) {
+                let _ = ACTIVE.try_with(|active| {
+                    if active.get() == Some(self.0) {
+                        active.set(None);
+                    }
+                });
+                // Decoder cleanup uses only the still-live outer Xpdf scope.
+                // Routing is already clear if an invariant violation panics.
+                unsafe { self.0.as_ref() }.clear_handles();
+            }
+        }
+        // SAFETY The private guard retains the pinned borrow through action
+        // and teardown. Raw inclusion handles cannot outlive this invocation.
+        let pointer = NonNull::from(unsafe { session.get_unchecked_mut() });
+        ACTIVE.with(|active| {
+            assert!(active.get().is_none(), "nested PDF inclusion scope");
+            active.set(Some(pointer));
+        });
+        let _guard = Unregister(pointer);
+        action()
+    }
+
+    fn clear_handles(&self) {
+        self.in_obj_list.set(ptr::null_mut());
+        self.encoding_list.set(ptr::null_mut());
+        self.documents_head.set(ptr::null_mut());
+        self.xref.set(ptr::null_mut());
+        self.initialized.set(0);
+        // Every node is registered independently of the current linked-list
+        // aliases, including nodes created before a failed write_epdf returns.
+        for (_, pointer) in self.encodings.borrow_mut().drain() {
+            unsafe {
+                xpdf_gfx_font_delete((*pointer.as_ptr()).font);
+                drop(Box::from_raw(pointer.as_ptr()));
+            }
+        }
+        for (_, pointer) in self.nodes.borrow_mut().drain() {
+            unsafe {
+                drop(Box::from_raw(pointer.as_ptr()));
+            }
+        }
+        for (_, pointer) in self.documents.borrow_mut().drain() {
+            unsafe {
+                drop(Box::from_raw(pointer.as_ptr()));
+            }
+        }
+    }
+}
+
+impl Drop for PdfInclusionSession {
+    fn drop(&mut self) {
+        // The closure guard already drained any decoder handles while the
+        // outer decoder scope was registered. No normal finalization here.
+        self.clear_handles();
+    }
+}
+
+fn with_owner<T>(action: impl FnOnce(&PdfInclusionSession) -> T) -> T {
+    ACTIVE.with(|active| {
+        let pointer = active
+            .get()
+            .expect("PDF inclusion outside invocation scope");
+        // SAFETY Private closure scope keeps the owner alive. Only separate
+        // Cells/RefCells are borrowed, not mutable references to owned boxes.
+        action(unsafe { pointer.as_ref() })
+    })
+}
+
+fn in_obj_list() -> *mut InObj {
+    with_owner(|owner| owner.in_obj_list.get())
+}
+fn set_in_obj_list(value: *mut InObj) {
+    with_owner(|owner| owner.in_obj_list.set(value));
+}
+fn encoding_list() -> *mut UsedEncoding {
+    with_owner(|owner| owner.encoding_list.get())
+}
+fn set_encoding_list(value: *mut UsedEncoding) {
+    with_owner(|owner| owner.encoding_list.set(value));
+}
+fn documents_head() -> *mut PdfDocument {
+    with_owner(|owner| owner.documents_head.get())
+}
+fn set_documents_head(value: *mut PdfDocument) {
+    with_owner(|owner| owner.documents_head.set(value));
+}
+fn xref() -> *mut XRef {
+    with_owner(|owner| owner.xref.get())
+}
+fn set_xref(value: *mut XRef) {
+    with_owner(|owner| owner.xref.set(value));
+}
+fn initialized() -> c_int {
+    with_owner(|owner| owner.initialized.get())
+}
+fn set_initialized(value: c_int) {
+    with_owner(|owner| owner.initialized.set(value));
+}
+
+fn own_document(value: Box<PdfDocument>) -> *mut PdfDocument {
+    with_owner(|owner| {
+        let mut registry = owner.documents.borrow_mut();
+        registry.reserve(1);
+        let pointer = Box::into_raw(value);
+        registry.insert(pointer as usize, NonNull::new(pointer).unwrap());
+        pointer
+    })
+}
+
+fn own_node(value: Box<InObj>) -> *mut InObj {
+    with_owner(|owner| {
+        let mut registry = owner.nodes.borrow_mut();
+        registry.reserve(1);
+        let pointer = Box::into_raw(value);
+        registry.insert(pointer as usize, NonNull::new(pointer).unwrap());
+        pointer
+    })
+}
+
+fn own_encoding(value: Box<UsedEncoding>) -> *mut UsedEncoding {
+    with_owner(|owner| {
+        let mut registry = owner.encodings.borrow_mut();
+        registry.reserve(1);
+        let pointer = Box::into_raw(value);
+        registry.insert(pointer as usize, NonNull::new(pointer).unwrap());
+        pointer
+    })
+}
+
+unsafe fn delete_node(pointer: *mut InObj) {
+    with_owner(|owner| {
+        assert!(
+            owner
+                .nodes
+                .borrow_mut()
+                .remove(&(pointer as usize))
+                .is_some(),
+            "unknown PDF reference handle"
+        )
+    });
+    unsafe {
+        drop(Box::from_raw(pointer));
+    }
+}
+
+unsafe fn delete_encoding(pointer: *mut UsedEncoding) {
+    with_owner(|owner| {
+        assert!(
+            owner
+                .encodings
+                .borrow_mut()
+                .remove(&(pointer as usize))
+                .is_some(),
+            "unknown PDF encoding handle"
+        )
+    });
+    unsafe {
+        drop(Box::from_raw(pointer));
+    }
+}
 
 unsafe fn c_bytes(ptr: *const c_char) -> &'static [u8] {
     if ptr.is_null() {
@@ -117,27 +330,14 @@ unsafe fn c_bytes(ptr: *const c_char) -> &'static [u8] {
     }
 }
 
-unsafe fn c_string_dup(ptr: *const c_char) -> *mut c_char {
-    let bytes = unsafe { c_bytes(ptr) };
-    let out = unsafe { crate::allocation::malloc(bytes.len() + 1) as *mut c_char };
-    if out.is_null() {
-        unsafe { pdftex_fail_args(c"out of memory".as_ptr(), &[]) };
-    }
-    unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, bytes.len());
-        *out.add(bytes.len()) = 0;
-    }
-    out
-}
-
 unsafe fn find_add_document(file_name: *mut c_char) -> *mut PdfDocument {
     unsafe {
-        let mut p = PDF_DOCUMENTS;
-        while !p.is_null() && crate::byte_string::strcmp((*p).file_name, file_name) != 0 {
+        let mut p = documents_head();
+        while !p.is_null() && crate::byte_string::strcmp((*p).file_name.as_ptr(), file_name) != 0 {
             p = (*p).next;
         }
         if !p.is_null() {
-            XREF = (*p).xref;
+            set_xref((*p).xref);
             (*p).occurrences += 1;
             return p;
         }
@@ -147,16 +347,16 @@ unsafe fn find_add_document(file_name: *mut c_char) -> *mut PdfDocument {
             xpdf_doc_delete(doc);
             pdftex_fail_args(c"%s".as_ptr(), &[PrintfArg::from(message)]);
         }
-        let p = Box::into_raw(Box::new(PdfDocument {
-            file_name: c_string_dup(file_name),
+        let p = own_document(Box::new(PdfDocument {
+            file_name: CString::new(c_bytes(file_name)).expect("C string has no interior nul"),
             doc,
             xref: ptr::null_mut(),
             in_obj_list: ptr::null_mut(),
             occurrences: 0,
-            next: PDF_DOCUMENTS,
+            next: documents_head(),
         }));
-        PDF_DOCUMENTS = p;
-        XREF = ptr::null_mut();
+        set_documents_head(p);
+        set_xref(ptr::null_mut());
         p
     }
 }
@@ -165,7 +365,7 @@ unsafe fn free_inobj_list(mut list: *mut InObj) {
     unsafe {
         while !list.is_null() {
             let next = (*list).next;
-            drop(Box::from_raw(list));
+            delete_node(list);
             list = next;
         }
     }
@@ -173,30 +373,49 @@ unsafe fn free_inobj_list(mut list: *mut InObj) {
 
 unsafe fn delete_document(pdf_doc: *mut PdfDocument) {
     unsafe {
-        let mut p = &raw mut PDF_DOCUMENTS;
-        while !(*p).is_null() && *p != pdf_doc {
-            p = &raw mut (**p).next;
+        let mut current = documents_head();
+        let mut previous: *mut PdfDocument = ptr::null_mut();
+        while !current.is_null() && current != pdf_doc {
+            previous = current;
+            current = (*current).next;
         }
-        if (*p).is_null() {
+        if current.is_null() {
             return;
         }
-        *p = (*pdf_doc).next;
+        if previous.is_null() {
+            set_documents_head((*pdf_doc).next);
+        } else {
+            (*previous).next = (*pdf_doc).next;
+        }
+        if in_obj_list() == (*pdf_doc).in_obj_list {
+            set_in_obj_list(ptr::null_mut());
+        }
+        if xref() == (*pdf_doc).xref {
+            set_xref(ptr::null_mut());
+        }
         free_inobj_list((*pdf_doc).in_obj_list);
-        XREF = (*pdf_doc).xref;
-        xpdf_doc_delete((*pdf_doc).doc);
-        crate::allocation::free((*pdf_doc).file_name as *mut c_void);
+        with_owner(|owner| {
+            assert!(
+                owner
+                    .documents
+                    .borrow_mut()
+                    .remove(&(pdf_doc as usize))
+                    .is_some(),
+                "unknown PDF inclusion handle"
+            )
+        });
         drop(Box::from_raw(pdf_doc));
     }
 }
 
 unsafe fn add_encoding(font: *mut GfxFont) -> c_int {
     unsafe {
-        let n = Box::into_raw(Box::new(UsedEncoding {
-            next: ENCODING_LIST,
+        let n = own_encoding(Box::new(UsedEncoding {
+            next: encoding_list(),
             font,
             enc_objnum: pdfnewobjnum(),
         }));
-        ENCODING_LIST = n;
+        set_encoding_list(n);
         (*n).enc_objnum
     }
 }
@@ -206,7 +425,7 @@ unsafe fn add_in_obj(type_: InObjType, ref_: Ref, fd: *mut FdEntry, enc: c_int) 
         if ref_.num == 0 {
             pdftex_fail_args(c"PDF inclusion: invalid reference".as_ptr(), &[]);
         }
-        let n = Box::into_raw(Box::new(InObj {
+        let n = own_node(Box::new(InObj {
             ref_,
             type_,
             next: ptr::null_mut(),
@@ -215,14 +434,14 @@ unsafe fn add_in_obj(type_: InObjType, ref_: Ref, fd: *mut FdEntry, enc: c_int) 
             written: 0,
             num: 0,
         }));
-        if IN_OBJ_LIST.is_null() {
-            IN_OBJ_LIST = n;
+        if in_obj_list().is_null() {
+            set_in_obj_list(n);
         } else {
-            let mut p = IN_OBJ_LIST;
-            let mut q = IN_OBJ_LIST;
+            let mut p = in_obj_list();
+            let mut q = in_obj_list();
             while !p.is_null() {
                 if (*p).ref_.num == ref_.num && (*p).ref_.gen == ref_.gen {
-                    drop(Box::from_raw(n));
+                    delete_node(n);
                     return (*p).num;
                 }
                 q = p;
@@ -386,7 +605,7 @@ unsafe fn copy_proc_set(obj: *mut Object) {
 unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
     unsafe {
         let ref_ = xpdf_object_get_ref(font_ref);
-        let mut p = IN_OBJ_LIST;
+        let mut p = in_obj_list();
         while !p.is_null() {
             if (*p).ref_.num == ref_.num && (*p).ref_.gen == ref_.gen {
                 copy_name(tag);
@@ -404,7 +623,7 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
         let fontfile = Obj::new();
         let ffsubtype = Obj::new();
         let stemv = Obj::new();
-        let fetched = xpdf_object_fetch(font_ref, XREF, fontdict.ptr);
+        let fetched = xpdf_object_fetch(font_ref, xref(), fontdict.ptr);
         let mut fontmap: *mut FmEntry = ptr::null_mut();
         let replaceable = REPLACE_EMBEDDED_TYPE1_FONTS
             && fixedinclusioncopyfont == 0
@@ -430,7 +649,7 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
                 xpdf_object_is_ref(fontdesc_ref.ptr) != 0
             }
             && {
-                xpdf_object_fetch(fontdesc_ref.ptr, XREF, fontdesc.ptr);
+                xpdf_object_fetch(fontdesc_ref.ptr, xref(), fontdesc.ptr);
                 xpdf_object_is_dict(fontdesc.ptr) != 0
             }
             && {
@@ -477,7 +696,7 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
             );
             copy_name(tag);
             let gfont = xpdf_gfx_font_make(
-                XREF,
+                xref(),
                 tag,
                 xpdf_object_get_ref(font_ref),
                 xpdf_object_get_dict(fontdict.ptr),
@@ -650,7 +869,7 @@ unsafe fn copy_object(obj: *mut Object) {
             crate::utils::pdf_puts(c">>".as_ptr());
         } else if xpdf_object_is_stream(obj) != 0 {
             let obj1 = Obj::new();
-            xpdf_object_init_dict_from_dict(obj1.ptr, XREF, xpdf_object_stream_get_dict(obj));
+            xpdf_object_init_dict_from_dict(obj1.ptr, xref(), xpdf_object_stream_get_dict(obj));
             crate::utils::pdf_puts(c"<<\n".as_ptr());
             copy_dict(obj1.ptr);
             crate::utils::pdf_puts(c">>\n".as_ptr());
@@ -686,12 +905,12 @@ unsafe fn copy_object(obj: *mut Object) {
 
 unsafe fn write_refs() {
     unsafe {
-        let mut r = IN_OBJ_LIST;
+        let mut r = in_obj_list();
         while !r.is_null() {
             if (*r).written == 0 {
                 let obj1 = Obj::new();
                 (*r).written = 1;
-                xpdf_xref_fetch(XREF, (*r).ref_.num, (*r).ref_.gen, obj1.ptr);
+                xpdf_xref_fetch(xref(), (*r).ref_.num, (*r).ref_.gen, obj1.ptr);
                 if (*r).type_ == InObjType::Font {
                     zpdfbeginobj((*r).num, 2);
                     copy_font_dict(obj1.ptr, r);
@@ -718,7 +937,7 @@ unsafe fn write_refs() {
 
 unsafe fn write_encodings() {
     unsafe {
-        let mut r = ENCODING_LIST;
+        let mut r = encoding_list();
         while !r.is_null() {
             let mut glyph_names = [ptr::null_mut::<c_char>(); 256];
             for i in 0..256 {
@@ -739,14 +958,14 @@ unsafe fn write_encodings() {
             epdf_write_enc(glyph_names.as_mut_ptr(), (*r).enc_objnum);
             r = (*r).next;
         }
-        r = ENCODING_LIST;
+        r = encoding_list();
         while !r.is_null() {
             let next = (*r).next;
             xpdf_gfx_font_delete((*r).font);
-            drop(Box::from_raw(r));
+            delete_encoding(r);
             r = next;
         }
-        ENCODING_LIST = ptr::null_mut();
+        set_encoding_list(ptr::null_mut());
     }
 }
 
@@ -781,9 +1000,9 @@ pub unsafe fn read_pdf_info(
     pdf_inclusion_errorlevel: c_int,
 ) -> c_int {
     unsafe {
-        if IS_INIT == 0 {
+        if initialized() == 0 {
             xpdf_global_params_init();
-            IS_INIT = 1;
+            set_initialized(1);
         }
         let pdf_doc = find_add_document(image_name);
         epdf_doc = pdf_doc as *mut c_void;
@@ -892,14 +1111,14 @@ pub unsafe fn write_epdf() {
     unsafe {
         let pdf_doc = epdf_doc as *mut PdfDocument;
         (*pdf_doc).occurrences -= 1;
-        XREF = (*pdf_doc).xref;
-        IN_OBJ_LIST = (*pdf_doc).in_obj_list;
-        ENCODING_LIST = ptr::null_mut();
+        set_xref((*pdf_doc).xref);
+        set_in_obj_list((*pdf_doc).in_obj_list);
+        set_encoding_list(ptr::null_mut());
         let catalog = xpdf_doc_catalog((*pdf_doc).doc);
         let page = xpdf_catalog_get_page(catalog, epdf_selected_page);
         let page_ref = xpdf_catalog_get_page_ref(catalog, epdf_selected_page);
         let page_obj = Obj::new();
-        xpdf_xref_fetch(XREF, page_ref.num, page_ref.gen, page_obj.ptr);
+        xpdf_xref_fetch(xref(), page_ref.num, page_ref.gen, page_obj.ptr);
         let page_dict = xpdf_object_get_dict(page_obj.ptr);
         let rotate = xpdf_page_rotate(page);
         // PTEX metadata is not rendered; skip it on the native fast path.
@@ -922,8 +1141,8 @@ pub unsafe fn write_epdf() {
                 &[
                     PrintfArg::from(sep),
                     PrintfArg::from(crate::utils::convertStringToPDFString(
-                        (*pdf_doc).file_name,
-                        crate::byte_string::strlen((*pdf_doc).file_name) as c_int,
+                        (*pdf_doc).file_name.as_ptr() as *mut c_char,
+                        (*pdf_doc).file_name.as_bytes().len() as c_int,
                     )),
                 ],
             );
@@ -1024,7 +1243,7 @@ pub unsafe fn write_epdf() {
                     pdftex_fail_args(c"PDF inclusion: /Group dict missing".as_ptr(), &[]);
                 }
                 write_sep_group = true;
-                xpdf_object_init_dict_from_dict(group_dict.ptr, XREF, xpdf_page_group(page));
+                xpdf_object_init_dict_from_dict(group_dict.ptr, xref(), xpdf_page_group(page));
                 pdf_printf_args(
                     c"/Group %ld 0 R\n".as_ptr(),
                     &[PrintfArg::from(pdfpagegroupval as c_long)],
@@ -1042,7 +1261,7 @@ pub unsafe fn write_epdf() {
         } else {
             let obj1 = Obj::new();
             let obj2 = Obj::new();
-            xpdf_object_init_dict_from_dict(obj1.ptr, XREF, res_dict);
+            xpdf_object_init_dict_from_dict(obj1.ptr, xref(), res_dict);
             if xpdf_object_is_dict(obj1.ptr) == 0 {
                 pdftex_fail_args(
                     c"PDF inclusion: invalid resources dict type <%s>".as_ptr(),
@@ -1122,15 +1341,15 @@ pub unsafe fn write_epdf() {
             pdfpagegroupval = 0;
         }
         write_refs();
-        (*pdf_doc).in_obj_list = IN_OBJ_LIST;
-        (*pdf_doc).xref = XREF;
+        (*pdf_doc).in_obj_list = in_obj_list();
+        (*pdf_doc).xref = xref();
     }
 }
 
 pub unsafe fn epdf_delete() {
     unsafe {
         let pdf_doc = epdf_doc as *mut PdfDocument;
-        XREF = (*pdf_doc).xref;
+        set_xref((*pdf_doc).xref);
         if (*pdf_doc).occurrences < 0 {
             delete_document(pdf_doc);
         }
@@ -1139,15 +1358,123 @@ pub unsafe fn epdf_delete() {
 
 pub unsafe fn epdf_check_mem() {
     unsafe {
-        if IS_INIT != 0 {
-            let mut p = PDF_DOCUMENTS;
+        if initialized() != 0 {
+            let mut p = documents_head();
             while !p.is_null() {
                 let next = (*p).next;
                 delete_document(p);
                 p = next;
             }
             xpdf_global_params_free();
-            IS_INIT = 0;
+            set_initialized(0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[test]
+    fn partial_inclusion_owns_orphan_nodes_and_releases_decoder_handles_before_outer_scope() {
+        let mut decoder = XpdfSession::new();
+        let mut inclusion = PdfInclusionSession::new();
+        XpdfSession::scope(decoder.as_mut(), || {
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                PdfInclusionSession::scope(inclusion.as_mut(), || unsafe {
+                    let document = own_document(Box::new(PdfDocument {
+                        file_name: c"partial.pdf".to_owned(),
+                        doc: xpdf_doc_new(ptr::null()),
+                        xref: ptr::null_mut(),
+                        in_obj_list: ptr::null_mut(),
+                        occurrences: 0,
+                        next: ptr::null_mut(),
+                    }));
+                    set_documents_head(document);
+                    // Deliberately not linked to the document. A failure before
+                    // write_epdf updates its header must still release this.
+                    let node = own_node(Box::new(InObj {
+                        ref_: Ref { num: 17, gen: 0 },
+                        type_: InObjType::Other,
+                        next: ptr::null_mut(),
+                        num: 1,
+                        fd: ptr::null_mut(),
+                        enc_objnum: 0,
+                        written: 0,
+                    }));
+                    set_in_obj_list(node);
+                    let encoding = own_encoding(Box::new(UsedEncoding {
+                        enc_objnum: 2,
+                        font: ptr::null_mut(),
+                        next: ptr::null_mut(),
+                    }));
+                    set_encoding_list(encoding);
+                    panic!("partial inclusion emission");
+                });
+            }));
+            assert!(outcome.is_err());
+            assert!(crate::xpdf::has_scope());
+            assert!(ACTIVE.with(Cell::get).is_none());
+            assert!(inclusion.nodes.borrow().is_empty());
+            assert!(inclusion.encodings.borrow().is_empty());
+            assert!(inclusion.documents.borrow().is_empty());
+            PdfInclusionSession::scope(inclusion.as_mut(), || {
+                assert!(documents_head().is_null());
+                assert!(in_obj_list().is_null());
+                assert!(encoding_list().is_null());
+                assert!(xref().is_null());
+                assert_eq!(initialized(), 0);
+            });
+        });
+    }
+
+    #[test]
+    fn explicit_document_deletion_unlinks_and_drops_each_typed_owner_once() {
+        let mut decoder = XpdfSession::new();
+        let mut inclusion = PdfInclusionSession::new();
+        XpdfSession::scope(decoder.as_mut(), || {
+            PdfInclusionSession::scope(inclusion.as_mut(), || unsafe {
+                let first = own_document(Box::new(PdfDocument {
+                    file_name: c"first.pdf".to_owned(),
+                    doc: xpdf_doc_new(ptr::null()),
+                    xref: ptr::null_mut(),
+                    in_obj_list: ptr::null_mut(),
+                    occurrences: 0,
+                    next: ptr::null_mut(),
+                }));
+                let second = own_document(Box::new(PdfDocument {
+                    file_name: c"second.pdf".to_owned(),
+                    doc: xpdf_doc_new(ptr::null()),
+                    xref: ptr::null_mut(),
+                    in_obj_list: ptr::null_mut(),
+                    occurrences: 0,
+                    next: first,
+                }));
+                set_documents_head(second);
+                let node = own_node(Box::new(InObj {
+                    ref_: Ref { num: 1, gen: 0 },
+                    type_: InObjType::Other,
+                    next: ptr::null_mut(),
+                    num: 1,
+                    fd: ptr::null_mut(),
+                    enc_objnum: 0,
+                    written: 0,
+                }));
+                (*first).in_obj_list = node;
+                set_in_obj_list(node);
+                delete_document(first);
+                assert_eq!(documents_head(), second);
+                assert!((*second).next.is_null());
+                assert!(in_obj_list().is_null());
+                with_owner(|owner| {
+                    assert!(owner.nodes.borrow().is_empty());
+                    assert_eq!(owner.documents.borrow().len(), 1);
+                });
+                delete_document(second);
+                assert!(documents_head().is_null());
+                with_owner(|owner| assert!(owner.documents.borrow().is_empty()));
+            });
+        });
     }
 }

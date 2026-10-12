@@ -3,9 +3,14 @@ use lopdf::{
     Dictionary as LoDictionary, Document as LoDocument, Object as LoObject, ObjectId as LoObjectId,
     Stream as LoStream,
 };
-use std::collections::HashSet;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
+use std::marker::{PhantomData, PhantomPinned};
+use std::pin::Pin;
 use std::ptr;
+use std::ptr::NonNull;
+use std::rc::Rc;
 
 const PDF_STRING_BOOLEAN: &[u8] = b"boolean\0";
 const PDF_STRING_INTEGER: &[u8] = b"integer\0";
@@ -47,9 +52,9 @@ thread_local! {
 pub struct Object {
     value: LoObject,
     doc: *mut PDFDoc,
-    dict_cache: Option<Box<Dict>>,
-    stream_cache: Option<Box<Stream>>,
-    string_cache: Option<Box<GString>>,
+    dict_cache: Option<OwnedBox<Dict>>,
+    stream_cache: Option<OwnedBox<Stream>>,
+    string_cache: Option<OwnedBox<GString>>,
     name_cache: CString,
 }
 
@@ -65,7 +70,7 @@ pub struct Stream {
     stream: LoStream,
     doc: *mut PDFDoc,
     pos: usize,
-    dict_cache: Option<Box<Dict>>,
+    dict_cache: Option<OwnedBox<Dict>>,
 }
 
 #[repr(C)]
@@ -74,14 +79,153 @@ pub struct GString {
     c_bytes: Vec<c_char>,
 }
 
+/// Own a typed Box allocation without creating parent-derived references to
+/// a child whose raw handle is borrowed by the compatibility interface.
+struct OwnedBox<T> {
+    pointer: NonNull<T>,
+    _owned: PhantomData<T>,
+}
+
+impl<T> OwnedBox<T> {
+    fn new(value: T) -> Self {
+        Self::from_box(Box::new(value))
+    }
+
+    fn from_box(value: Box<T>) -> Self {
+        Self {
+            pointer: NonNull::new(Box::into_raw(value)).unwrap(),
+            _owned: PhantomData,
+        }
+    }
+
+    fn as_ptr(&self) -> *mut T {
+        self.pointer.as_ptr()
+    }
+
+    fn into_raw(self) -> *mut T {
+        // Ownership moves as a raw scalar; no Box/reference retag can
+        // invalidate aliases derived before registry publication.
+        let owned = std::mem::ManuallyDrop::new(self);
+        owned.pointer.as_ptr()
+    }
+}
+
+impl<T> Drop for OwnedBox<T> {
+    fn drop(&mut self) {
+        // SAFETY This private owner is never duplicated. Child pointers only
+        // borrow the allocation, whose sole Box ownership is reclaimed here.
+        unsafe {
+            drop(Box::from_raw(self.pointer.as_ptr()));
+        }
+    }
+}
+
 #[repr(C)]
 pub struct PDFDoc {
     doc: Option<LoDocument>,
     ok: bool,
     page_error: Option<PageBuildError>,
-    catalog: *mut Catalog,
-    xref: *mut XRef,
-    pages: Vec<Box<Page>>,
+    catalog: Option<OwnedBox<Catalog>>,
+    xref: Option<OwnedBox<XRef>>,
+    pages: Vec<OwnedBox<Page>>,
+    _pinned: PhantomPinned,
+}
+
+/// Invocation-owned raw compatibility handles. Entries exclusively own their
+/// typed Box allocations; exposed pointers borrow them until explicit deletion
+/// or the end of this scope. Teardown never writes or finalizes a PDF.
+pub(crate) struct XpdfSession {
+    objects: RefCell<HashMap<usize, NonNull<Object>>>,
+    documents: RefCell<HashMap<usize, NonNull<PDFDoc>>>,
+    _thread: PhantomData<Rc<()>>,
+    _pinned: PhantomPinned,
+}
+
+thread_local! {
+    static ACTIVE: Cell<Option<NonNull<XpdfSession>>> = const { Cell::new(None) };
+}
+
+impl XpdfSession {
+    pub(crate) fn new() -> Pin<Box<Self>> {
+        Box::pin(Self {
+            objects: RefCell::new(HashMap::new()),
+            documents: RefCell::new(HashMap::new()),
+            _thread: PhantomData,
+            _pinned: PhantomPinned,
+        })
+    }
+
+    pub(crate) fn scope<T>(session: Pin<&mut Self>, action: impl FnOnce() -> T) -> T {
+        struct Unregister(NonNull<XpdfSession>);
+        impl Drop for Unregister {
+            fn drop(&mut self) {
+                // SAFETY action has ended or unwound; its raw handle borrows
+                // must not escape this invocation scope.
+                let _ = ACTIVE.try_with(|active| {
+                    if active.get() == Some(self.0) {
+                        active.set(None);
+                    }
+                });
+                unsafe { self.0.as_ref() }.clear_handles();
+            }
+        }
+        let pointer = NonNull::from(unsafe { session.get_unchecked_mut() });
+        ACTIVE.with(|active| {
+            assert!(active.get().is_none(), "nested PDF decoder scope");
+            active.set(Some(pointer));
+        });
+        let _guard = Unregister(pointer);
+        action()
+    }
+
+    fn clear_handles(&self) {
+        // These wrappers only borrow document pointers. Their destructors do
+        // not traverse borrowed documents, and run before document teardown.
+        for (_, pointer) in self.objects.borrow_mut().drain() {
+            unsafe {
+                drop(Box::from_raw(pointer.as_ptr()));
+            }
+        }
+        for (_, pointer) in self.documents.borrow_mut().drain() {
+            unsafe {
+                drop(Box::from_raw(pointer.as_ptr()));
+            }
+        }
+    }
+}
+
+impl Drop for XpdfSession {
+    fn drop(&mut self) {
+        self.clear_handles();
+    }
+}
+
+fn with_owner<T>(action: impl FnOnce(Option<&XpdfSession>) -> T) -> T {
+    ACTIVE.with(|active| {
+        // SAFETY The private scope retains this pinned owner; no state borrow
+        // escapes this private synchronous callback.
+        action(active.get().map(|pointer| unsafe { pointer.as_ref() }))
+    })
+}
+
+pub(crate) fn has_scope() -> bool {
+    ACTIVE.with(|active| active.get().is_some())
+}
+
+fn register_document(document: OwnedBox<PDFDoc>) -> *mut PDFDoc {
+    with_owner(|owner| {
+        if let Some(owner) = owner {
+            owner.documents.borrow_mut().reserve(1);
+        }
+        let pointer = document.into_raw();
+        if let Some(owner) = owner {
+            owner
+                .documents
+                .borrow_mut()
+                .insert(pointer as usize, NonNull::new(pointer).unwrap());
+        }
+        pointer
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,8 +251,8 @@ pub struct Page {
     rotate: c_int,
     resources: Option<LoDictionary>,
     group: Option<LoDictionary>,
-    resources_cache: Option<Box<Dict>>,
-    group_cache: Option<Box<Dict>>,
+    resources_cache: Option<OwnedBox<Dict>>,
+    group_cache: Option<OwnedBox<Dict>>,
 }
 
 #[repr(C)]
@@ -177,9 +321,9 @@ impl Object {
                 value.object_dict += 1;
                 counts.set(value);
             });
-            self.dict_cache = Some(Box::new(Dict::new(dict, self.doc)));
+            self.dict_cache = Some(OwnedBox::new(Dict::new(dict, self.doc)));
         }
-        self.dict_cache.as_deref_mut().map(|dict| dict as *mut Dict)
+        self.dict_cache.as_ref().map(OwnedBox::as_ptr)
     }
 
     fn stream(&mut self) -> Option<*mut Stream> {
@@ -195,11 +339,9 @@ impl Object {
                 value.object_stream_bytes += stream.content.len();
                 counts.set(value);
             });
-            self.stream_cache = Some(Box::new(Stream::new(stream, self.doc)));
+            self.stream_cache = Some(OwnedBox::new(Stream::new(stream, self.doc)));
         }
-        self.stream_cache
-            .as_deref_mut()
-            .map(|stream| stream as *mut Stream)
+        self.stream_cache.as_ref().map(OwnedBox::as_ptr)
     }
 }
 
@@ -232,11 +374,11 @@ impl Stream {
                 value.stream_dict += 1;
                 counts.set(value);
             });
-            self.dict_cache = Some(Box::new(Dict::new(dict, self.doc)));
+            self.dict_cache = Some(OwnedBox::new(Dict::new(dict, self.doc)));
         }
         self.dict_cache
-            .as_deref_mut()
-            .map(|dict| dict as *mut Dict)
+            .as_ref()
+            .map(OwnedBox::as_ptr)
             .unwrap_or(ptr::null_mut())
     }
 }
@@ -526,11 +668,31 @@ pub fn xpdf_global_params_init() {}
 pub fn xpdf_global_params_free() {}
 
 pub fn xpdf_object_new() -> *mut Object {
-    Box::into_raw(Box::new(Object::new(LoObject::Null, ptr::null_mut())))
+    with_owner(|owner| {
+        if let Some(owner) = owner {
+            owner.objects.borrow_mut().reserve(1);
+        }
+        let pointer = Box::into_raw(Box::new(Object::new(LoObject::Null, ptr::null_mut())));
+        if let Some(owner) = owner {
+            owner
+                .objects
+                .borrow_mut()
+                .insert(pointer as usize, NonNull::new(pointer).unwrap());
+        }
+        pointer
+    })
 }
 
 pub unsafe fn xpdf_object_delete(obj: *mut Object) {
     if !obj.is_null() {
+        with_owner(|owner| {
+            if let Some(owner) = owner {
+                assert!(
+                    owner.objects.borrow_mut().remove(&(obj as usize)).is_some(),
+                    "unknown PDF object handle"
+                );
+            }
+        });
         unsafe {
             drop(Box::from_raw(obj));
         }
@@ -644,10 +806,10 @@ pub unsafe fn xpdf_object_get_string(obj: *mut Object) -> *mut GString {
     let LoObject::String(bytes, _) = &obj.value else {
         return ptr::null_mut();
     };
-    obj.string_cache = Some(Box::new(GString::new(bytes.clone())));
+    obj.string_cache = Some(OwnedBox::new(GString::new(bytes.clone())));
     obj.string_cache
-        .as_deref_mut()
-        .map(|string| string as *mut GString)
+        .as_ref()
+        .map(OwnedBox::as_ptr)
         .unwrap_or(ptr::null_mut())
 }
 
@@ -961,35 +1123,42 @@ pub unsafe fn xpdf_stream_get_undecoded_stream(stream: *mut Stream) -> *mut Stre
 
 pub unsafe fn xpdf_doc_new(file_name: *const c_char) -> *mut PDFDoc {
     if file_name.is_null() {
-        return Box::into_raw(Box::new(PDFDoc {
+        return register_document(OwnedBox::new(PDFDoc {
             doc: None,
             ok: false,
             page_error: None,
-            catalog: ptr::null_mut(),
-            xref: ptr::null_mut(),
+            catalog: None,
+            xref: None,
             pages: Vec::new(),
+            _pinned: PhantomPinned,
         }));
     }
     let path = unsafe { CStr::from_ptr(file_name) }
         .to_string_lossy()
         .into_owned();
-    let (doc, ok) = match LoDocument::load(&path) {
-        Ok(doc) => (Some(doc), true),
-        Err(_) => (None, false),
-    };
-    let pdf_doc = Box::into_raw(Box::new(PDFDoc {
+    let path = crate::working_directory::resolve(std::path::Path::new(&path));
+    let (doc, ok) =
+        match path.and_then(|path| LoDocument::load(path).map_err(std::io::Error::other)) {
+            Ok(doc) => (Some(doc), true),
+            Err(_) => (None, false),
+        };
+    let owned = OwnedBox::new(PDFDoc {
         doc,
         ok,
         page_error: None,
-        catalog: ptr::null_mut(),
-        xref: ptr::null_mut(),
+        catalog: None,
+        xref: None,
         pages: Vec::new(),
-    }));
+        _pinned: PhantomPinned,
+    });
+    // All children borrow this stable address. The local typed raw owner
+    // remains responsible for teardown if loading any child panics.
+    let pdf_doc = owned.as_ptr();
     if let Some(doc) = unsafe { doc_ref(pdf_doc) }.and_then(|pdf| pdf.doc.as_ref()) {
         let pages = build_pages(pdf_doc, doc);
         if let Some(pdf) = unsafe { doc_mut(pdf_doc) } {
             match pages {
-                Ok(pages) => pdf.pages = pages,
+                Ok(pages) => pdf.pages = pages.into_iter().map(OwnedBox::from_box).collect(),
                 Err(error) => {
                     pdf.ok = false;
                     pdf.page_error = Some(error);
@@ -997,29 +1166,33 @@ pub unsafe fn xpdf_doc_new(file_name: *const c_char) -> *mut PDFDoc {
             }
         }
     }
-    let catalog = Box::into_raw(Box::new(Catalog { doc: pdf_doc }));
-    let xref = Box::into_raw(Box::new(XRef { doc: pdf_doc }));
+    let catalog = OwnedBox::new(Catalog { doc: pdf_doc });
+    let xref = OwnedBox::new(XRef { doc: pdf_doc });
     if let Some(pdf) = unsafe { doc_mut(pdf_doc) } {
-        pdf.catalog = catalog;
-        pdf.xref = xref;
+        pdf.catalog = Some(catalog);
+        pdf.xref = Some(xref);
     }
-    pdf_doc
+    register_document(owned)
 }
 
 pub unsafe fn xpdf_doc_delete(doc: *mut PDFDoc) {
     if doc.is_null() {
         return;
     }
-    let doc = unsafe { Box::from_raw(doc) };
-    if !doc.catalog.is_null() {
-        unsafe {
-            drop(Box::from_raw(doc.catalog));
+    with_owner(|owner| {
+        if let Some(owner) = owner {
+            assert!(
+                owner
+                    .documents
+                    .borrow_mut()
+                    .remove(&(doc as usize))
+                    .is_some(),
+                "unknown PDF document handle"
+            );
         }
-    }
-    if !doc.xref.is_null() {
-        unsafe {
-            drop(Box::from_raw(doc.xref));
-        }
+    });
+    unsafe {
+        drop(Box::from_raw(doc));
     }
 }
 
@@ -1048,13 +1221,13 @@ pub unsafe fn xpdf_doc_pdf_version(doc: *mut PDFDoc) -> c_float {
 
 pub unsafe fn xpdf_doc_catalog(doc: *mut PDFDoc) -> *mut Catalog {
     unsafe { doc_ref(doc) }
-        .map(|doc| doc.catalog)
+        .and_then(|doc| doc.catalog.as_ref().map(OwnedBox::as_ptr))
         .unwrap_or(ptr::null_mut())
 }
 
 pub unsafe fn xpdf_doc_xref(doc: *mut PDFDoc) -> *mut XRef {
     unsafe { doc_ref(doc) }
-        .map(|doc| doc.xref)
+        .and_then(|doc| doc.xref.as_ref().map(OwnedBox::as_ptr))
         .unwrap_or(ptr::null_mut())
 }
 
@@ -1106,9 +1279,9 @@ pub unsafe fn xpdf_catalog_get_page(catalog: *mut Catalog, page_num: c_int) -> *
     let Some(catalog) = (unsafe { catalog.as_ref() }) else {
         return ptr::null_mut();
     };
-    unsafe { doc_mut(catalog.doc) }
-        .and_then(|doc| doc.pages.get_mut((page_num - 1) as usize))
-        .map(|page| page.as_mut() as *mut Page)
+    unsafe { doc_ref(catalog.doc) }
+        .and_then(|doc| doc.pages.get((page_num - 1) as usize))
+        .map(OwnedBox::as_ptr)
         .unwrap_or(ptr::null_mut())
 }
 
@@ -1128,7 +1301,7 @@ pub unsafe fn xpdf_catalog_find_page(catalog: *mut Catalog, num: c_int, gen: c_i
         .and_then(|doc| {
             doc.pages
                 .iter()
-                .position(|page| page.id == id)
+                .position(|page| unsafe { (*page.as_ptr()).id == id })
                 .map(|idx| idx as c_int + 1)
         })
         .unwrap_or(0)
@@ -1201,11 +1374,11 @@ pub unsafe fn xpdf_page_group(page: *mut Page) -> *mut Dict {
             value.page_group += 1;
             counts.set(value);
         });
-        page.group_cache = Some(Box::new(Dict::new(group, page.doc)));
+        page.group_cache = Some(OwnedBox::new(Dict::new(group, page.doc)));
     }
     page.group_cache
-        .as_deref_mut()
-        .map(|dict| dict as *mut Dict)
+        .as_ref()
+        .map(OwnedBox::as_ptr)
         .unwrap_or(ptr::null_mut())
 }
 
@@ -1223,11 +1396,11 @@ pub unsafe fn xpdf_page_resource_dict(page: *mut Page) -> *mut Dict {
             value.page_resources += 1;
             counts.set(value);
         });
-        page.resources_cache = Some(Box::new(Dict::new(resources, page.doc)));
+        page.resources_cache = Some(OwnedBox::new(Dict::new(resources, page.doc)));
     }
     page.resources_cache
-        .as_deref_mut()
-        .map(|dict| dict as *mut Dict)
+        .as_ref()
+        .map(OwnedBox::as_ptr)
         .unwrap_or(ptr::null_mut())
 }
 
@@ -1269,6 +1442,122 @@ mod tests {
     use super::*;
     use std::slice;
 
+    #[test]
+    fn typed_child_owners_drop_once_on_normal_return_and_partial_construction() {
+        struct Count(Rc<Cell<usize>>);
+        impl Drop for Count {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+        let count = Rc::new(Cell::new(0));
+        {
+            let first = OwnedBox::new(Count(Rc::clone(&count)));
+            assert!(!first.as_ptr().is_null());
+            assert_eq!(count.get(), 0);
+        }
+        assert_eq!(count.get(), 1);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _first = OwnedBox::new(Count(Rc::clone(&count)));
+            let _second = OwnedBox::new(Count(Rc::clone(&count)));
+            panic!("partial child construction");
+        }));
+        assert!(outcome.is_err());
+        assert_eq!(count.get(), 3);
+    }
+
+    #[test]
+    fn decoder_document_owns_child_handles_and_preserves_getter_addresses() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "tekai-pdf-owner-{}-{nonce}.pdf",
+            std::process::id()
+        ));
+        let mut input = page_tree_document(false);
+        // The pure in-memory fixture manually inserts object IDs. Saving it
+        // also requires the writer's cross-reference extent to include them.
+        input.max_id = 3;
+        input.save(&path).unwrap();
+        let name = CString::new(path.to_string_lossy().as_bytes()).unwrap();
+        let mut owner = XpdfSession::new();
+        XpdfSession::scope(owner.as_mut(), || unsafe {
+            let document = xpdf_doc_new(name.as_ptr());
+            assert_ne!(xpdf_doc_is_ok(document), 0);
+            let catalog = xpdf_doc_catalog(document);
+            let xref = xpdf_doc_xref(document);
+            assert!(!catalog.is_null() && !xref.is_null());
+            let page = xpdf_catalog_get_page(catalog, 1);
+            assert!(!page.is_null());
+            for _ in 0..8 {
+                assert_eq!(xpdf_doc_catalog(document), catalog);
+                assert_eq!(xpdf_doc_xref(document), xref);
+                assert_eq!(xpdf_catalog_get_page(catalog, 1), page);
+                assert_eq!(xpdf_catalog_num_pages(catalog), 1);
+                assert_eq!(xpdf_page_rotate(page), 0);
+            }
+            xpdf_doc_delete(document);
+            with_owner(|owner| assert!(owner.unwrap().documents.borrow().is_empty()));
+        });
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn scoped_decoder_handles_are_dropped_on_abort_and_start_fresh() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        let mut owner = XpdfSession::new();
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            XpdfSession::scope(owner.as_mut(), || unsafe {
+                let object = xpdf_object_new();
+                let deleted = xpdf_object_new();
+                xpdf_object_delete(deleted);
+                let document = xpdf_doc_new(ptr::null());
+                assert_eq!(xpdf_doc_is_ok(document), 0);
+                object_mut(object).unwrap().name_cache = CString::new("partial object").unwrap();
+                with_owner(|owner| {
+                    let owner = owner.unwrap();
+                    assert_eq!(owner.objects.borrow().len(), 1);
+                    assert_eq!(owner.documents.borrow().len(), 1);
+                });
+                panic!("partial PDF inclusion");
+            });
+        }));
+        assert!(outcome.is_err());
+        assert!(!has_scope());
+        assert!(owner.objects.borrow().is_empty());
+        assert!(owner.documents.borrow().is_empty());
+        XpdfSession::scope(owner.as_mut(), || unsafe {
+            let document = xpdf_doc_new(ptr::null());
+            xpdf_doc_delete(document);
+            let object = xpdf_object_new();
+            xpdf_object_delete(object);
+            with_owner(|owner| {
+                assert!(owner.unwrap().documents.borrow().is_empty());
+                assert!(owner.unwrap().objects.borrow().is_empty());
+            });
+        });
+        assert!(!has_scope());
+    }
+
+    #[test]
+    fn rejected_decoder_nesting_keeps_the_outer_owner_active() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        let mut first = XpdfSession::new();
+        let mut second = XpdfSession::new();
+        XpdfSession::scope(first.as_mut(), || {
+            let pointer = ACTIVE.with(Cell::get);
+            assert!(catch_unwind(AssertUnwindSafe(|| XpdfSession::scope(
+                second.as_mut(),
+                || ()
+            )))
+            .is_err());
+            assert_eq!(ACTIVE.with(Cell::get), pointer);
+        });
+        assert!(!has_scope());
+    }
+
     fn reset_clone_counts() {
         CACHE_CLONES.with(|counts| counts.set(CacheCloneCounts::default()));
     }
@@ -1282,9 +1571,10 @@ mod tests {
             doc: Some(doc),
             ok: true,
             page_error: None,
-            catalog: ptr::null_mut(),
-            xref: ptr::null_mut(),
+            catalog: None,
+            xref: None,
             pages: Vec::new(),
+            _pinned: PhantomPinned,
         })
     }
 

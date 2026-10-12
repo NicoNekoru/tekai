@@ -10,7 +10,7 @@ pub use crate::support::{
 };
 pub use crate::utils::{initversionstring, maketexstring};
 
-use crate::byte_string::{memcpy, strcat, strchr, strcmp, strcpy, strlen, strncmp, strncpy};
+use crate::byte_string::{memcpy, strchr, strcmp, strcpy, strlen, strncmp, strncpy};
 use crate::environment::getenv;
 use crate::stdio::system;
 
@@ -34,10 +34,24 @@ pub use crate::core_types::{
     WordFile as wordfile,
 };
 
-use crate::integer_parse::{
-    decimal_i32_legacy, signed_prefix, source_date_epoch as parse_source_date_epoch, IntegerBase,
-};
+use crate::integer_parse::{decimal_i32_legacy, signed_prefix, IntegerBase};
 use std::ffi::CStr;
+use std::os::unix::ffi::OsStrExt;
+
+fn readable_path(path: &std::path::Path) -> bool {
+    crate::working_directory::with_resolved(path, |path| {
+        let path =
+            std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(std::io::Error::other)?;
+        // This permission query is an OS interface. Preserve access(R_OK)'s
+        // real-user-ID semantics instead of substituting an effective-ID open.
+        if unsafe { libc::access(path.as_ptr(), libc::R_OK) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    })
+    .is_ok()
+}
 
 use crate::openclose::{close_file, open_input, open_output};
 use crate::stdio::{gzread, gzwrite};
@@ -54,44 +68,11 @@ use crate::openclose::{xmalloc, xrealloc, xstrdup};
 use crate::termination::__assert_rtn;
 
 extern "C" {
-    fn access(_: *const ::core::ffi::c_char, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn close(_: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn sleep(_: ::core::ffi::c_uint) -> ::core::ffi::c_uint;
-    fn write(
-        __fd: ::core::ffi::c_int,
-        __buf: *const ::core::ffi::c_void,
-        __nbyte: size_t,
-    ) -> ssize_t;
-    fn __error() -> *mut ::core::ffi::c_int;
     static mut kpse_def_inst: kpathsea_instance;
     static mut kpse_def: kpathsea;
-    fn fcntl(_: ::core::ffi::c_int, _: ::core::ffi::c_int, ...) -> ::core::ffi::c_int;
     static mut fullnameoffile: string;
     static mut recorder_enabled: boolean;
     static mut output_directory: string;
-    fn gmtime(_: *const time_t) -> *mut tm;
-    fn localtime(_: *const time_t) -> *mut tm;
-    fn strftime(
-        _: *mut ::core::ffi::c_char,
-        __maxsize: size_t,
-        _: *const ::core::ffi::c_char,
-        _: *const tm,
-    ) -> size_t;
-    fn time(_: *mut time_t) -> time_t;
-    fn gettimeofday(_: *mut timeval, _: *mut ::core::ffi::c_void) -> ::core::ffi::c_int;
-    fn connect(_: ::core::ffi::c_int, _: *const sockaddr, _: socklen_t) -> ::core::ffi::c_int;
-    fn socket(
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
-    // The generated structure uses 64-bit inode fields. Intel macOS exposes
-    // that layout through a distinct symbol; its plain stat uses the legacy ABI.
-    #[cfg_attr(
-        all(target_os = "macos", target_arch = "x86_64"),
-        link_name = "stat$INODE64"
-    )]
-    fn stat(_: *const ::core::ffi::c_char, _: *mut stat) -> ::core::ffi::c_int;
 }
 
 #[inline(always)]
@@ -131,18 +112,6 @@ pub type mode_t = __darwin_mode_t;
 pub type nlink_t = __uint16_t;
 pub type uid_t = __darwin_uid_t;
 pub type time_t = __darwin_time_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct timespec {
-    pub tv_sec: __darwin_time_t,
-    pub tv_nsec: ::core::ffi::c_long,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct timeval {
-    pub tv_sec: __darwin_time_t,
-    pub tv_usec: __darwin_suseconds_t,
-}
 pub type string = *mut ::core::ffi::c_char;
 pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
@@ -228,43 +197,6 @@ pub const kpse_src_implicit: kpse_src_type = 0;
 pub use crate::kpathsea_types::kpathsea;
 pub use crate::kpathsea_types::kpathsea_instance;
 pub use crate::kpathsea_types::kpse_format_info_type;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct tm {
-    pub tm_sec: ::core::ffi::c_int,
-    pub tm_min: ::core::ffi::c_int,
-    pub tm_hour: ::core::ffi::c_int,
-    pub tm_mday: ::core::ffi::c_int,
-    pub tm_mon: ::core::ffi::c_int,
-    pub tm_year: ::core::ffi::c_int,
-    pub tm_wday: ::core::ffi::c_int,
-    pub tm_yday: ::core::ffi::c_int,
-    pub tm_isdst: ::core::ffi::c_int,
-    pub tm_gmtoff: ::core::ffi::c_long,
-    pub tm_zone: *mut ::core::ffi::c_char,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct stat {
-    pub st_dev: dev_t,
-    pub st_mode: mode_t,
-    pub st_nlink: nlink_t,
-    pub st_ino: __darwin_ino64_t,
-    pub st_uid: uid_t,
-    pub st_gid: gid_t,
-    pub st_rdev: dev_t,
-    pub st_atimespec: timespec,
-    pub st_mtimespec: timespec,
-    pub st_ctimespec: timespec,
-    pub st_birthtimespec: timespec,
-    pub st_size: off_t,
-    pub st_blocks: blkcnt_t,
-    pub st_blksize: blksize_t,
-    pub st_flags: __uint32_t,
-    pub st_gen: __uint32_t,
-    pub st_lspare: __int32_t,
-    pub st_qspare: [__int64_t; 2],
-}
 pub type md5_byte_t = ::core::ffi::c_uchar;
 pub type md5_state_t = md5_state_s;
 pub use crate::md5::Md5State as md5_state_s;
@@ -306,7 +238,6 @@ pub const _IONBF: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
 pub const EOF: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 pub const R_OK: ::core::ffi::c_int = (1 as ::core::ffi::c_int) << 2 as ::core::ffi::c_int;
 pub const SIGINT: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
-pub const SIG_DFL: Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()> = None;
 pub const EXIT_SUCCESS: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const EINTR: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
 pub const EDITOR: [::core::ffi::c_char; 12] =
@@ -2466,121 +2397,23 @@ pub const IPC_PIPE_NAME: [::core::ffi::c_char; 15] =
 pub const IPC_SERVER_CMD: [::core::ffi::c_char; 21] = unsafe {
     ::core::mem::transmute::<[u8; 21], [::core::ffi::c_char; 21]>(*b"open `which TeXview`\0")
 };
-static mut ipc_addr: *mut sockaddr = ::core::ptr::null::<sockaddr>() as *mut sockaddr;
-static mut ipc_addr_len: ::core::ffi::c_int = 0;
-unsafe fn ipc_make_name() -> ::core::ffi::c_int {
-    if ipc_addr_len == 0 as ::core::ffi::c_int {
-        let mut s: string = getenv(b"HOME\0" as *const u8 as *const ::core::ffi::c_char) as string;
-        if !s.is_null() {
-            let mut ipc_name: *mut ::core::ffi::c_char =
-                ::core::ptr::null_mut::<::core::ffi::c_char>();
-            ipc_addr = xmalloc(strlen(s as *const ::core::ffi::c_char).wrapping_add(40 as size_t))
-                as *mut sockaddr;
-            (*ipc_addr).sa_family = 0 as sa_family_t;
-            ipc_name = &raw mut (*ipc_addr).sa_data as *mut ::core::ffi::c_char;
-            strcpy(ipc_name, s as *const ::core::ffi::c_char);
-            strcat(ipc_name, IPC_PIPE_NAME.as_ptr());
-            ipc_addr_len = strlen(ipc_name).wrapping_add(3 as size_t) as ::core::ffi::c_int;
-        }
-    }
-    return ipc_addr_len;
-}
-static mut sock: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 unsafe fn ipc_is_open() -> ::core::ffi::c_int {
-    return (sock != -(1 as ::core::ffi::c_int)) as ::core::ffi::c_int;
+    i32::from(crate::ipc::is_open())
 }
 unsafe fn ipc_open_out() {
-    if sock != -(1 as ::core::ffi::c_int) {
-        return;
-    }
-    if ipc_make_name() <= 0 as ::core::ffi::c_int {
-        return;
-    }
-    sock = socket(IPC_AF, SOCK_STREAM, 0 as ::core::ffi::c_int);
-    if sock != -(1 as ::core::ffi::c_int) {
-        if connect(sock, ipc_addr, ipc_addr_len as socklen_t) != 0 as ::core::ffi::c_int
-            || fcntl(sock, F_SETFL, O_NONBLOCK) < 0 as ::core::ffi::c_int
-        {
-            close(sock);
-            sock = -(1 as ::core::ffi::c_int);
-            return;
-        }
-    }
+    crate::ipc::open();
 }
-unsafe fn ipc_close_out() {
-    if ipc_is_open() != 0 {
-        close(sock);
-        sock = -(1 as ::core::ffi::c_int);
-    }
-}
-unsafe fn ipc_snd(
-    mut n: ::core::ffi::c_int,
-    mut is_eof: ::core::ffi::c_int,
-    mut data: *mut ::core::ffi::c_char,
-) {
-    let mut ourmsg: C2RustUnnamed = C2RustUnnamed {
-        msg: msg {
-            namelength: 0,
-            eof: 0,
-        },
-        more_data: [0; 1024],
-    };
-    if ipc_is_open() == 0 {
-        return;
-    }
-    ourmsg.msg.namelength = n;
-    ourmsg.msg.eof = is_eof;
-    if n != 0 {
-        strcpy(&raw mut ourmsg.more_data as *mut ::core::ffi::c_char, data);
-    }
-    n = (n as ::core::ffi::c_ulong)
-        .wrapping_add(::core::mem::size_of::<msg>() as usize as ::core::ffi::c_ulong)
-        as ::core::ffi::c_int as ::core::ffi::c_int;
-    if write(
-        sock,
-        &raw mut ourmsg as *const ::core::ffi::c_void,
-        n as size_t,
-    ) != n as ssize_t
-    {
-        ipc_close_out();
-    }
-}
-pub unsafe fn ipcpage(mut is_eof: ::core::ffi::c_int) {
-    static mut begun: boolean = false_0;
-    let mut len: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
-    let mut p: string = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    if begun == 0 {
-        let mut name: string = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut cwd: string = xgetcwd();
-        ipc_open_out();
-        len = (*strstart
-            .offset((outputfilename as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize)
-            - *strstart.offset(outputfilename as isize)) as ::core::ffi::c_uint;
-        name = xmalloc(len.wrapping_add(1 as ::core::ffi::c_uint) as size_t) as string;
-        strncpy(
-            name as *mut ::core::ffi::c_char,
-            strpool.offset(*strstart.offset(outputfilename as isize) as isize)
-                as *mut packedASCIIcode as string as *const ::core::ffi::c_char,
-            len as size_t,
-        );
-        *name.offset(len as isize) = 0 as ::core::ffi::c_char;
-        p = concat3(
-            cwd as const_string,
-            DIR_SEP_STRING.as_ptr(),
-            name as const_string,
-        );
-        free(cwd as *mut ::core::ffi::c_void);
-        free(name as *mut ::core::ffi::c_void);
-        len = strlen(p as *const ::core::ffi::c_char) as ::core::ffi::c_uint;
-        begun = true_0 as boolean;
-    }
-    ipc_snd(
-        len as ::core::ffi::c_int,
-        is_eof,
-        p as *mut ::core::ffi::c_char,
-    );
-    if !p.is_null() {
-        free(p as *mut ::core::ffi::c_void);
+pub unsafe fn ipcpage(is_eof: ::core::ffi::c_int) {
+    if crate::ipc::wants_name() {
+        use std::os::unix::ffi::OsStrExt;
+        let name = gettexstring(outputfilename);
+        let path =
+            std::path::Path::new(std::ffi::OsStr::from_bytes(CStr::from_ptr(name).to_bytes()));
+        let path = crate::working_directory::resolve(path).ok();
+        crate::ipc::page(path.as_deref(), is_eof);
+        free(name.cast());
+    } else {
+        crate::ipc::page(None, is_eof);
     }
 }
 unsafe fn tcx_get_num(
@@ -2931,7 +2764,7 @@ unsafe fn parse_options(argc_0: ::core::ffi::c_int, argv_0: *mut string) {
                 if ipc_is_open() == 0 && system(IPC_SERVER_CMD.as_ptr()) == 0 {
                     let mut i = 0;
                     while i < 20 && ipc_is_open() == 0 {
-                        sleep(2);
+                        std::thread::sleep(std::time::Duration::from_secs(2));
                         ipc_open_out();
                         i += 1;
                     }
@@ -3364,108 +3197,64 @@ pub(crate) unsafe fn close_file_or_pipe(mut f_0: *mut FILE) {
     }
     close_file(f_0);
 }
-static mut start_time_set: boolean = false_0;
-static mut start_time: time_t = 0 as time_t;
-static mut SOURCE_DATE_EPOCH_set: boolean = false_0;
-static mut FORCE_SOURCE_DATE_set: boolean = false_0;
-pub unsafe fn init_start_time() {
-    let mut source_date_epoch: *mut ::core::ffi::c_char =
-        ::core::ptr::null_mut::<::core::ffi::c_char>();
-    if start_time_set == 0 {
-        start_time_set = true_0 as boolean;
-        source_date_epoch =
-            getenv(b"SOURCE_DATE_EPOCH\0" as *const u8 as *const ::core::ffi::c_char);
-        if !source_date_epoch.is_null() {
-            let Some(epoch) = parse_source_date_epoch(CStr::from_ptr(source_date_epoch).to_bytes())
-            else {
-                crate::stdio::fprintf_args(
-                    crate::stdio::stderr(),
-                    b"%s: fatal: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                    &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
-                );
-                crate::stdio::fprintf_args(crate::stdio::stderr(), b"invalid epoch-seconds-timezone value for environment variable $SOURCE_DATE_EPOCH: %s\0"
-                        as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(source_date_epoch)]);
-                fputs(
-                    b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    crate::stdio::stderr(),
-                );
-                exit(1 as ::core::ffi::c_int);
-            };
-            start_time = epoch as time_t;
-            SOURCE_DATE_EPOCH_set = true_0 as boolean;
-        } else {
-            start_time = time(NULL as *mut time_t);
-        }
-    }
-}
-pub unsafe fn get_date_and_time(
-    mut minutes: *mut integer,
-    mut day: *mut integer,
-    mut month: *mut integer,
-    mut year: *mut integer,
-) {
-    let mut tmptr: *mut tm = ::core::ptr::null_mut::<tm>();
-    let mut sde_texprim: string =
-        getenv(b"FORCE_SOURCE_DATE\0" as *const u8 as *const ::core::ffi::c_char) as string;
-    if !sde_texprim.is_null()
-        && (!sde_texprim.is_null()
-            && !(b"1\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                sde_texprim as *const ::core::ffi::c_char,
-                b"1\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int)
-    {
-        init_start_time();
-        tmptr = gmtime(&raw mut start_time);
-        FORCE_SOURCE_DATE_set = true_0 as boolean;
-    } else {
-        let mut myclock: time_t = time(::core::ptr::null_mut::<time_t>());
-        tmptr = localtime(&raw mut myclock);
-        if !sde_texprim.is_null()
-            && strlen(sde_texprim as *const ::core::ffi::c_char) > 0 as size_t
-            && !(!sde_texprim.is_null()
-                && !(b"0\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-                && strcmp(
-                    sde_texprim as *const ::core::ffi::c_char,
-                    b"0\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0 as ::core::ffi::c_int)
-        {
-            fputs(
-                b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                crate::stdio::stderr(),
-            );
+unsafe fn time_result<T>(result: Result<T, crate::time::TimeError>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            use std::io::Write;
+            use std::os::unix::ffi::OsStrExt;
             crate::stdio::fprintf_args(
                 crate::stdio::stderr(),
-                b"invalid value (expected 0 or 1) for environment variable $FORCE_SOURCE_DATE: %s\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-                &[crate::utils::PrintfArg::from(sde_texprim)],
+                c"%s: fatal: (kpathsea) ".as_ptr(),
+                &[crate::utils::PrintfArg::from((*kpse_def).invocation_name)],
             );
-            fputs(
-                b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                crate::stdio::stderr(),
-            );
-            fflush(crate::stdio::stderr());
+            let mut stderr = std::io::stderr().lock();
+            if let crate::time::TimeError::InvalidEpoch(value) = error {
+                let _ = stderr.write_all(b"invalid epoch-seconds-timezone value for environment variable $SOURCE_DATE_EPOCH: ");
+                let _ = stderr.write_all(value.as_bytes());
+                let _ = stderr.write_all(b".\n");
+            } else {
+                let _ = writeln!(stderr, "{error}.");
+            }
+            exit(1);
         }
     }
-    *minutes = ((*tmptr).tm_hour * 60 as ::core::ffi::c_int + (*tmptr).tm_min) as integer;
-    *day = (*tmptr).tm_mday as integer;
-    *month = ((*tmptr).tm_mon + 1 as ::core::ffi::c_int) as integer;
-    *year = ((*tmptr).tm_year + 1900 as ::core::ffi::c_int) as integer;
 }
-pub unsafe fn get_seconds_and_micros(mut seconds: *mut integer, mut micros: *mut integer) {
-    let mut tv: timeval = timeval {
-        tv_sec: 0,
-        tv_usec: 0,
-    };
-    gettimeofday(&raw mut tv, NULL);
-    *seconds = tv.tv_sec as integer;
-    *micros = tv.tv_usec as integer;
+pub unsafe fn init_start_time() {
+    time_result(crate::time::initialize_start());
+}
+pub unsafe fn get_date_and_time(
+    minutes: *mut integer,
+    day: *mut integer,
+    month: *mut integer,
+    year: *mut integer,
+) {
+    let date = time_result(crate::time::tex_date());
+    if let Some(value) = time_result(crate::time::invalid_force_source()) {
+        use std::io::Write;
+        use std::os::unix::ffi::OsStrExt;
+        let mut stderr = std::io::stderr().lock();
+        let _ = stderr.write_all(b"warning: (kpathsea) invalid value (expected 0 or 1) for environment variable $FORCE_SOURCE_DATE: ");
+        let _ = stderr.write_all(value.as_bytes());
+        let _ = stderr.write_all(b".\n");
+        let _ = stderr.flush();
+    }
+    *minutes = date.hour * 60 + date.minute;
+    *day = date.day;
+    *month = date.month;
+    *year = date.year;
+}
+pub unsafe fn get_seconds_and_micros(seconds: *mut integer, micros: *mut integer) {
+    let (whole, fraction) = time_result(crate::time::seconds_and_micros());
+    // Preserve the generated elapsed-time primitive's 32-bit second counter.
+    *seconds = whole as integer;
+    *micros = fraction;
 }
 pub(crate) unsafe fn input_line(mut f_0: *mut FILE) -> boolean {
     let mut i: ::core::ffi::c_int = EOF;
     last = first;
     loop {
-        *__error() = 0 as ::core::ffi::c_int;
+        crate::stdio::clear_errno();
         while last < bufsize
             && {
                 i = fast_fgetc(f_0);
@@ -3478,7 +3267,7 @@ pub(crate) unsafe fn input_line(mut f_0: *mut FILE) -> boolean {
             last = last + 1;
             *buffer.offset(fresh29 as isize) = i as ASCIIcode;
         }
-        if !(i == EOF && *__error() == EINTR) {
+        if !(i == EOF && crate::stdio::errno() == EINTR) {
             break;
         }
     }
@@ -3508,7 +3297,7 @@ pub(crate) unsafe fn input_line(mut f_0: *mut FILE) -> boolean {
     if i == '\r' as i32 {
         loop {
             i = fast_fgetc(f_0);
-            if !(i == EOF && *__error() == EINTR) {
+            if !(i == EOF && crate::stdio::errno() == EINTR) {
                 break;
             }
         }
@@ -4013,129 +3802,11 @@ pub unsafe fn makesrcspecial(
 }
 pub const MAX_CSTRING_LEN: ::core::ffi::c_int =
     1024 as ::core::ffi::c_int * 1024 as ::core::ffi::c_int;
-pub const TIME_STR_SIZE: ::core::ffi::c_int = 30 as ::core::ffi::c_int;
-#[no_mangle]
-pub static mut start_time_str: [::core::ffi::c_char; 30] = [0; 30];
-static mut time_str: [::core::ffi::c_char; 30] = [0; 30];
-unsafe fn makepdftime(mut t: time_t, mut time_str_0: *mut ::core::ffi::c_char, mut utc: boolean) {
-    let mut lt: tm = tm {
-        tm_sec: 0,
-        tm_min: 0,
-        tm_hour: 0,
-        tm_mday: 0,
-        tm_mon: 0,
-        tm_year: 0,
-        tm_wday: 0,
-        tm_yday: 0,
-        tm_isdst: 0,
-        tm_gmtoff: 0,
-        tm_zone: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-    };
-    let mut gmt: tm = tm {
-        tm_sec: 0,
-        tm_min: 0,
-        tm_hour: 0,
-        tm_mday: 0,
-        tm_mon: 0,
-        tm_year: 0,
-        tm_wday: 0,
-        tm_yday: 0,
-        tm_isdst: 0,
-        tm_gmtoff: 0,
-        tm_zone: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-    };
-    let mut size: size_t = 0;
-    let mut i: ::core::ffi::c_int = 0;
-    let mut off: ::core::ffi::c_int = 0;
-    let mut off_hours: ::core::ffi::c_int = 0;
-    let mut off_mins: ::core::ffi::c_int = 0;
-    if utc != 0 {
-        lt = *gmtime(&raw mut t);
-    } else {
-        lt = *localtime(&raw mut t);
-    }
-    size = strftime(
-        time_str_0,
-        TIME_STR_SIZE as size_t,
-        b"D:%Y%m%d%H%M%S\0" as *const u8 as *const ::core::ffi::c_char,
-        &raw mut lt,
-    );
-    if size == 0 as size_t {
-        *time_str_0.offset(0 as ::core::ffi::c_int as isize) = '\0' as i32 as ::core::ffi::c_char;
-        return;
-    }
-    if *time_str_0.offset(14 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '6' as i32 {
-        *time_str_0.offset(14 as ::core::ffi::c_int as isize) = '5' as i32 as ::core::ffi::c_char;
-        *time_str_0.offset(15 as ::core::ffi::c_int as isize) = '9' as i32 as ::core::ffi::c_char;
-        *time_str_0.offset(16 as ::core::ffi::c_int as isize) = '\0' as i32 as ::core::ffi::c_char;
-    }
-    gmt = *gmtime(&raw mut t);
-    off = 60 as ::core::ffi::c_int * (lt.tm_hour - gmt.tm_hour) + lt.tm_min - gmt.tm_min;
-    if lt.tm_year != gmt.tm_year {
-        off += if lt.tm_year > gmt.tm_year {
-            1440 as ::core::ffi::c_int
-        } else {
-            -(1440 as ::core::ffi::c_int)
-        };
-    } else if lt.tm_yday != gmt.tm_yday {
-        off += if lt.tm_yday > gmt.tm_yday {
-            1440 as ::core::ffi::c_int
-        } else {
-            -(1440 as ::core::ffi::c_int)
-        };
-    }
-    if off == 0 as ::core::ffi::c_int {
-        let fresh0 = size;
-        size = size.wrapping_add(1);
-        *time_str_0.offset(fresh0 as isize) = 'Z' as i32 as ::core::ffi::c_char;
-        *time_str_0.offset(size as isize) = 0 as ::core::ffi::c_char;
-    } else {
-        off_hours = off / 60 as ::core::ffi::c_int;
-        off_mins = (if off - off_hours * 60 as ::core::ffi::c_int >= 0 as ::core::ffi::c_int {
-            off - off_hours * 60 as ::core::ffi::c_int
-        } else {
-            -(off - off_hours * 60 as ::core::ffi::c_int)
-        }) as ::core::ffi::c_int;
-        i = crate::utils::snprintf_args(
-            time_str_0.offset(size as isize) as *mut ::core::ffi::c_char,
-            9 as size_t,
-            b"%+03d'%02d'\0" as *const u8 as *const ::core::ffi::c_char,
-            &[
-                crate::utils::PrintfArg::from(off_hours),
-                crate::utils::PrintfArg::from(off_mins),
-            ],
-        );
-        if i as ::core::ffi::c_uint >= 9 as ::core::ffi::c_int as ::core::ffi::c_uint {
-            crate::utils::pdftex_fail_args(
-                b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
-                &[
-                    crate::utils::PrintfArg::from(
-                        b"tekai-engine/generated/texmfmp.rs\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    ),
-                    crate::utils::PrintfArg::from(3413 as ::core::ffi::c_int),
-                ],
-            );
-        }
-    };
+pub(crate) unsafe fn start_date() -> crate::time::PdfDate {
+    time_result(crate::time::creation_date())
 }
 pub unsafe fn initstarttime() {
-    if start_time_set == 0 {
-        init_start_time();
-        if !getenv(b"SOURCE_DATE_EPOCH\0" as *const u8 as *const ::core::ffi::c_char).is_null() {
-            makepdftime(
-                start_time,
-                &raw mut start_time_str as *mut ::core::ffi::c_char,
-                true_0,
-            );
-        } else {
-            makepdftime(
-                start_time,
-                &raw mut start_time_str as *mut ::core::ffi::c_char,
-                false_0,
-            );
-        }
-    }
+    let _ = start_date();
 }
 pub unsafe fn find_input_file(mut s: integer) -> string {
     let mut filename: string = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -4146,8 +3817,9 @@ pub unsafe fn find_input_file(mut s: integer) -> string {
             DIR_SEP_STRING.as_ptr(),
             filename as const_string,
         );
-        if access(pathname as *const ::core::ffi::c_char, R_OK) == 0 as ::core::ffi::c_int
-            && dir_p(pathname) == 0
+        if readable_path(std::path::Path::new(std::ffi::OsStr::from_bytes(
+            CStr::from_ptr(pathname).to_bytes(),
+        ))) && dir_p(pathname) == 0
         {
             return pathname;
         }
@@ -4234,173 +3906,53 @@ pub unsafe fn makecfilename(mut s: integer) -> *mut ::core::ffi::c_char {
     *q = '\0' as i32 as ::core::ffi::c_char;
     return name;
 }
-pub unsafe fn getcreationdate() {
-    let mut len: size_t = 0;
-    initstarttime();
-    len = strlen(&raw mut start_time_str as *mut ::core::ffi::c_char);
-    if (poolptr as size_t).wrapping_add(len) as ::core::ffi::c_uint
-        >= poolsize as ::core::ffi::c_uint
-    {
+unsafe fn append_metadata_bytes(bytes: &[u8]) {
+    let Some(end) = crate::time::pool_end(poolptr, poolsize, bytes.len()) else {
         poolptr = poolsize;
         return;
-    }
-    memcpy(
-        strpool.offset(poolptr as isize) as *mut packedASCIIcode as *mut ::core::ffi::c_void,
-        &raw mut start_time_str as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
-        len,
-    );
-    poolptr = (poolptr as size_t).wrapping_add(len) as integer as integer;
-}
-pub unsafe fn getfilemoddate(mut s: integer) {
-    let mut file_data: stat = stat {
-        st_dev: 0,
-        st_mode: 0,
-        st_nlink: 0,
-        st_ino: 0,
-        st_uid: 0,
-        st_gid: 0,
-        st_rdev: 0,
-        st_atimespec: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_mtimespec: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_ctimespec: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_birthtimespec: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_size: 0,
-        st_blocks: 0,
-        st_blksize: 0,
-        st_flags: 0,
-        st_gen: 0,
-        st_lspare: 0,
-        st_qspare: [0; 2],
     };
-    let mut file_name: *mut ::core::ffi::c_char = find_input_file(s) as *mut ::core::ffi::c_char;
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), strpool.add(poolptr as usize), bytes.len());
+    poolptr = end;
+}
+pub unsafe fn getcreationdate() {
+    let date = start_date();
+    append_metadata_bytes(date.as_bytes());
+}
+unsafe fn input_file_metadata(s: integer) -> Option<crate::time::FileMetadata> {
+    use std::os::unix::ffi::OsStrExt;
+    let file_name = find_input_file(s);
     if file_name.is_null() {
-        return;
+        return None;
     }
     recorder_record_input(file_name as const_string);
-    if stat(file_name, &raw mut file_data) == 0 as ::core::ffi::c_int {
-        let mut len: size_t = 0;
-        let mut use_utc: boolean =
-            (FORCE_SOURCE_DATE_set != 0 && SOURCE_DATE_EPOCH_set != 0) as ::core::ffi::c_int;
-        makepdftime(
-            file_data.st_mtimespec.tv_sec as time_t,
-            &raw mut time_str as *mut ::core::ffi::c_char,
-            use_utc,
-        );
-        len = strlen(&raw mut time_str as *mut ::core::ffi::c_char);
-        if (poolptr as size_t).wrapping_add(len) as ::core::ffi::c_uint
-            >= poolsize as ::core::ffi::c_uint
-        {
-            poolptr = poolsize;
-        } else {
-            memcpy(
-                strpool.offset(poolptr as isize) as *mut packedASCIIcode
-                    as *mut ::core::ffi::c_void,
-                &raw mut time_str as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
-                len,
-            );
-            poolptr = (poolptr as size_t).wrapping_add(len) as integer as integer;
-        }
-    }
-    if !file_name.is_null() {
-        free(file_name as *mut ::core::ffi::c_void);
-    }
-    file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(
+        CStr::from_ptr(file_name).to_bytes(),
+    ));
+    let metadata = crate::time::file_metadata(path).ok();
+    free(file_name.cast());
+    metadata
 }
-pub unsafe fn getfilesize(mut s: integer) {
-    let mut file_data: stat = stat {
-        st_dev: 0,
-        st_mode: 0,
-        st_nlink: 0,
-        st_ino: 0,
-        st_uid: 0,
-        st_gid: 0,
-        st_rdev: 0,
-        st_atimespec: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_mtimespec: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_ctimespec: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_birthtimespec: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_size: 0,
-        st_blocks: 0,
-        st_blksize: 0,
-        st_flags: 0,
-        st_gen: 0,
-        st_lspare: 0,
-        st_qspare: [0; 2],
-    };
-    let mut i: ::core::ffi::c_int = 0;
-    let mut file_name: *mut ::core::ffi::c_char = find_input_file(s) as *mut ::core::ffi::c_char;
-    if file_name.is_null() {
-        return;
+pub unsafe fn getfilemoddate(s: integer) {
+    if let Some(metadata) = input_file_metadata(s) {
+        let date = time_result(crate::time::modification_date(metadata.modified_seconds));
+        append_metadata_bytes(date.as_bytes());
     }
-    recorder_record_input(file_name as const_string);
-    if stat(file_name, &raw mut file_data) == 0 as ::core::ffi::c_int {
-        let mut len: size_t = 0;
-        let mut buf: [::core::ffi::c_char; 20] = [0; 20];
-        i = crate::utils::snprintf_args(
-            &raw mut buf as *mut ::core::ffi::c_char,
-            ::core::mem::size_of::<[::core::ffi::c_char; 20]>() as size_t,
-            b"%lu\0" as *const u8 as *const ::core::ffi::c_char,
-            &[crate::utils::PrintfArg::from(
-                file_data.st_size as ::core::ffi::c_ulong,
-            )],
-        );
-        if i as ::core::ffi::c_uint
-            >= ::core::mem::size_of::<[::core::ffi::c_char; 20]>() as ::core::ffi::c_uint
-        {
-            crate::utils::pdftex_fail_args(
-                b"snprintf failed: file %s, line %d\0" as *const u8 as *const ::core::ffi::c_char,
-                &[
-                    crate::utils::PrintfArg::from(
-                        b"tekai-engine/generated/texmfmp.rs\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    ),
-                    crate::utils::PrintfArg::from(3637 as ::core::ffi::c_int),
-                ],
-            );
+}
+pub unsafe fn getfilesize(s: integer) {
+    if let Some(metadata) = input_file_metadata(s) {
+        let mut bytes = [0u8; 20];
+        let mut at = bytes.len();
+        let mut size = metadata.len;
+        loop {
+            at -= 1;
+            bytes[at] = b'0' + (size % 10) as u8;
+            size /= 10;
+            if size == 0 {
+                break;
+            }
         }
-        len = strlen(&raw mut buf as *mut ::core::ffi::c_char);
-        if (poolptr as size_t).wrapping_add(len) as ::core::ffi::c_uint
-            >= poolsize as ::core::ffi::c_uint
-        {
-            poolptr = poolsize;
-        } else {
-            memcpy(
-                strpool.offset(poolptr as isize) as *mut packedASCIIcode
-                    as *mut ::core::ffi::c_void,
-                &raw mut buf as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
-                len,
-            );
-            poolptr = (poolptr as size_t).wrapping_add(len) as integer as integer;
-        }
+        append_metadata_bytes(&bytes[at..]);
     }
-    if !file_name.is_null() {
-        free(file_name as *mut ::core::ffi::c_void);
-    }
-    file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
 pub unsafe fn getfiledump(
     mut s: integer,
@@ -4603,39 +4155,4 @@ pub unsafe fn getmd5sum(mut s: strnumber, mut file: boolean) {
         len as size_t,
     );
     poolptr += len;
-}
-#[cfg(all(test, target_os = "macos"))]
-mod metadata_tests {
-    use super::stat;
-    use std::ffi::CString;
-    use std::mem::MaybeUninit;
-    use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::MetadataExt;
-
-    #[test]
-    fn generated_stat_binding_matches_filesystem_metadata() {
-        let path = std::env::temp_dir().join(format!(
-            "tekai-stat-{}-{}.txt",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::write(&path, b"abc").unwrap();
-        let expected = std::fs::metadata(&path).unwrap();
-        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
-        let mut actual = MaybeUninit::<stat>::zeroed();
-        // SAFETY: name is NUL-terminated and actual has the structure layout
-        // required by the selected macOS stat symbol.
-        let status = unsafe { super::stat(name.as_ptr(), actual.as_mut_ptr()) };
-        std::fs::remove_file(&path).unwrap();
-        assert_eq!(status, 0);
-        // SAFETY: stat succeeded and initialized the zeroed structure.
-        let actual = unsafe { actual.assume_init() };
-        assert_eq!(actual.st_size as u64, expected.len());
-        assert_eq!(actual.st_ino, expected.ino());
-        assert_eq!(actual.st_mtimespec.tv_sec, expected.mtime());
-        assert_eq!(actual.st_mtimespec.tv_nsec, expected.mtime_nsec());
-    }
 }

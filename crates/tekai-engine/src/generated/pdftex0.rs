@@ -11488,7 +11488,7 @@ pub unsafe fn endtokenlist() {
     }
     inputptr -= 1;
     curinput = *inputstack.offset(inputptr as isize);
-    if interrupt != 0 as ::core::ffi::c_int {
+    if crate::control::interrupted() {
         pauseforinstructions();
     }
 }
@@ -12258,7 +12258,7 @@ pub unsafe fn getnext() {
                             }
                         }
                     }
-                    if interrupt != 0 as ::core::ffi::c_int {
+                    if crate::control::interrupted() {
                         pauseforinstructions();
                     }
                 }
@@ -39202,7 +39202,7 @@ pub unsafe fn zmakeord(mut q: halfword) {
                         (*mem.offset(q as isize)).hh.v.RH = p;
                         return;
                     } else {
-                        if interrupt != 0 as ::core::ffi::c_int {
+                        if crate::control::interrupted() {
                             pauseforinstructions();
                         }
                         match curi.u.B2 as ::core::ffi::c_int {
@@ -45871,7 +45871,7 @@ pub unsafe fn zreconstitute(
                                             rthit = true_0 as boolean;
                                         }
                                     }
-                                    if interrupt != 0 as ::core::ffi::c_int {
+                                    if crate::control::interrupted() {
                                         pauseforinstructions();
                                     }
                                     match q.u.B2 as ::core::ffi::c_int {
@@ -60881,10 +60881,10 @@ pub unsafe fn maincontrol() {
     '_lab60: loop {
         getxtoken();
         loop {
-            if interrupt != 0 as ::core::ffi::c_int {
+            if crate::control::interrupted() {
                 if OKtointerrupt != 0 {
                     backinput();
-                    if interrupt != 0 as ::core::ffi::c_int {
+                    if crate::control::interrupted() {
                         pauseforinstructions();
                     }
                     continue '_lab60;
@@ -61802,7 +61802,7 @@ pub unsafe fn maincontrol() {
                                 {
                                     rthit = true_0 as boolean;
                                 }
-                                if interrupt != 0 as ::core::ffi::c_int {
+                                if crate::control::interrupted() {
                                     pauseforinstructions();
                                 }
                                 match mainj.u.B2 as ::core::ffi::c_int {

@@ -5,10 +5,15 @@
 //! module implements those hooks without linking TeX Live's C SyncTeX
 //! runtime.
 
+use std::cell::{Cell, RefCell};
 use std::ffi::CString;
 use std::fs::{self, File};
 use std::io::{self, Write as _};
+use std::marker::{PhantomData, PhantomPinned};
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::ptr::NonNull;
+use std::rc::Rc;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -113,9 +118,10 @@ impl SyncTexContext {
         self.push_anchor();
         self.push_text("Post scriptum:\n");
 
-        let Some(mut path) = tex_string(unsafe { engine::texmflogname }).map(PathBuf::from) else {
+        let Some(path) = tex_string(unsafe { engine::texmflogname }).map(PathBuf::from) else {
             return Ok(None);
         };
+        let mut path = crate::working_directory::resolve(&path)?;
         if self.compress {
             path.set_extension("synctex.gz");
             let mut stale = path.clone();
@@ -138,22 +144,68 @@ impl SyncTexContext {
     }
 }
 
-static mut CONTEXT: Option<SyncTexContext> = None;
+pub(crate) struct SyncTexSession {
+    context: RefCell<Option<SyncTexContext>>,
+    _thread: PhantomData<Rc<()>>,
+    _pinned: PhantomPinned,
+}
 
-/// Reset per-run state before the generated engine parses command-line flags.
-pub unsafe fn reset_for_run() {
-    unsafe {
-        CONTEXT = Some(SyncTexContext::new());
+thread_local! {
+    static ACTIVE: Cell<Option<NonNull<SyncTexSession>>> = const { Cell::new(None) };
+}
+
+impl SyncTexSession {
+    pub(crate) fn new() -> Pin<Box<Self>> {
+        Box::pin(Self {
+            context: RefCell::new(None),
+            _thread: PhantomData,
+            _pinned: PhantomPinned,
+        })
+    }
+
+    pub(crate) fn scope<T>(session: Pin<&mut Self>, action: impl FnOnce() -> T) -> T {
+        struct Unregister(NonNull<SyncTexSession>);
+        impl Drop for Unregister {
+            fn drop(&mut self) {
+                let _ = ACTIVE.try_with(|active| {
+                    if active.get() == Some(self.0) {
+                        active.set(None);
+                    }
+                });
+                // Discard unfinished text. Only synctexterminate writes the
+                // postamble/sidecar, never this guard or the owner's Drop.
+                unsafe { self.0.as_ref() }.context.borrow_mut().take();
+            }
+        }
+        // SAFETY The owner stays pinned and exclusively borrowed through the
+        // private guard. Dropping unfinished context discards text, not output.
+        let pointer = NonNull::from(unsafe { session.get_unchecked_mut() });
+        ACTIVE.with(|active| {
+            assert!(active.get().is_none(), "nested SyncTeX scope");
+            active.set(Some(pointer));
+        });
+        let _guard = Unregister(pointer);
+        action()
     }
 }
 
-unsafe fn context_mut() -> &'static mut SyncTexContext {
-    unsafe {
-        if CONTEXT.is_none() {
-            CONTEXT = Some(SyncTexContext::new());
+fn with_context(action: impl FnOnce(&mut SyncTexContext)) {
+    ACTIVE.with(|active| {
+        if let Some(pointer) = active.get() {
+            // SAFETY Scope retains the owner; no context reference escapes.
+            let mut context = unsafe { pointer.as_ref() }.context.borrow_mut();
+            action(context.get_or_insert_with(SyncTexContext::new));
         }
-        CONTEXT.as_mut().expect("SyncTeX context initialized")
-    }
+    });
+}
+
+/// Reset per-run state before the generated engine parses command-line flags.
+pub unsafe fn reset_for_run() {
+    ACTIVE.with(|active| {
+        if let Some(pointer) = active.get() {
+            *unsafe { pointer.as_ref() }.context.borrow_mut() = Some(SyncTexContext::new());
+        }
+    });
 }
 
 fn remove_if_exists(path: &PathBuf) -> io::Result<()> {
@@ -201,7 +253,7 @@ fn current_input_name() -> Option<String> {
             return None;
         }
         let name = tex_string(*engine::fullsourcefilenamestack.offset(engine::inopen as isize))?;
-        let path = PathBuf::from(&name);
+        let path = crate::working_directory::resolve(&PathBuf::from(&name)).ok()?;
         Some(
             fs::canonicalize(&path)
                 .unwrap_or(path)
@@ -263,119 +315,128 @@ fn position() -> (Integer, Integer) {
 
 fn record_box(node: Halfword, marker: char) {
     unsafe {
-        let context = context_mut();
-        if context.off || !context.content_ready || synctex_value() == 0 {
-            return;
-        }
-        let (tag, line) = node_context(node, BOX_TAG_OFFSET, BOX_LINE_OFFSET);
-        let (h, v) = position();
-        let width = memory_int(node.saturating_add(1));
-        let depth = memory_int(node.saturating_add(2));
-        let height = memory_int(node.saturating_add(3));
-        context.current_tag = tag;
-        context.current_line = line;
-        context.not_void = true;
-        context.push_record(&format!(
-            "{marker}{tag},{line}:{h},{v}:{width},{height},{depth}\n"
-        ));
+        with_context(|context| {
+            if context.off || !context.content_ready || synctex_value() == 0 {
+                return;
+            }
+            let (tag, line) = node_context(node, BOX_TAG_OFFSET, BOX_LINE_OFFSET);
+            let (h, v) = position();
+            let width = memory_int(node.saturating_add(1));
+            let depth = memory_int(node.saturating_add(2));
+            let height = memory_int(node.saturating_add(3));
+            context.current_tag = tag;
+            context.current_line = line;
+            context.not_void = true;
+            context.push_record(&format!(
+                "{marker}{tag},{line}:{h},{v}:{width},{height},{depth}\n"
+            ));
+        });
     }
 }
 
 fn close_box(marker: char) {
     unsafe {
-        let context = context_mut();
-        if context.off || !context.content_ready || synctex_value() == 0 {
-            return;
-        }
-        context.push_record(&format!("{marker}\n"));
+        with_context(|context| {
+            if context.off || !context.content_ready || synctex_value() == 0 {
+                return;
+            }
+            context.push_record(&format!("{marker}\n"));
+        });
     }
 }
 
 fn record_medium_node(node: Halfword, marker: char, include_width: bool) {
     unsafe {
-        let context = context_mut();
-        if context.off || !context.content_ready || synctex_value() == 0 {
-            return;
-        }
-        let (tag, line) = node_context(node, MEDIUM_TAG_OFFSET, MEDIUM_LINE_OFFSET);
-        if tag <= 0 || line <= 0 {
-            return;
-        }
-        let (h, v) = position();
-        context.current_tag = tag;
-        context.current_line = line;
-        let width = include_width
-            .then(|| format!(":{}", memory_int(node.saturating_add(1))))
-            .unwrap_or_default();
-        context.push_record(&format!("{marker}{tag},{line}:{h},{v}{width}\n"));
+        with_context(|context| {
+            if context.off || !context.content_ready || synctex_value() == 0 {
+                return;
+            }
+            let (tag, line) = node_context(node, MEDIUM_TAG_OFFSET, MEDIUM_LINE_OFFSET);
+            if tag <= 0 || line <= 0 {
+                return;
+            }
+            let (h, v) = position();
+            context.current_tag = tag;
+            context.current_line = line;
+            let width = include_width
+                .then(|| format!(":{}", memory_int(node.saturating_add(1))))
+                .unwrap_or_default();
+            context.push_record(&format!("{marker}{tag},{line}:{h},{v}{width}\n"));
+        });
     }
 }
 
 fn record_rule(node: Halfword) {
     unsafe {
-        let context = context_mut();
-        if context.off || !context.content_ready || synctex_value() == 0 {
-            return;
-        }
-        let (tag, line) = node_context(node, RULE_TAG_OFFSET, RULE_LINE_OFFSET);
-        if tag <= 0 || line <= 0 {
-            return;
-        }
-        let (h, v) = position();
-        context.current_tag = tag;
-        context.current_line = line;
-        context.push_record(&format!(
-            "r{tag},{line}:{h},{v}:{},{},{}\n",
-            engine::rulewd,
-            engine::ruleht,
-            engine::ruledp
-        ));
+        with_context(|context| {
+            if context.off || !context.content_ready || synctex_value() == 0 {
+                return;
+            }
+            let (tag, line) = node_context(node, RULE_TAG_OFFSET, RULE_LINE_OFFSET);
+            if tag <= 0 || line <= 0 {
+                return;
+            }
+            let (h, v) = position();
+            context.current_tag = tag;
+            context.current_line = line;
+            context.push_record(&format!(
+                "r{tag},{line}:{h},{v}:{},{},{}\n",
+                engine::rulewd,
+                engine::ruleht,
+                engine::ruledp
+            ));
+        });
     }
 }
 
 pub fn synctexinitcommand() {
     unsafe {
         let option = engine::synctexoption;
-        let context = context_mut();
-        if option == SYNCTEX_NO_OPTION {
-            set_synctex_value(0);
-        } else if option == 0 {
-            context.off = true;
-            set_synctex_value(0);
-        } else {
-            context.compress = option >= 0;
-            set_synctex_value(option | 1);
-        }
+        with_context(|context| {
+            if option == SYNCTEX_NO_OPTION {
+                set_synctex_value(0);
+            } else if option == 0 {
+                context.off = true;
+                set_synctex_value(0);
+            } else {
+                context.compress = option >= 0;
+                set_synctex_value(option | 1);
+            }
+        });
     }
 }
 
 pub fn synctexabort(_log_opened: Boolean) {
-    unsafe {
-        if let Some(context) = CONTEXT.as_mut() {
-            context.off = true;
-            context.source.clear();
-        }
-    }
+    with_context(|context| {
+        context.off = true;
+        context.source.clear();
+    });
 }
 
 pub fn synctexstartinput() {
     unsafe {
-        let context = context_mut();
-        if context.off {
-            engine::curinput.synctextagfield = 0;
-            return;
-        }
-        context.tag_counter = context.tag_counter.saturating_add(1);
-        let tag = context.tag_counter;
-        engine::curinput.synctextagfield = tag;
-        if let Some(name) = current_input_name() {
-            context.add_input(tag, name);
-        }
+        with_context(|context| {
+            if context.off {
+                engine::curinput.synctextagfield = 0;
+                return;
+            }
+            context.tag_counter = context.tag_counter.saturating_add(1);
+            let tag = context.tag_counter;
+            engine::curinput.synctextagfield = tag;
+            if let Some(name) = current_input_name() {
+                context.add_input(tag, name);
+            }
+        });
     }
 }
 
 pub fn synctexterminate(log_opened: Boolean) {
-    let context = unsafe { CONTEXT.take() };
+    let context = ACTIVE.with(|active| {
+        let pointer = active.get()?;
+        // SAFETY Scope retains the owner; explicit termination consumes only
+        // the context, never the registered session.
+        unsafe { pointer.as_ref() }.context.borrow_mut().take()
+    });
     if log_opened == 0 {
         return;
     }
@@ -390,22 +451,24 @@ pub fn synctexterminate(log_opened: Boolean) {
 
 pub fn synctexsheet(magnification: Integer) {
     unsafe {
-        let context = context_mut();
-        if context.off || synctex_value() == 0 {
-            return;
-        }
-        context.prepare_content(magnification);
-        context.begin_sheet(engine::totalpages.saturating_add(1));
+        with_context(|context| {
+            if context.off || synctex_value() == 0 {
+                return;
+            }
+            context.prepare_content(magnification);
+            context.begin_sheet(engine::totalpages.saturating_add(1));
+        });
     }
 }
 
 pub fn synctexteehs() {
     unsafe {
-        let context = context_mut();
-        if context.off || !context.content_ready {
-            return;
-        }
-        context.end_sheet(engine::totalpages);
+        with_context(|context| {
+            if context.off || !context.content_ready {
+                return;
+            }
+            context.end_sheet(engine::totalpages);
+        });
     }
 }
 
@@ -462,18 +525,73 @@ pub fn synctexnode(_node: Halfword, _parent: Halfword) {}
 
 pub fn synctexcurrent() {
     unsafe {
-        let context = context_mut();
-        if context.off
-            || !context.content_ready
-            || context.current_tag <= 0
-            || context.current_line <= 0
-        {
-            return;
-        }
-        let (h, v) = position();
-        context.push_record(&format!(
-            "x{},{}:{h},{v}\n",
-            context.current_tag, context.current_line
-        ));
+        with_context(|context| {
+            if context.off
+                || !context.content_ready
+                || context.current_tag <= 0
+                || context.current_line <= 0
+            {
+                return;
+            }
+            let (h, v) = position();
+            context.push_record(&format!(
+                "x{},{}:{h},{v}\n",
+                context.current_tag, context.current_line
+            ));
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[test]
+    fn unfinished_sidecar_is_discarded_on_unwind_and_routing_is_cleared() {
+        let mut owner = SyncTexSession::new();
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            SyncTexSession::scope(owner.as_mut(), || {
+                with_context(|context| {
+                    context.push_text("partial content\n");
+                    context.content_ready = true;
+                    context.not_void = true;
+                });
+                panic!("partial typesetting");
+            });
+        }));
+        assert!(outcome.is_err());
+        assert!(ACTIVE.with(Cell::get).is_none());
+        assert!(owner.context.borrow().is_none());
+        SyncTexSession::scope(owner.as_mut(), || {
+            with_context(|context| assert_eq!(context.source, "SyncTeX Version:1\n"));
+            synctexabort(0);
+            with_context(|context| {
+                assert!(context.off);
+                assert!(context.source.is_empty());
+            });
+            synctexterminate(0);
+        });
+        assert!(owner.context.borrow().is_none());
+    }
+
+    #[test]
+    fn context_borrow_failure_and_nested_scope_do_not_replace_routing() {
+        let mut first = SyncTexSession::new();
+        let mut second = SyncTexSession::new();
+        SyncTexSession::scope(first.as_mut(), || {
+            let pointer = ACTIVE.with(Cell::get);
+            assert!(catch_unwind(AssertUnwindSafe(|| SyncTexSession::scope(
+                second.as_mut(),
+                || ()
+            )))
+            .is_err());
+            assert_eq!(ACTIVE.with(Cell::get), pointer);
+            assert!(
+                catch_unwind(AssertUnwindSafe(|| with_context(|_| with_context(|_| ())))).is_err()
+            );
+            with_context(|context| assert!(!context.off));
+        });
+        assert!(ACTIVE.with(Cell::get).is_none());
     }
 }

@@ -1,6 +1,12 @@
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ffi::{c_char, c_double, c_int, c_uint, c_void};
 use std::io::Cursor;
+use std::marker::{PhantomData, PhantomPinned};
+use std::pin::Pin;
 use std::ptr;
+use std::ptr::NonNull;
+use std::rc::Rc;
 use std::sync::Arc;
 
 const PNG_LIBPNG_VER_STRING: &[u8] = b"1.6.58\0";
@@ -77,16 +83,103 @@ struct PngDecodeCacheKey {
     gamma: Option<(u64, u64)>,
 }
 
-thread_local! {
-    static PNG_DECODE_CACHE: std::cell::RefCell<crate::cache::BudgetCache<PngDecodeCacheKey, Arc<DecodedImage>>> =
-        std::cell::RefCell::new(crate::cache::BudgetCache::new(PNG_CACHE_BYTES, 256));
+const PNG_CACHE_BYTES: usize = 16 * 1024 * 1024;
+type DecodeCache = crate::cache::BudgetCache<PngDecodeCacheKey, Arc<DecodedImage>>;
+
+/// Owns decoded pixels and every live shim handle for one invocation. The
+/// registries own typed Box allocations; stored raw handles are only aliases.
+/// No borrowed file is closed and no decoder is finalized during teardown.
+pub(crate) struct PngSession {
+    cache: RefCell<DecodeCache>,
+    states: RefCell<HashMap<usize, NonNull<PngState>>>,
+    infos: RefCell<HashMap<usize, NonNull<PngInfo>>>,
+    _thread: PhantomData<Rc<()>>,
+    _pinned: PhantomPinned,
 }
 
-const PNG_CACHE_BYTES: usize = 16 * 1024 * 1024;
+thread_local! {
+    static ACTIVE: Cell<Option<NonNull<PngSession>>> = const { Cell::new(None) };
+}
+
+impl PngSession {
+    pub(crate) fn new() -> Pin<Box<Self>> {
+        Box::pin(Self {
+            cache: RefCell::new(DecodeCache::new(PNG_CACHE_BYTES, 256)),
+            states: RefCell::new(HashMap::new()),
+            infos: RefCell::new(HashMap::new()),
+            _thread: PhantomData,
+            _pinned: PhantomPinned,
+        })
+    }
+
+    pub(crate) fn scope<T>(session: Pin<&mut Self>, action: impl FnOnce() -> T) -> T {
+        struct Unregister(NonNull<PngSession>);
+        impl Drop for Unregister {
+            fn drop(&mut self) {
+                // SAFETY The closure has ended/unwound and retains no shim
+                // references; the pinned borrow still keeps the owner alive.
+                let _ = ACTIVE.try_with(|active| {
+                    if active.get() == Some(self.0) {
+                        active.set(None);
+                    }
+                });
+                unsafe { self.0.as_ref() }.clear_handles();
+                *unsafe { self.0.as_ref() }.cache.borrow_mut() =
+                    DecodeCache::new(PNG_CACHE_BYTES, 256);
+            }
+        }
+        let pointer = NonNull::from(unsafe { session.get_unchecked_mut() });
+        ACTIVE.with(|active| {
+            assert!(active.get().is_none(), "nested PNG scope");
+            active.set(Some(pointer));
+        });
+        let _guard = Unregister(pointer);
+        action()
+    }
+
+    fn clear_handles(&self) {
+        // Raw registry entries exclusively own Box allocations. Using typed
+        // pointers rather than borrowing Boxes avoids aliasing an active raw
+        // decoder reference while the separate cache is being accessed.
+        for (_, pointer) in self.infos.borrow_mut().drain() {
+            unsafe {
+                drop(Box::from_raw(pointer.as_ptr()));
+            }
+        }
+        for (_, pointer) in self.states.borrow_mut().drain() {
+            unsafe {
+                drop(Box::from_raw(pointer.as_ptr()));
+            }
+        }
+    }
+}
+
+impl Drop for PngSession {
+    fn drop(&mut self) {
+        self.clear_handles();
+    }
+}
+
+fn with_owner<T>(action: impl FnOnce(Option<&PngSession>) -> T) -> T {
+    ACTIVE.with(|active| {
+        // SAFETY Only the private closure scope registers a live pinned owner;
+        // its reference stays inside this private synchronous callback.
+        action(active.get().map(|pointer| unsafe { pointer.as_ref() }))
+    })
+}
+
+fn with_cache<T>(action: impl FnOnce(&mut DecodeCache) -> T) -> T {
+    with_owner(|owner| {
+        if let Some(owner) = owner {
+            action(&mut owner.cache.borrow_mut())
+        } else {
+            action(&mut DecodeCache::new(PNG_CACHE_BYTES, 256))
+        }
+    })
+}
 
 pub(crate) fn reset_decode_cache() {
-    PNG_DECODE_CACHE
-        .with(|cache| *cache.borrow_mut() = crate::cache::BudgetCache::new(PNG_CACHE_BYTES, 256));
+    with_cache(|cache| *cache = DecodeCache::new(PNG_CACHE_BYTES, 256));
 }
 
 struct PngState {
@@ -192,9 +285,7 @@ impl PngState {
         }
         let cache_key = self.decode_cache_key();
         if let Some(key) = cache_key {
-            if let Some(decoded) =
-                PNG_DECODE_CACHE.with(|cache| cache.borrow_mut().get(&key).cloned())
-            {
+            if let Some(decoded) = with_cache(|cache| cache.get(&key).cloned()) {
                 self.decoded = Some(decoded);
                 self.row_cursor = 0;
                 return Ok(());
@@ -256,10 +347,8 @@ impl PngState {
             color_type,
         });
         if let Some(key) = cache_key {
-            PNG_DECODE_CACHE.with(|cache| {
-                cache
-                    .borrow_mut()
-                    .insert(key, Arc::clone(&decoded), decoded.data.capacity() + 256);
+            with_cache(|cache| {
+                cache.insert(key, Arc::clone(&decoded), decoded.data.capacity() + 256);
             });
         }
         self.decoded = Some(decoded);
@@ -321,16 +410,40 @@ pub unsafe fn png_create_read_struct(
     _error_fn: PngErrorPtr,
     _warn_fn: PngErrorPtr,
 ) -> *mut png_struct_def {
-    Box::into_raw(Box::new(PngState::new())).cast()
+    with_owner(|owner| {
+        if let Some(owner) = owner {
+            owner.states.borrow_mut().reserve(1);
+        }
+        let pointer = Box::into_raw(Box::new(PngState::new()));
+        if let Some(owner) = owner {
+            owner
+                .states
+                .borrow_mut()
+                .insert(pointer as usize, NonNull::new(pointer).unwrap());
+        }
+        pointer.cast()
+    })
 }
 
 pub unsafe fn png_create_info_struct(png_ptr: *const png_struct_def) -> *mut png_info_def {
     let Some(state) = state(png_ptr) else {
         return ptr::null_mut();
     };
-    let info = Box::into_raw(Box::new(PngInfo {
-        state: state as *mut PngState,
-    }));
+    let info = with_owner(|owner| {
+        if let Some(owner) = owner {
+            owner.infos.borrow_mut().reserve(1);
+        }
+        let info = Box::into_raw(Box::new(PngInfo {
+            state: state as *mut PngState,
+        }));
+        if let Some(owner) = owner {
+            owner
+                .infos
+                .borrow_mut()
+                .insert(info as usize, NonNull::new(info).unwrap());
+        }
+        info
+    });
     state.info_ptr = info;
     info.cast()
 }
@@ -377,6 +490,18 @@ pub unsafe fn png_destroy_read_struct(
     if !info_ptr_ptr.is_null() {
         let info_ptr = *info_ptr_ptr;
         if !info_ptr.is_null() {
+            with_owner(|owner| {
+                if let Some(owner) = owner {
+                    assert!(
+                        owner
+                            .infos
+                            .borrow_mut()
+                            .remove(&(info_ptr as usize))
+                            .is_some(),
+                        "unknown PNG info handle"
+                    );
+                }
+            });
             drop(Box::from_raw(info_ptr.cast::<PngInfo>()));
             *info_ptr_ptr = ptr::null_mut();
         }
@@ -384,6 +509,18 @@ pub unsafe fn png_destroy_read_struct(
     if !png_ptr_ptr.is_null() {
         let png_ptr = *png_ptr_ptr;
         if !png_ptr.is_null() {
+            with_owner(|owner| {
+                if let Some(owner) = owner {
+                    assert!(
+                        owner
+                            .states
+                            .borrow_mut()
+                            .remove(&(png_ptr as usize))
+                            .is_some(),
+                        "unknown PNG decoder handle"
+                    );
+                }
+            });
             drop(Box::from_raw(png_ptr.cast::<PngState>()));
             *png_ptr_ptr = ptr::null_mut();
         }
@@ -975,6 +1112,65 @@ mod tests {
     use std::os::unix::ffi::OsStrExt;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[test]
+    fn scoped_handles_release_pixels_on_partial_abort_and_explicit_deletion() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        let mut owner = PngSession::new();
+        let pixels = Arc::new(DecodedImage {
+            data: vec![23; 8192],
+            rowbytes: 8192,
+            bit_depth: 8,
+            color_type: PNG_COLOR_TYPE_GRAY,
+        });
+        let weak = Arc::downgrade(&pixels);
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            PngSession::scope(owner.as_mut(), || unsafe {
+                let decoder = png_create_read_struct(ptr::null(), ptr::null_mut(), None, None);
+                let _info = png_create_info_struct(decoder);
+                state(decoder).unwrap().decoded = Some(pixels);
+                with_owner(|owner| {
+                    let owner = owner.unwrap();
+                    assert_eq!(owner.states.borrow().len(), 1);
+                    assert_eq!(owner.infos.borrow().len(), 1);
+                });
+                panic!("partial PNG read");
+            });
+        }));
+        assert!(outcome.is_err());
+        assert!(ACTIVE.with(Cell::get).is_none());
+        assert!(weak.upgrade().is_none());
+        assert!(owner.states.borrow().is_empty());
+        assert!(owner.infos.borrow().is_empty());
+        PngSession::scope(owner.as_mut(), || unsafe {
+            let mut decoder = png_create_read_struct(ptr::null(), ptr::null_mut(), None, None);
+            let mut info = png_create_info_struct(decoder);
+            png_destroy_read_struct(&mut decoder, &mut info, ptr::null_mut());
+            assert!(decoder.is_null() && info.is_null());
+            with_owner(|owner| {
+                let owner = owner.unwrap();
+                assert!(owner.states.borrow().is_empty());
+                assert!(owner.infos.borrow().is_empty());
+            });
+        });
+    }
+
+    #[test]
+    fn rejected_decoder_nesting_preserves_the_outer_route() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        let mut first = PngSession::new();
+        let mut second = PngSession::new();
+        PngSession::scope(first.as_mut(), || {
+            let pointer = ACTIVE.with(Cell::get);
+            assert!(catch_unwind(AssertUnwindSafe(|| PngSession::scope(
+                second.as_mut(),
+                || ()
+            )))
+            .is_err());
+            assert_eq!(ACTIVE.with(Cell::get), pointer);
+        });
+        assert!(ACTIVE.with(Cell::get).is_none());
+    }
+
     fn append_metadata_chunk(png: &mut Vec<u8>, typ: &[u8; 4], data: &[u8]) {
         png.extend_from_slice(&(data.len() as u32).to_be_bytes());
         png.extend_from_slice(typ);
@@ -1153,69 +1349,73 @@ mod tests {
 
     #[test]
     fn complete_framing_decode_errors_do_not_cache_pixels() {
-        reset_decode_cache();
-        for (color_type, scanline) in [
-            (PNG_COLOR_TYPE_GRAY, &[0, 10][..]),
-            (PNG_COLOR_TYPE_RGB, &[0, 10, 20, 30][..]),
-            (PNG_COLOR_TYPE_RGB_ALPHA, &[0, 10, 20, 30, 128][..]),
-        ] {
-            let valid_idat = compressed_scanline(scanline);
-            for (case, idat, invalid_crc) in [
-                ("zlib", vec![0, 0], false),
-                ("crc", valid_idat.clone(), true),
-                ("short scanline", compressed_scanline(&[0]), false),
+        let mut owner = PngSession::new();
+        PngSession::scope(owner.as_mut(), || {
+            reset_decode_cache();
+            for (color_type, scanline) in [
+                (PNG_COLOR_TYPE_GRAY, &[0, 10][..]),
+                (PNG_COLOR_TYPE_RGB, &[0, 10, 20, 30][..]),
+                (PNG_COLOR_TYPE_RGB_ALPHA, &[0, 10, 20, 30, 128][..]),
             ] {
-                let png = decode_fixture(color_type, &idat, invalid_crc);
-                let fp = unsafe { crate::stdio::tmpfile() };
-                assert!(!fp.is_null());
-                assert_eq!(
-                    unsafe { crate::stdio::fwrite(png.as_ptr().cast(), 1, png.len(), fp) },
-                    png.len()
-                );
-                let metadata = unsafe { parse_metadata_from_file(fp) }.unwrap();
-                let mut state = PngState::new();
-                state.file = fp;
-                state.width = metadata.width;
-                state.height = metadata.height;
-                state.color_type = metadata.color_type;
-                state.gamma = Some((1.0, 1.0));
-                let key = state.decode_cache_key().unwrap();
-                let error = state
-                    .ensure_decoded()
-                    .expect_err("malformed IDAT was decoded");
-                let expected = match case {
-                    "zlib" => "Corrupt deflate stream. BadZlibHeader".to_string(),
-                    "short scanline" => {
-                        "IDAT or fDAT chunk does not have enough data for image.".to_string()
-                    }
-                    "crc" => {
-                        let crc_start = 33 + 8 + idat.len();
-                        let stored =
-                            u32::from_be_bytes(png[crc_start..crc_start + 4].try_into().unwrap());
-                        let actual = stored ^ 0x0100_0000;
-                        format!(
+                let valid_idat = compressed_scanline(scanline);
+                for (case, idat, invalid_crc) in [
+                    ("zlib", vec![0, 0], false),
+                    ("crc", valid_idat.clone(), true),
+                    ("short scanline", compressed_scanline(&[0]), false),
+                ] {
+                    let png = decode_fixture(color_type, &idat, invalid_crc);
+                    let fp = unsafe { crate::stdio::tmpfile() };
+                    assert!(!fp.is_null());
+                    assert_eq!(
+                        unsafe { crate::stdio::fwrite(png.as_ptr().cast(), 1, png.len(), fp) },
+                        png.len()
+                    );
+                    let metadata = unsafe { parse_metadata_from_file(fp) }.unwrap();
+                    let mut state = PngState::new();
+                    state.file = fp;
+                    state.width = metadata.width;
+                    state.height = metadata.height;
+                    state.color_type = metadata.color_type;
+                    state.gamma = Some((1.0, 1.0));
+                    let key = state.decode_cache_key().unwrap();
+                    let error = state
+                        .ensure_decoded()
+                        .expect_err("malformed IDAT was decoded");
+                    let expected = match case {
+                        "zlib" => "Corrupt deflate stream. BadZlibHeader".to_string(),
+                        "short scanline" => {
+                            "IDAT or fDAT chunk does not have enough data for image.".to_string()
+                        }
+                        "crc" => {
+                            let crc_start = 33 + 8 + idat.len();
+                            let stored = u32::from_be_bytes(
+                                png[crc_start..crc_start + 4].try_into().unwrap(),
+                            );
+                            let actual = stored ^ 0x0100_0000;
+                            format!(
                             "CRC error: expected 0x{stored:x} have 0x{actual:x} while decoding ChunkType {{ type: IDAT, critical: true, private: false, reserved: false, safecopy: false }} chunk."
                         )
-                    }
-                    _ => unreachable!(),
-                };
-                assert_eq!(error, expected, "{case}, color {color_type}");
-                eprintln!("{case}, color {color_type}: invalid PNG image data: {error}");
-                assert!(state.decoded.is_none());
-                PNG_DECODE_CACHE.with(|cache| assert!(cache.borrow_mut().get(&key).is_none()));
-                assert_eq!(state.ensure_decoded().unwrap_err(), error);
-                unsafe { crate::stdio::fclose(fp) };
+                        }
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(error, expected, "{case}, color {color_type}");
+                    eprintln!("{case}, color {color_type}: invalid PNG image data: {error}");
+                    assert!(state.decoded.is_none());
+                    with_cache(|cache| assert!(cache.get(&key).is_none()));
+                    assert_eq!(state.ensure_decoded().unwrap_err(), error);
+                    unsafe { crate::stdio::fclose(fp) };
+                }
+                let mut valid = PngState::new();
+                valid.data = decode_fixture(color_type, &valid_idat, false);
+                valid.width = 1;
+                valid.height = 1;
+                valid.color_type = color_type;
+                valid.gamma = Some((1.0, 1.0));
+                valid.ensure_decoded().unwrap();
+                assert_eq!(valid.decoded.unwrap().data, scanline[1..]);
             }
-            let mut valid = PngState::new();
-            valid.data = decode_fixture(color_type, &valid_idat, false);
-            valid.width = 1;
-            valid.height = 1;
-            valid.color_type = color_type;
-            valid.gamma = Some((1.0, 1.0));
-            valid.ensure_decoded().unwrap();
-            assert_eq!(valid.decoded.unwrap().data, scanline[1..]);
-        }
-        reset_decode_cache();
+            reset_decode_cache();
+        });
     }
 
     #[test]
@@ -1365,47 +1565,49 @@ mod tests {
 
     #[test]
     fn decoded_cache_is_bounded_and_eviction_keeps_active_pixels_valid() {
-        reset_decode_cache();
-        let active = Arc::new(DecodedImage {
-            data: vec![123; 1024 * 1024],
-            rowbytes: 1024,
-            bit_depth: 8,
-            color_type: PNG_COLOR_TYPE_GRAY,
+        let mut owner = PngSession::new();
+        PngSession::scope(owner.as_mut(), || {
+            reset_decode_cache();
+            let active = Arc::new(DecodedImage {
+                data: vec![123; 1024 * 1024],
+                rowbytes: 1024,
+                bit_depth: 8,
+                color_type: PNG_COLOR_TYPE_GRAY,
+            });
+            let key = |ino| PngDecodeCacheKey {
+                file: FileIdentity {
+                    dev: 1,
+                    ino,
+                    size: 1,
+                    mtime_sec: 1,
+                    mtime_nsec: 0,
+                    ctime_sec: 1,
+                    ctime_nsec: 0,
+                },
+                strip_16: false,
+                trns_to_alpha: false,
+                strip_alpha: false,
+                gamma: None,
+            };
+            with_cache(|cache| {
+                cache.insert(key(0), Arc::clone(&active), active.data.capacity() + 256);
+                assert!(Arc::ptr_eq(cache.get(&key(0)).unwrap(), &active));
+                for n in 1..64 {
+                    let decoded = Arc::new(DecodedImage {
+                        data: vec![n as u8; 1024 * 1024],
+                        rowbytes: 1024,
+                        bit_depth: 8,
+                        color_type: PNG_COLOR_TYPE_GRAY,
+                    });
+                    cache.insert(key(n), decoded, 1024 * 1024 + 256);
+                    assert!(cache.retained_bytes() <= PNG_CACHE_BYTES);
+                }
+                assert!(cache.get(&key(0)).is_none());
+            });
+            assert_eq!(Arc::strong_count(&active), 1);
+            assert!(active.data.iter().all(|pixel| *pixel == 123));
+            reset_decode_cache();
         });
-        let key = |ino| PngDecodeCacheKey {
-            file: FileIdentity {
-                dev: 1,
-                ino,
-                size: 1,
-                mtime_sec: 1,
-                mtime_nsec: 0,
-                ctime_sec: 1,
-                ctime_nsec: 0,
-            },
-            strip_16: false,
-            trns_to_alpha: false,
-            strip_alpha: false,
-            gamma: None,
-        };
-        PNG_DECODE_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            cache.insert(key(0), Arc::clone(&active), active.data.capacity() + 256);
-            assert!(Arc::ptr_eq(cache.get(&key(0)).unwrap(), &active));
-            for n in 1..64 {
-                let decoded = Arc::new(DecodedImage {
-                    data: vec![n as u8; 1024 * 1024],
-                    rowbytes: 1024,
-                    bit_depth: 8,
-                    color_type: PNG_COLOR_TYPE_GRAY,
-                });
-                cache.insert(key(n), decoded, 1024 * 1024 + 256);
-                assert!(cache.retained_bytes() <= PNG_CACHE_BYTES);
-            }
-            assert!(cache.get(&key(0)).is_none());
-        });
-        assert_eq!(Arc::strong_count(&active), 1);
-        assert!(active.data.iter().all(|pixel| *pixel == 123));
-        reset_decode_cache();
     }
 
     #[test]
@@ -1436,64 +1638,67 @@ mod tests {
 
     #[test]
     fn real_file_cache_reuses_only_matching_transforms_and_file_identity() {
-        fn encoded(pixel: &[u8]) -> Vec<u8> {
-            let mut bytes = Vec::new();
-            {
-                let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
-                encoder.set_color(png::ColorType::Rgba);
-                encoder.set_depth(png::BitDepth::Eight);
-                encoder
-                    .write_header()
-                    .unwrap()
-                    .write_image_data(pixel)
-                    .unwrap();
+        let mut owner = PngSession::new();
+        PngSession::scope(owner.as_mut(), || {
+            fn encoded(pixel: &[u8]) -> Vec<u8> {
+                let mut bytes = Vec::new();
+                {
+                    let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
+                    encoder.set_color(png::ColorType::Rgba);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    encoder
+                        .write_header()
+                        .unwrap()
+                        .write_image_data(pixel)
+                        .unwrap();
+                }
+                bytes
             }
-            bytes
-        }
-        reset_decode_cache();
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "tekai-png-cache-{}-{nonce}.png",
-            std::process::id()
-        ));
-        fs::write(&path, encoded(&[10, 20, 30, 128])).unwrap();
-        let original_mtime = fs::metadata(&path).unwrap().modified().unwrap();
-        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
-        let file = unsafe { crate::stdio::fopen(name.as_ptr(), c"rb".as_ptr()) };
-        assert!(!file.is_null());
-        let decode = |strip_alpha| {
-            let mut state = PngState::new();
-            state.file = file;
-            state.width = 1;
-            state.height = 1;
-            state.strip_alpha = strip_alpha;
-            state.ensure_decoded().unwrap();
-            state.decoded.unwrap()
-        };
-        let rgba = decode(false);
-        let rgb = decode(true);
-        assert_eq!(rgba.data, [10, 20, 30, 128]);
-        assert_eq!(rgb.data, [10, 20, 30]);
-        assert!(!Arc::ptr_eq(&rgba, &rgb));
-        assert!(Arc::ptr_eq(&rgb, &decode(true)));
-        let identity = file_identity(file).unwrap();
-        fs::write(&path, encoded(&[50, 60, 70, 128])).unwrap();
-        fs::File::options()
-            .write(true)
-            .open(&path)
-            .unwrap()
-            .set_times(fs::FileTimes::new().set_modified(original_mtime))
-            .unwrap();
-        assert_ne!(file_identity(file).unwrap(), identity);
-        assert_eq!(decode(true).data, [50, 60, 70]);
-        unsafe {
-            crate::stdio::fclose(file);
-        }
-        fs::remove_file(path).unwrap();
-        reset_decode_cache();
+            reset_decode_cache();
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "tekai-png-cache-{}-{nonce}.png",
+                std::process::id()
+            ));
+            fs::write(&path, encoded(&[10, 20, 30, 128])).unwrap();
+            let original_mtime = fs::metadata(&path).unwrap().modified().unwrap();
+            let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+            let file = unsafe { crate::stdio::fopen(name.as_ptr(), c"rb".as_ptr()) };
+            assert!(!file.is_null());
+            let decode = |strip_alpha| {
+                let mut state = PngState::new();
+                state.file = file;
+                state.width = 1;
+                state.height = 1;
+                state.strip_alpha = strip_alpha;
+                state.ensure_decoded().unwrap();
+                state.decoded.unwrap()
+            };
+            let rgba = decode(false);
+            let rgb = decode(true);
+            assert_eq!(rgba.data, [10, 20, 30, 128]);
+            assert_eq!(rgb.data, [10, 20, 30]);
+            assert!(!Arc::ptr_eq(&rgba, &rgb));
+            assert!(Arc::ptr_eq(&rgb, &decode(true)));
+            let identity = file_identity(file).unwrap();
+            fs::write(&path, encoded(&[50, 60, 70, 128])).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(original_mtime))
+                .unwrap();
+            assert_ne!(file_identity(file).unwrap(), identity);
+            assert_eq!(decode(true).data, [50, 60, 70]);
+            unsafe {
+                crate::stdio::fclose(file);
+            }
+            fs::remove_file(path).unwrap();
+            reset_decode_cache();
+        });
     }
 
     #[test]

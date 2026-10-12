@@ -18,9 +18,8 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::pin::Pin;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 const EOF: c_int = -1;
 const BUFFER_SIZE: usize = 8192;
@@ -86,13 +85,14 @@ struct Console {
 }
 
 /// Own every stream, including read-ahead and console state, for one invocation.
-/// Boxes keep raw stream addresses stable while the ownership vector changes.
-/// Pinning protects console addresses and the owner pointers held by streams.
+/// Typed raw entries own Box::into_raw allocations without moving or mutably
+/// reborrowing a Box while its FILE aliases are live. Pinning protects console
+/// addresses and the owner pointers held by streams.
 pub(crate) struct StreamSession {
-    // The translated engine keeps addresses of streams across vector growth.
-    #[allow(clippy::vec_box)]
-    streams: RefCell<Vec<Box<Stream>>>,
+    streams: RefCell<Vec<NonNull<Stream>>>,
     console: Console,
+    next_temp: Cell<u64>,
+    temp_nonce: u128,
     _thread_confined: PhantomData<Rc<()>>,
     _pinned: PhantomPinned,
 }
@@ -124,6 +124,10 @@ impl StreamSession {
                     Buffering::None,
                 )),
             },
+            next_temp: Cell::new(0),
+            temp_nonce: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_nanos()),
             _thread_confined: PhantomData,
             _pinned: PhantomPinned,
         })
@@ -150,7 +154,10 @@ impl StreamSession {
     pub(crate) fn finish(self: Pin<&mut Self>) -> io::Result<()> {
         let session = self.as_ref().get_ref();
         let mut first_error = None;
-        for mut stream in session.streams.borrow_mut().drain(..) {
+        for pointer in session.streams.borrow_mut().drain(..) {
+            // SAFETY each registry entry exclusively owns one into_raw Box.
+            // Teardown runs outside routing, after all FILE accesses ended.
+            let mut stream = unsafe { Box::from_raw(pointer.as_ptr()) };
             if let Err(error) = stream.close_for_teardown() {
                 first_error.get_or_insert(error);
             }
@@ -163,6 +170,14 @@ impl StreamSession {
             }
         }
         first_error.map_or(Ok(()), Err)
+    }
+}
+
+impl Drop for StreamSession {
+    fn drop(&mut self) {
+        // SAFETY self is being destroyed in place. No scope can still borrow
+        // it, and finish drains every owner exactly once, including on unwind.
+        let _ = unsafe { Pin::new_unchecked(self) }.finish();
     }
 }
 
@@ -207,6 +222,14 @@ fn set_errno(code: c_int) {
     }
 }
 
+pub(crate) fn clear_errno() {
+    set_errno(0);
+}
+
+pub(crate) fn errno() -> c_int {
+    io::Error::last_os_error().raw_os_error().unwrap_or(0)
+}
+
 fn io_error(code: c_int) -> io::Error {
     io::Error::from_raw_os_error(code)
 }
@@ -241,9 +264,12 @@ impl Stream {
     fn into_handle(mut self) -> *mut Self {
         with_session(|session| {
             self.owner = session;
-            let mut stream = Box::new(self);
-            let pointer = &mut *stream as *mut Self;
-            session.streams.borrow_mut().push(stream);
+            let mut streams = session.streams.borrow_mut();
+            // Reserve before conversion, so no panicking Vec growth can leave
+            // the newly transferred typed allocation without an owner.
+            streams.reserve(1);
+            let pointer = Box::into_raw(Box::new(self));
+            streams.push(NonNull::new(pointer).expect("Box allocation is non-null"));
             pointer
         })
     }
@@ -616,7 +642,9 @@ pub(crate) unsafe fn fopen(name: *const c_char, mode: *const c_char) -> *mut Str
     if mode.contains(&b'x') {
         options.create_new(true);
     }
-    match options.open(name) {
+    match crate::working_directory::with_resolved(std::path::Path::new(name), |path| {
+        options.open(path)
+    }) {
         Ok(mut file) => {
             let position = if append && !read {
                 file.seek(SeekFrom::End(0)).unwrap_or(0)
@@ -1009,15 +1037,18 @@ unsafe fn close_handle(pointer: *mut Stream, pipe_status: bool) -> c_int {
         }
     };
     if !owner.is_null() {
-        // SAFETY: owned handles are boxed by this pinned, thread-confined
+        // SAFETY: owned handles are registered by this pinned thread-confined
         // session. Every access must precede session teardown.
         let owner = unsafe { &*owner };
         let mut streams = owner.streams.borrow_mut();
         let index = streams
             .iter()
-            .position(|stream| std::ptr::eq(&**stream, pointer))
+            .position(|stream| stream.as_ptr() == pointer)
             .expect("stream absent from its invocation owner");
-        streams.swap_remove(index);
+        let removed = streams.swap_remove(index);
+        // The last mutable Stream borrow ended before removing its owner.
+        // Reconstruct only now, when no later FILE access is permitted.
+        unsafe { drop(Box::from_raw(removed.as_ptr())) };
     }
     status
 }
@@ -1035,6 +1066,15 @@ pub(crate) unsafe fn popen(command: *const c_char, mode: *const c_char) -> *mut 
     }
     let mut builder = Command::new("/bin/sh");
     builder.arg("-c").arg(command);
+    match crate::working_directory::current() {
+        Ok(directory) => {
+            builder.current_dir(directory);
+        }
+        Err(error) => {
+            set_errno(error.raw_os_error().unwrap_or(libc::EIO));
+            return ptr::null_mut();
+        }
+    }
     if let Err(error) = crate::environment::configure_command(&mut builder) {
         crate::environment::report(&error);
         set_errno(libc::EINVAL);
@@ -1073,6 +1113,15 @@ pub(crate) unsafe fn system(command: *const c_char) -> c_int {
     let command = OsStr::from_bytes(unsafe { CStr::from_ptr(command) }.to_bytes());
     let mut builder = Command::new("/bin/sh");
     builder.arg("-c").arg(command);
+    match crate::working_directory::current() {
+        Ok(directory) => {
+            builder.current_dir(directory);
+        }
+        Err(error) => {
+            set_errno(error.raw_os_error().unwrap_or(libc::EIO));
+            return -1;
+        }
+    }
     if let Err(error) = crate::environment::configure_command(&mut builder) {
         crate::environment::report(&error);
         set_errno(libc::EINVAL);
@@ -1113,11 +1162,32 @@ pub(crate) unsafe fn fileno(stream: *mut Stream) -> c_int {
 }
 
 pub(crate) unsafe fn tmpfile() -> *mut Stream {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let directory = crate::environment::var_os("TMPDIR")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let directory = match crate::working_directory::resolve(&directory) {
+        Ok(path) => path,
+        Err(error) => {
+            set_errno(error.raw_os_error().unwrap_or(libc::EIO));
+            return ptr::null_mut();
+        }
+    };
     for _ in 0..100 {
-        let serial = NEXT.fetch_add(1, Ordering::Relaxed);
-        let path =
-            std::env::temp_dir().join(format!("tekai-stream-{}-{serial}", std::process::id()));
+        let Some((serial, nonce)) = with_session(|session| {
+            let serial = session.next_temp.get();
+            session.next_temp.set(serial.checked_add(1)?);
+            Some((serial, session.temp_nonce))
+        }) else {
+            set_errno(libc::EOVERFLOW);
+            return ptr::null_mut();
+        };
+        // create_new and mode 0600 remain the authority for uniqueness and
+        // access. The nonce only separates independent invocation namespaces.
+        let path = directory.join(format!(
+            "tekai-stream-{}-{nonce:x}-{serial}",
+            std::process::id()
+        ));
         match OpenOptions::new()
             .read(true)
             .write(true)
@@ -1238,7 +1308,10 @@ pub(crate) unsafe fn gzclose(stream: *mut Stream) -> c_int {
 pub(crate) unsafe fn flush_all() -> c_int {
     let mut result = 0;
     with_session(|session| {
-        for stream in session.streams.borrow_mut().iter_mut() {
+        for pointer in session.streams.borrow().iter() {
+            // SAFETY FILE adapters and this sweep use the same into_raw
+            // provenance. No parent Box reborrow invalidates a retained FILE.
+            let stream = unsafe { &mut *pointer.as_ptr() };
             // fflush(NULL) flushes pending output, not read-ahead buffers.
             if let Err(error) = stream.flush_output() {
                 stream.record_error(error);

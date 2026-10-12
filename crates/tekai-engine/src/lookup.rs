@@ -7,8 +7,10 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::marker::PhantomData;
+use std::marker::{PhantomData, PhantomPinned};
 use std::path::{Component, Path, PathBuf};
+use std::pin::Pin;
+use std::ptr::NonNull;
 use std::rc::Rc;
 use std::time::SystemTime;
 
@@ -118,7 +120,7 @@ struct LookupSession {
     // an index that cannot be retained. This set is bounded too.
     oversized: Vec<IndexKey>,
     exclusion_config: Option<OsString>,
-    policy_generation: u64,
+    explicit_policy: Option<Vec<PathBuf>>,
     project_exclusions: Vec<PathBuf>,
     observed_files: HashMap<PathBuf, ObservedFileReceipt>,
     observed_bytes: usize,
@@ -133,13 +135,17 @@ struct LookupSession {
 
 impl LookupSession {
     fn new() -> Self {
+        Self::new_with_policy(None)
+    }
+
+    fn new_with_policy(explicit_policy: Option<Vec<PathBuf>>) -> Self {
         Self {
             indices: BudgetCache::new(INDEX_BUDGET, INDEX_LIMIT),
             budget: INDEX_BUDGET,
             oversized: Vec::new(),
             exclusion_config: crate::environment::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES"),
-            policy_generation: POLICY_GENERATION.with(Cell::get),
-            project_exclusions: project_exclusions(),
+            project_exclusions: explicit_policy.clone().unwrap_or_else(project_exclusions),
+            explicit_policy,
             observed_files: HashMap::new(),
             observed_bytes: 0,
             observed_budget: OBSERVED_FILE_BUDGET,
@@ -163,10 +169,9 @@ impl LookupSession {
         entry: &str,
         implicit_project: bool,
     ) -> Option<PathBuf> {
-        if self.exclusion_config != crate::environment::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES")
-            || self.policy_generation != POLICY_GENERATION.with(Cell::get)
-        {
-            *self = Self::new();
+        let base = crate::working_directory::resolve(base).ok()?;
+        if self.exclusion_config != crate::environment::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES") {
+            *self = Self::new_with_policy(self.explicit_policy.clone());
         }
         let database_only = entry.starts_with("!!");
         let entry = entry.strip_prefix("!!").unwrap_or(entry);
@@ -273,7 +278,6 @@ impl LookupSession {
         }
         let key = IndexKey::Disk(root.clone(), implicit_project);
         let excluded = crate::runtime::installed_bundle_root()
-            .map(Path::to_path_buf)
             .into_iter()
             .collect::<Vec<_>>();
         let generated = if implicit_project {
@@ -500,7 +504,7 @@ fn physical_output_paths(path: &Path) -> Option<Vec<PathBuf>> {
     let mut path = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir().ok()?.join(path)
+        crate::working_directory::current().ok()?.join(path)
     };
     // Resolve the native parent before removing dot-dot components. A parent
     // such as output/link/.. can name a different directory than output when
@@ -590,9 +594,6 @@ fn streaming_find(
 }
 
 fn project_exclusions() -> Vec<PathBuf> {
-    if let Some(paths) = SCOPED_PROJECT_EXCLUSIONS.with(|paths| paths.borrow().clone()) {
-        return paths;
-    }
     crate::environment::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES")
         .map(|value| {
             std::env::split_paths(&value)
@@ -607,11 +608,8 @@ pub(crate) fn find_search_path(
     candidate: &str,
     entry: &crate::search::SearchPath,
 ) -> Option<PathBuf> {
-    SESSION.with(|session| {
-        session
-            .borrow_mut()
-            .get_or_insert_with(LookupSession::new)
-            .find_policy(base, candidate, &entry.path, entry.source == "project")
+    with_session(|session| {
+        session.find_policy(base, candidate, &entry.path, entry.source == "project")
     })
 }
 
@@ -711,7 +709,7 @@ fn absolute_lexical(path: &Path) -> Option<PathBuf> {
     let path = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir().ok()?.join(path)
+        crate::working_directory::current().ok()?.join(path)
     };
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -794,33 +792,105 @@ impl DirectoryPattern {
 }
 
 thread_local! {
-    static SESSION: RefCell<Option<LookupSession>> = const { RefCell::new(None) };
-    static SCOPED_PROJECT_EXCLUSIONS: RefCell<Option<Vec<PathBuf>>> = const { RefCell::new(None) };
-    static POLICY_GENERATION: Cell<u64> = const { Cell::new(0) };
+    static ACTIVE: Cell<Option<NonNull<LookupOwner>>> = const { Cell::new(None) };
 }
 
-/// A thread-owned implicit-search policy for compiler preflight. Explicit
-/// search entries and explicit relative paths keep their normal semantics.
-/// Dropping the guard restores the previous policy and invalidates its session.
-pub struct ProjectLookupPolicyGuard {
-    previous: Option<Vec<PathBuf>>,
-    _thread_owned: PhantomData<Rc<()>>,
+/// Invocation-owned mutable search state. TLS only routes to the pinned owner.
+pub(crate) struct LookupOwner {
+    session: RefCell<Option<LookupSession>>,
+    explicit_policy: Option<Vec<PathBuf>>,
+    _thread: PhantomData<Rc<()>>,
+    _pinned: PhantomPinned,
 }
 
-pub fn scoped_project_exclusions(paths: Vec<PathBuf>) -> ProjectLookupPolicyGuard {
-    let previous = SCOPED_PROJECT_EXCLUSIONS.with(|current| current.replace(Some(paths)));
-    POLICY_GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
-    ProjectLookupPolicyGuard {
-        previous,
-        _thread_owned: PhantomData,
+impl LookupOwner {
+    pub(crate) fn new() -> Pin<Box<Self>> {
+        Self::with_policy(None)
+    }
+
+    fn with_policy(explicit_policy: Option<Vec<PathBuf>>) -> Pin<Box<Self>> {
+        Box::pin(Self {
+            session: RefCell::new(None),
+            explicit_policy,
+            _thread: PhantomData,
+            _pinned: PhantomPinned,
+        })
+    }
+
+    pub(crate) fn scope<T>(session: Pin<&mut Self>, action: impl FnOnce() -> T) -> T {
+        struct Restore {
+            pointer: NonNull<LookupOwner>,
+            previous: Option<NonNull<LookupOwner>>,
+        }
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = ACTIVE.try_with(|active| {
+                    if active.get() == Some(self.pointer) {
+                        active.set(self.previous);
+                    }
+                });
+            }
+        }
+        // SAFETY The owner stays pinned and exclusively borrowed until the
+        // private restoration guard has returned, including during unwinding.
+        let pointer = NonNull::from(unsafe { session.get_unchecked_mut() });
+        let previous = ACTIVE.with(|active| {
+            if let Some(previous) = active.get() {
+                // Nested policy closures may restore a previous owner, but
+                // cannot route away while one of its operations is borrowing.
+                let owner = unsafe { previous.as_ref() };
+                assert!(
+                    owner.session.try_borrow_mut().is_ok(),
+                    "recursive lookup scope"
+                );
+            }
+            active.replace(Some(pointer))
+        });
+        let _restore = Restore { pointer, previous };
+        action()
     }
 }
 
-impl Drop for ProjectLookupPolicyGuard {
-    fn drop(&mut self) {
-        SCOPED_PROJECT_EXCLUSIONS.with(|current| current.replace(self.previous.take()));
-        POLICY_GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
-    }
+/// Apply an implicit-project policy for a closure without exposing a guard
+/// whose safe abandonment could leave a borrowed pointer registered in TLS.
+pub fn with_lookup_policy<T>(paths: Vec<PathBuf>, action: impl FnOnce() -> T) -> T {
+    with_owned_lookup_policy(Some(paths), action)
+}
+
+/// Own caches for a public utility/build closure while preserving its default
+/// environment-derived implicit-project policy. No state survives the closure.
+pub fn with_lookup_session<T>(action: impl FnOnce() -> T) -> T {
+    with_owned_lookup_policy(None, action)
+}
+
+fn with_owned_lookup_policy<T>(paths: Option<Vec<PathBuf>>, action: impl FnOnce() -> T) -> T {
+    let mut runtime = crate::runtime::RuntimeSession::new();
+    let mut index = crate::kpathsea::IndexSession::new();
+    let mut owner = LookupOwner::with_policy(paths);
+    crate::runtime::RuntimeSession::scope(runtime.as_mut(), || {
+        crate::kpathsea::IndexSession::scope(index.as_mut(), || {
+            LookupOwner::scope(owner.as_mut(), action)
+        })
+    })
+}
+
+fn with_session<T>(action: impl FnOnce(&mut LookupSession) -> T) -> T {
+    ACTIVE.with(|active| {
+        let Some(pointer) = active.get() else {
+            // Unscoped public utilities retain no policy or environment cache
+            // between calls. Compiler/engine closures use their own owner.
+            return action(&mut LookupSession::new());
+        };
+        // SAFETY The private scope retains the owner. RefCell rejects recursive
+        // mutable access and no reference to its state escapes this callback.
+        let owner = unsafe { pointer.as_ref() };
+        let mut session = owner.session.borrow_mut();
+        action(
+            session.get_or_insert_with(|| {
+                LookupSession::new_with_policy(owner.explicit_policy.clone())
+            }),
+        )
+    })
 }
 
 /// Begin a build/pass's view of mutable search trees. Call again after external
@@ -828,7 +898,13 @@ impl Drop for ProjectLookupPolicyGuard {
 pub fn reset() {
     // A cache-hit build never performs a lookup. Drop prior indices without
     // constructing an empty session that would immediately remain unused.
-    SESSION.with(|session| *session.borrow_mut() = None);
+    ACTIVE.with(|active| {
+        if let Some(pointer) = active.get() {
+            // SAFETY Private scope keeps this owner alive; reset never escapes
+            // its short exclusive interior borrow.
+            *unsafe { pointer.as_ref() }.session.borrow_mut() = None;
+        }
+    });
 }
 
 /// Capture directory membership dependencies for a compiler generation.
@@ -880,6 +956,7 @@ fn dependency_paths_with_budget(
     excluded: &[&Path],
     mut budget: usize,
 ) -> Option<Vec<LookupDependency>> {
+    let base = crate::working_directory::resolve(base).ok()?;
     let mut dependencies = HashSet::new();
     let mut graphs: Vec<DirectoryGraph> = Vec::new();
     for entry in entries.iter().filter(|entry| !entry.bundled) {
@@ -1026,39 +1103,23 @@ fn nearest_existing_directory(path: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn find(base: &Path, candidate: &str, entry: &Path) -> Option<PathBuf> {
-    SESSION.with(|session| {
-        session
-            .borrow_mut()
-            .get_or_insert_with(LookupSession::new)
-            .find(base, candidate, &entry.to_string_lossy())
-    })
+    with_session(|session| session.find(base, candidate, &entry.to_string_lossy()))
 }
 
 pub(crate) fn can_record_output(path: &Path) -> bool {
-    SESSION.with(|session| {
-        session
-            .borrow_mut()
-            .get_or_insert_with(LookupSession::new)
-            .can_record_output(path)
-    })
+    with_session(|session| session.can_record_output(path))
 }
 
 pub(crate) fn record_input(path: &Path) -> bool {
-    SESSION.with(|session| {
-        let mut session = session.borrow_mut();
-        let session = session.get_or_insert_with(LookupSession::new);
-        session.record_input(path, crate::runtime::installed_bundle_root())
-    })
+    let bundle = crate::runtime::installed_bundle_root();
+    with_session(|session| session.record_input(path, bundle.as_deref()))
 }
 
 pub(crate) fn record_output(path: &Path) -> bool {
-    SESSION.with(|session| {
+    with_session(|session| {
         // Outputs may precede the first lookup. Keep the bounded observation
         // ledger, but leave all disk inventories lazy until actually needed.
-        session
-            .borrow_mut()
-            .get_or_insert_with(LookupSession::new)
-            .record_output(path)
+        session.record_output(path)
     })
 }
 
@@ -1075,6 +1136,104 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn nested_policy_unwind_restores_the_outer_cache_and_busy_scopes_are_rejected() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        let root = fixture();
+        fs::create_dir_all(root.join("a-generated")).unwrap();
+        fs::create_dir_all(root.join("z-source")).unwrap();
+        let generated = root.join("a-generated/choice.sty");
+        let source = root.join("z-source/choice.sty");
+        fs::write(&generated, "generated").unwrap();
+        fs::write(&source, "source").unwrap();
+        let entry = crate::search::SearchPath {
+            path: ".//".to_string(),
+            source: "project",
+            bundled: false,
+        };
+        with_lookup_policy(vec![root.join("a-generated")], || {
+            assert_eq!(
+                find_search_path(&root, "choice.sty", &entry),
+                Some(source.clone())
+            );
+            let pointer = ACTIVE.with(Cell::get);
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                with_lookup_policy(Vec::new(), || {
+                    assert_eq!(
+                        find_search_path(&root, "choice.sty", &entry),
+                        Some(generated.clone())
+                    );
+                    panic!("partial preflight");
+                });
+            }))
+            .is_err());
+            assert_eq!(ACTIVE.with(Cell::get), pointer);
+            assert_eq!(
+                find_search_path(&root, "choice.sty", &entry),
+                Some(source.clone())
+            );
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                with_session(|_| with_lookup_policy(Vec::new(), || ()));
+            }))
+            .is_err());
+            assert_eq!(ACTIVE.with(Cell::get), pointer);
+            assert_eq!(
+                find_search_path(&root, "choice.sty", &entry),
+                Some(source.clone())
+            );
+        });
+        assert!(ACTIVE.with(Cell::get).is_none());
+        assert_eq!(
+            find_search_path(&root, "choice.sty", &entry),
+            Some(generated)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn public_default_session_keeps_environment_policy_and_restores_after_explicit_policy() {
+        let root = fixture();
+        fs::create_dir_all(root.join("a-generated")).unwrap();
+        fs::create_dir_all(root.join("z-source")).unwrap();
+        let generated = root.join("a-generated/choice.sty");
+        let source = root.join("z-source/choice.sty");
+        fs::write(&generated, "generated").unwrap();
+        fs::write(&source, "source").unwrap();
+        let entry = crate::search::SearchPath {
+            path: ".//".to_string(),
+            source: "project",
+            bundled: false,
+        };
+        let mut environment = crate::environment::EnvironmentSession::new().unwrap();
+        crate::environment::EnvironmentSession::scope(environment.as_mut(), || {
+            crate::environment::set(
+                std::ffi::OsStr::new("TEKAI_ENGINE_PROJECT_EXCLUDES"),
+                root.join("a-generated").as_os_str(),
+            )
+            .unwrap();
+            with_lookup_session(|| {
+                assert_eq!(
+                    find_search_path(&root, "choice.sty", &entry),
+                    Some(source.clone())
+                );
+                with_lookup_policy(Vec::new(), || {
+                    assert_eq!(
+                        find_search_path(&root, "choice.sty", &entry),
+                        Some(generated.clone())
+                    );
+                });
+                assert_eq!(
+                    find_search_path(&root, "choice.sty", &entry),
+                    Some(source.clone())
+                );
+                with_session(|session| assert_eq!(session.disk_scans, 1));
+            });
+            assert!(ACTIVE.with(Cell::get).is_none());
+        })
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1514,8 +1673,7 @@ mod tests {
             find_search_path(&root, "choice.sty", &entry),
             Some(generated.clone())
         );
-        {
-            let _guard = scoped_project_exclusions(vec![root.join("a-generated")]);
+        with_lookup_policy(vec![root.join("a-generated")], || {
             assert_eq!(find_search_path(&root, "choice.sty", &entry), Some(source));
             let thread_root = root.clone();
             let thread_entry = entry.clone();
@@ -1529,7 +1687,7 @@ mod tests {
                 .unwrap(),
                 Some(generated.clone())
             );
-        }
+        });
         assert_eq!(
             find_search_path(&root, "choice.sty", &entry),
             Some(generated)
@@ -1629,44 +1787,59 @@ mod tests {
 
     #[test]
     fn unused_sessions_stay_lazy_and_reset_drops_retained_indices() {
-        let root = fixture();
-        let entry = PathBuf::from(format!("{}//", root.display()));
-        let nested = root.join("nested");
-        fs::create_dir(&nested).unwrap();
-        reset();
-        SESSION.with(|session| assert!(session.borrow().is_none()));
-        fs::write(nested.join("first.tex"), "first").unwrap();
-        record_output(&nested.join("first.tex"));
-        SESSION.with(|session| {
+        let mut owner = LookupOwner::new();
+        LookupOwner::scope(owner.as_mut(), || {
+            let root = fixture();
+            let entry = PathBuf::from(format!("{}//", root.display()));
+            let nested = root.join("nested");
+            fs::create_dir(&nested).unwrap();
+            reset();
+            ACTIVE.with(|active| {
+                assert!(unsafe { active.get().unwrap().as_ref() }
+                    .session
+                    .borrow()
+                    .is_none())
+            });
+            fs::write(nested.join("first.tex"), "first").unwrap();
+            record_output(&nested.join("first.tex"));
+            ACTIVE.with(|active| {
+                let session = &unsafe { active.get().unwrap().as_ref() }.session;
+                assert_eq!(
+                    session.borrow().as_ref().unwrap().indices.retained_bytes(),
+                    0
+                );
+            });
             assert_eq!(
-                session.borrow().as_ref().unwrap().indices.retained_bytes(),
-                0
+                find(&root, "first.tex", &entry),
+                Some(nested.join("first.tex"))
             );
+            ACTIVE.with(|active| {
+                let session = &unsafe { active.get().unwrap().as_ref() }.session;
+                assert!(session.borrow().as_ref().unwrap().indices.retained_bytes() > 0);
+            });
+            assert!(find(&root, "second.tex", &entry).is_none());
+            fs::write(nested.join("second.tex"), "second").unwrap();
+            record_output(&nested.join("second.tex"));
+            assert_eq!(
+                find(&root, "second.tex", &entry),
+                Some(nested.join("second.tex"))
+            );
+            fs::remove_file(nested.join("first.tex")).unwrap();
+            reset();
+            ACTIVE.with(|active| {
+                assert!(unsafe { active.get().unwrap().as_ref() }
+                    .session
+                    .borrow()
+                    .is_none())
+            });
+            assert!(find(&root, "first.tex", &entry).is_none());
+            assert_eq!(
+                find(&root, "second.tex", &entry),
+                Some(nested.join("second.tex"))
+            );
+            reset();
+            fs::remove_dir_all(root).unwrap();
         });
-        assert_eq!(
-            find(&root, "first.tex", &entry),
-            Some(nested.join("first.tex"))
-        );
-        SESSION.with(|session| {
-            assert!(session.borrow().as_ref().unwrap().indices.retained_bytes() > 0);
-        });
-        assert!(find(&root, "second.tex", &entry).is_none());
-        fs::write(nested.join("second.tex"), "second").unwrap();
-        record_output(&nested.join("second.tex"));
-        assert_eq!(
-            find(&root, "second.tex", &entry),
-            Some(nested.join("second.tex"))
-        );
-        fs::remove_file(nested.join("first.tex")).unwrap();
-        reset();
-        SESSION.with(|session| assert!(session.borrow().is_none()));
-        assert!(find(&root, "first.tex", &entry).is_none());
-        assert_eq!(
-            find(&root, "second.tex", &entry),
-            Some(nested.join("second.tex"))
-        );
-        reset();
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

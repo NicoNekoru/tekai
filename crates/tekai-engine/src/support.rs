@@ -67,8 +67,11 @@ pub unsafe fn xdirname(name: *const c_char) -> *mut c_char {
 }
 
 pub unsafe fn xgetcwd() -> *mut c_char {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let cwd = CString::new(cwd.to_string_lossy().as_bytes()).expect("cwd contained NUL");
+    let cwd = crate::working_directory::current().unwrap_or_else(|error| {
+        eprintln!("engine working directory unavailable: {error}");
+        crate::stdio::exit(libc::EXIT_FAILURE)
+    });
+    let cwd = CString::new(cwd.as_os_str().as_bytes()).expect("cwd contained NUL");
     unsafe { copy_bytes_with_nul(cwd.as_bytes()) }
 }
 
@@ -89,8 +92,11 @@ pub unsafe fn dir_p(name: *mut c_char) -> c_int {
     if name.is_null() {
         return 0;
     }
-    let path = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
-    std::fs::metadata(path)
+    let path = std::path::Path::new(OsStr::from_bytes(
+        unsafe { CStr::from_ptr(name) }.to_bytes(),
+    ));
+    crate::working_directory::resolve(path)
+        .and_then(std::fs::metadata)
         .map(|metadata| metadata.is_dir() as c_int)
         .unwrap_or(0)
 }

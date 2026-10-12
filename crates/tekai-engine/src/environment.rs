@@ -272,6 +272,20 @@ pub(crate) fn set(name: &OsStr, value: &OsStr) -> Result<(), EnvironmentError> {
     with_overlay(|overlay| overlay.set(name, value, false))?
 }
 
+pub(crate) fn remove(name: &OsStr) -> Result<(), EnvironmentError> {
+    if !valid_name(name) {
+        return Err(EnvironmentError::InvalidName);
+    }
+    with_overlay(|overlay| {
+        if let Some(old) = overlay.values.remove(name) {
+            overlay.stored_bytes -= name.len() + old.len();
+        }
+        overlay.views.remove(name);
+        // Old C-string views remain owned until invocation exit, even after
+        // removal. No generated borrower can observe a freed payload.
+    })
+}
+
 pub(crate) fn set_cnf(name: &OsStr, value: &OsStr) -> Result<(), EnvironmentError> {
     with_overlay(|overlay| overlay.set(name, value, true))?
 }
@@ -351,6 +365,11 @@ mod tests {
                 var_os(name),
                 Some(OsString::from_vec(b"second\x80".to_vec()))
             );
+            remove(name).unwrap();
+            assert_eq!(var_os(name), None);
+            assert!(unsafe { getenv(c_name.as_ptr()) }.is_null());
+            assert_eq!(unsafe { CStr::from_ptr(old) }.to_bytes(), first.as_bytes());
+            assert_eq!(unsafe { CStr::from_ptr(new) }.to_bytes(), b"second\x80");
             set(OsStr::new("TEKAI_UTF8_TEST"), first).unwrap();
             assert!(matches!(
                 var("TEKAI_UTF8_TEST"),

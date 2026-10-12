@@ -61,6 +61,7 @@ mod backend_types;
 mod byte_string;
 mod cache;
 mod checked_width;
+mod control;
 mod core_types;
 mod directory_graph;
 mod embedded;
@@ -70,6 +71,7 @@ pub mod file_identity;
 mod float_parse;
 mod integer_parse;
 mod invocation;
+mod ipc;
 mod jpeg_exif;
 pub mod kpathsea;
 mod kpathsea_types;
@@ -86,12 +88,15 @@ mod stdio;
 pub mod support;
 pub mod synctex;
 mod termination;
+mod time;
 mod ttf_name;
 mod ttf_post;
 pub mod utils;
 pub mod web2c;
+mod working_directory;
 pub mod xpdf;
 
+pub use control::InterruptToken;
 pub use invocation::{EngineCompletion, InvocationError};
 #[cfg(test)]
 use libz_rs_sys as zlib;
@@ -113,55 +118,68 @@ use libz_rs_sys as zlib;
 /// This entry does not make the generated or backend interfaces safe to call
 /// concurrently or allow a second invocation to reuse the legacy global state.
 pub unsafe fn run_from_args(arguments: Vec<Vec<u8>>) -> Result<EngineCompletion, InvocationError> {
-    // Claim permanent entry and retain all argument backing before any reset
-    // or initialization can mutate the process-global engine state.
+    use invocation::resource;
+    // The permanent latch remains until the core's globals have been moved.
     let (argc, argv) = unsafe { invocation::retain_for_entry(arguments)? };
     let mut compression = generated::backend::writezip::CompressionSession::new();
-    let _compression_scope = generated::backend::writezip::CompressionSession::scope(
-        compression.as_mut(),
-    )
-    .map_err(|error| InvocationError::ResourceSetup {
-        resource: "PDF compression",
-        message: error.to_string(),
-    })?;
     let mut streams = stdio::StreamSession::new();
     let mut regex = regex_session::RegexSession::new();
-    let mut environment =
-        environment::EnvironmentSession::new().map_err(|error| InvocationError::ResourceSetup {
-            resource: "environment",
-            message: error.to_string(),
-        })?;
-    let result = environment::EnvironmentSession::scope(environment.as_mut(), || {
-        termination::catch(|| {
-            regex_session::RegexSession::scope(regex.as_mut(), || {
-                streams.as_mut().scope(|| {
-                    lookup::reset();
-                    pngshim::reset_decode_cache();
-                    let completion = unsafe {
-                        generated::pdftexextra::synctexoption = ::core::ffi::c_int::MAX;
-                        synctex::reset_for_run();
-                        generated::pdftexextra::maininit(argc, argv);
-                        generated::pdftexini::mainbody()
-                    };
-                    // Recorder and other streams can retain buffered output after normal
-                    // finalization. Keep them alive until the generated calls have returned.
-                    unsafe { stdio::flush_all() };
-                    completion
-                })
-            })
-        })
-    })
-    .map_err(|error| InvocationError::ResourceSetup {
-        resource: "environment",
-        message: error.to_string(),
-    })?;
-    let completion = match result {
-        Ok(result) => result.map_err(|error| InvocationError::ResourceSetup {
-            resource: "regex",
-            message: error.to_string(),
-        })?,
-        Err(completion) => completion,
-    };
+    let mut environment = resource("environment", environment::EnvironmentSession::new())?;
+    let mut directory = resource(
+        "working directory",
+        working_directory::WorkingDirectory::new(None),
+    )?;
+    let mut runtime = runtime::RuntimeSession::new();
+    let mut index = kpathsea::IndexSession::new();
+    let mut lookup = lookup::LookupOwner::new();
+    let mut png = pngshim::PngSession::new();
+    let mut sync = synctex::SyncTexSession::new();
+    let mut xpdf = xpdf::XpdfSession::new();
+    let mut inclusion = pdftoepdf::PdfInclusionSession::new();
+    let mut control = control::ControlSession::new(InterruptToken::default());
+    let mut ipc = ipc::IpcSession::new();
+    let result = resource(
+        "environment",
+        environment::EnvironmentSession::scope(environment.as_mut(), || {
+            resource("working directory", directory.as_mut().scope(|| {
+            let mut time = resource("time", time::TimeSession::new())?;
+            resource("time", time::TimeSession::scope(time.as_mut(), || {
+                resource("interrupt", control::ControlSession::scope(control.as_mut(), || {
+                    resource("IPC", ipc.as_mut().scope(|| {
+                        resource("PDF compression", generated::backend::writezip::CompressionSession::scope(compression.as_mut(), || {
+                            resource("regex", regex_session::RegexSession::scope(regex.as_mut(), || {
+                                runtime::RuntimeSession::scope(runtime.as_mut(), || {
+                                    kpathsea::IndexSession::scope(index.as_mut(), || {
+                                        lookup::LookupOwner::scope(lookup.as_mut(), || {
+                                            pngshim::PngSession::scope(png.as_mut(), || {
+                                                synctex::SyncTexSession::scope(sync.as_mut(), || {
+                                                    xpdf::XpdfSession::scope(xpdf.as_mut(), || {
+                                                        pdftoepdf::PdfInclusionSession::scope(inclusion.as_mut(), || {
+                                                            streams.as_mut().scope(|| {
+                                                                let completion = termination::catch(|| unsafe {
+                                                                    generated::pdftexextra::synctexoption = ::core::ffi::c_int::MAX;
+                                                                    generated::pdftexextra::maininit(argc, argv);
+                                                                    generated::pdftexini::mainbody()
+                                                                }).unwrap_or_else(|completion| completion);
+                                                                unsafe { stdio::flush_all() };
+                                                                Ok::<_, InvocationError>(completion)
+                                                            })
+                                                        })
+                                                    })
+                                                })
+                                            })
+                                        })
+                                    })
+                                })
+                            }))?
+                        }))?
+                    }))?
+                }))?
+            }))?
+        }))?
+        }),
+    )?;
+    let completion = result?;
     streams
         .as_mut()
         .finish()

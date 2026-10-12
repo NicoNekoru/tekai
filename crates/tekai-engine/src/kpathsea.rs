@@ -12,15 +12,18 @@ use crate::generated::pdftexextra::{
 };
 use crate::openclose::{xmalloc, xstrdup};
 use libc::{c_char, c_double, c_int, c_uint};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, OsStr};
 use std::io;
+use std::marker::{PhantomData, PhantomPinned};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::ptr;
-use std::sync::OnceLock;
+use std::ptr::NonNull;
+use std::rc::Rc;
 
 #[path = "format_cache.rs"]
 mod format_cache;
@@ -123,10 +126,73 @@ pub static mut kpse_def: kpathsea = ptr::null_mut();
 
 pub use crate::kpathsea_types::KpseGlyphFileType;
 
-static FILE_INDEX: OnceLock<FileIndex> = OnceLock::new();
+pub(crate) struct IndexSession {
+    state: RefCell<IndexState>,
+    _thread: PhantomData<Rc<()>>,
+    _pinned: PhantomPinned,
+}
+
+#[derive(Default)]
+struct IndexState {
+    index: Option<FileIndex>,
+    readable: HashMap<PathBuf, bool>,
+}
 
 thread_local! {
-    static INDEX_READABLE_CACHE: RefCell<HashMap<PathBuf, bool>> = RefCell::new(HashMap::new());
+    static ACTIVE_INDEX: Cell<Option<NonNull<IndexSession>>> = const { Cell::new(None) };
+}
+
+impl IndexSession {
+    pub(crate) fn new() -> Pin<Box<Self>> {
+        Box::pin(Self {
+            state: RefCell::new(IndexState::default()),
+            _thread: PhantomData,
+            _pinned: PhantomPinned,
+        })
+    }
+
+    pub(crate) fn scope<T>(session: Pin<&mut Self>, action: impl FnOnce() -> T) -> T {
+        struct Unregister {
+            pointer: NonNull<IndexSession>,
+            previous: Option<NonNull<IndexSession>>,
+        }
+        impl Drop for Unregister {
+            fn drop(&mut self) {
+                let _ = ACTIVE_INDEX.try_with(|active| {
+                    if active.get() == Some(self.pointer) {
+                        active.set(self.previous);
+                    }
+                });
+            }
+        }
+        // SAFETY The private guard cannot be abandoned by action. The pinned
+        // owner remains exclusively borrowed through normal return or unwind.
+        let pointer = NonNull::from(unsafe { session.get_unchecked_mut() });
+        let previous = ACTIVE_INDEX.with(|active| {
+            if let Some(previous) = active.get() {
+                assert!(
+                    unsafe { previous.as_ref() }.state.try_borrow_mut().is_ok(),
+                    "recursive bundled index scope"
+                );
+            }
+            active.replace(Some(pointer))
+        });
+        let _guard = Unregister { pointer, previous };
+        action()
+    }
+}
+
+fn with_index<T>(action: impl FnOnce(&mut IndexState) -> T) -> T {
+    ACTIVE_INDEX.with(|active| {
+        if let Some(pointer) = active.get() {
+            // SAFETY Private scope retains the owner; the short RefCell borrow
+            // never escapes and catches reentrant index access.
+            action(&mut unsafe { pointer.as_ref() }.state.borrow_mut())
+        } else {
+            // Standalone utility calls never remember a previous cache root.
+            action(&mut IndexState::default())
+        }
+    })
 }
 
 const NO_FILE_INDEX: u32 = u32::MAX;
@@ -304,33 +370,33 @@ fn with_candidate_names<T>(
 }
 
 fn path_is_readable(path: &Path) -> bool {
-    std::fs::metadata(path)
+    crate::working_directory::resolve(path)
+        .and_then(std::fs::metadata)
         .map(|metadata| metadata.is_file())
         .unwrap_or(false)
 }
 
-fn indexed_path_is_readable(path: &Path) -> bool {
-    INDEX_READABLE_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if let Some(readable) = cache.get(path) {
-            return *readable;
-        }
-        let readable = path_is_readable(path);
-        cache.insert(path.to_path_buf(), readable);
-        readable
-    })
+fn indexed_path_is_readable(path: &Path, cache: &mut HashMap<PathBuf, bool>) -> bool {
+    if let Some(readable) = cache.get(path) {
+        return *readable;
+    }
+    let readable = path_is_readable(path);
+    cache.insert(path.to_path_buf(), readable);
+    readable
 }
 
 fn check_direct_path(path: &Path) -> Option<PathBuf> {
-    if path_is_readable(path) {
-        return Some(path.to_path_buf());
+    let path = crate::working_directory::resolve(path).ok()?;
+    if path_is_readable(&path) {
+        return Some(path);
     }
     None
 }
 
 fn check_format_path(path: &Path) -> Option<PathBuf> {
+    let path = crate::working_directory::resolve(path).ok()?;
     if path.extension() == Some(OsStr::new("fmt")) {
-        if let Ok(raw) = format_cache::materialize_file(path, &embedded_engine_cache_root()) {
+        if let Ok(raw) = format_cache::materialize_file(&path, &embedded_engine_cache_root()) {
             if raw != path {
                 // The immutable raw entry remains readable after a source
                 // replacement. Keep the original format in the recorder so
@@ -342,7 +408,7 @@ fn check_format_path(path: &Path) -> Option<PathBuf> {
             return Some(raw);
         }
     }
-    check_direct_path(path)
+    check_direct_path(&path)
 }
 
 fn embedded_pdflatex_format(name: &str) -> Option<PathBuf> {
@@ -361,35 +427,15 @@ fn materialize_embedded_pdflatex_format() -> io::Result<PathBuf> {
     )
 }
 
-/// Current format materialization cache policy, independent of the embedded
-/// texmf root's process-lifetime initialization.
+/// Current format materialization cache policy. Invocation environment reads
+/// and bundled index ownership follow the same invocation's cache selection.
 pub fn engine_cache_root() -> PathBuf {
-    if let Some(path) = crate::environment::var_os("TEKAI_ENGINE_CACHE") {
-        return PathBuf::from(path);
-    }
-    if cfg!(target_os = "macos") {
-        if let Some(home) = crate::environment::var_os("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Caches")
-                .join("tekai")
-                .join("engine");
-        }
-    }
-    if let Some(path) = crate::environment::var_os("XDG_CACHE_HOME") {
-        return PathBuf::from(path).join("tekai").join("engine");
-    }
-    if let Some(home) = crate::environment::var_os("HOME") {
-        return PathBuf::from(home)
-            .join(".cache")
-            .join("tekai")
-            .join("engine");
-    }
-    std::env::temp_dir().join("tekai").join("engine")
+    crate::runtime::selected_cache_root()
 }
 
 fn embedded_engine_cache_root() -> PathBuf {
-    engine_cache_root()
+    let path = engine_cache_root();
+    crate::working_directory::resolve(&path).unwrap_or(path)
 }
 
 /// Directories whose additions can change the format selected by the engine.
@@ -435,11 +481,11 @@ fn build_format_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn file_index() -> &'static FileIndex {
-    FILE_INDEX.get_or_init(|| {
+fn file_index(state: &mut IndexState) -> &FileIndex {
+    state.index.get_or_insert_with(|| {
         let mut index = FileIndex::default();
         if let Ok(root) = crate::runtime::texmf_root() {
-            parse_ls_r(root, &mut index);
+            parse_ls_r(&root, &mut index);
         }
         index
     })
@@ -481,23 +527,32 @@ fn find_in_index(candidate: &str, format: c_uint) -> Option<PathBuf> {
 }
 
 fn find_in_index_uncached(candidate: &str, format: c_uint) -> Option<PathBuf> {
-    let index = file_index();
-    let key = basename(candidate);
-    if candidate == key {
-        return best_index_match(index.paths_for(key), format);
-    }
-    best_index_match(
-        index
-            .paths_for(key)
-            .filter(|path| path.ends_with(candidate)),
-        format,
-    )
+    with_index(|state| {
+        file_index(state);
+        let index = state.index.as_ref().unwrap();
+        let readable = &mut state.readable;
+        let key = basename(candidate);
+        if candidate == key {
+            return best_index_match(index.paths_for(key), format, readable);
+        }
+        best_index_match(
+            index
+                .paths_for(key)
+                .filter(|path| path.ends_with(candidate)),
+            format,
+            readable,
+        )
+    })
 }
 
-fn best_index_match(matches: impl Iterator<Item = PathBuf>, format: c_uint) -> Option<PathBuf> {
+fn best_index_match(
+    matches: impl Iterator<Item = PathBuf>,
+    format: c_uint,
+    readable: &mut HashMap<PathBuf, bool>,
+) -> Option<PathBuf> {
     matches
         .filter(|path| index_path_is_runtime(path, format))
-        .filter(|path| indexed_path_is_readable(path))
+        .filter(|path| indexed_path_is_readable(path, readable))
         .min_by_key(|path| index_path_rank(path, format))
 }
 
@@ -636,9 +691,9 @@ fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
         return embedded_pdflatex_format(name);
     }
 
+    let base = crate::working_directory::current().ok()?;
     with_candidate_names(name, format, |candidate| {
-        search_input(Path::new("."), candidate, format, search_paths(format))
-            .map(|found| found.path)
+        search_input(&base, candidate, format, search_paths(format)).map(|found| found.path)
     })
 }
 
@@ -998,6 +1053,57 @@ pub unsafe fn kpse_magstep_fix(dpi: c_uint, _: c_uint, _: *mut c_int) -> c_uint 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invocation_indices_follow_current_cache_roots_and_restore_nested_owners() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let fixture =
+            std::env::temp_dir().join(format!("tekai-index-owner-{}-{nonce}", std::process::id()));
+        let cache_a = fixture.join("a");
+        let cache_b = fixture.join("b");
+        let prepare = |cache: &Path| {
+            let bundle = cache.join(format!("texmf-{}", crate::runtime::BUNDLE_ID.trim()));
+            let root = bundle.join("texmf-dist");
+            std::fs::create_dir_all(root.join("tex/latex/test")).unwrap();
+            std::fs::write(bundle.join(".complete"), crate::runtime::BUNDLE_ID).unwrap();
+            std::fs::write(root.join("ls-R"), "./tex/latex/test:\nsame.sty\n").unwrap();
+            std::fs::write(root.join("tex/latex/test/same.sty"), "test").unwrap();
+            root.join("tex/latex/test/same.sty").canonicalize().unwrap()
+        };
+        let a = prepare(&cache_a);
+        let b = prepare(&cache_b);
+        let mut environment = crate::environment::EnvironmentSession::new().unwrap();
+        crate::environment::EnvironmentSession::scope(environment.as_mut(), || {
+            crate::environment::set(OsStr::new("TEKAI_ENGINE_CACHE"), cache_a.as_os_str()).unwrap();
+            crate::lookup::with_lookup_policy(Vec::new(), || {
+                assert_eq!(find_in_index("same.sty", KPSE_TEX_FORMAT), Some(a.clone()));
+                with_index(|state| assert_eq!(state.readable.len(), 1));
+                crate::environment::set(OsStr::new("TEKAI_ENGINE_CACHE"), cache_b.as_os_str())
+                    .unwrap();
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    crate::lookup::with_lookup_policy(Vec::new(), || {
+                        assert_eq!(find_in_index("same.sty", KPSE_TEX_FORMAT), Some(b.clone()));
+                        assert_eq!(find_in_index("same.sty", KPSE_TEX_FORMAT), Some(b.clone()));
+                        with_index(|state| assert_eq!(state.readable.len(), 1));
+                        panic!("partial nested preflight");
+                    });
+                }));
+                assert!(outcome.is_err());
+                assert_eq!(find_in_index("same.sty", KPSE_TEX_FORMAT), Some(a.clone()));
+            });
+            assert!(ACTIVE_INDEX.with(Cell::get).is_none());
+            crate::lookup::with_lookup_policy(Vec::new(), || {
+                assert_eq!(find_in_index("same.sty", KPSE_TEX_FORMAT), Some(b.clone()));
+            });
+        })
+        .unwrap();
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
 
     #[test]
     fn magstep_fix_uses_the_callers_unsigned_resolution_and_integer_pointer_types() {

@@ -76,7 +76,6 @@ extern "C" {
     static mut formatident: StrNumber;
     static mut pdftexbanner: StrNumber;
     static mut lasttokensstring: StrNumber;
-    static mut start_time_str: [c_char; 30];
     static mut vfefnts: *mut Integer;
     static mut vfifnts: *mut InternalFontNumber;
     static mut fontmax: Integer;
@@ -459,7 +458,12 @@ pub unsafe fn removepdffile() {
         if !kpathsea_debug_enabled() && outputfilename != 0 && fixedpdfdraftmode == 0 {
             let name = makecstring(outputfilename);
             xfclose(pdffile, name);
-            libc::remove(name);
+            use std::os::unix::ffi::OsStrExt;
+            let path =
+                std::path::Path::new(std::ffi::OsStr::from_bytes(CStr::from_ptr(name).to_bytes()));
+            if let Ok(path) = crate::working_directory::resolve(path) {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
 }
@@ -697,9 +701,12 @@ pub unsafe fn printID(filename: StrNumber) {
         let mut state = mem::MaybeUninit::<Md5State>::zeroed();
         let state_ptr = state.as_mut_ptr();
         md5_init(state_ptr);
-        initstarttime();
-        let start = &raw mut start_time_str as *mut c_char;
-        md5_append(state_ptr, start as *const u8, c_str_len(start) as c_int);
+        let start = crate::generated::pdftexextra::start_date();
+        md5_append(
+            state_ptr,
+            start.as_bytes().as_ptr(),
+            start.as_bytes().len() as c_int,
+        );
         let file_name = makecstring(filename);
         md5_append(
             state_ptr,
@@ -740,20 +747,20 @@ pub unsafe fn printIDalt(toks: Integer) {
 
 pub unsafe fn printcreationdate() {
     unsafe {
-        initstarttime();
+        let start = crate::generated::pdftexextra::start_date();
         pdf_printf_args(
             c"/CreationDate (%s)\n".as_ptr(),
-            &[PrintfArg::from(&raw mut start_time_str as *mut c_char)],
+            &[PrintfArg::from(start.as_ptr())],
         );
     }
 }
 
 pub unsafe fn printmoddate() {
     unsafe {
-        initstarttime();
+        let start = crate::generated::pdftexextra::start_date();
         pdf_printf_args(
             c"/ModDate (%s)\n".as_ptr(),
-            &[PrintfArg::from(&raw mut start_time_str as *mut c_char)],
+            &[PrintfArg::from(start.as_ptr())],
         );
     }
 }
@@ -1240,7 +1247,9 @@ pub unsafe fn make_subset_tag(fd: *mut FdEntry) {
     }
 }
 
-unsafe fn init_colorstacks() -> &'static mut Vec<ColorStack> {
+// The raw handle is valid only within the current invocation. Callers form
+// short local borrows, never a process-lifetime mutable reference.
+unsafe fn init_colorstacks() -> *mut Vec<ColorStack> {
     unsafe {
         if COLOR_STACKS.is_none() {
             COLOR_STACKS = Some(vec![ColorStack {
@@ -1253,7 +1262,7 @@ unsafe fn init_colorstacks() -> &'static mut Vec<ColorStack> {
                 page_start: TRUE,
             }]);
         }
-        COLOR_STACKS.as_mut().expect("initialized")
+        COLOR_STACKS.as_mut().expect("initialized") as *mut Vec<ColorStack>
     }
 }
 
@@ -1285,12 +1294,12 @@ unsafe fn tex_string_bytes(s: StrNumber) -> Option<Vec<u8>> {
 }
 
 pub unsafe fn colorstackused() -> c_int {
-    unsafe { init_colorstacks().len() as c_int }
+    unsafe { (*init_colorstacks()).len() as c_int }
 }
 
 pub unsafe fn newcolorstack(s: Integer, literal_mode: Integer, page_start: Boolean) -> c_int {
     unsafe {
-        let stacks = init_colorstacks();
+        let stacks = &mut *init_colorstacks();
         if stacks.len() == MAX_COLORSTACKS {
             return -1;
         }
@@ -1311,7 +1320,7 @@ pub unsafe fn newcolorstack(s: Integer, literal_mode: Integer, page_start: Boole
 
 pub unsafe fn colorstackset(colstack_no: c_int, s: Integer) -> Integer {
     unsafe {
-        let stacks = init_colorstacks();
+        let stacks = &mut *init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
         if PAGE_MODE != 0 {
             stack.page_current = tex_string_bytes(s);
@@ -1324,7 +1333,7 @@ pub unsafe fn colorstackset(colstack_no: c_int, s: Integer) -> Integer {
 
 pub unsafe fn colorstackcurrent(colstack_no: c_int) -> Integer {
     unsafe {
-        let stacks = init_colorstacks();
+        let stacks = &mut *init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
         if PAGE_MODE != 0 {
             pool_put_bytes(poolptr, stack.page_current.as_deref());
@@ -1337,7 +1346,7 @@ pub unsafe fn colorstackcurrent(colstack_no: c_int) -> Integer {
 
 pub unsafe fn colorstackpush(colstack_no: c_int, s: Integer) -> Integer {
     unsafe {
-        let stacks = init_colorstacks();
+        let stacks = &mut *init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
         if PAGE_MODE != 0 {
             stack.page_stack.push(stack.page_current.take());
@@ -1352,7 +1361,7 @@ pub unsafe fn colorstackpush(colstack_no: c_int, s: Integer) -> Integer {
 
 pub unsafe fn colorstackpop(colstack_no: c_int) -> Integer {
     unsafe {
-        let stacks = init_colorstacks();
+        let stacks = &mut *init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
         if PAGE_MODE != 0 {
             let Some(value) = stack.page_stack.pop() else {
@@ -1384,7 +1393,7 @@ unsafe fn colorstackpagestart() {
         if PAGE_MODE != 0 {
             return;
         }
-        for stack in init_colorstacks().iter_mut() {
+        for stack in (&mut *init_colorstacks()).iter_mut() {
             stack.form_stack.clear();
             stack.form_current = stack.form_init.clone();
         }
@@ -1393,7 +1402,7 @@ unsafe fn colorstackpagestart() {
 
 pub unsafe fn colorstackskippagestart(colstack_no: c_int) -> Integer {
     unsafe {
-        let stack = &init_colorstacks()[colstack_no as usize];
+        let stack = &(&*init_colorstacks())[colstack_no as usize];
         if stack.page_start == 0 {
             return 1;
         }

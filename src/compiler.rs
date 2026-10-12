@@ -1086,24 +1086,28 @@ pub fn build(options: &BuildOptions) -> Result<BuildReport> {
     owned_options.out_dir = output_lock.output_path().to_path_buf();
     let options = &owned_options;
     clear_kpathsea_resolution_cache();
-    let _lookup_policy = if options.runner == Runner::Direct && options.engine != Engine::Tectonic {
+    let lookup_policy = if options.runner == Runner::Direct && options.engine != Engine::Tectonic {
         let main = options.main.canonicalize()?;
         let doc_dir = main.parent().context("root TeX file has no parent")?;
-        Some(tekai_engine::lookup::scoped_project_exclusions(
+        Some(
             generated_lookup_roots(doc_dir, &options.out_dir, &main)?
                 .into_iter()
                 .filter(|root| !doc_dir.starts_with(root))
                 .collect(),
-        ))
+        )
     } else {
         None
     };
-    match options.runner {
+    let action = || match options.runner {
         Runner::Direct if is_certified_tekai_pdftex_engine(options.engine) => {
             tekai_pdftex_direct_build(options)
         }
         Runner::Direct if options.engine != Engine::Tectonic => direct_build(options),
         Runner::Direct | Runner::Latexmk => latexmk_or_tectonic_build(options),
+    };
+    match lookup_policy {
+        Some(paths) => tekai_engine::lookup::with_lookup_policy(paths, action),
+        None => tekai_engine::lookup::with_lookup_session(action),
     }
 }
 
@@ -1328,34 +1332,34 @@ pub fn build_dependency_paths(options: &BuildOptions) -> Result<Vec<PathBuf>> {
     let job_name = build_job_name(options, &main)?;
     let out_dir = absolute_from_cwd(&options.out_dir)?;
     let doc_dir = main.parent().context("root TeX file has no parent")?;
-    let _lookup_policy = tekai_engine::lookup::scoped_project_exclusions(
-        generated_lookup_roots(doc_dir, &out_dir, &main)?
-            .into_iter()
-            .filter(|root| !doc_dir.starts_with(root))
-            .collect(),
-    );
-    let state_path = out_dir.join(format!(".tekai-{job_name}.state.json"));
-    let mut paths = source_seed_dependency_paths(&main)?;
-    if !state_path.exists() {
-        return Ok(paths);
-    }
-    let Some(state) = read_build_state_if_exists(&state_path)? else {
-        return Ok(paths);
-    };
-    let mode_key = direct_mode_key(options, &main);
-    if state.version != BUILD_STATE_VERSION || state.mode_key != mode_key {
-        return Ok(paths);
-    }
-    paths.extend(
-        state
-            .inputs
-            .into_iter()
-            .filter(|input| !is_virtual_fingerprint_path(&input.path))
-            .map(|input| PathBuf::from(input.path)),
-    );
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
+    let lookup_policy = generated_lookup_roots(doc_dir, &out_dir, &main)?
+        .into_iter()
+        .filter(|root| !doc_dir.starts_with(root))
+        .collect();
+    tekai_engine::lookup::with_lookup_policy(lookup_policy, || {
+        let state_path = out_dir.join(format!(".tekai-{job_name}.state.json"));
+        let mut paths = source_seed_dependency_paths(&main)?;
+        if !state_path.exists() {
+            return Ok(paths);
+        }
+        let Some(state) = read_build_state_if_exists(&state_path)? else {
+            return Ok(paths);
+        };
+        let mode_key = direct_mode_key(options, &main);
+        if state.version != BUILD_STATE_VERSION || state.mode_key != mode_key {
+            return Ok(paths);
+        }
+        paths.extend(
+            state
+                .inputs
+                .into_iter()
+                .filter(|input| !is_virtual_fingerprint_path(&input.path))
+                .map(|input| PathBuf::from(input.path)),
+        );
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    })
 }
 
 /// Return the lintable TeX source graph rooted at `main`.

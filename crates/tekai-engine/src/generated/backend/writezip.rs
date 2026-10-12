@@ -59,7 +59,7 @@ enum Phase {
 /// releases unfinished codec state without writing a trailer or finalizing PDF.
 pub(crate) struct CompressionSession {
     compressor: Option<Compress>,
-    output: [u8; ZIP_BUF_SIZE],
+    output: Box<[u8; ZIP_BUF_SIZE]>,
     pending: usize,
     phase: Phase,
     _pinned: PhantomPinned,
@@ -89,7 +89,7 @@ impl Drop for BusyScope<'_> {
 ///
 /// This guard stays on its creating thread. The engine must return before the
 /// guard is dropped, and the guard must be dropped before its session owner.
-pub(crate) struct CompressionScope<'a> {
+struct CompressionScope<'a> {
     pointer: NonNull<CompressionSession>,
     _borrow: PhantomData<&'a mut CompressionSession>,
     _same_thread: PhantomData<Rc<()>>,
@@ -109,16 +109,29 @@ impl Drop for CompressionScope<'_> {
 
 impl CompressionSession {
     pub(crate) fn new() -> Pin<Box<Self>> {
+        let mut output = Box::<[u8; ZIP_BUF_SIZE]>::new_uninit();
+        // SAFETY all-zero bytes are a valid byte array. Initialize directly in
+        // the allocation, not a 128 KiB temporary on the caller's stack.
+        unsafe { std::ptr::write_bytes(output.as_mut_ptr(), 0, 1) };
+        let output = unsafe { output.assume_init() };
         Box::pin(Self {
             compressor: None,
-            output: [0; ZIP_BUF_SIZE],
+            output,
             pending: 0,
             phase: Phase::Idle,
             _pinned: PhantomPinned,
         })
     }
 
-    pub(crate) fn scope(session: Pin<&mut Self>) -> Result<CompressionScope<'_>, CompressionError> {
+    pub(crate) fn scope<T>(
+        session: Pin<&mut Self>,
+        action: impl FnOnce() -> T,
+    ) -> Result<T, CompressionError> {
+        let _scope = Self::enter(session)?;
+        Ok(action())
+    }
+
+    fn enter(session: Pin<&mut Self>) -> Result<CompressionScope<'_>, CompressionError> {
         ACTIVE.with(|active| {
             if active.busy.get() {
                 return Err(CompressionError::BusyScope);
@@ -686,10 +699,10 @@ mod tests {
         ));
         let mut first = CompressionSession::new();
         {
-            let _scope = CompressionSession::scope(first.as_mut()).unwrap();
+            let _scope = CompressionSession::enter(first.as_mut()).unwrap();
             let mut second = CompressionSession::new();
             assert!(matches!(
-                CompressionSession::scope(second.as_mut()),
+                CompressionSession::enter(second.as_mut()),
                 Err(CompressionError::AlreadyScoped)
             ));
             with_current(|session| {
@@ -707,7 +720,7 @@ mod tests {
             Err(CompressionError::MissingScope)
         ));
         let unwind = catch_unwind(AssertUnwindSafe(|| {
-            let _scope = CompressionSession::scope(first.as_mut()).unwrap();
+            let _scope = CompressionSession::enter(first.as_mut()).unwrap();
             with_current::<()>(|session| {
                 session.process(b"partial", false, &mut |_| Ok(()))?;
                 panic!("test invocation unwind")
@@ -721,14 +734,35 @@ mod tests {
         ));
         drop(first);
         let mut fresh = CompressionSession::new();
-        let _scope = CompressionSession::scope(fresh.as_mut()).unwrap();
+        let _scope = CompressionSession::enter(fresh.as_mut()).unwrap();
+    }
+
+    #[test]
+    fn compression_constructor_fits_a_small_caller_stack() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(|| {
+                let mut session = CompressionSession::new();
+                CompressionSession::scope(session.as_mut(), || {
+                    with_current(|state| {
+                        assert_eq!(state.phase, Phase::Idle);
+                        assert!(state.output.iter().all(|&byte| byte == 0));
+                        Ok(())
+                    })
+                    .unwrap();
+                })
+                .unwrap();
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]
     fn callback_guard_drop_unregisters_even_while_busy_and_after_panic() {
         for panic_after_drop in [false, true] {
             let mut owner = CompressionSession::new();
-            let scope = CompressionSession::scope(owner.as_mut()).unwrap();
+            let scope = CompressionSession::enter(owner.as_mut()).unwrap();
             let mut other = CompressionSession::new();
             let outcome = catch_unwind(AssertUnwindSafe(|| {
                 with_current(|session| {
@@ -739,7 +773,7 @@ mod tests {
                         Err(CompressionError::BusyScope)
                     ));
                     assert!(matches!(
-                        CompressionSession::scope(other.as_mut()),
+                        CompressionSession::enter(other.as_mut()),
                         Err(CompressionError::BusyScope)
                     ));
                     session.start(1)?;
@@ -756,7 +790,7 @@ mod tests {
                 with_current(|_| Ok(())),
                 Err(CompressionError::MissingScope)
             ));
-            let _scope = CompressionSession::scope(owner.as_mut()).unwrap();
+            let _scope = CompressionSession::enter(owner.as_mut()).unwrap();
             with_current(|session| {
                 session.abort();
                 Ok(())

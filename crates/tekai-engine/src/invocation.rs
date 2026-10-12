@@ -89,6 +89,16 @@ impl fmt::Display for InvocationError {
 
 impl std::error::Error for InvocationError {}
 
+pub(crate) fn resource<T, E: fmt::Display>(
+    resource: &'static str,
+    result: Result<T, E>,
+) -> Result<T, InvocationError> {
+    result.map_err(|error| InvocationError::ResourceSetup {
+        resource,
+        message: error.to_string(),
+    })
+}
+
 fn checked_count(count: usize) -> Result<c_int, InvocationError> {
     if count == 0 {
         return Err(InvocationError::MissingProgramName);
