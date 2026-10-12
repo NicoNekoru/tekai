@@ -1,93 +1,32 @@
+pub use crate::generated::backend::writet1::load_enc_file;
+pub use crate::generated::pdftex0::{pdfenddict, zpdfbegindict};
+pub use crate::utils::pdf_puts;
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_destroy, avl_find, avl_item_func, avl_node, avl_probe,
+    avl_t_first, avl_t_init, avl_t_next, avl_table, avl_traverser, libavl_allocator,
+};
+
+use crate::byte_string::strcmp;
+
 use crate::allocation::free;
 use crate::openclose::xmalloc;
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
-    fn zpdfbegindict(i: integer, pdfoslevel: integer);
-    fn pdfenddict();
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_destroy(_: *mut avl_table, _: Option<avl_item_func>);
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
-    fn avl_t_init(_: *mut avl_traverser, _: *mut avl_table);
-    fn avl_t_first(_: *mut avl_traverser, _: *mut avl_table) -> *mut ::core::ffi::c_void;
-    fn avl_t_next(_: *mut avl_traverser) -> *mut ::core::ffi::c_void;
     static mut avl_xallocator: libavl_allocator;
     static mut notdef: [::core::ffi::c_char; 0];
-    fn pdf_printf(_: *const ::core::ffi::c_char, ...);
-    fn pdf_puts(_: *const ::core::ffi::c_char);
-    fn load_enc_file(_: *mut ::core::ffi::c_char) -> *mut *mut ::core::ffi::c_char;
 }
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
 pub type address = *mut ::core::ffi::c_void;
 pub type integer = ::core::ffi::c_int;
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-pub type avl_item_func =
-    unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> ();
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_traverser {
-    pub avl_table: *mut avl_table,
-    pub avl_node: *mut avl_node,
-    pub avl_stack: [*mut avl_node; 32],
-    pub avl_height: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fe_entry {
-    pub fe_objnum: integer,
-    pub name: *mut ::core::ffi::c_char,
-    pub glyph_names: *mut *mut ::core::ffi::c_char,
-    pub tx_tree: *mut avl_table,
-}
+pub use crate::backend_types::fe_entry;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 #[no_mangle]
 pub static mut fe_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-unsafe extern "C" fn comp_fe_entry(
+unsafe fn comp_fe_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -97,7 +36,7 @@ unsafe extern "C" fn comp_fe_entry(
         (*(pb as *const fe_entry)).name,
     );
 }
-unsafe extern "C" fn new_fe_entry() -> *mut fe_entry {
+unsafe fn new_fe_entry() -> *mut fe_entry {
     let mut fe: *mut fe_entry = ::core::ptr::null_mut::<fe_entry>();
     fe = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<fe_entry>() as size_t))
         as *mut fe_entry;
@@ -107,7 +46,7 @@ unsafe extern "C" fn new_fe_entry() -> *mut fe_entry {
     (*fe).tx_tree = ::core::ptr::null_mut::<avl_table>();
     return fe;
 }
-unsafe extern "C" fn lookup_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe_entry {
+unsafe fn lookup_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe_entry {
     let mut fe: fe_entry = fe_entry {
         fe_objnum: 0,
         name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -128,7 +67,7 @@ unsafe extern "C" fn lookup_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe
         fe_tree = avl_create(
             Some(
                 comp_fe_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -149,13 +88,13 @@ unsafe extern "C" fn lookup_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe
     }
     return avl_find(fe_tree, &raw mut fe as *const ::core::ffi::c_void) as *mut fe_entry;
 }
-unsafe extern "C" fn register_fe_entry(mut fe: *mut fe_entry) {
+unsafe fn register_fe_entry(mut fe: *mut fe_entry) {
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if fe_tree.is_null() {
         fe_tree = avl_create(
             Some(
                 comp_fe_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -212,8 +151,7 @@ unsafe extern "C" fn register_fe_entry(mut fe: *mut fe_entry) {
     } else {
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn get_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe_entry {
+pub unsafe fn get_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe_entry {
     let mut fe: *mut fe_entry = ::core::ptr::null_mut::<fe_entry>();
     let mut gl: *mut *mut ::core::ffi::c_char = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     fe = lookup_fe_entry(s);
@@ -228,8 +166,7 @@ pub unsafe extern "C" fn get_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut f
     }
     return fe;
 }
-#[no_mangle]
-pub unsafe extern "C" fn epdf_write_enc(
+pub unsafe fn epdf_write_enc(
     mut glyph_names: *mut *mut ::core::ffi::c_char,
     mut fe_objnum: ::core::ffi::c_int,
 ) {
@@ -291,7 +228,7 @@ pub unsafe extern "C" fn epdf_write_enc(
     pdf_puts(b"]\n\0" as *const u8 as *const ::core::ffi::c_char);
     pdfenddict();
 }
-unsafe extern "C" fn write_enc(
+unsafe fn write_enc(
     mut glyph_names: *mut *mut ::core::ffi::c_char,
     mut tx_tree: *mut avl_table,
     mut fe_objnum: ::core::ffi::c_int,
@@ -369,7 +306,7 @@ unsafe extern "C" fn write_enc(
     pdf_puts(b"]\n\0" as *const u8 as *const ::core::ffi::c_char);
     pdfenddict();
 }
-unsafe extern "C" fn write_fontencoding(mut fe: *mut fe_entry) {
+unsafe fn write_fontencoding(mut fe: *mut fe_entry) {
     if fe.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"write_fontencoding\0" as *const u8 as *const ::core::ffi::c_char,
@@ -385,8 +322,7 @@ unsafe extern "C" fn write_fontencoding(mut fe: *mut fe_entry) {
         (*fe).fe_objnum as ::core::ffi::c_int,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn write_fontencodings() {
+pub unsafe fn write_fontencodings() {
     let mut fe: *mut fe_entry = ::core::ptr::null_mut::<fe_entry>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
@@ -407,10 +343,7 @@ pub unsafe extern "C" fn write_fontencodings() {
         fe = avl_t_next(&raw mut t) as *mut fe_entry;
     }
 }
-unsafe extern "C" fn destroy_fe_entry(
-    mut pa: *mut ::core::ffi::c_void,
-    mut pb: *mut ::core::ffi::c_void,
-) {
+unsafe fn destroy_fe_entry(mut pa: *mut ::core::ffi::c_void, mut pb: *mut ::core::ffi::c_void) {
     let mut p: *mut fe_entry = ::core::ptr::null_mut::<fe_entry>();
     let mut i: ::core::ffi::c_int = 0;
     p = pa as *mut fe_entry;
@@ -440,17 +373,13 @@ unsafe extern "C" fn destroy_fe_entry(
     }
     p = ::core::ptr::null_mut::<fe_entry>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn enc_free() {
+pub unsafe fn enc_free() {
     if !fe_tree.is_null() {
         avl_destroy(
             fe_tree,
             Some(
                 destroy_fe_entry
-                    as unsafe extern "C" fn(
-                        *mut ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
+                    as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
     }

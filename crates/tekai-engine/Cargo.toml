@@ -21,9 +21,11 @@ path = "src/bin/tekai-engine.rs"
 required-features = ["standalone-binary"]
 
 [dependencies]
-flate2 = "1.1"
+crc32fast = "1.5"
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 libc = "0.2"
-libz-rs-sys = { version = "0.6.5", features = ["export-symbols", "gz"] }
+libm = "0.2"
+memchr = "2.8"
 lopdf = { version = "0.35", default-features = false, features = ["nom_parser"] }
 png = "0.17"
 sha2 = "0.11"
@@ -31,4 +33,5 @@ tar = "0.4"
 walkdir = "2.5"
 
 [dev-dependencies]
+libz-rs-sys = { version = "0.6.5", features = ["gz"] }
 proptest = { workspace = true }

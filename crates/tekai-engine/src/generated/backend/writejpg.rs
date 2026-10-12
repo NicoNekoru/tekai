@@ -1,16 +1,13 @@
+pub use crate::generated::pdftex0::{pdfendstream, pdfflush, zpdfosgetosbuf};
+pub use crate::utils::pdf_puts;
+
 use crate::stdio::{feof, fread};
 use crate::support::{xfopen, xfseek, xftell};
 use crate::utils::xgetc;
 
-#[repr(C)]
-pub struct png_struct_def {
-    _unused: [u8; 0],
-}
+pub use crate::pngshim::png_struct_def;
 
-#[repr(C)]
-pub struct png_info_def {
-    _unused: [u8; 0],
-}
+pub use crate::pngshim::png_info_def;
 
 extern "C" {
     static mut pdfbuf: *mut eightbits;
@@ -19,13 +16,7 @@ extern "C" {
     static mut pdfosmode: boolean;
     static mut fixedpdfmajorversion: integer;
     static mut fixedpdfminorversion: integer;
-    fn zpdfosgetosbuf(s: integer);
-    fn pdfflush();
-    fn pdfendstream();
     static mut cur_file_name: *mut ::core::ffi::c_char;
-    fn pdf_printf(_: *const ::core::ffi::c_char, ...);
-    fn pdf_puts(_: *const ::core::ffi::c_char);
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
     static mut image_array: *mut image_entry;
 }
 #[inline(always)]
@@ -47,59 +38,12 @@ pub type png_struct = png_struct_def;
 pub type png_structp = *mut png_struct;
 pub type png_info = png_info_def;
 pub type png_infop = *mut png_info;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct JPG_IMAGE_INFO {
-    pub color_space: ::core::ffi::c_int,
-    pub bits_per_component: ::core::ffi::c_uchar,
-    pub length: ::core::ffi::c_ulong,
-    pub file: *mut FILE,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct png_image_struct {
-    pub png_ptr: png_structp,
-    pub info_ptr: png_infop,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct pdf_image_struct {
-    pub orig_x: integer,
-    pub orig_y: integer,
-    pub selected_page: integer,
-    pub page_box: integer,
-    pub doc: *mut ::core::ffi::c_void,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct JBIG2_IMAGE_INFO {
-    pub selected_page: integer,
-    pub file: *mut FILE,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct image_entry {
-    pub image_name: *mut ::core::ffi::c_char,
-    pub image_type: ::core::ffi::c_int,
-    pub color_type: ::core::ffi::c_int,
-    pub width: integer,
-    pub height: integer,
-    pub rotate: integer,
-    pub x_res: integer,
-    pub y_res: integer,
-    pub num_pages: integer,
-    pub colorspace_ref: integer,
-    pub group_ref: integer,
-    pub image_struct: C2RustUnnamed,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union C2RustUnnamed {
-    pub pdf: *mut pdf_image_struct,
-    pub png: png_image_struct,
-    pub jpg: *mut JPG_IMAGE_INFO,
-    pub jbig2: *mut JBIG2_IMAGE_INFO,
-}
+pub use crate::backend_types::image_entry;
+pub use crate::backend_types::pdf_image_struct;
+pub use crate::backend_types::png_image_struct;
+pub use crate::backend_types::ImageData as C2RustUnnamed;
+pub use crate::backend_types::JBIG2_IMAGE_INFO;
+pub use crate::backend_types::JPG_IMAGE_INFO;
 pub const M_RST7: C2RustUnnamed_0 = 215;
 pub const M_RST6: C2RustUnnamed_0 = 214;
 pub const M_RST5: C2RustUnnamed_0 = 213;
@@ -161,7 +105,7 @@ pub const IMAGE_COLOR_C: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
 pub const JPG_GRAY: ::core::ffi::c_int = 1;
 pub const JPG_RGB: ::core::ffi::c_int = 3;
 pub const JPG_CMYK: ::core::ffi::c_int = 4;
-unsafe extern "C" fn read2bytes(mut f: *mut FILE) -> ::core::ffi::c_uint {
+unsafe fn read2bytes(mut f: *mut FILE) -> ::core::ffi::c_uint {
     let high = xgetc(f);
     let low = xgetc(f);
     if high == libc::EOF || low == libc::EOF {
@@ -173,8 +117,7 @@ unsafe extern "C" fn read2bytes(mut f: *mut FILE) -> ::core::ffi::c_uint {
     }
     ((high as ::core::ffi::c_uint) << 8) | low as ::core::ffi::c_uint
 }
-#[no_mangle]
-pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
+pub unsafe fn read_jpg_info(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
     let mut units: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     let mut appmk: ::core::ffi::c_ushort = 0;
@@ -410,8 +353,7 @@ pub unsafe extern "C" fn read_jpg_info(mut img: integer) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn write_jpg(mut img: integer) {
+pub unsafe fn write_jpg(mut img: integer) {
     let mut l: ::core::ffi::c_ulong = 0;
     let mut f: *mut FILE = ::core::ptr::null_mut::<FILE>();
     pdf_puts(b"/Type /XObject\n/Subtype /Image\n\0" as *const u8 as *const ::core::ffi::c_char);

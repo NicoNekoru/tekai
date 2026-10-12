@@ -4,10 +4,11 @@ use core::ffi::c_int;
 use core::{ptr, slice};
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Md5State {
-    count: [u32; 2],
-    abcd: [u32; 4],
-    buf: [u8; 64],
+    pub(crate) count: [u32; 2],
+    pub(crate) abcd: [u32; 4],
+    pub(crate) buf: [u8; 64],
 }
 
 const S: [u32; 64] = [
@@ -83,16 +84,14 @@ const K: [u32; 64] = [
     0xeb86_d391,
 ];
 
-#[no_mangle]
-pub unsafe extern "C" fn md5_init(state: *mut Md5State) {
+pub unsafe fn md5_init(state: *mut Md5State) {
     let state = unsafe { &mut *state };
     state.count = [0, 0];
     state.abcd = [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476];
     state.buf = [0; 64];
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn md5_append(state: *mut Md5State, data: *const u8, nbytes: c_int) {
+pub unsafe fn md5_append(state: *mut Md5State, data: *const u8, nbytes: c_int) {
     if nbytes <= 0 {
         return;
     }
@@ -101,8 +100,7 @@ pub unsafe extern "C" fn md5_append(state: *mut Md5State, data: *const u8, nbyte
     append(state, input);
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn md5_finish(state: *mut Md5State, digest: *mut u8) {
+pub unsafe fn md5_finish(state: *mut Md5State, digest: *mut u8) {
     let state = unsafe { &mut *state };
     let mut length = [0_u8; 8];
     for (i, byte) in length.iter_mut().enumerate() {
@@ -203,6 +201,24 @@ fn process(state: &mut Md5State, block: &[u8; 64]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_state_uses_the_actual_owner_layout_and_rust_interfaces() {
+        use crate::generated::pdftexextra::md5_state_t;
+        use core::mem::{align_of, offset_of, size_of};
+
+        let _init: unsafe fn(*mut md5_state_t) = md5_init;
+        let _append: unsafe fn(*mut md5_state_t, *const u8, c_int) = md5_append;
+        let _finish: unsafe fn(*mut md5_state_t, *mut u8) = md5_finish;
+        let state: Option<Md5State> = None;
+        let _: Option<md5_state_t> = state;
+
+        assert_eq!(size_of::<md5_state_t>(), 88);
+        assert_eq!(align_of::<md5_state_t>(), 4);
+        assert_eq!(offset_of!(md5_state_t, count), 0);
+        assert_eq!(offset_of!(md5_state_t, abcd), 8);
+        assert_eq!(offset_of!(md5_state_t, buf), 24);
+    }
 
     fn digest_hex(input: &[u8]) -> String {
         let mut state = Md5State {

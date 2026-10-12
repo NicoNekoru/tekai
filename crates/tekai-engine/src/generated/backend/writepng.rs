@@ -1,3 +1,20 @@
+pub use crate::generated::pdftex0::{
+    getpdfcompresslevel, pdfbeginstream, pdfendobj, pdfendstream, pdfflush, pdfnewobjnum,
+    zpdfbegindict, zpdfbeginobj, zpdfcreateobj, zpdfosgetosbuf,
+};
+pub use crate::pngshim::{
+    png_create_info_struct, png_create_read_struct, png_get_PLTE, png_get_bit_depth,
+    png_get_color_type, png_get_gAMA, png_get_gAMA_fixed, png_get_image_height,
+    png_get_image_width, png_get_interlace_type, png_get_io_ptr, png_get_rowbytes, png_get_valid,
+    png_get_x_pixels_per_meter, png_get_y_pixels_per_meter, png_read_image, png_read_info,
+    png_read_row, png_read_update_info, png_set_gamma, png_set_interlace_handling, png_set_option,
+    png_set_strip_16, png_set_strip_alpha, png_set_tRNS_to_alpha,
+};
+pub use crate::utils::pdf_puts;
+
+use crate::byte_string::strcmp;
+use crate::environment::getenv;
+
 use crate::stdio::fread;
 use crate::support::xfopen;
 use crate::web2c::zround;
@@ -5,22 +22,11 @@ use crate::web2c::zround;
 use crate::allocation::free;
 use crate::openclose::xmalloc;
 
-#[repr(C)]
-pub struct png_struct_def {
-    _unused: [u8; 0],
-}
+pub use crate::pngshim::png_struct_def;
 
-#[repr(C)]
-pub struct png_info_def {
-    _unused: [u8; 0],
-}
+pub use crate::pngshim::png_info_def;
 
 extern "C" {
-    fn getenv(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     static mut pdfbuf: *mut eightbits;
     static mut pdfbufsize: integer;
     static mut pdfptr: integer;
@@ -33,83 +39,6 @@ extern "C" {
     static mut fixedimageapplygamma: integer;
     static mut pdfpagegroupval: integer;
     static mut objptr: integer;
-    fn zpdfosgetosbuf(s: integer);
-    fn zpdfcreateobj(t: integer, i: integer);
-    fn pdfnewobjnum() -> integer;
-    fn zpdfbeginobj(i: integer, pdfoslevel: integer);
-    fn pdfendobj();
-    fn zpdfbegindict(i: integer, pdfoslevel: integer);
-    fn getpdfcompresslevel() -> integer;
-    fn pdfflush();
-    fn pdfbeginstream();
-    fn pdfendstream();
-    fn pdf_printf(_: *const ::core::ffi::c_char, ...);
-    fn pdf_puts(_: *const ::core::ffi::c_char);
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
-    fn tex_printf(_: *const ::core::ffi::c_char, ...);
-    fn png_create_read_struct(
-        user_png_ver: png_const_charp,
-        error_ptr: png_voidp,
-        error_fn: png_error_ptr,
-        warn_fn: png_error_ptr,
-    ) -> png_structp;
-    fn png_create_info_struct(png_ptr: png_const_structrp) -> png_infop;
-    fn png_read_info(png_ptr: png_structrp, info_ptr: png_inforp);
-    fn png_set_tRNS_to_alpha(png_ptr: png_structrp);
-    fn png_set_strip_alpha(png_ptr: png_structrp);
-    fn png_set_interlace_handling(png_ptr: png_structrp) -> ::core::ffi::c_int;
-    fn png_set_strip_16(png_ptr: png_structrp);
-    fn png_set_gamma(
-        png_ptr: png_structrp,
-        screen_gamma: ::core::ffi::c_double,
-        override_file_gamma: ::core::ffi::c_double,
-    );
-    fn png_read_update_info(png_ptr: png_structrp, info_ptr: png_inforp);
-    fn png_read_row(png_ptr: png_structrp, row: png_bytep, display_row: png_bytep);
-    fn png_read_image(png_ptr: png_structrp, image: png_bytepp);
-    fn png_get_io_ptr(png_ptr: png_const_structrp) -> png_voidp;
-    fn png_get_valid(
-        png_ptr: png_const_structrp,
-        info_ptr: png_const_inforp,
-        flag: png_uint_32,
-    ) -> png_uint_32;
-    fn png_get_rowbytes(png_ptr: png_const_structrp, info_ptr: png_const_inforp) -> size_t;
-    fn png_get_image_width(png_ptr: png_const_structrp, info_ptr: png_const_inforp) -> png_uint_32;
-    fn png_get_image_height(png_ptr: png_const_structrp, info_ptr: png_const_inforp)
-        -> png_uint_32;
-    fn png_get_bit_depth(png_ptr: png_const_structrp, info_ptr: png_const_inforp) -> png_byte;
-    fn png_get_color_type(png_ptr: png_const_structrp, info_ptr: png_const_inforp) -> png_byte;
-    fn png_get_interlace_type(png_ptr: png_const_structrp, info_ptr: png_const_inforp) -> png_byte;
-    fn png_get_x_pixels_per_meter(
-        png_ptr: png_const_structrp,
-        info_ptr: png_const_inforp,
-    ) -> png_uint_32;
-    fn png_get_y_pixels_per_meter(
-        png_ptr: png_const_structrp,
-        info_ptr: png_const_inforp,
-    ) -> png_uint_32;
-    fn png_get_gAMA(
-        png_ptr: png_const_structrp,
-        info_ptr: png_const_inforp,
-        file_gamma: *mut ::core::ffi::c_double,
-    ) -> png_uint_32;
-    fn png_get_gAMA_fixed(
-        png_ptr: png_const_structrp,
-        info_ptr: png_const_inforp,
-        int_file_gamma: *mut png_fixed_point,
-    ) -> png_uint_32;
-    fn png_get_PLTE(
-        png_ptr: png_const_structrp,
-        info_ptr: png_inforp,
-        palette: *mut png_colorp,
-        num_palette: *mut ::core::ffi::c_int,
-    ) -> png_uint_32;
-    fn png_set_option(
-        png_ptr: png_structrp,
-        option: ::core::ffi::c_int,
-        onoff: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
     static mut image_array: *mut image_entry;
 }
 pub type __int64_t = i64;
@@ -139,69 +68,16 @@ pub type png_structrp = *mut png_struct;
 pub type png_const_structrp = *const png_struct;
 pub type png_inforp = *mut png_info;
 pub type png_const_inforp = *const png_info;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct png_color_struct {
-    pub red: png_byte,
-    pub green: png_byte,
-    pub blue: png_byte,
-}
+pub use crate::pngshim::png_color_struct;
 pub type png_color = png_color_struct;
 pub type png_colorp = *mut png_color;
-pub type png_error_ptr = Option<unsafe extern "C" fn(png_structp, png_const_charp) -> ()>;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct JPG_IMAGE_INFO {
-    pub color_space: ::core::ffi::c_int,
-    pub bits_per_component: ::core::ffi::c_uchar,
-    pub length: ::core::ffi::c_ulong,
-    pub file: *mut FILE,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct png_image_struct {
-    pub png_ptr: png_structp,
-    pub info_ptr: png_infop,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct pdf_image_struct {
-    pub orig_x: integer,
-    pub orig_y: integer,
-    pub selected_page: integer,
-    pub page_box: integer,
-    pub doc: *mut ::core::ffi::c_void,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct JBIG2_IMAGE_INFO {
-    pub selected_page: integer,
-    pub file: *mut FILE,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct image_entry {
-    pub image_name: *mut ::core::ffi::c_char,
-    pub image_type: ::core::ffi::c_int,
-    pub color_type: ::core::ffi::c_int,
-    pub width: integer,
-    pub height: integer,
-    pub rotate: integer,
-    pub x_res: integer,
-    pub y_res: integer,
-    pub num_pages: integer,
-    pub colorspace_ref: integer,
-    pub group_ref: integer,
-    pub image_struct: C2RustUnnamed,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union C2RustUnnamed {
-    pub pdf: *mut pdf_image_struct,
-    pub png: png_image_struct,
-    pub jpg: *mut JPG_IMAGE_INFO,
-    pub jbig2: *mut JBIG2_IMAGE_INFO,
-}
+pub type png_error_ptr = Option<unsafe fn(png_structp, png_const_charp) -> ()>;
+pub use crate::backend_types::image_entry;
+pub use crate::backend_types::pdf_image_struct;
+pub use crate::backend_types::png_image_struct;
+pub use crate::backend_types::ImageData as C2RustUnnamed;
+pub use crate::backend_types::JBIG2_IMAGE_INFO;
+pub use crate::backend_types::JPG_IMAGE_INFO;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const SEEK_SET: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const SEEK_CUR: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
@@ -238,9 +114,8 @@ pub const IMAGE_COLOR_B: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const IMAGE_COLOR_C: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
 pub const IMAGE_COLOR_I: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
 static mut transparent_page_group: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-unsafe extern "C" fn warn(mut png_ptr: png_structp, mut msg: png_const_charp) {}
-#[no_mangle]
-pub unsafe extern "C" fn read_png_info(mut img: integer) {
+unsafe fn warn(mut png_ptr: png_structp, mut msg: png_const_charp) {}
+pub unsafe fn read_png_info(mut img: integer) {
     let mut png_file: *mut FILE = xfopen(
         (*image_array.offset(img as isize)).image_name as const_string,
         FOPEN_RBIN_MODE.as_ptr(),
@@ -250,7 +125,7 @@ pub unsafe extern "C" fn read_png_info(mut img: integer) {
         PNG_LIBPNG_VER_STRING.as_ptr(),
         NULL,
         None,
-        Some(warn as unsafe extern "C" fn(png_structp, png_const_charp) -> ()),
+        Some(warn as unsafe fn(png_structp, png_const_charp) -> ()),
     );
     if (*fresh0).is_null() {
         crate::utils::pdftex_fail_args(
@@ -399,7 +274,7 @@ pub unsafe extern "C" fn read_png_info(mut img: integer) {
         (*image_array.offset(img as isize)).group_ref = pdfpagegroupval;
     }
 }
-unsafe extern "C" fn write_png_palette(mut img: integer) {
+unsafe fn write_png_palette(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
     let mut j: ::core::ffi::c_int = 0;
     let mut k: ::core::ffi::c_int = 0;
@@ -671,7 +546,7 @@ unsafe extern "C" fn write_png_palette(mut img: integer) {
         pdfendstream();
     }
 }
-unsafe extern "C" fn write_png_gray(mut img: integer) {
+unsafe fn write_png_gray(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
     let mut j: ::core::ffi::c_int = 0;
     let mut k: ::core::ffi::c_int = 0;
@@ -890,7 +765,7 @@ unsafe extern "C" fn write_png_gray(mut img: integer) {
     }
     pdfendstream();
 }
-unsafe extern "C" fn write_png_gray_alpha(mut img: integer) {
+unsafe fn write_png_gray_alpha(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
     let mut j: ::core::ffi::c_int = 0;
     let mut k: ::core::ffi::c_int = 0;
@@ -1393,7 +1268,7 @@ unsafe extern "C" fn write_png_gray_alpha(mut img: integer) {
         pdfendstream();
     }
 }
-unsafe extern "C" fn write_png_rgb(mut img: integer) {
+unsafe fn write_png_rgb(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
     let mut j: ::core::ffi::c_int = 0;
     let mut k: ::core::ffi::c_int = 0;
@@ -1781,7 +1656,7 @@ unsafe fn write_opaque_smask_bytes(mut len: usize) {
     }
 }
 
-unsafe extern "C" fn write_png_rgb_alpha(mut img: integer) {
+unsafe fn write_png_rgb_alpha(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
     let mut j: ::core::ffi::c_int = 0;
     let mut k: ::core::ffi::c_int = 0;
@@ -2352,7 +2227,7 @@ unsafe fn read_copy_png_chunk(
     (length, chunk_type, next_offset)
 }
 
-unsafe extern "C" fn copy_png(mut img: integer) {
+unsafe fn copy_png(mut img: integer) {
     let fp = png_get_io_ptr(
         (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
     ) as *mut FILE;
@@ -2453,7 +2328,7 @@ unsafe extern "C" fn copy_png(mut img: integer) {
 }
 static mut last_png_needs_page_group: boolean = 0;
 static mut transparent_page_group_was_written: boolean = false_0;
-unsafe extern "C" fn write_additional_png_objects() {
+unsafe fn write_additional_png_objects() {
     if last_png_needs_page_group != 0 {
         if transparent_page_group_was_written == 0
             && transparent_page_group > 0 as ::core::ffi::c_int
@@ -2474,8 +2349,7 @@ unsafe extern "C" fn write_additional_png_objects() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn write_png(mut img: integer) {
+pub unsafe fn write_png(mut img: integer) {
     let mut png_copy: boolean = true_0;
     let mut gamma: ::core::ffi::c_double = 0.0f64;
     let mut int_file_gamma: png_fixed_point = 0 as png_fixed_point;

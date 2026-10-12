@@ -1,3 +1,14 @@
+pub use crate::generated::pdftex0::{pdfbeginstream, pdfendstream, pdfnewobjnum, zpdfbegindict};
+pub use crate::generated::pdftexextra::makecstring;
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_destroy, avl_find, avl_item_func, avl_node, avl_probe,
+    avl_t_init, avl_t_next, avl_table, avl_traverser, libavl_allocator,
+};
+
+use crate::byte_string::isdigit;
+use crate::byte_string::{strcat, strchr, strcmp, strcpy, strlen, strncat, strncmp, strrchr};
+
 use crate::allocation::free;
 use crate::backend_parse::{copy_without_spaces, Cursor, FieldError};
 use crate::generated::pdftexextra::{do_dump, do_undump};
@@ -5,72 +16,18 @@ use crate::integer_parse::{signed_prefix, IntegerBase};
 use crate::openclose::{xmalloc, xstrdup};
 use std::ffi::CStr;
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn strcat(
-        __s1: *mut ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strcpy(
-        __dst: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strncat(
-        __s1: *mut ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
-    fn strrchr(
-        __s: *const ::core::ffi::c_char,
-        __c: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
-    static mut _DefaultRuneLocale: _RuneLocale;
-    fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
     static mut fixedgentounicode: integer;
     static mut fmtfile: wordfile;
-    fn pdfnewobjnum() -> integer;
-    fn zpdfbegindict(i: integer, pdfoslevel: integer);
-    fn pdfbeginstream();
-    fn pdfendstream();
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_destroy(_: *mut avl_table, _: Option<avl_item_func>);
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
-    fn avl_t_init(_: *mut avl_traverser, _: *mut avl_table);
-    fn avl_t_next(_: *mut avl_traverser) -> *mut ::core::ffi::c_void;
     static mut avl_xallocator: libavl_allocator;
     static mut notdef: [::core::ffi::c_char; 0];
-    fn pdf_printf(_: *const ::core::ffi::c_char, ...);
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
 }
 pub type __uint32_t = u32;
 pub type __int64_t = i64;
-pub type __darwin_ct_rune_t = ::core::ffi::c_int;
 pub type __darwin_size_t = usize;
 pub type __darwin_wchar_t = ::libc::wchar_t;
-pub type __darwin_rune_t = __darwin_wchar_t;
 pub type __darwin_off_t = __int64_t;
 pub type size_t = __darwin_size_t;
 pub type off_t = __darwin_off_t;
@@ -79,103 +36,10 @@ pub type string = *mut ::core::ffi::c_char;
 pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
 pub type integer = ::core::ffi::c_int;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneEntry {
-    pub __min: __darwin_rune_t,
-    pub __max: __darwin_rune_t,
-    pub __map: __darwin_rune_t,
-    pub __types: *mut __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneRange {
-    pub __nranges: ::core::ffi::c_int,
-    pub __ranges: *mut _RuneEntry,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneCharClass {
-    pub __name: [::core::ffi::c_char; 14],
-    pub __mask: __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneLocale {
-    pub __magic: [::core::ffi::c_char; 8],
-    pub __encoding: [::core::ffi::c_char; 32],
-    pub __sgetrune: Option<
-        unsafe extern "C" fn(
-            *const ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *const ::core::ffi::c_char,
-        ) -> __darwin_rune_t,
-    >,
-    pub __sputrune: Option<
-        unsafe extern "C" fn(
-            __darwin_rune_t,
-            *mut ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *mut ::core::ffi::c_char,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub __invalid_rune: __darwin_rune_t,
-    pub __runetype: [__uint32_t; 256],
-    pub __maplower: [__darwin_rune_t; 256],
-    pub __mapupper: [__darwin_rune_t; 256],
-    pub __runetype_ext: _RuneRange,
-    pub __maplower_ext: _RuneRange,
-    pub __mapupper_ext: _RuneRange,
-    pub __variable: *mut ::core::ffi::c_void,
-    pub __variable_len: ::core::ffi::c_int,
-    pub __ncharclasses: ::core::ffi::c_int,
-    pub __charclasses: *mut _RuneCharClass,
-}
 pub use crate::stdio::Stream as gzFile_s;
 pub type gzFile = *mut gzFile_s;
 pub type strnumber = integer;
 pub type wordfile = gzFile;
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-pub type avl_item_func =
-    unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> ();
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_traverser {
-    pub avl_table: *mut avl_table,
-    pub avl_node: *mut avl_node,
-    pub avl_stack: [*mut avl_node; 32],
-    pub avl_height: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct glyph_unicode_entry {
@@ -187,28 +51,11 @@ pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::co
 pub const SMALL_BUF_SIZE: ::core::ffi::c_int = 256 as ::core::ffi::c_int;
 pub const true_0: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const false_0: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-pub const _CACHED_RUNES: ::core::ffi::c_int = (1 as ::core::ffi::c_int) << 8 as ::core::ffi::c_int;
-pub const _CTYPE_D: ::core::ffi::c_long = 0x400 as ::core::ffi::c_long;
-unsafe fn __isctype(
-    mut _c: __darwin_ct_rune_t,
-    mut _f: ::core::ffi::c_ulong,
-) -> __darwin_ct_rune_t {
-    return if _c < 0 as ::core::ffi::c_int || _c >= _CACHED_RUNES {
-        0 as __darwin_ct_rune_t
-    } else {
-        (_DefaultRuneLocale.__runetype[_c as usize] as ::core::ffi::c_ulong & _f != 0)
-            as ::core::ffi::c_int
-    };
-}
-unsafe fn isdigit(mut _c: ::core::ffi::c_int) -> ::core::ffi::c_int {
-    return __isctype(_c as __darwin_ct_rune_t, _CTYPE_D as ::core::ffi::c_ulong)
-        as ::core::ffi::c_int;
-}
 pub const UNI_UNDEF: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 pub const UNI_STRING: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
 pub const UNI_EXTRA_STRING: ::core::ffi::c_int = -(3 as ::core::ffi::c_int);
 static mut glyph_unicode_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-unsafe extern "C" fn comp_glyph_unicode_entry(
+unsafe fn comp_glyph_unicode_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -218,7 +65,7 @@ unsafe extern "C" fn comp_glyph_unicode_entry(
         (*(pb as *const glyph_unicode_entry)).name,
     );
 }
-unsafe extern "C" fn new_glyph_unicode_entry() -> *mut glyph_unicode_entry {
+unsafe fn new_glyph_unicode_entry() -> *mut glyph_unicode_entry {
     let mut e: *mut glyph_unicode_entry = ::core::ptr::null_mut::<glyph_unicode_entry>();
     e = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<glyph_unicode_entry>() as size_t))
         as *mut glyph_unicode_entry;
@@ -227,7 +74,7 @@ unsafe extern "C" fn new_glyph_unicode_entry() -> *mut glyph_unicode_entry {
     (*e).unicode_seq = ::core::ptr::null_mut::<::core::ffi::c_char>();
     return e;
 }
-unsafe extern "C" fn destroy_glyph_unicode_entry(
+unsafe fn destroy_glyph_unicode_entry(
     mut pa: *mut ::core::ffi::c_void,
     mut pb: *mut ::core::ffi::c_void,
 ) {
@@ -252,23 +99,18 @@ unsafe extern "C" fn destroy_glyph_unicode_entry(
         (*e).unicode_seq = ::core::ptr::null_mut::<::core::ffi::c_char>();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn glyph_unicode_free() {
+pub unsafe fn glyph_unicode_free() {
     if !glyph_unicode_tree.is_null() {
         avl_destroy(
             glyph_unicode_tree,
             Some(
                 destroy_glyph_unicode_entry
-                    as unsafe extern "C" fn(
-                        *mut ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
+                    as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn deftounicode(mut glyph: strnumber, mut unistr: strnumber) {
+pub unsafe fn deftounicode(mut glyph: strnumber, mut unistr: strnumber) {
     let mut buf: [::core::ffi::c_char; 256] = [0; 256];
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut buf2: [u8; 256] = [0; 256];
@@ -356,7 +198,7 @@ pub unsafe extern "C" fn deftounicode(mut glyph: strnumber, mut unistr: strnumbe
         glyph_unicode_tree = avl_create(
             Some(
                 comp_glyph_unicode_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -426,7 +268,7 @@ pub unsafe extern "C" fn deftounicode(mut glyph: strnumber, mut unistr: strnumbe
     } else {
     };
 }
-unsafe extern "C" fn check_unicode_value(
+unsafe fn check_unicode_value(
     mut s: *const ::core::ffi::c_char,
     mut multiple_value: boolean,
 ) -> ::core::ffi::c_long {
@@ -480,7 +322,7 @@ unsafe extern "C" fn check_unicode_value(
     }
     return code;
 }
-unsafe extern "C" fn utf16be_str(mut code: ::core::ffi::c_long) -> *mut ::core::ffi::c_char {
+unsafe fn utf16be_str(mut code: ::core::ffi::c_long) -> *mut ::core::ffi::c_char {
     static mut buf: [::core::ffi::c_char; 256] = [0; 256];
     let mut v: ::core::ffi::c_long = 0;
     let mut vh: ::core::ffi::c_uint = 0;
@@ -517,7 +359,7 @@ unsafe extern "C" fn utf16be_str(mut code: ::core::ffi::c_long) -> *mut ::core::
     }
     return &raw mut buf as *mut ::core::ffi::c_char;
 }
-unsafe extern "C" fn set_glyph_unicode(
+unsafe fn set_glyph_unicode(
     mut s: *const ::core::ffi::c_char,
     mut tfmname: *const ::core::ffi::c_char,
     mut gp: *mut glyph_unicode_entry,
@@ -739,7 +581,7 @@ unsafe extern "C" fn set_glyph_unicode(
         }
     }
 }
-unsafe extern "C" fn is_last_byte_valid(
+unsafe fn is_last_byte_valid(
     mut srcCode1: ::core::ffi::c_int,
     mut srcCode2: ::core::ffi::c_int,
     mut code: ::core::ffi::c_long,
@@ -751,8 +593,7 @@ unsafe extern "C" fn is_last_byte_valid(
     return (l < (255 as ::core::ffi::c_int - (srcCode2 - srcCode1)) as ::core::ffi::c_long)
         as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn write_tounicode(
+pub unsafe fn write_tounicode(
     mut glyph_names: *mut *mut ::core::ffi::c_char,
     mut tfmname: *const ::core::ffi::c_char,
     mut encname: *const ::core::ffi::c_char,
@@ -1036,8 +877,7 @@ pub unsafe extern "C" fn write_tounicode(
     pdfendstream();
     return objnum;
 }
-#[no_mangle]
-pub unsafe extern "C" fn dumptounicode() {
+pub unsafe fn dumptounicode() {
     let mut traverse: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
         avl_node: ::core::ptr::null_mut::<avl_node>(),
@@ -1128,8 +968,7 @@ pub unsafe extern "C" fn dumptounicode() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn undumptounicode() {
+pub unsafe fn undumptounicode() {
     let mut tmp: *mut glyph_unicode_entry = ::core::ptr::null_mut::<glyph_unicode_entry>();
     let mut remaining: integer = 0;
     do_undump(
@@ -1153,7 +992,7 @@ pub unsafe extern "C" fn undumptounicode() {
     glyph_unicode_tree = avl_create(
         Some(
             comp_glyph_unicode_entry
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,

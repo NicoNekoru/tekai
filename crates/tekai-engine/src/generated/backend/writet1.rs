@@ -1,4 +1,17 @@
-use crate::byte_string::{memcpy, strcat, strchr, strcmp, strcpy, strlen, strncmp, strncpy, strstr};
+pub use crate::generated::backend::mapfile::check_ff_exist;
+pub use crate::generated::pdftex0::{getnullstr, zpackfilename};
+pub use crate::openclose::recorder_record_input;
+pub use crate::utils::{fb_offset, fb_putchar, make_subset_tag, maketexstring};
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_destroy, avl_find, avl_item_func, avl_node, avl_probe,
+    avl_t_first, avl_t_init, avl_t_next, avl_table, avl_traverser, libavl_allocator,
+};
+
+use crate::byte_string::isdigit;
+use crate::byte_string::{
+    memcpy, strcat, strchr, strcmp, strcpy, strlen, strncmp, strncpy, strstr,
+};
 
 use crate::backend_grammar::{
     charstring_count, encoding_assignment, encoding_copy, encoding_interval, predefined_encoding,
@@ -13,43 +26,15 @@ use crate::web2c::zround;
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc, xstrdup};
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn atan(_: ::core::ffi::c_double) -> ::core::ffi::c_double;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
-    fn recorder_record_input(_: const_string);
-    static mut _DefaultRuneLocale: _RuneLocale;
     static mut nameoffile: *mut ASCIIcode;
-    fn zpackfilename(n: strnumber, a: strnumber, e: strnumber);
-    fn getnullstr() -> strnumber;
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_destroy(_: *mut avl_table, _: Option<avl_item_func>);
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
-    fn avl_t_init(_: *mut avl_traverser, _: *mut avl_table);
-    fn avl_t_first(_: *mut avl_traverser, _: *mut avl_table) -> *mut ::core::ffi::c_void;
-    fn avl_t_next(_: *mut avl_traverser) -> *mut ::core::ffi::c_void;
     static mut avl_xallocator: libavl_allocator;
     static mut cur_file_name: *mut ::core::ffi::c_char;
     static mut last_ptr_index: size_t;
     static mut fb_array: *mut ::core::ffi::c_char;
     static mut notdef: [::core::ffi::c_char; 0];
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
-    fn tex_printf(_: *const ::core::ffi::c_char, ...);
-    fn check_ff_exist(_: *mut ::core::ffi::c_char, _: boolean) -> *mut ff_entry;
-    fn maketexstring(_: *const ::core::ffi::c_char) -> strnumber;
-    fn fb_offset() -> integer;
-    fn fb_putchar(b: eightbits);
-    fn make_subset_tag(_: *mut fd_entry);
 }
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
@@ -58,11 +43,9 @@ unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
 pub type __builtin_va_list = *mut ::core::ffi::c_char;
 pub type __uint32_t = u32;
 pub type __int64_t = i64;
-pub type __darwin_ct_rune_t = ::core::ffi::c_int;
 pub type __darwin_size_t = usize;
 pub type __darwin_va_list = __builtin_va_list;
 pub type __darwin_wchar_t = ::libc::wchar_t;
-pub type __darwin_rune_t = __darwin_wchar_t;
 pub type __darwin_off_t = __int64_t;
 pub type va_list = __darwin_va_list;
 pub type size_t = __darwin_size_t;
@@ -134,175 +117,18 @@ pub const kpse_any_glyph_format: C2RustUnnamed = 2;
 pub const kpse_pk_format: C2RustUnnamed = 1;
 pub const kpse_gf_format: C2RustUnnamed = 0;
 pub type integer = ::core::ffi::c_int;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneEntry {
-    pub __min: __darwin_rune_t,
-    pub __max: __darwin_rune_t,
-    pub __map: __darwin_rune_t,
-    pub __types: *mut __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneRange {
-    pub __nranges: ::core::ffi::c_int,
-    pub __ranges: *mut _RuneEntry,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneCharClass {
-    pub __name: [::core::ffi::c_char; 14],
-    pub __mask: __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneLocale {
-    pub __magic: [::core::ffi::c_char; 8],
-    pub __encoding: [::core::ffi::c_char; 32],
-    pub __sgetrune: Option<
-        unsafe extern "C" fn(
-            *const ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *const ::core::ffi::c_char,
-        ) -> __darwin_rune_t,
-    >,
-    pub __sputrune: Option<
-        unsafe extern "C" fn(
-            __darwin_rune_t,
-            *mut ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *mut ::core::ffi::c_char,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub __invalid_rune: __darwin_rune_t,
-    pub __runetype: [__uint32_t; 256],
-    pub __maplower: [__darwin_rune_t; 256],
-    pub __mapupper: [__darwin_rune_t; 256],
-    pub __runetype_ext: _RuneRange,
-    pub __maplower_ext: _RuneRange,
-    pub __mapupper_ext: _RuneRange,
-    pub __variable: *mut ::core::ffi::c_void,
-    pub __variable_len: ::core::ffi::c_int,
-    pub __ncharclasses: ::core::ffi::c_int,
-    pub __charclasses: *mut _RuneCharClass,
-}
 pub type ASCIIcode = ::core::ffi::c_uchar;
 pub type eightbits = ::core::ffi::c_uchar;
 pub type strnumber = integer;
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-pub type avl_item_func =
-    unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> ();
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_traverser {
-    pub avl_table: *mut avl_table,
-    pub avl_node: *mut avl_node,
-    pub avl_stack: [*mut avl_node; 32],
-    pub avl_height: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct key_entry {
-    pub pdfname: *const ::core::ffi::c_char,
-    pub t1name: *const ::core::ffi::c_char,
-    pub value: ::core::ffi::c_float,
-    pub valid: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _subfont_entry {
-    pub infix: *mut ::core::ffi::c_char,
-    pub charcodes: [::core::ffi::c_long; 256],
-    pub next: *mut subfont_entry,
-}
+pub use crate::backend_types::_subfont_entry;
+pub use crate::backend_types::key_entry;
 pub type subfont_entry = _subfont_entry;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fe_entry {
-    pub fe_objnum: integer,
-    pub name: *mut ::core::ffi::c_char,
-    pub glyph_names: *mut *mut ::core::ffi::c_char,
-    pub tx_tree: *mut avl_table,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fm_entry {
-    pub tfm_name: *mut ::core::ffi::c_char,
-    pub sfd_name: *mut ::core::ffi::c_char,
-    pub ps_name: *mut ::core::ffi::c_char,
-    pub fd_flags: integer,
-    pub slant: integer,
-    pub extend: integer,
-    pub encname: *mut ::core::ffi::c_char,
-    pub ff_name: *mut ::core::ffi::c_char,
-    pub type_0: ::core::ffi::c_ushort,
-    pub pid: ::core::ffi::c_short,
-    pub eid: ::core::ffi::c_short,
-    pub subfont: *mut subfont_entry,
-    pub links: ::core::ffi::c_ushort,
-    pub in_use: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct intparm {
-    pub val: ::core::ffi::c_int,
-    pub set: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fd_entry_ {
-    pub fd_objnum: integer,
-    pub fontname: *mut ::core::ffi::c_char,
-    pub subset_tag: *mut ::core::ffi::c_char,
-    pub ff_found: boolean,
-    pub ff_objnum: integer,
-    pub fn_objnum: integer,
-    pub all_glyphs: boolean,
-    pub write_ttf_glyph_names: boolean,
-    pub font_dim: [intparm; 11],
-    pub fe: *mut fe_entry,
-    pub builtin_glyph_names: *mut *mut ::core::ffi::c_char,
-    pub fm: *mut fm_entry,
-    pub tx_tree: *mut avl_table,
-    pub gl_tree: *mut avl_table,
-}
+pub use crate::backend_types::fd_entry_;
+pub use crate::backend_types::fe_entry;
+pub use crate::backend_types::fm_entry;
+pub use crate::backend_types::intparm;
 pub type fd_entry = fd_entry_;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct ff_entry {
-    pub ff_name: *mut ::core::ffi::c_char,
-    pub ff_path: *mut ::core::ffi::c_char,
-}
+pub use crate::backend_types::ff_entry;
 pub type t1_line_entry = ::core::ffi::c_char;
 pub type byte = ::core::ffi::c_uchar;
 pub type t1_buf_entry = ::core::ffi::c_char;
@@ -342,23 +168,6 @@ pub const FONTNAME_CODE: ::core::ffi::c_int = 10 as ::core::ffi::c_int;
 pub const FONT_KEYS_NUM: ::core::ffi::c_int = FONTNAME_CODE + 1 as ::core::ffi::c_int;
 pub const F_SUBSETTED: ::core::ffi::c_int = 0x2 as ::core::ffi::c_int;
 pub const F_TRUETYPE: ::core::ffi::c_int = 0x20 as ::core::ffi::c_int;
-pub const _CACHED_RUNES: ::core::ffi::c_int = (1 as ::core::ffi::c_int) << 8 as ::core::ffi::c_int;
-pub const _CTYPE_D: ::core::ffi::c_long = 0x400 as ::core::ffi::c_long;
-unsafe fn __isctype(
-    mut _c: __darwin_ct_rune_t,
-    mut _f: ::core::ffi::c_ulong,
-) -> __darwin_ct_rune_t {
-    return if _c < 0 as ::core::ffi::c_int || _c >= _CACHED_RUNES {
-        0 as __darwin_ct_rune_t
-    } else {
-        (_DefaultRuneLocale.__runetype[_c as usize] as ::core::ffi::c_ulong & _f != 0)
-            as ::core::ffi::c_int
-    };
-}
-unsafe fn isdigit(mut _c: ::core::ffi::c_int) -> ::core::ffi::c_int {
-    return __isctype(_c as __darwin_ct_rune_t, _CTYPE_D as ::core::ffi::c_ulong)
-        as ::core::ffi::c_int;
-}
 static mut font_key: [key_entry; 11] = [
     key_entry {
         pdfname: b"Ascent\0" as *const u8 as *const ::core::ffi::c_char,
@@ -785,7 +594,7 @@ static mut t1_block_length: ::core::ffi::c_long = 0;
 static mut last_hexbyte: ::core::ffi::c_int = 0;
 static mut t1_file: *mut FILE = ::core::ptr::null::<FILE>() as *mut FILE;
 static mut enc_file: *mut FILE = ::core::ptr::null::<FILE>() as *mut FILE;
-unsafe extern "C" fn enc_getline() {
+unsafe fn enc_getline() {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut c: ::core::ffi::c_int = 0;
     loop {
@@ -875,8 +684,7 @@ unsafe extern "C" fn enc_getline() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn load_enc_file(
+pub unsafe fn load_enc_file(
     mut enc_name: *mut ::core::ffi::c_char,
 ) -> *mut *mut ::core::ffi::c_char {
     let mut buf: [::core::ffi::c_char; 4096] = [0; 4096];
@@ -1024,7 +832,7 @@ pub unsafe extern "C" fn load_enc_file(
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
     return glyph_names;
 }
-unsafe extern "C" fn t1_check_pfa() {
+unsafe fn t1_check_pfa() {
     let c: ::core::ffi::c_int = fast_fgetc(t1_file) as ::core::ffi::c_int;
     t1_pfa = (if c != 128 as ::core::ffi::c_int {
         true_0
@@ -1033,7 +841,7 @@ unsafe extern "C" fn t1_check_pfa() {
     }) as boolean;
     ungetc(c, t1_file);
 }
-unsafe extern "C" fn t1_getbyte() -> ::core::ffi::c_int {
+unsafe fn t1_getbyte() -> ::core::ffi::c_int {
     let mut c: ::core::ffi::c_int = fast_fgetc(t1_file);
     if t1_pfa != 0 {
         return c;
@@ -1064,7 +872,7 @@ unsafe extern "C" fn t1_getbyte() -> ::core::ffi::c_int {
     t1_block_length -= 1;
     return c;
 }
-unsafe extern "C" fn hexval(mut c: ::core::ffi::c_int) -> ::core::ffi::c_int {
+unsafe fn hexval(mut c: ::core::ffi::c_int) -> ::core::ffi::c_int {
     if c >= 'A' as i32 && c <= 'F' as i32 {
         return c - 'A' as i32 + 10 as ::core::ffi::c_int;
     } else if c >= 'a' as i32 && c <= 'f' as i32 {
@@ -1075,7 +883,7 @@ unsafe extern "C" fn hexval(mut c: ::core::ffi::c_int) -> ::core::ffi::c_int {
         return -(1 as ::core::ffi::c_int);
     };
 }
-unsafe extern "C" fn edecrypt(mut cipher: byte) -> byte {
+unsafe fn edecrypt(mut cipher: byte) -> byte {
     let mut plain: byte = 0;
     if t1_pfa != 0 {
         while cipher as ::core::ffi::c_int == 10 as ::core::ffi::c_int
@@ -1094,7 +902,7 @@ unsafe extern "C" fn edecrypt(mut cipher: byte) -> byte {
         .wrapping_add(t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
     return plain;
 }
-unsafe extern "C" fn cdecrypt(mut cipher: byte, mut cr: *mut ::core::ffi::c_ushort) -> byte {
+unsafe fn cdecrypt(mut cipher: byte, mut cr: *mut ::core::ffi::c_ushort) -> byte {
     let plain: byte = (cipher as ::core::ffi::c_int
         ^ *cr as ::core::ffi::c_int >> 8 as ::core::ffi::c_int) as byte;
     *cr = (cipher as ::core::ffi::c_int + *cr as ::core::ffi::c_int)
@@ -1102,7 +910,7 @@ unsafe extern "C" fn cdecrypt(mut cipher: byte, mut cr: *mut ::core::ffi::c_usho
         .wrapping_add(t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
     return plain;
 }
-unsafe extern "C" fn eencrypt(mut plain: byte) -> byte {
+unsafe fn eencrypt(mut plain: byte) -> byte {
     let cipher: byte = (plain as ::core::ffi::c_int
         ^ t1_er as ::core::ffi::c_int >> 8 as ::core::ffi::c_int) as byte;
     t1_er = (cipher as ::core::ffi::c_int + t1_er as ::core::ffi::c_int)
@@ -1110,7 +918,7 @@ unsafe extern "C" fn eencrypt(mut plain: byte) -> byte {
         .wrapping_add(t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
     return cipher;
 }
-unsafe extern "C" fn cencrypt(mut plain: byte, mut cr: *mut ::core::ffi::c_ushort) -> byte {
+unsafe fn cencrypt(mut plain: byte, mut cr: *mut ::core::ffi::c_ushort) -> byte {
     let cipher: byte = (plain as ::core::ffi::c_int
         ^ *cr as ::core::ffi::c_int >> 8 as ::core::ffi::c_int) as byte;
     *cr = (cipher as ::core::ffi::c_int + *cr as ::core::ffi::c_int)
@@ -1118,7 +926,7 @@ unsafe extern "C" fn cencrypt(mut plain: byte, mut cr: *mut ::core::ffi::c_ushor
         .wrapping_add(t1_c2 as ::core::ffi::c_int) as ::core::ffi::c_ushort;
     return cipher;
 }
-unsafe extern "C" fn eol(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+unsafe fn eol(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     let mut p: *mut ::core::ffi::c_char = strchr(s, 0 as ::core::ffi::c_int);
     if p.offset_from(s) as ::core::ffi::c_long > 1 as ::core::ffi::c_long
         && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
@@ -1131,7 +939,7 @@ unsafe extern "C" fn eol(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c
     }
     return p;
 }
-unsafe extern "C" fn t1_scan_num(
+unsafe fn t1_scan_num(
     mut p: *mut ::core::ffi::c_char,
     mut r: *mut *mut ::core::ffi::c_char,
 ) -> ::core::ffi::c_float {
@@ -1155,7 +963,7 @@ unsafe extern "C" fn t1_scan_num(
     }
     return parsed.value;
 }
-unsafe extern "C" fn str_suffix(
+unsafe fn str_suffix(
     mut begin_buf: *const ::core::ffi::c_char,
     mut end_buf: *const ::core::ffi::c_char,
     mut s: *const ::core::ffi::c_char,
@@ -1177,7 +985,7 @@ unsafe extern "C" fn str_suffix(
     }
     return (s2 < s) as ::core::ffi::c_int;
 }
-unsafe extern "C" fn t1_getline() {
+unsafe fn t1_getline() {
     let mut c: ::core::ffi::c_int = 0;
     let mut l: ::core::ffi::c_int = 0;
     let mut eexec_scan: ::core::ffi::c_int = 0;
@@ -1521,7 +1329,7 @@ unsafe extern "C" fn t1_getline() {
         t1_buf_ptr = t1_buf_array.offset(last_ptr_index as isize);
     }
 }
-unsafe extern "C" fn t1_putline() {
+unsafe fn t1_putline() {
     let mut p: *mut ::core::ffi::c_char = t1_line_array as *mut ::core::ffi::c_char;
     if t1_line_ptr.offset_from(t1_line_array) as ::core::ffi::c_long <= 1 as ::core::ffi::c_long {
         return;
@@ -1540,14 +1348,14 @@ unsafe extern "C" fn t1_putline() {
         }
     };
 }
-unsafe extern "C" fn t1_puts(mut s: *const ::core::ffi::c_char) {
+unsafe fn t1_puts(mut s: *const ::core::ffi::c_char) {
     if s != t1_line_array as *const ::core::ffi::c_char {
         strcpy(t1_line_array as *mut ::core::ffi::c_char, s);
     }
     t1_line_ptr = strchr(t1_line_array, 0 as ::core::ffi::c_int) as *mut t1_line_entry;
     t1_putline();
 }
-unsafe extern "C" fn t1_printf(
+unsafe fn t1_printf(
     mut fmt: *const ::core::ffi::c_char,
     mut code: ::core::ffi::c_int,
     mut glyph: *mut ::core::ffi::c_char,
@@ -1562,7 +1370,7 @@ unsafe extern "C" fn t1_printf(
     );
     t1_puts(t1_line_array);
 }
-unsafe extern "C" fn t1_init_params(mut open_name_prefix: *const ::core::ffi::c_char) {
+unsafe fn t1_init_params(mut open_name_prefix: *const ::core::ffi::c_char) {
     crate::utils::tex_printf_args(
         b"%s\0" as *const u8 as *const ::core::ffi::c_char,
         &[crate::utils::PrintfArg::from(open_name_prefix)],
@@ -1582,7 +1390,7 @@ unsafe extern "C" fn t1_init_params(mut open_name_prefix: *const ::core::ffi::c_
     t1_block_length = 0 as ::core::ffi::c_long;
     t1_check_pfa();
 }
-unsafe extern "C" fn t1_close_font_file(mut close_name_suffix: *const ::core::ffi::c_char) {
+unsafe fn t1_close_font_file(mut close_name_suffix: *const ::core::ffi::c_char) {
     crate::utils::tex_printf_args(
         b"%s\0" as *const u8 as *const ::core::ffi::c_char,
         &[crate::utils::PrintfArg::from(close_name_suffix)],
@@ -1590,7 +1398,7 @@ unsafe extern "C" fn t1_close_font_file(mut close_name_suffix: *const ::core::ff
     xfclose(t1_file, cur_file_name as const_string);
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-unsafe extern "C" fn t1_check_block_len(mut decrypt: boolean) {
+unsafe fn t1_check_block_len(mut decrypt: boolean) {
     let mut l: ::core::ffi::c_int = 0;
     let mut c: ::core::ffi::c_int = 0;
     if t1_block_length == 0 as ::core::ffi::c_long {
@@ -1610,7 +1418,7 @@ unsafe extern "C" fn t1_check_block_len(mut decrypt: boolean) {
         );
     }
 }
-unsafe extern "C" fn t1_start_eexec() {
+unsafe fn t1_start_eexec() {
     let mut i: ::core::ffi::c_int = 0;
     if !((*(*fd_cur).fm).type_0 as ::core::ffi::c_int & 0x1 as ::core::ffi::c_int
         != 0 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long
@@ -1641,7 +1449,7 @@ unsafe extern "C" fn t1_start_eexec() {
     t1_eexec_encrypt = true_0 as boolean;
     t1_putline();
 }
-unsafe extern "C" fn t1_stop_eexec() {
+unsafe fn t1_stop_eexec() {
     let mut c: ::core::ffi::c_int = 0;
     if !((*(*fd_cur).fm).type_0 as ::core::ffi::c_int & 0x1 as ::core::ffi::c_int
         != 0 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long
@@ -1676,7 +1484,7 @@ unsafe extern "C" fn t1_stop_eexec() {
     t1_cs = false_0 as boolean;
     t1_in_eexec = 2 as ::core::ffi::c_int;
 }
-unsafe extern "C" fn t1_modify_fm() {
+unsafe fn t1_modify_fm() {
     let mut a: [::core::ffi::c_float; 6] = [0.; 6];
     let mut i: ::core::ffi::c_int = 0;
     let mut c: ::core::ffi::c_int = 0;
@@ -1789,7 +1597,7 @@ unsafe extern "C" fn t1_modify_fm() {
     strcpy(t1_line_array as *mut ::core::ffi::c_char, t1_buf_array);
     t1_line_ptr = eol(t1_line_array as *mut ::core::ffi::c_char) as *mut t1_line_entry;
 }
-unsafe extern "C" fn t1_modify_italic() {
+unsafe fn t1_modify_italic() {
     let mut a: ::core::ffi::c_float = 0.;
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut r: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -1804,7 +1612,7 @@ unsafe extern "C" fn t1_modify_italic() {
     );
     a = t1_scan_num(p.offset(1 as ::core::ffi::c_int as isize), &raw mut r);
     a = (a as ::core::ffi::c_double
-        - atan((*(*fd_cur).fm).slant as ::core::ffi::c_double * 1E-3f64)
+        - libm::atan((*(*fd_cur).fm).slant as ::core::ffi::c_double * 1E-3f64)
             * (180 as ::core::ffi::c_int as ::core::ffi::c_double / M_PI))
         as ::core::ffi::c_float;
     crate::utils::sprintf_args(
@@ -1822,7 +1630,7 @@ unsafe extern "C" fn t1_modify_italic() {
         zround(a as ::core::ffi::c_double) as ::core::ffi::c_int;
     (*fd_cur).font_dim[ITALIC_ANGLE_CODE as usize].set = true_0 as boolean;
 }
-unsafe extern "C" fn t1_scan_keys() {
+unsafe fn t1_scan_keys() {
     let mut i: ::core::ffi::c_int = 0;
     let mut k: ::core::ffi::c_int = 0;
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -1994,7 +1802,7 @@ unsafe extern "C" fn t1_scan_keys() {
         t1_scan_num(p, ::core::ptr::null_mut::<*mut ::core::ffi::c_char>()) as ::core::ffi::c_int;
     (*fd_cur).font_dim[k as usize].set = true_0 as boolean;
 }
-unsafe extern "C" fn t1_scan_param() {
+unsafe fn t1_scan_param() {
     static mut lenIV: *const ::core::ffi::c_char =
         b"/lenIV\0" as *const u8 as *const ::core::ffi::c_char;
     if t1_scan == 0 || *t1_line_array as ::core::ffi::c_int != '/' as i32 {
@@ -2016,7 +1824,7 @@ unsafe extern "C" fn t1_scan_param() {
     }
     t1_scan_keys();
 }
-unsafe extern "C" fn copy_glyph_names(
+unsafe fn copy_glyph_names(
     mut glyph_names: *mut *mut ::core::ffi::c_char,
     mut a: ::core::ffi::c_int,
     mut b: ::core::ffi::c_int,
@@ -2068,7 +1876,7 @@ unsafe fn t1_copy_scan_word(bytes: &[u8]) {
     *t1_buf_array.add(bytes.len()) = 0;
 }
 
-unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
+unsafe fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
     let mut i: ::core::ffi::c_int = 0;
     let mut a: ::core::ffi::c_int = 0;
     let mut b: ::core::ffi::c_int = 0;
@@ -2331,7 +2139,7 @@ unsafe extern "C" fn t1_builtin_enc() -> *mut *mut ::core::ffi::c_char {
     }
     return glyph_names;
 }
-unsafe extern "C" fn t1_check_end() {
+unsafe fn t1_check_end() {
     if feof(t1_file) != 0 {
         return;
     }
@@ -2345,7 +2153,7 @@ unsafe extern "C" fn t1_check_end() {
         t1_putline();
     }
 }
-unsafe extern "C" fn t1_open_fontfile(mut open_name_prefix: *const ::core::ffi::c_char) -> boolean {
+unsafe fn t1_open_fontfile(mut open_name_prefix: *const ::core::ffi::c_char) -> boolean {
     let mut ff: *mut ff_entry = ::core::ptr::null_mut::<ff_entry>();
     ff = check_ff_exist(
         (*(*fd_cur).fm).ff_name,
@@ -2368,7 +2176,7 @@ unsafe extern "C" fn t1_open_fontfile(mut open_name_prefix: *const ::core::ffi::
     t1_init_params(open_name_prefix);
     return true_0;
 }
-unsafe extern "C" fn t1_include() {
+unsafe fn t1_include() {
     loop {
         t1_getline();
         t1_scan_param();
@@ -2416,7 +2224,7 @@ unsafe extern "C" fn t1_include() {
         0 as ::core::ffi::c_int
     }) as integer;
 }
-unsafe extern "C" fn check_cs_token_pair() -> *mut *const ::core::ffi::c_char {
+unsafe fn check_cs_token_pair() -> *mut *const ::core::ffi::c_char {
     let mut p: *mut *const ::core::ffi::c_char = &raw mut cs_token_pairs_list
         as *mut [*const ::core::ffi::c_char; 2]
         as *mut *const ::core::ffi::c_char;
@@ -2438,7 +2246,7 @@ unsafe extern "C" fn check_cs_token_pair() -> *mut *const ::core::ffi::c_char {
     }
     return ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
 }
-unsafe extern "C" fn cs_store(mut is_subr: boolean) {
+unsafe fn cs_store(mut is_subr: boolean) {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut ptr: *mut cs_entry = ::core::ptr::null_mut::<cs_entry>();
     let mut subr: ::core::ffi::c_int = 0;
@@ -2536,7 +2344,7 @@ static mut cc_tab: [cc_entry; 66] = [cc_entry {
     valid: 0,
 }; 66];
 static mut is_cc_init: boolean = false_0;
-unsafe extern "C" fn cc_init() {
+unsafe fn cc_init() {
     let mut i: ::core::ffi::c_int = 0;
     if is_cc_init != 0 {
         return;
@@ -2720,7 +2528,7 @@ unsafe extern "C" fn cc_init() {
         .valid = true_0 as boolean;
     is_cc_init = true_0 as boolean;
 }
-unsafe extern "C" fn cs_fail(
+unsafe fn cs_fail(
     mut cs_name: *const ::core::ffi::c_char,
     mut subr: ::core::ffi::c_int,
     mut fmt: *const ::core::ffi::c_char,
@@ -2754,7 +2562,7 @@ unsafe extern "C" fn cs_fail(
         );
     };
 }
-unsafe extern "C" fn append_cs_return(mut ptr: *mut cs_entry) {
+unsafe fn append_cs_return(mut ptr: *mut cs_entry) {
     let mut cr: ::core::ffi::c_ushort = 0;
     let mut i: ::core::ffi::c_int = 0;
     let mut p: *mut byte = ::core::ptr::null_mut::<byte>();
@@ -2826,10 +2634,7 @@ unsafe extern "C" fn append_cs_return(mut ptr: *mut cs_entry) {
     (*ptr).len = (*ptr).len.wrapping_add(1);
     (*ptr).cslen = (*ptr).cslen.wrapping_add(1);
 }
-unsafe extern "C" fn cs_mark(
-    mut cs_name: *const ::core::ffi::c_char,
-    mut subr: ::core::ffi::c_int,
-) {
+unsafe fn cs_mark(mut cs_name: *const ::core::ffi::c_char, mut subr: ::core::ffi::c_int) {
     let mut current_block: u64;
     let mut data: *mut byte = ::core::ptr::null_mut::<byte>();
     let mut i: ::core::ffi::c_int = 0;
@@ -3190,7 +2995,7 @@ unsafe extern "C" fn cs_mark(
         }
     };
 }
-unsafe extern "C" fn comp_t1_glyphs(
+unsafe fn comp_t1_glyphs(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -3200,16 +3005,14 @@ unsafe extern "C" fn comp_t1_glyphs(
         *(pb as *const *const ::core::ffi::c_char),
     );
 }
-unsafe extern "C" fn create_t1_glyph_tree(
-    mut glyph_names: *mut *mut ::core::ffi::c_char,
-) -> *mut avl_table {
+unsafe fn create_t1_glyph_tree(mut glyph_names: *mut *mut ::core::ffi::c_char) -> *mut avl_table {
     let mut i: ::core::ffi::c_int = 0;
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     static mut gl_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
     gl_tree = avl_create(
         Some(
             comp_t1_glyphs
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,
@@ -3256,7 +3059,7 @@ unsafe extern "C" fn create_t1_glyph_tree(
     }
     return gl_tree;
 }
-unsafe extern "C" fn destroy_t1_glyph_tree(mut gl_tree: *mut avl_table) {
+unsafe fn destroy_t1_glyph_tree(mut gl_tree: *mut avl_table) {
     if gl_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"destroy_t1_glyph_tree\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3268,7 +3071,7 @@ unsafe extern "C" fn destroy_t1_glyph_tree(mut gl_tree: *mut avl_table) {
     };
     avl_destroy(gl_tree, None);
 }
-unsafe extern "C" fn t1_subset_ascii_part() {
+unsafe fn t1_subset_ascii_part() {
     let mut j: ::core::ffi::c_int = 0;
     let mut p: *mut ::core::ffi::c_int = ::core::ptr::null_mut::<::core::ffi::c_int>();
     let mut glyph: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -3435,7 +3238,7 @@ unsafe extern "C" fn t1_subset_ascii_part() {
         }
     }
 }
-unsafe extern "C" fn cs_init() {
+unsafe fn cs_init() {
     cs_tab = ::core::ptr::null_mut::<cs_entry>();
     cs_ptr = cs_tab;
     cs_dict_end = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -3451,7 +3254,7 @@ unsafe extern "C" fn cs_init() {
     subr_size = subr_size_pos;
     subr_max = subr_size;
 }
-unsafe extern "C" fn init_cs_entry(mut cs: *mut cs_entry) {
+unsafe fn init_cs_entry(mut cs: *mut cs_entry) {
     (*cs).data = ::core::ptr::null_mut::<byte>();
     (*cs).name = ::core::ptr::null_mut::<::core::ffi::c_char>();
     (*cs).len = 0 as ::core::ffi::c_ushort;
@@ -3459,7 +3262,7 @@ unsafe extern "C" fn init_cs_entry(mut cs: *mut cs_entry) {
     (*cs).used = false_0 as boolean;
     (*cs).valid = false_0 as boolean;
 }
-unsafe extern "C" fn t1_read_subrs() {
+unsafe fn t1_read_subrs() {
     let mut i: ::core::ffi::c_int = 0;
     let mut s: ::core::ffi::c_int = 0;
     let mut ptr: *mut cs_entry = ::core::ptr::null_mut::<cs_entry>();
@@ -3661,7 +3464,7 @@ unsafe fn release_cs_entries(mut ptr: *mut cs_entry, end: *mut cs_entry) {
     }
 }
 
-unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
+unsafe fn t1_flush_cs(mut is_subr: boolean) {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut r: *mut byte = ::core::ptr::null_mut::<byte>();
     let mut return_cs: *mut byte = ::core::ptr::null_mut::<byte>();
@@ -3821,7 +3624,7 @@ unsafe extern "C" fn t1_flush_cs(mut is_subr: boolean) {
     }
     line_end = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-unsafe extern "C" fn t1_mark_glyphs() {
+unsafe fn t1_mark_glyphs() {
     let mut glyph: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
@@ -3880,7 +3683,7 @@ unsafe extern "C" fn t1_mark_glyphs() {
         }
     }
 }
-unsafe extern "C" fn t1_check_unusual_charstring() {
+unsafe fn t1_check_unusual_charstring() {
     let marker = strstr(
         t1_line_array,
         &raw mut charstringname as *mut ::core::ffi::c_char,
@@ -4008,7 +3811,7 @@ unsafe extern "C" fn t1_check_unusual_charstring() {
         t1_line_ptr = eol(t1_line_array as *mut ::core::ffi::c_char) as *mut t1_line_entry;
     }
 }
-unsafe extern "C" fn t1_subset_charstrings() {
+unsafe fn t1_subset_charstrings() {
     let mut ptr: *mut cs_entry = ::core::ptr::null_mut::<cs_entry>();
     t1_check_unusual_charstring();
     cs_size_pos = (strstr(
@@ -4059,7 +3862,7 @@ unsafe extern "C" fn t1_subset_charstrings() {
     }
     t1_flush_cs(false_0);
 }
-unsafe extern "C" fn t1_subset_end() {
+unsafe fn t1_subset_end() {
     if t1_synthetic != 0 {
         while strstr(
             t1_line_array,
@@ -4097,8 +3900,7 @@ unsafe extern "C" fn t1_subset_end() {
         0 as ::core::ffi::c_int
     }) as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn writet1(mut fd: *mut fd_entry) {
+pub unsafe fn writet1(mut fd: *mut fd_entry) {
     fd_cur = fd;
     if (*fd_cur).fm.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -4156,8 +3958,7 @@ pub unsafe extern "C" fn writet1(mut fd: *mut fd_entry) {
     t1_subset_end();
     t1_close_font_file(b">\0" as *const u8 as *const ::core::ffi::c_char);
 }
-#[no_mangle]
-pub unsafe extern "C" fn t1_free() {
+pub unsafe fn t1_free() {
     if !t1_line_array.is_null() {
         free(t1_line_array as *mut ::core::ffi::c_void);
     }

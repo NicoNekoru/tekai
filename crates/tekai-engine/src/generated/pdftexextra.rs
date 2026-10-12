@@ -1,4 +1,18 @@
+pub use crate::kpathsea::{
+    kpathsea_cnf_line_env_progname, kpse_absolute_p, kpse_find_file, kpse_in_name_ok,
+    kpse_maketex_option, kpse_readable_file, kpse_reset_program_name, kpse_set_program_enabled,
+    kpse_set_program_name, kpse_var_value,
+};
+pub use crate::md5::{md5_append, md5_finish, md5_init};
+pub use crate::openclose::{recorder_record_input, recorder_record_output};
+pub use crate::support::{
+    concat, concat3, dir_p, find_suffix, printversionandexit, usagehelp, xgetcwd, xputenv,
+};
+pub use crate::utils::{initversionstring, maketexstring};
+
 use crate::byte_string::{memcpy, strcat, strchr, strcmp, strcpy, strlen, strncmp, strncpy};
+use crate::environment::getenv;
+use crate::stdio::system;
 
 pub use crate::core_types::{
     AsciiCode as ASCIIcode, Boolean as boolean, CharUsedArray as charusedarray,
@@ -37,6 +51,8 @@ use crate::stdio::{
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc, xstrdup};
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
     fn access(_: *const ::core::ffi::c_char, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn close(_: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -46,59 +62,13 @@ extern "C" {
         __buf: *const ::core::ffi::c_void,
         __nbyte: size_t,
     ) -> ssize_t;
-    fn signal(
-        _: ::core::ffi::c_int,
-        _: Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()>,
-    ) -> Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()>;
-    fn abort() -> !;
-    fn getenv(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn system(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn strtok(
-        __str: *mut ::core::ffi::c_char,
-        __sep: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn __error() -> *mut ::core::ffi::c_int;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
     static mut kpse_def_inst: kpathsea_instance;
     static mut kpse_def: kpathsea;
-    fn concat(s1: const_string, s2: const_string) -> string;
-    fn concat3(_: const_string, _: const_string, _: const_string) -> string;
-    fn find_suffix(name: const_string) -> const_string;
-    fn xputenv(var: const_string, value: const_string);
-    fn xgetcwd() -> string;
-    fn dir_p(fn_0: string) -> boolean;
-    fn kpse_set_program_name(argv0: const_string, progname: const_string);
     fn fcntl(_: ::core::ffi::c_int, _: ::core::ffi::c_int, ...) -> ::core::ffi::c_int;
-    fn usagehelp(message: *mut const_string, bug_email: const_string);
-    fn kpse_set_program_enabled(fmt: kpse_file_format_type, value: boolean, level: kpse_src_type);
-    fn kpse_maketex_option(fmtname: const_string, value: boolean);
-    fn kpse_find_file(
-        name: const_string,
-        format: kpse_file_format_type,
-        must_exist: boolean,
-    ) -> string;
-    fn kpse_in_name_ok(fname: const_string) -> boolean;
-    fn kpse_reset_program_name(progname: const_string);
-    fn kpse_var_value(var: const_string) -> string;
-    fn recorder_record_input(_: const_string);
-    fn recorder_record_output(_: const_string);
     static mut fullnameoffile: string;
     static mut recorder_enabled: boolean;
     static mut output_directory: string;
-    fn printversionandexit(_: const_string, _: const_string, _: const_string, _: const_string);
-    static mut _DefaultRuneLocale: _RuneLocale;
-    fn __maskrune(_: __darwin_ct_rune_t, _: ::core::ffi::c_ulong) -> ::core::ffi::c_int;
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn maketexstring(_: *const ::core::ffi::c_char) -> strnumber;
-    fn initversionstring(versions: *mut *mut ::core::ffi::c_char);
-    fn kpathsea_cnf_line_env_progname(kpse: kpathsea, l_0: string);
-    fn kpse_readable_file(name: string) -> string;
-    fn kpse_absolute_p(filename: const_string, relative_ok: boolean) -> boolean;
     fn gmtime(_: *const time_t) -> *mut tm;
     fn localtime(_: *const time_t) -> *mut tm;
     fn strftime(
@@ -122,9 +92,6 @@ extern "C" {
         link_name = "stat$INODE64"
     )]
     fn stat(_: *const ::core::ffi::c_char, _: *mut stat) -> ::core::ffi::c_int;
-    fn md5_init(pms: *mut md5_state_t);
-    fn md5_append(pms: *mut md5_state_t, data: *const md5_byte_t, nbytes: ::core::ffi::c_int);
-    fn md5_finish(pms: *mut md5_state_t, digest: *mut md5_byte_t);
 }
 
 #[inline(always)]
@@ -137,10 +104,8 @@ pub type __int32_t = i32;
 pub type __uint32_t = u32;
 pub type __int64_t = i64;
 pub type __uint64_t = u64;
-pub type __darwin_ct_rune_t = ::core::ffi::c_int;
 pub type __darwin_size_t = usize;
 pub type __darwin_wchar_t = ::libc::wchar_t;
-pub type __darwin_rune_t = __darwin_wchar_t;
 pub type __darwin_socklen_t = __uint32_t;
 pub type __darwin_ssize_t = isize;
 pub type __darwin_time_t = ::core::ffi::c_long;
@@ -181,49 +146,17 @@ pub struct timeval {
 pub type string = *mut ::core::ffi::c_char;
 pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
-pub type p_record_input = Option<unsafe extern "C" fn(const_string) -> ()>;
-pub type p_record_output = Option<unsafe extern "C" fn(const_string) -> ()>;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct str_llist_elt {
-    pub str_0: string,
-    pub moved: boolean,
-    pub next: *mut str_llist_elt,
-}
-pub type str_llist_type = *mut str_llist_elt;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct cache_entry {
-    pub key: const_string,
-    pub value: *mut str_llist_type,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct expansion_type {
-    pub var: const_string,
-    pub expanding: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct hash_element_struct {
-    pub key: const_string,
-    pub value: const_string,
-    pub next: *mut hash_element_struct,
-}
-pub type hash_element_type = hash_element_struct;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct hash_table_type {
-    pub buckets: *mut *mut hash_element_type,
-    pub size: ::core::ffi::c_uint,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct str_list_type {
-    pub length: ::core::ffi::c_uint,
-    pub list: *mut string,
-}
-pub type kpse_file_format_type = ::core::ffi::c_uint;
+pub use crate::kpathsea_types::cache_entry;
+pub use crate::kpathsea_types::expansion_type;
+pub use crate::kpathsea_types::hash_element_struct;
+pub use crate::kpathsea_types::hash_element_type;
+pub use crate::kpathsea_types::hash_table_type;
+pub use crate::kpathsea_types::kpse_file_format_type;
+pub use crate::kpathsea_types::p_record_input;
+pub use crate::kpathsea_types::p_record_output;
+pub use crate::kpathsea_types::str_list_type;
+pub use crate::kpathsea_types::str_llist_elt;
+pub use crate::kpathsea_types::str_llist_type;
 pub const kpse_last_format: kpse_file_format_type = 59;
 pub const kpse_bltxml_format: kpse_file_format_type = 58;
 pub const kpse_ris_format: kpse_file_format_type = 57;
@@ -284,7 +217,7 @@ pub const kpse_tfm_format: kpse_file_format_type = 3;
 pub const kpse_any_glyph_format: kpse_file_format_type = 2;
 pub const kpse_pk_format: kpse_file_format_type = 1;
 pub const kpse_gf_format: kpse_file_format_type = 0;
-pub type kpse_src_type = ::core::ffi::c_uint;
+pub use crate::kpathsea_types::kpse_src_type;
 pub const kpse_src_cmdline: kpse_src_type = 6;
 pub const kpse_src_x: kpse_src_type = 5;
 pub const kpse_src_env: kpse_src_type = 4;
@@ -292,118 +225,9 @@ pub const kpse_src_client_cnf: kpse_src_type = 3;
 pub const kpse_src_texmf_cnf: kpse_src_type = 2;
 pub const kpse_src_compile: kpse_src_type = 1;
 pub const kpse_src_implicit: kpse_src_type = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct kpse_format_info_type {
-    pub type_0: const_string,
-    pub path: string,
-    pub raw_path: const_string,
-    pub path_source: const_string,
-    pub override_path: const_string,
-    pub client_path: const_string,
-    pub cnf_path: const_string,
-    pub default_path: const_string,
-    pub suffix: *mut const_string,
-    pub alt_suffix: *mut const_string,
-    pub suffix_search_only: boolean,
-    pub program: const_string,
-    pub argc: ::core::ffi::c_int,
-    pub argv: *mut const_string,
-    pub program_enabled_p: boolean,
-    pub program_enable_level: kpse_src_type,
-    pub binmode: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct kpathsea_instance {
-    pub record_input: p_record_input,
-    pub record_output: p_record_output,
-    pub cnf_hash: hash_table_type,
-    pub doing_cnf_init: boolean,
-    pub db: hash_table_type,
-    pub alias_db: hash_table_type,
-    pub db_dir_list: str_list_type,
-    pub debug: ::core::ffi::c_uint,
-    pub link_table: hash_table_type,
-    pub the_cache: *mut cache_entry,
-    pub cache_length: ::core::ffi::c_uint,
-    pub map: hash_table_type,
-    pub map_path: const_string,
-    pub debug_hash_lookup_int: boolean,
-    pub elt: string,
-    pub elt_alloc: ::core::ffi::c_uint,
-    pub path: const_string,
-    pub followup_search: boolean,
-    pub log_file: *mut FILE,
-    pub log_opened: boolean,
-    pub invocation_name: string,
-    pub invocation_short_name: string,
-    pub program_name: string,
-    pub ll_verbose: ::core::ffi::c_int,
-    pub fallback_font: const_string,
-    pub fallback_resolutions_string: const_string,
-    pub fallback_resolutions: *mut ::core::ffi::c_uint,
-    pub format_info: [kpse_format_info_type; 59],
-    pub make_tex_discard_errors: boolean,
-    pub missfont: *mut FILE,
-    pub expansions: *mut expansion_type,
-    pub expansion_len: ::core::ffi::c_uint,
-    pub saved_env: *mut *mut ::core::ffi::c_char,
-    pub saved_count: ::core::ffi::c_int,
-}
-pub type kpathsea = *mut kpathsea_instance;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneEntry {
-    pub __min: __darwin_rune_t,
-    pub __max: __darwin_rune_t,
-    pub __map: __darwin_rune_t,
-    pub __types: *mut __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneRange {
-    pub __nranges: ::core::ffi::c_int,
-    pub __ranges: *mut _RuneEntry,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneCharClass {
-    pub __name: [::core::ffi::c_char; 14],
-    pub __mask: __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneLocale {
-    pub __magic: [::core::ffi::c_char; 8],
-    pub __encoding: [::core::ffi::c_char; 32],
-    pub __sgetrune: Option<
-        unsafe extern "C" fn(
-            *const ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *const ::core::ffi::c_char,
-        ) -> __darwin_rune_t,
-    >,
-    pub __sputrune: Option<
-        unsafe extern "C" fn(
-            __darwin_rune_t,
-            *mut ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *mut ::core::ffi::c_char,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub __invalid_rune: __darwin_rune_t,
-    pub __runetype: [__uint32_t; 256],
-    pub __maplower: [__darwin_rune_t; 256],
-    pub __mapupper: [__darwin_rune_t; 256],
-    pub __runetype_ext: _RuneRange,
-    pub __maplower_ext: _RuneRange,
-    pub __mapupper_ext: _RuneRange,
-    pub __variable: *mut ::core::ffi::c_void,
-    pub __variable_len: ::core::ffi::c_int,
-    pub __ncharclasses: ::core::ffi::c_int,
-    pub __charclasses: *mut _RuneCharClass,
-}
+pub use crate::kpathsea_types::kpathsea;
+pub use crate::kpathsea_types::kpathsea_instance;
+pub use crate::kpathsea_types::kpse_format_info_type;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct tm {
@@ -443,13 +267,7 @@ pub struct stat {
 }
 pub type md5_byte_t = ::core::ffi::c_uchar;
 pub type md5_state_t = md5_state_s;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct md5_state_s {
-    pub count: [md5_word_t; 2],
-    pub abcd: [md5_word_t; 4],
-    pub buf: [md5_byte_t; 64],
-}
+pub use crate::md5::Md5State as md5_state_s;
 pub type md5_word_t = ::core::ffi::c_uint;
 pub type socklen_t = __darwin_socklen_t;
 #[derive(Copy, Clone)]
@@ -504,21 +322,6 @@ pub const F_SETFL: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
 pub const DIR_SEP: ::core::ffi::c_int = '/' as i32;
 pub const DIR_SEP_STRING: [::core::ffi::c_char; 2] =
     unsafe { ::core::mem::transmute::<[u8; 2], [::core::ffi::c_char; 2]>(*b"/\0") };
-pub const _CTYPE_S: ::core::ffi::c_long = 0x4000 as ::core::ffi::c_long;
-unsafe fn isascii(mut _c: ::core::ffi::c_int) -> ::core::ffi::c_int {
-    return (_c & !(0x7f as ::core::ffi::c_int) == 0 as ::core::ffi::c_int) as ::core::ffi::c_int;
-}
-unsafe fn __istype(mut _c: __darwin_ct_rune_t, mut _f: ::core::ffi::c_ulong) -> ::core::ffi::c_int {
-    return if isascii(_c as ::core::ffi::c_int) != 0 {
-        (_DefaultRuneLocale.__runetype[_c as usize] as ::core::ffi::c_ulong & _f != 0)
-            as ::core::ffi::c_int
-    } else {
-        (__maskrune(_c, _f) != 0) as ::core::ffi::c_int
-    };
-}
-unsafe fn isspace(mut _c: ::core::ffi::c_int) -> ::core::ffi::c_int {
-    return __istype(_c as __darwin_ct_rune_t, _CTYPE_S as ::core::ffi::c_ulong);
-}
 pub const TEXMFENGINENAME: [::core::ffi::c_char; 7] =
     unsafe { ::core::mem::transmute::<[u8; 7], [::core::ffi::c_char; 7]>(*b"pdftex\0") };
 #[no_mangle]
@@ -2115,13 +1918,13 @@ pub static mut PDFTEXHELP: [const_string; 57] = [
 ];
 pub const edit_var: [::core::ffi::c_char; 8] =
     unsafe { ::core::mem::transmute::<[u8; 8], [::core::ffi::c_char; 8]>(*b"TEXEDIT\0") };
-unsafe extern "C" fn Isspace(mut c_0: ::core::ffi::c_char) -> ::core::ffi::c_int {
+unsafe fn Isspace(mut c_0: ::core::ffi::c_char) -> ::core::ffi::c_int {
     return (c_0 as ::core::ffi::c_int == ' ' as i32 || c_0 as ::core::ffi::c_int == '\t' as i32)
         as ::core::ffi::c_int;
 }
 static mut cmdlist: *mut *mut ::core::ffi::c_char =
     ::core::ptr::null::<*mut ::core::ffi::c_char>() as *mut *mut ::core::ffi::c_char;
-unsafe extern "C" fn mk_shellcmdlist(mut v: *mut ::core::ffi::c_char) {
+unsafe fn mk_shellcmdlist(mut v: *mut ::core::ffi::c_char) {
     let mut p: *mut *mut ::core::ffi::c_char = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     let mut q: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut r: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -2161,7 +1964,7 @@ unsafe extern "C" fn mk_shellcmdlist(mut v: *mut ::core::ffi::c_char) {
     }
     *p = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-unsafe extern "C" fn init_shell_escape() {
+unsafe fn init_shell_escape() {
     if shellenabledp < 0 as ::core::ffi::c_int {
         shellenabledp = 0 as ::core::ffi::c_int;
     } else {
@@ -2194,7 +1997,7 @@ unsafe extern "C" fn init_shell_escape() {
     };
 }
 pub const QUOTE: ::core::ffi::c_int = '\'' as i32;
-unsafe extern "C" fn shell_cmd_is_allowed(
+unsafe fn shell_cmd_is_allowed(
     mut cmd: *const ::core::ffi::c_char,
     mut safecmd: *mut *mut ::core::ffi::c_char,
     mut cmdname: *mut *mut ::core::ffi::c_char,
@@ -2326,8 +2129,7 @@ unsafe extern "C" fn shell_cmd_is_allowed(
     }
     return allow;
 }
-#[no_mangle]
-pub unsafe extern "C" fn runsystem(mut cmd: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+pub unsafe fn runsystem(mut cmd: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let mut allow: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     let mut safecmd: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut cmdname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -2370,7 +2172,7 @@ pub unsafe extern "C" fn runsystem(mut cmd: *const ::core::ffi::c_char) -> ::cor
     }
     return allow;
 }
-unsafe extern "C" fn runpopen(
+unsafe fn runpopen(
     mut cmd: *mut ::core::ffi::c_char,
     mut mode: *const ::core::ffi::c_char,
 ) -> *mut FILE {
@@ -2431,8 +2233,7 @@ static mut last_source_name: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 static mut last_lineno: ::core::ffi::c_int = 0;
 static mut srcspecialsoption: boolean = false_0;
-#[no_mangle]
-pub unsafe extern "C" fn texmf_yesno(mut var: const_string) -> boolean {
+pub unsafe fn texmf_yesno(mut var: const_string) -> boolean {
     let mut value: string = kpse_var_value(var);
     return (!value.is_null()
         && (*value as ::core::ffi::c_int == 't' as i32
@@ -2442,16 +2243,15 @@ pub unsafe extern "C" fn texmf_yesno(mut var: const_string) -> boolean {
 #[no_mangle]
 pub static mut ptexbanner: *const ::core::ffi::c_char =
     b"This is pdfTeX, Version 3.141592653-2.6-1.40.29\0" as *const u8 as *const ::core::ffi::c_char;
-#[no_mangle]
-pub unsafe extern "C" fn maininit(mut ac: ::core::ffi::c_int, mut av: *mut string) {
+pub unsafe fn maininit(mut ac: ::core::ffi::c_int, mut av: *mut string) {
     let mut main_input_file: string = ::core::ptr::null_mut::<::core::ffi::c_char>();
     argc = ac;
     argv = av as *mut *mut ::core::ffi::c_char;
     interactionoption = 4 as ::core::ffi::c_uchar;
     kpse_def_inst.record_input =
-        Some(recorder_record_input as unsafe extern "C" fn(const_string) -> ()) as p_record_input;
+        Some(recorder_record_input as unsafe fn(const_string) -> ()) as p_record_input;
     kpse_def_inst.record_output =
-        Some(recorder_record_output as unsafe extern "C" fn(const_string) -> ()) as p_record_output;
+        Some(recorder_record_output as unsafe fn(const_string) -> ()) as p_record_output;
     parse_options(ac, av);
     if user_progname.is_null() {
         user_progname = dump_name;
@@ -2603,7 +2403,7 @@ pub unsafe extern "C" fn maininit(mut ac: ::core::ffi::c_int, mut av: *mut strin
             strlen(TEXformatdefault.offset(1 as ::core::ffi::c_int as isize)
                 as *const ::core::ffi::c_char) as integer;
     } else {
-        abort();
+        crate::termination::abort();
     }
     kpse_set_program_enabled(kpse_tfm_format, MAKE_TEX_TFM_BY_DEFAULT, kpse_src_compile);
     kpse_set_program_enabled(kpse_tex_format, MAKE_TEX_TEX_BY_DEFAULT, kpse_src_compile);
@@ -2614,20 +2414,7 @@ pub unsafe extern "C" fn maininit(mut ac: ::core::ffi::c_int, mut av: *mut strin
             as *mut ::core::ffi::c_char;
     }
 }
-unsafe fn main_0(mut ac: ::core::ffi::c_int, mut av: *mut string) -> ::core::ffi::c_int {
-    let arguments = (0..ac)
-        .map(|index| CStr::from_ptr(*av.add(index as usize)).to_bytes().to_vec())
-        .collect();
-    match crate::run_from_args(arguments) {
-        Ok(completion) => completion.exit_code(),
-        Err(error) => {
-            eprintln!("{error}");
-            1
-        }
-    }
-}
-#[no_mangle]
-pub unsafe extern "C" fn topenin() {
+pub unsafe fn topenin() {
     let mut i: ::core::ffi::c_int = 0;
     *buffer.offset(first as isize) = 0 as ASCIIcode;
     if optind < argc {
@@ -2681,7 +2468,7 @@ pub const IPC_SERVER_CMD: [::core::ffi::c_char; 21] = unsafe {
 };
 static mut ipc_addr: *mut sockaddr = ::core::ptr::null::<sockaddr>() as *mut sockaddr;
 static mut ipc_addr_len: ::core::ffi::c_int = 0;
-unsafe extern "C" fn ipc_make_name() -> ::core::ffi::c_int {
+unsafe fn ipc_make_name() -> ::core::ffi::c_int {
     if ipc_addr_len == 0 as ::core::ffi::c_int {
         let mut s: string = getenv(b"HOME\0" as *const u8 as *const ::core::ffi::c_char) as string;
         if !s.is_null() {
@@ -2699,10 +2486,10 @@ unsafe extern "C" fn ipc_make_name() -> ::core::ffi::c_int {
     return ipc_addr_len;
 }
 static mut sock: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
-unsafe extern "C" fn ipc_is_open() -> ::core::ffi::c_int {
+unsafe fn ipc_is_open() -> ::core::ffi::c_int {
     return (sock != -(1 as ::core::ffi::c_int)) as ::core::ffi::c_int;
 }
-unsafe extern "C" fn ipc_open_out() {
+unsafe fn ipc_open_out() {
     if sock != -(1 as ::core::ffi::c_int) {
         return;
     }
@@ -2720,13 +2507,13 @@ unsafe extern "C" fn ipc_open_out() {
         }
     }
 }
-unsafe extern "C" fn ipc_close_out() {
+unsafe fn ipc_close_out() {
     if ipc_is_open() != 0 {
         close(sock);
         sock = -(1 as ::core::ffi::c_int);
     }
 }
-unsafe extern "C" fn ipc_snd(
+unsafe fn ipc_snd(
     mut n: ::core::ffi::c_int,
     mut is_eof: ::core::ffi::c_int,
     mut data: *mut ::core::ffi::c_char,
@@ -2758,8 +2545,7 @@ unsafe extern "C" fn ipc_snd(
         ipc_close_out();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn ipcpage(mut is_eof: ::core::ffi::c_int) {
+pub unsafe fn ipcpage(mut is_eof: ::core::ffi::c_int) {
     static mut begun: boolean = false_0;
     let mut len: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
     let mut p: string = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -2797,7 +2583,7 @@ pub unsafe extern "C" fn ipcpage(mut is_eof: ::core::ffi::c_int) {
         free(p as *mut ::core::ffi::c_void);
     }
 }
-unsafe extern "C" fn tcx_get_num(
+unsafe fn tcx_get_num(
     mut upb: ::core::ffi::c_int,
     mut line_count: ::core::ffi::c_uint,
     mut start: string,
@@ -2821,7 +2607,7 @@ unsafe extern "C" fn tcx_get_num(
         let mut p: string = start;
         while *p as ::core::ffi::c_int != 0
             && (*p as ::core::ffi::c_uint <= 127 as ::core::ffi::c_uint
-                && isspace(*p as ::core::ffi::c_uchar as ::core::ffi::c_int) != 0)
+                && crate::integer_parse::is_c_whitespace(*p as u8))
         {
             p = p.offset(1);
         }
@@ -2854,8 +2640,7 @@ unsafe extern "C" fn tcx_get_num(
     }
     return num;
 }
-#[no_mangle]
-pub unsafe extern "C" fn readtcxfile() {
+pub unsafe fn readtcxfile() {
     let mut orig_filename: string = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if find_suffix(translate_filename as const_string).is_null() {
         translate_filename = concat(
@@ -2942,7 +2727,7 @@ pub unsafe extern "C" fn readtcxfile() {
         fflush(crate::stdio::stderr());
     };
 }
-unsafe extern "C" fn normalize_quotes(mut name: const_string, mut mesg: const_string) -> string {
+unsafe fn normalize_quotes(mut name: const_string, mut mesg: const_string) -> string {
     let mut quoted: boolean = false_0;
     let mut must_quote: boolean = (strchr(name as *const ::core::ffi::c_char, ' ' as i32)
         != NULL as *mut ::core::ffi::c_char)
@@ -2987,7 +2772,7 @@ unsafe extern "C" fn normalize_quotes(mut name: const_string, mut mesg: const_st
     }
     return ret;
 }
-unsafe extern "C" fn get_input_file_name() -> string {
+unsafe fn get_input_file_name() -> string {
     let mut input_file_name: string = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if !(*argv.offset(optind as isize)).is_null()
         && *(*argv.offset(optind as isize)).offset(0 as ::core::ffi::c_int as isize)
@@ -3258,103 +3043,53 @@ unsafe fn parse_options(argc_0: ::core::ffi::c_int, argv_0: *mut string) {
                 as string;
     }
 }
-unsafe extern "C" fn parse_src_specials_option(mut opt_list: const_string) {
-    let mut toklist: *mut ::core::ffi::c_char = xstrdup(opt_list) as *mut ::core::ffi::c_char;
-    let mut tok: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    insertsrcspecialauto = false_0 as boolean;
-    tok = strtok(toklist, b", \0" as *const u8 as *const ::core::ffi::c_char);
-    while !tok.is_null() {
-        if strcmp(
-            tok,
-            b"everypar\0" as *const u8 as *const ::core::ffi::c_char,
-        ) == 0 as ::core::ffi::c_int
-            || strcmp(tok, b"par\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-            || strcmp(tok, b"auto\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-        {
-            insertsrcspecialauto = true_0 as boolean;
-            insertsrcspecialeverypar = true_0 as boolean;
-        } else if strcmp(
-            tok,
-            b"everyparend\0" as *const u8 as *const ::core::ffi::c_char,
-        ) == 0 as ::core::ffi::c_int
-            || strcmp(tok, b"parend\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-        {
-            insertsrcspecialeveryparend = true_0 as boolean;
-        } else if strcmp(tok, b"everycr\0" as *const u8 as *const ::core::ffi::c_char)
-            == 0 as ::core::ffi::c_int
-            || strcmp(tok, b"cr\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-        {
-            insertsrcspecialeverycr = true_0 as boolean;
-        } else if strcmp(
-            tok,
-            b"everymath\0" as *const u8 as *const ::core::ffi::c_char,
-        ) == 0 as ::core::ffi::c_int
-            || strcmp(tok, b"math\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-        {
-            insertsrcspecialeverymath = true_0 as boolean;
-        } else if strcmp(
-            tok,
-            b"everyhbox\0" as *const u8 as *const ::core::ffi::c_char,
-        ) == 0 as ::core::ffi::c_int
-            || strcmp(tok, b"hbox\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-        {
-            insertsrcspecialeveryhbox = true_0 as boolean;
-        } else if strcmp(
-            tok,
-            b"everyvbox\0" as *const u8 as *const ::core::ffi::c_char,
-        ) == 0 as ::core::ffi::c_int
-            || strcmp(tok, b"vbox\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-        {
-            insertsrcspecialeveryvbox = true_0 as boolean;
-        } else if strcmp(
-            tok,
-            b"everydisplay\0" as *const u8 as *const ::core::ffi::c_char,
-        ) == 0 as ::core::ffi::c_int
-            || strcmp(tok, b"display\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-        {
-            insertsrcspecialeverydisplay = true_0 as boolean;
-        } else if strcmp(tok, b"none\0" as *const u8 as *const ::core::ffi::c_char)
-            == 0 as ::core::ffi::c_int
-        {
-            insertsrcspecialeverydisplay = false_0 as boolean;
-            insertsrcspecialeveryvbox = insertsrcspecialeverydisplay;
-            insertsrcspecialeveryhbox = insertsrcspecialeveryvbox;
-            insertsrcspecialeverymath = insertsrcspecialeveryhbox;
-            insertsrcspecialeverycr = insertsrcspecialeverymath;
-            insertsrcspecialeveryparend = insertsrcspecialeverycr;
-            insertsrcspecialeverypar = insertsrcspecialeveryparend;
-            insertsrcspecialauto = insertsrcspecialeverypar;
-        } else {
-            fputs(
-                b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                crate::stdio::stderr(),
-            );
-            crate::stdio::fprintf_args(
-                crate::stdio::stderr(),
-                b"Ignoring unknown argument `%s' to --src-specials\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &[crate::utils::PrintfArg::from(tok)],
-            );
-            fputs(
-                b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                crate::stdio::stderr(),
-            );
-            fflush(crate::stdio::stderr());
+unsafe fn parse_src_specials_option(opt_list: const_string) {
+    let bytes = CStr::from_ptr(opt_list).to_bytes();
+    insertsrcspecialauto = false_0;
+    for token in crate::byte_string::Tokenizer::new(bytes, b", ") {
+        match token {
+            b"everypar" | b"par" | b"auto" => {
+                insertsrcspecialauto = true_0;
+                insertsrcspecialeverypar = true_0;
+            }
+            b"everyparend" | b"parend" => insertsrcspecialeveryparend = true_0,
+            b"everycr" | b"cr" => insertsrcspecialeverycr = true_0,
+            b"everymath" | b"math" => insertsrcspecialeverymath = true_0,
+            b"everyhbox" | b"hbox" => insertsrcspecialeveryhbox = true_0,
+            b"everyvbox" | b"vbox" => insertsrcspecialeveryvbox = true_0,
+            b"everydisplay" | b"display" => insertsrcspecialeverydisplay = true_0,
+            b"none" => {
+                insertsrcspecialeverydisplay = false_0;
+                insertsrcspecialeveryvbox = false_0;
+                insertsrcspecialeveryhbox = false_0;
+                insertsrcspecialeverymath = false_0;
+                insertsrcspecialeverycr = false_0;
+                insertsrcspecialeveryparend = false_0;
+                insertsrcspecialeverypar = false_0;
+                insertsrcspecialauto = false_0;
+            }
+            _ => {
+                // The tokenizer stops at NUL. Only this synchronous legacy
+                // diagnostic needs a temporary terminated copy of the token.
+                let token = std::ffi::CString::new(token).expect("token excludes NUL");
+                fputs(
+                    b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
+                    crate::stdio::stderr(),
+                );
+                crate::stdio::fprintf_args(
+                    crate::stdio::stderr(),
+                    b"Ignoring unknown argument `%s' to --src-specials\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[crate::utils::PrintfArg::from(token.as_ptr())],
+                );
+                fputs(
+                    b".\n\0" as *const u8 as *const ::core::ffi::c_char,
+                    crate::stdio::stderr(),
+                );
+                fflush(crate::stdio::stderr());
+            }
         }
-        tok = strtok(
-            ::core::ptr::null_mut::<::core::ffi::c_char>(),
-            b", \0" as *const u8 as *const ::core::ffi::c_char,
-        );
     }
-    free(toklist as *mut ::core::ffi::c_void);
     srcspecialsp = insertsrcspecialauto
         | insertsrcspecialeverypar
         | insertsrcspecialeveryparend
@@ -3363,9 +3098,9 @@ unsafe extern "C" fn parse_src_specials_option(mut opt_list: const_string) {
         | insertsrcspecialeveryhbox
         | insertsrcspecialeveryvbox
         | insertsrcspecialeverydisplay;
-    srcspecialsoption = true_0 as boolean;
+    srcspecialsoption = true_0;
 }
-unsafe extern "C" fn parse_first_line(mut filename: const_string) {
+unsafe fn parse_first_line(mut filename: const_string) {
     let mut f_0: *mut FILE = if !filename.is_null() {
         fopen(
             filename as *const ::core::ffi::c_char,
@@ -3629,19 +3364,11 @@ pub(crate) unsafe fn close_file_or_pipe(mut f_0: *mut FILE) {
     }
     close_file(f_0);
 }
-unsafe extern "C" fn catch_interrupt(mut arg: ::core::ffi::c_int) {
-    interrupt = 1 as ::core::ffi::c_int as integer;
-    signal(
-        SIGINT,
-        Some(catch_interrupt as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
-    );
-}
 static mut start_time_set: boolean = false_0;
 static mut start_time: time_t = 0 as time_t;
 static mut SOURCE_DATE_EPOCH_set: boolean = false_0;
 static mut FORCE_SOURCE_DATE_set: boolean = false_0;
-#[no_mangle]
-pub unsafe extern "C" fn init_start_time() {
+pub unsafe fn init_start_time() {
     let mut source_date_epoch: *mut ::core::ffi::c_char =
         ::core::ptr::null_mut::<::core::ffi::c_char>();
     if start_time_set == 0 {
@@ -3671,8 +3398,7 @@ pub unsafe extern "C" fn init_start_time() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn get_date_and_time(
+pub unsafe fn get_date_and_time(
     mut minutes: *mut integer,
     mut day: *mut integer,
     mut month: *mut integer,
@@ -3725,20 +3451,8 @@ pub unsafe extern "C" fn get_date_and_time(
     *day = (*tmptr).tm_mday as integer;
     *month = ((*tmptr).tm_mon + 1 as ::core::ffi::c_int) as integer;
     *year = ((*tmptr).tm_year + 1900 as ::core::ffi::c_int) as integer;
-    let mut old_handler: Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()> = None;
-    old_handler = signal(
-        SIGINT,
-        Some(catch_interrupt as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
-    );
-    if old_handler.is_some() {
-        signal(SIGINT, old_handler);
-    }
 }
-#[no_mangle]
-pub unsafe extern "C" fn get_seconds_and_micros(
-    mut seconds: *mut integer,
-    mut micros: *mut integer,
-) {
+pub unsafe fn get_seconds_and_micros(mut seconds: *mut integer, mut micros: *mut integer) {
     let mut tv: timeval = timeval {
         tv_sec: 0,
         tv_usec: 0,
@@ -3817,8 +3531,7 @@ pub(crate) unsafe fn input_line(mut f_0: *mut FILE) -> boolean {
     return true_0;
 }
 static mut edit_value: const_string = EDITOR.as_ptr();
-#[no_mangle]
-pub unsafe extern "C" fn calledit(
+pub unsafe fn calledit(
     mut filename: *mut packedASCIIcode,
     mut fnstart: poolpointer,
     mut fnlength: integer,
@@ -4010,7 +3723,7 @@ pub unsafe extern "C" fn calledit(
     }
     uexit(1 as ::core::ffi::c_int);
 }
-unsafe extern "C" fn swap_items(
+unsafe fn swap_items(
     mut p: *mut ::core::ffi::c_char,
     mut nitems: ::core::ffi::c_int,
     mut size: ::core::ffi::c_int,
@@ -4192,12 +3905,10 @@ pub(crate) unsafe fn do_undump(
     }
     swap_items(p, nitems, item_size);
 }
-#[no_mangle]
-pub unsafe extern "C" fn makefullnamestring() -> strnumber {
+pub unsafe fn makefullnamestring() -> strnumber {
     return maketexstring(fullnameoffile as *const ::core::ffi::c_char);
 }
-#[no_mangle]
-pub unsafe extern "C" fn getjobname(mut name: strnumber) -> strnumber {
+pub unsafe fn getjobname(mut name: strnumber) -> strnumber {
     let mut ret: strnumber = name;
     let mut i: ::core::ffi::c_int = 0;
     let mut l_0: ::core::ffi::c_int = 0;
@@ -4207,10 +3918,7 @@ pub unsafe extern "C" fn getjobname(mut name: strnumber) -> strnumber {
     }
     return ret;
 }
-unsafe extern "C" fn compare_paths(
-    mut p1: const_string,
-    mut p2: const_string,
-) -> ::core::ffi::c_int {
+unsafe fn compare_paths(mut p1: const_string, mut p2: const_string) -> ::core::ffi::c_int {
     let mut ret: ::core::ffi::c_int = 0;
     loop {
         ret = *p1 as ::core::ffi::c_int - *p2 as ::core::ffi::c_int;
@@ -4231,8 +3939,7 @@ unsafe extern "C" fn compare_paths(
     };
     return ret;
 }
-#[no_mangle]
-pub unsafe extern "C" fn gettexstring(mut s: strnumber) -> string {
+pub unsafe fn gettexstring(mut s: strnumber) -> string {
     let mut len: poolpointer = 0;
     let mut name: string = ::core::ptr::null_mut::<::core::ffi::c_char>();
     len = *strstart.offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize)
@@ -4247,29 +3954,20 @@ pub unsafe extern "C" fn gettexstring(mut s: strnumber) -> string {
     *name.offset(len as isize) = 0 as ::core::ffi::c_char;
     return name;
 }
-#[no_mangle]
-pub unsafe extern "C" fn isnewsource(
-    mut srcfilename: strnumber,
-    mut lineno: ::core::ffi::c_int,
-) -> boolean {
+pub unsafe fn isnewsource(mut srcfilename: strnumber, mut lineno: ::core::ffi::c_int) -> boolean {
     let mut name: *mut ::core::ffi::c_char = gettexstring(srcfilename) as *mut ::core::ffi::c_char;
     return (compare_paths(name as const_string, last_source_name as const_string)
         != 0 as ::core::ffi::c_int
         || lineno != last_lineno) as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn remembersourceinfo(
-    mut srcfilename: strnumber,
-    mut lineno: ::core::ffi::c_int,
-) {
+pub unsafe fn remembersourceinfo(mut srcfilename: strnumber, mut lineno: ::core::ffi::c_int) {
     if !last_source_name.is_null() {
         free(last_source_name as *mut ::core::ffi::c_void);
     }
     last_source_name = gettexstring(srcfilename) as *mut ::core::ffi::c_char;
     last_lineno = lineno;
 }
-#[no_mangle]
-pub unsafe extern "C" fn makesrcspecial(
+pub unsafe fn makesrcspecial(
     mut srcfilename: strnumber,
     mut lineno: ::core::ffi::c_int,
 ) -> poolpointer {
@@ -4319,11 +4017,7 @@ pub const TIME_STR_SIZE: ::core::ffi::c_int = 30 as ::core::ffi::c_int;
 #[no_mangle]
 pub static mut start_time_str: [::core::ffi::c_char; 30] = [0; 30];
 static mut time_str: [::core::ffi::c_char; 30] = [0; 30];
-unsafe extern "C" fn makepdftime(
-    mut t: time_t,
-    mut time_str_0: *mut ::core::ffi::c_char,
-    mut utc: boolean,
-) {
+unsafe fn makepdftime(mut t: time_t, mut time_str_0: *mut ::core::ffi::c_char, mut utc: boolean) {
     let mut lt: tm = tm {
         tm_sec: 0,
         tm_min: 0,
@@ -4425,8 +4119,7 @@ unsafe extern "C" fn makepdftime(
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn initstarttime() {
+pub unsafe fn initstarttime() {
     if start_time_set == 0 {
         init_start_time();
         if !getenv(b"SOURCE_DATE_EPOCH\0" as *const u8 as *const ::core::ffi::c_char).is_null() {
@@ -4444,8 +4137,7 @@ pub unsafe extern "C" fn initstarttime() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn find_input_file(mut s: integer) -> string {
+pub unsafe fn find_input_file(mut s: integer) -> string {
     let mut filename: string = ::core::ptr::null_mut::<::core::ffi::c_char>();
     filename = makecfilename(s) as string;
     if !output_directory.is_null() && kpse_absolute_p(filename as const_string, false_0) == 0 {
@@ -4469,8 +4161,7 @@ pub unsafe extern "C" fn find_input_file(mut s: integer) -> string {
     }
     return kpse_find_file(filename as const_string, kpse_tex_format, true_0);
 }
-#[no_mangle]
-pub unsafe extern "C" fn makecstring(mut s: integer) -> *mut ::core::ffi::c_char {
+pub unsafe fn makecstring(mut s: integer) -> *mut ::core::ffi::c_char {
     static mut cstrbuf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -4528,8 +4219,7 @@ pub unsafe extern "C" fn makecstring(mut s: integer) -> *mut ::core::ffi::c_char
     *p = 0 as ::core::ffi::c_char;
     return cstrbuf;
 }
-#[no_mangle]
-pub unsafe extern "C" fn makecfilename(mut s: integer) -> *mut ::core::ffi::c_char {
+pub unsafe fn makecfilename(mut s: integer) -> *mut ::core::ffi::c_char {
     let mut name: *mut ::core::ffi::c_char = makecstring(s);
     let mut p: *mut ::core::ffi::c_char = name;
     let mut q: *mut ::core::ffi::c_char = name;
@@ -4544,8 +4234,7 @@ pub unsafe extern "C" fn makecfilename(mut s: integer) -> *mut ::core::ffi::c_ch
     *q = '\0' as i32 as ::core::ffi::c_char;
     return name;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getcreationdate() {
+pub unsafe fn getcreationdate() {
     let mut len: size_t = 0;
     initstarttime();
     len = strlen(&raw mut start_time_str as *mut ::core::ffi::c_char);
@@ -4562,8 +4251,7 @@ pub unsafe extern "C" fn getcreationdate() {
     );
     poolptr = (poolptr as size_t).wrapping_add(len) as integer as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getfilemoddate(mut s: integer) {
+pub unsafe fn getfilemoddate(mut s: integer) {
     let mut file_data: stat = stat {
         st_dev: 0,
         st_mode: 0,
@@ -4630,8 +4318,7 @@ pub unsafe extern "C" fn getfilemoddate(mut s: integer) {
     }
     file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn getfilesize(mut s: integer) {
+pub unsafe fn getfilesize(mut s: integer) {
     let mut file_data: stat = stat {
         st_dev: 0,
         st_mode: 0,
@@ -4715,8 +4402,7 @@ pub unsafe extern "C" fn getfilesize(mut s: integer) {
     }
     file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn getfiledump(
+pub unsafe fn getfiledump(
     mut s: integer,
     mut offset: ::core::ffi::c_int,
     mut length: ::core::ffi::c_int,
@@ -4794,8 +4480,7 @@ pub unsafe extern "C" fn getfiledump(
     }
     file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn convertStringToHexString(
+pub unsafe fn convertStringToHexString(
     mut in_0: *const ::core::ffi::c_char,
     mut out: *mut ::core::ffi::c_char,
     mut lin: ::core::ffi::c_int,
@@ -4841,8 +4526,7 @@ pub unsafe extern "C" fn convertStringToHexString(
 }
 pub const DIGEST_SIZE: ::core::ffi::c_int = 16 as ::core::ffi::c_int;
 pub const FILE_BUF_SIZE: ::core::ffi::c_int = 1024 as ::core::ffi::c_int;
-#[no_mangle]
-pub unsafe extern "C" fn getmd5sum(mut s: strnumber, mut file: boolean) {
+pub unsafe fn getmd5sum(mut s: strnumber, mut file: boolean) {
     let mut state: md5_state_t = md5_state_s {
         count: [0; 2],
         abcd: [0; 4],
@@ -4920,27 +4604,6 @@ pub unsafe extern "C" fn getmd5sum(mut s: strnumber, mut file: boolean) {
     );
     poolptr += len;
 }
-pub fn main() {
-    let mut args_strings: Vec<Vec<u8>> = ::std::env::args()
-        .map(|arg| {
-            ::std::ffi::CString::new(arg)
-                .expect("Failed to convert argument into CString.")
-                .into_bytes_with_nul()
-        })
-        .collect();
-    let mut args_ptrs: Vec<*mut ::core::ffi::c_char> = args_strings
-        .iter_mut()
-        .map(|arg| arg.as_mut_ptr() as *mut ::core::ffi::c_char)
-        .chain(::core::iter::once(::core::ptr::null_mut()))
-        .collect();
-    unsafe {
-        ::std::process::exit(main_0(
-            (args_ptrs.len() - 1) as ::core::ffi::c_int,
-            args_ptrs.as_mut_ptr() as *mut string,
-        ) as i32)
-    }
-}
-
 #[cfg(all(test, target_os = "macos"))]
 mod metadata_tests {
     use super::stat;

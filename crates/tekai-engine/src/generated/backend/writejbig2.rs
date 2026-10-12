@@ -1,52 +1,32 @@
+pub use crate::generated::pdftex0::{
+    pdfendstream, pdfflush, zpdfbegindict, zpdfcreateobj, zpdfosgetosbuf,
+};
+pub use crate::utils::pdf_puts;
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_find, avl_node, avl_probe, avl_t_first, avl_t_init,
+    avl_t_next, avl_table, avl_traverser, libavl_allocator,
+};
+
+use crate::byte_string::strcmp;
+
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xstrdup};
 use crate::support::{xfclose, xfopen, xfseeko, xftello};
 
-#[repr(C)]
-pub struct png_struct_def {
-    _unused: [u8; 0],
-}
+pub use crate::pngshim::png_struct_def;
 
-#[repr(C)]
-pub struct png_info_def {
-    _unused: [u8; 0],
-}
+pub use crate::pngshim::png_info_def;
+
+use crate::termination::__assert_rtn;
 
 extern "C" {
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
     static mut pdfbuf: *mut eightbits;
     static mut pdfbufsize: integer;
     static mut pdfptr: integer;
     static mut pdfosmode: boolean;
     static mut objptr: integer;
-    fn zpdfosgetosbuf(s: integer);
-    fn zpdfcreateobj(t: integer, i: integer);
-    fn zpdfbegindict(i: integer, pdfoslevel: integer);
-    fn pdfflush();
-    fn pdfendstream();
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
-    fn avl_t_init(_: *mut avl_traverser, _: *mut avl_table);
-    fn avl_t_first(_: *mut avl_traverser, _: *mut avl_table) -> *mut ::core::ffi::c_void;
-    fn avl_t_next(_: *mut avl_traverser) -> *mut ::core::ffi::c_void;
     static mut avl_xallocator: libavl_allocator;
-    fn pdf_printf(_: *const ::core::ffi::c_char, ...);
-    fn pdf_puts(_: *const ::core::ffi::c_char);
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
     static mut image_array: *mut image_entry;
 }
 #[inline(always)]
@@ -66,45 +46,6 @@ pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
 pub type integer = ::core::ffi::c_int;
 pub type eightbits = ::core::ffi::c_uchar;
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_traverser {
-    pub avl_table: *mut avl_table,
-    pub avl_node: *mut avl_node,
-    pub avl_stack: [*mut avl_node; 32],
-    pub avl_height: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
 pub type FILEINFO = _FILEINFO;
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -183,59 +124,12 @@ pub type png_struct = png_struct_def;
 pub type png_structp = *mut png_struct;
 pub type png_info = png_info_def;
 pub type png_infop = *mut png_info;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct JPG_IMAGE_INFO {
-    pub color_space: ::core::ffi::c_int,
-    pub bits_per_component: ::core::ffi::c_uchar,
-    pub length: ::core::ffi::c_ulong,
-    pub file: *mut FILE,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct png_image_struct {
-    pub png_ptr: png_structp,
-    pub info_ptr: png_infop,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct pdf_image_struct {
-    pub orig_x: integer,
-    pub orig_y: integer,
-    pub selected_page: integer,
-    pub page_box: integer,
-    pub doc: *mut ::core::ffi::c_void,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct JBIG2_IMAGE_INFO {
-    pub selected_page: integer,
-    pub file: *mut FILE,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct image_entry {
-    pub image_name: *mut ::core::ffi::c_char,
-    pub image_type: ::core::ffi::c_int,
-    pub color_type: ::core::ffi::c_int,
-    pub width: integer,
-    pub height: integer,
-    pub rotate: integer,
-    pub x_res: integer,
-    pub y_res: integer,
-    pub num_pages: integer,
-    pub colorspace_ref: integer,
-    pub group_ref: integer,
-    pub image_struct: C2RustUnnamed,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union C2RustUnnamed {
-    pub pdf: *mut pdf_image_struct,
-    pub png: png_image_struct,
-    pub jpg: *mut JPG_IMAGE_INFO,
-    pub jbig2: *mut JBIG2_IMAGE_INFO,
-}
+pub use crate::backend_types::image_entry;
+pub use crate::backend_types::pdf_image_struct;
+pub use crate::backend_types::png_image_struct;
+pub use crate::backend_types::ImageData as C2RustUnnamed;
+pub use crate::backend_types::JBIG2_IMAGE_INFO;
+pub use crate::backend_types::JPG_IMAGE_INFO;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const SEEK_SET: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const SEEK_CUR: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
@@ -269,7 +163,7 @@ pub const M_Tables: ::core::ffi::c_uint = 53 as ::core::ffi::c_uint;
 pub const M_Extension: ::core::ffi::c_uint = 62 as ::core::ffi::c_uint;
 #[no_mangle]
 pub static mut file_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-unsafe extern "C" fn comp_file_entry(
+unsafe fn comp_file_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -279,7 +173,7 @@ unsafe extern "C" fn comp_file_entry(
         (*(pb as *const FILEINFO)).filename,
     );
 }
-unsafe extern "C" fn comp_page_entry(
+unsafe fn comp_page_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -288,7 +182,7 @@ unsafe extern "C" fn comp_page_entry(
         .pagenum
         .wrapping_sub((*(pb as *const PAGEINFO)).pagenum) as ::core::ffi::c_int;
 }
-unsafe extern "C" fn comp_segment_entry(
+unsafe fn comp_segment_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -297,7 +191,7 @@ unsafe extern "C" fn comp_segment_entry(
         .segnum
         .wrapping_sub((*(pb as *const SEGINFO)).segnum) as ::core::ffi::c_int;
 }
-unsafe extern "C" fn ygetc(mut stream: *mut FILE) -> ::core::ffi::c_int {
+unsafe fn ygetc(mut stream: *mut FILE) -> ::core::ffi::c_int {
     let mut c: ::core::ffi::c_int = fast_fgetc(stream);
     if c < 0 as ::core::ffi::c_int {
         if c == EOF {
@@ -315,7 +209,7 @@ unsafe extern "C" fn ygetc(mut stream: *mut FILE) -> ::core::ffi::c_int {
     }
     return c;
 }
-unsafe extern "C" fn new_fileinfo() -> *mut FILEINFO {
+unsafe fn new_fileinfo() -> *mut FILEINFO {
     let mut fip: *mut FILEINFO = ::core::ptr::null_mut::<FILEINFO>();
     fip = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<FILEINFO>() as size_t))
         as *mut FILEINFO;
@@ -332,7 +226,7 @@ unsafe extern "C" fn new_fileinfo() -> *mut FILEINFO {
     (*fip).phase = INITIAL;
     return fip;
 }
-unsafe extern "C" fn new_pageinfo() -> *mut PAGEINFO {
+unsafe fn new_pageinfo() -> *mut PAGEINFO {
     let mut pip: *mut PAGEINFO = ::core::ptr::null_mut::<PAGEINFO>();
     pip = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<PAGEINFO>() as size_t))
         as *mut PAGEINFO;
@@ -347,7 +241,7 @@ unsafe extern "C" fn new_pageinfo() -> *mut PAGEINFO {
     (*pip).stripedheight = 0 as ::core::ffi::c_uint;
     return pip;
 }
-unsafe extern "C" fn init_seginfo(mut sip: *mut SEGINFO) {
+unsafe fn init_seginfo(mut sip: *mut SEGINFO) {
     (*sip).segnum = 0 as ::core::ffi::c_ulong;
     (*sip).isrefered = false_0 as boolean;
     (*sip).refers = false_0 as boolean;
@@ -368,12 +262,12 @@ unsafe extern "C" fn init_seginfo(mut sip: *mut SEGINFO) {
     (*sip).pageinfoflag = false_0 as boolean;
     (*sip).endoffileflag = false_0 as boolean;
 }
-unsafe extern "C" fn initlinkedlist(mut lp: *mut LIST) {
+unsafe fn initlinkedlist(mut lp: *mut LIST) {
     (*lp).first = ::core::ptr::null_mut::<LITEM>();
     (*lp).last = ::core::ptr::null_mut::<LITEM>();
     (*lp).tree = ::core::ptr::null_mut::<avl_table>();
 }
-unsafe extern "C" fn litem_append(mut lp: *mut LIST) -> *mut LIST {
+unsafe fn litem_append(mut lp: *mut LIST) -> *mut LIST {
     let mut ip: *mut LITEM = ::core::ptr::null_mut::<LITEM>();
     ip = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<LITEM>() as size_t))
         as *mut LITEM;
@@ -389,7 +283,7 @@ unsafe extern "C" fn litem_append(mut lp: *mut LIST) -> *mut LIST {
     (*ip).d = NULL;
     return lp;
 }
-unsafe extern "C" fn pages_maketree(mut plp: *mut LIST) {
+unsafe fn pages_maketree(mut plp: *mut LIST) {
     let mut ip: *mut LITEM = ::core::ptr::null_mut::<LITEM>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if !(*plp).tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -404,7 +298,7 @@ unsafe extern "C" fn pages_maketree(mut plp: *mut LIST) {
     (*plp).tree = avl_create(
         Some(
             comp_page_entry
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,
@@ -440,7 +334,7 @@ unsafe extern "C" fn pages_maketree(mut plp: *mut LIST) {
         ip = (*ip).next as *mut LITEM;
     }
 }
-unsafe extern "C" fn segments_maketree(mut slp: *mut LIST) {
+unsafe fn segments_maketree(mut slp: *mut LIST) {
     let mut ip: *mut LITEM = ::core::ptr::null_mut::<LITEM>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if !(*slp).tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -455,7 +349,7 @@ unsafe extern "C" fn segments_maketree(mut slp: *mut LIST) {
     (*slp).tree = avl_create(
         Some(
             comp_segment_entry
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,
@@ -491,10 +385,7 @@ unsafe extern "C" fn segments_maketree(mut slp: *mut LIST) {
         ip = (*ip).next as *mut LITEM;
     }
 }
-unsafe extern "C" fn find_pageinfo(
-    mut plp: *mut LIST,
-    mut pagenum: ::core::ffi::c_ulong,
-) -> *mut PAGEINFO {
+unsafe fn find_pageinfo(mut plp: *mut LIST, mut pagenum: ::core::ffi::c_ulong) -> *mut PAGEINFO {
     let mut tmp: PAGEINFO = _PAGEINFO {
         segments: _LIST {
             first: ::core::ptr::null_mut::<LITEM>(),
@@ -522,10 +413,7 @@ unsafe extern "C" fn find_pageinfo(
     };
     return avl_find((*plp).tree, &raw mut tmp as *const ::core::ffi::c_void) as *mut PAGEINFO;
 }
-unsafe extern "C" fn find_seginfo(
-    mut slp: *mut LIST,
-    mut segnum: ::core::ffi::c_ulong,
-) -> *mut SEGINFO {
+unsafe fn find_seginfo(mut slp: *mut LIST, mut segnum: ::core::ffi::c_ulong) -> *mut SEGINFO {
     let mut tmp: SEGINFO = _SEGINFO {
         segnum: 0,
         isrefered: 0,
@@ -559,15 +447,15 @@ unsafe extern "C" fn find_seginfo(
     };
     return avl_find((*slp).tree, &raw mut tmp as *const ::core::ffi::c_void) as *mut SEGINFO;
 }
-unsafe extern "C" fn read2bytes(mut f: *mut FILE) -> ::core::ffi::c_uint {
+unsafe fn read2bytes(mut f: *mut FILE) -> ::core::ffi::c_uint {
     let mut c: ::core::ffi::c_uint = ygetc(f) as ::core::ffi::c_uint;
     return (c << 8 as ::core::ffi::c_int).wrapping_add(ygetc(f) as ::core::ffi::c_uint);
 }
-unsafe extern "C" fn read4bytes(mut f: *mut FILE) -> ::core::ffi::c_ulong {
+unsafe fn read4bytes(mut f: *mut FILE) -> ::core::ffi::c_ulong {
     let mut l: ::core::ffi::c_uint = read2bytes(f);
     return (l << 16 as ::core::ffi::c_int).wrapping_add(read2bytes(f)) as ::core::ffi::c_ulong;
 }
-unsafe extern "C" fn getstreamlen(mut slip: *mut LITEM, mut refer: boolean) -> off_t {
+unsafe fn getstreamlen(mut slip: *mut LITEM, mut refer: boolean) -> off_t {
     let mut sip: *mut SEGINFO = ::core::ptr::null_mut::<SEGINFO>();
     let mut len: off_t = 0 as off_t;
     while !slip.is_null() {
@@ -579,7 +467,7 @@ unsafe extern "C" fn getstreamlen(mut slip: *mut LITEM, mut refer: boolean) -> o
     }
     return len;
 }
-unsafe extern "C" fn readfilehdr(mut fip: *mut FILEINFO) {
+unsafe fn readfilehdr(mut fip: *mut FILEINFO) {
     let mut i: ::core::ffi::c_uint = 0;
     let mut jbig2_id: [::core::ffi::c_uchar; 8] = [
         0x97 as ::core::ffi::c_int as ::core::ffi::c_uchar,
@@ -636,7 +524,7 @@ unsafe extern "C" fn readfilehdr(mut fip: *mut FILEINFO) {
         (*fip).numofpages = read4bytes((*fip).file);
     }
 }
-unsafe extern "C" fn readseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) -> boolean {
+unsafe fn readseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) -> boolean {
     let mut i: ::core::ffi::c_uint = 0;
     (*sip).hdrstart = xftello((*fip).file, (*fip).filename as const_string);
     if (*fip).sequentialaccess != 0 && (*sip).hdrstart == (*fip).filesize {
@@ -700,7 +588,7 @@ unsafe extern "C" fn readseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) -
     (*sip).hdrend = xftello((*fip).file, (*fip).filename as const_string);
     return true_0;
 }
-unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
+unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
     let mut i: ::core::ffi::c_uint = 0;
     let mut referedseg: ::core::ffi::c_ulong = 0 as ::core::ffi::c_ulong;
     i = 0 as ::core::ffi::c_uint;
@@ -964,7 +852,7 @@ unsafe extern "C" fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
         i = i.wrapping_add(1);
     }
 }
-unsafe extern "C" fn checkseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
+unsafe fn checkseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
     let mut i: ::core::ffi::c_uint = 0;
     let mut referedseg: ::core::ffi::c_ulong = 0 as ::core::ffi::c_ulong;
     xfseeko(
@@ -1011,7 +899,7 @@ unsafe extern "C" fn checkseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) 
         );
     };
 }
-unsafe extern "C" fn checkseghdrflags(mut sip: *mut SEGINFO) {
+unsafe fn checkseghdrflags(mut sip: *mut SEGINFO) {
     (*sip).endofstripeflag = false_0 as boolean;
     (*sip).endofpageflag = false_0 as boolean;
     (*sip).pageinfoflag = false_0 as boolean;
@@ -1039,7 +927,7 @@ unsafe extern "C" fn checkseghdrflags(mut sip: *mut SEGINFO) {
         }
     };
 }
-unsafe extern "C" fn markpage0seg(mut fip: *mut FILEINFO, mut referedseg: ::core::ffi::c_ulong) {
+unsafe fn markpage0seg(mut fip: *mut FILEINFO, mut referedseg: ::core::ffi::c_ulong) {
     let mut pip: *mut PAGEINFO = ::core::ptr::null_mut::<PAGEINFO>();
     let mut sip: *mut SEGINFO = ::core::ptr::null_mut::<SEGINFO>();
     pip = (*(*fip).page0.first).d as *mut PAGEINFO;
@@ -1051,7 +939,7 @@ unsafe extern "C" fn markpage0seg(mut fip: *mut FILEINFO, mut referedseg: ::core
         (*sip).isrefered = true_0 as boolean;
     }
 }
-unsafe extern "C" fn findstreamstart(mut fip: *mut FILEINFO) -> off_t {
+unsafe fn findstreamstart(mut fip: *mut FILEINFO) -> off_t {
     let mut tmp: SEGINFO = _SEGINFO {
         segnum: 0,
         isrefered: 0,
@@ -1092,7 +980,7 @@ unsafe extern "C" fn findstreamstart(mut fip: *mut FILEINFO) -> off_t {
     readfilehdr(fip);
     return (*fip).streamstart;
 }
-unsafe extern "C" fn rd_jbig2_info(mut fip: *mut FILEINFO) {
+unsafe fn rd_jbig2_info(mut fip: *mut FILEINFO) {
     let mut seekdist: off_t = 0 as off_t;
     let mut streampos: off_t = 0 as off_t;
     let mut currentpage: ::core::ffi::c_ulong = 0 as ::core::ffi::c_ulong;
@@ -1205,7 +1093,7 @@ unsafe extern "C" fn rd_jbig2_info(mut fip: *mut FILEINFO) {
     }
     xfclose((*fip).file, (*fip).filename as const_string);
 }
-unsafe extern "C" fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_ulong) {
+unsafe fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_ulong) {
     let mut slip: *mut LITEM = ::core::ptr::null_mut::<LITEM>();
     let mut pip: *mut PAGEINFO = ::core::ptr::null_mut::<PAGEINFO>();
     let mut sip: *mut SEGINFO = ::core::ptr::null_mut::<SEGINFO>();
@@ -1320,8 +1208,7 @@ unsafe extern "C" fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_u
     pdfendstream();
     xfclose((*fip).file, (*fip).filename as const_string);
 }
-#[no_mangle]
-pub unsafe extern "C" fn read_jbig2_info(mut img: integer) {
+pub unsafe fn read_jbig2_info(mut img: integer) {
     let mut fip: *mut FILEINFO = ::core::ptr::null_mut::<FILEINFO>();
     let mut tmp: FILEINFO = _FILEINFO {
         file: ::core::ptr::null_mut::<FILE>(),
@@ -1361,7 +1248,7 @@ pub unsafe extern "C" fn read_jbig2_info(mut img: integer) {
         file_tree = avl_create(
             Some(
                 comp_file_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -1428,8 +1315,7 @@ pub unsafe extern "C" fn read_jbig2_info(mut img: integer) {
     (*image_array.offset(img as isize)).y_res = ((*pip).yres as ::core::ffi::c_double * 0.0254f64
         + 0.5f64) as ::core::ffi::c_int as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn write_jbig2(mut img: integer) {
+pub unsafe fn write_jbig2(mut img: integer) {
     let mut fip: *mut FILEINFO = ::core::ptr::null_mut::<FILEINFO>();
     let mut tmp: FILEINFO = _FILEINFO {
         file: ::core::ptr::null_mut::<FILE>(),
@@ -1502,8 +1388,7 @@ pub unsafe extern "C" fn write_jbig2(mut img: integer) {
     };
     wr_jbig2(fip, (*pip).pagenum);
 }
-#[no_mangle]
-pub unsafe extern "C" fn flushjbig2page0objects() {
+pub unsafe fn flushjbig2page0objects() {
     let mut fip: *mut FILEINFO = ::core::ptr::null_mut::<FILEINFO>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),

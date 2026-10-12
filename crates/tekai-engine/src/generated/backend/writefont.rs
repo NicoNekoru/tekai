@@ -1,17 +1,29 @@
+pub use crate::generated::backend::avlstuff::{comp_int_entry, comp_string_entry};
+pub use crate::generated::backend::mapfile::{check_std_t1font, hasfmentry};
+pub use crate::generated::backend::tounicode::write_tounicode;
+pub use crate::generated::backend::writeenc::{get_fe_entry, write_fontencodings};
+pub use crate::generated::backend::writet1::writet1;
+pub use crate::generated::backend::writet3::writet3;
+pub use crate::generated::backend::writettf::{writeotf, writettf};
+pub use crate::generated::pdftex0::{
+    getnullstr, getpdfomitcharset, pdfbeginstream, pdfenddict, pdfendobj, pdfendstream,
+    pdfnewobjnum, zdividescaled, zgetchardepth, zgetcharheight, zgetcharwidth, zgetquad, zgetslant,
+    zgetxheight, zpdfbegindict, zpdfbeginobj, zpdfprint,
+};
+pub use crate::utils::{fb_flush, pdf_puts};
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_find, avl_node, avl_probe, avl_t_first, avl_t_init,
+    avl_t_next, avl_table, avl_traverser, libavl_allocator,
+};
+
+use crate::byte_string::strcmp;
+
 use crate::openclose::{xmalloc, xstrdup};
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn atan(_: ::core::ffi::c_double) -> ::core::ffi::c_double;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
     static mut fontbc: *mut eightbits;
     static mut fontec: *mut eightbits;
     static mut fixedgentounicode: integer;
@@ -20,67 +32,12 @@ extern "C" {
     static mut pdfcharused: *mut charusedarray;
     static mut pdffontsize: *mut scaled;
     static mut pdffontmap: *mut fmentryptr;
-    fn zpdfprint(s: strnumber);
-    fn zdividescaled(s: scaled, m: scaled, dd: integer) -> scaled;
-    fn pdfnewobjnum() -> integer;
-    fn zpdfbeginobj(i: integer, pdfoslevel: integer);
-    fn pdfendobj();
-    fn zpdfbegindict(i: integer, pdfoslevel: integer);
-    fn pdfenddict();
-    fn getpdfomitcharset() -> integer;
-    fn zgetxheight(f: internalfontnumber) -> scaled;
-    fn zgetcharwidth(f: internalfontnumber, c: eightbits) -> scaled;
-    fn zgetcharheight(f: internalfontnumber, c: eightbits) -> scaled;
-    fn zgetchardepth(f: internalfontnumber, c: eightbits) -> scaled;
-    fn zgetquad(f: internalfontnumber) -> scaled;
-    fn zgetslant(f: internalfontnumber) -> scaled;
-    fn pdfbeginstream();
-    fn pdfendstream();
-    fn getnullstr() -> strnumber;
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
-    fn avl_t_init(_: *mut avl_traverser, _: *mut avl_table);
-    fn avl_t_first(_: *mut avl_traverser, _: *mut avl_table) -> *mut ::core::ffi::c_void;
-    fn avl_t_next(_: *mut avl_traverser) -> *mut ::core::ffi::c_void;
     static mut avl_xallocator: libavl_allocator;
     static mut t1_length1: integer;
     static mut t1_length3: integer;
     static mut t1_length2: integer;
     static mut ttf_length: integer;
     static mut notdef: [::core::ffi::c_char; 0];
-    fn pdf_printf(_: *const ::core::ffi::c_char, ...);
-    fn pdf_puts(_: *const ::core::ffi::c_char);
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
-    fn hasfmentry(_: internalfontnumber) -> boolean;
-    fn check_std_t1font(s: *mut ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn write_tounicode(
-        _: *mut *mut ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-    ) -> integer;
-    fn fb_flush();
-    fn get_fe_entry(_: *mut ::core::ffi::c_char) -> *mut fe_entry;
-    fn write_fontencodings();
-    fn writet1(_: *mut fd_entry);
-    fn writet3(_: *mut fm_entry, _: ::core::ffi::c_int, _: internalfontnumber);
-    fn writettf(_: *mut fd_entry);
-    fn writeotf(_: *mut fd_entry);
-    fn comp_int_entry(
-        _: *const ::core::ffi::c_void,
-        _: *const ::core::ffi::c_void,
-        _: *mut ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int;
-    fn comp_string_entry(
-        _: *const ::core::ffi::c_void,
-        _: *const ::core::ffi::c_void,
-        _: *mut ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int;
 }
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
@@ -95,132 +52,17 @@ pub type scaled = integer;
 pub type internalfontnumber = integer;
 pub type charusedarray = [eightbits; 32];
 pub type fmentryptr = *mut integer;
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_traverser {
-    pub avl_table: *mut avl_table,
-    pub avl_node: *mut avl_node,
-    pub avl_stack: [*mut avl_node; 32],
-    pub avl_height: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct key_entry {
-    pub pdfname: *const ::core::ffi::c_char,
-    pub t1name: *const ::core::ffi::c_char,
-    pub value: ::core::ffi::c_float,
-    pub valid: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _subfont_entry {
-    pub infix: *mut ::core::ffi::c_char,
-    pub charcodes: [::core::ffi::c_long; 256],
-    pub next: *mut subfont_entry,
-}
+pub use crate::backend_types::_subfont_entry;
+pub use crate::backend_types::key_entry;
 pub type subfont_entry = _subfont_entry;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fe_entry {
-    pub fe_objnum: integer,
-    pub name: *mut ::core::ffi::c_char,
-    pub glyph_names: *mut *mut ::core::ffi::c_char,
-    pub tx_tree: *mut avl_table,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fm_entry {
-    pub tfm_name: *mut ::core::ffi::c_char,
-    pub sfd_name: *mut ::core::ffi::c_char,
-    pub ps_name: *mut ::core::ffi::c_char,
-    pub fd_flags: integer,
-    pub slant: integer,
-    pub extend: integer,
-    pub encname: *mut ::core::ffi::c_char,
-    pub ff_name: *mut ::core::ffi::c_char,
-    pub type_0: ::core::ffi::c_ushort,
-    pub pid: ::core::ffi::c_short,
-    pub eid: ::core::ffi::c_short,
-    pub subfont: *mut subfont_entry,
-    pub links: ::core::ffi::c_ushort,
-    pub in_use: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct intparm {
-    pub val: ::core::ffi::c_int,
-    pub set: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fd_entry_ {
-    pub fd_objnum: integer,
-    pub fontname: *mut ::core::ffi::c_char,
-    pub subset_tag: *mut ::core::ffi::c_char,
-    pub ff_found: boolean,
-    pub ff_objnum: integer,
-    pub fn_objnum: integer,
-    pub all_glyphs: boolean,
-    pub write_ttf_glyph_names: boolean,
-    pub font_dim: [intparm; 11],
-    pub fe: *mut fe_entry,
-    pub builtin_glyph_names: *mut *mut ::core::ffi::c_char,
-    pub fm: *mut fm_entry,
-    pub tx_tree: *mut avl_table,
-    pub gl_tree: *mut avl_table,
-}
+pub use crate::backend_types::fd_entry_;
+pub use crate::backend_types::fe_entry;
+pub use crate::backend_types::fm_entry;
+pub use crate::backend_types::intparm;
 pub type fd_entry = fd_entry_;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct cw_entry_ {
-    pub cw_objnum: integer,
-    pub width: *mut integer,
-}
+pub use crate::backend_types::cw_entry_;
 pub type cw_entry = cw_entry_;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fo_entry_ {
-    pub fo_objnum: integer,
-    pub tex_font: internalfontnumber,
-    pub fm: *mut fm_entry,
-    pub fd: *mut fd_entry,
-    pub fe: *mut fe_entry,
-    pub cw: *mut cw_entry,
-    pub first_char: integer,
-    pub last_char: integer,
-    pub tounicode_objnum: integer,
-}
+pub use crate::backend_types::fo_entry_;
 pub type fo_entry = fo_entry_;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const true_0: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
@@ -320,7 +162,7 @@ static mut font_key: [key_entry; 11] = [
 pub static mut fo_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
 #[no_mangle]
 pub static mut fd_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-unsafe extern "C" fn comp_fo_entry(
+unsafe fn comp_fo_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -330,7 +172,7 @@ unsafe extern "C" fn comp_fo_entry(
         (*(*(pb as *const fo_entry)).fm).tfm_name,
     );
 }
-unsafe extern "C" fn comp_fd_entry(
+unsafe fn comp_fd_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -371,7 +213,7 @@ unsafe extern "C" fn comp_fd_entry(
     }
     return 0 as ::core::ffi::c_int;
 }
-unsafe extern "C" fn new_fo_entry() -> *mut fo_entry {
+unsafe fn new_fo_entry() -> *mut fo_entry {
     let mut fo: *mut fo_entry = ::core::ptr::null_mut::<fo_entry>();
     fo = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<fo_entry>() as size_t))
         as *mut fo_entry;
@@ -386,8 +228,7 @@ unsafe extern "C" fn new_fo_entry() -> *mut fo_entry {
     (*fo).tounicode_objnum = 0 as ::core::ffi::c_int as integer;
     return fo;
 }
-#[no_mangle]
-pub unsafe extern "C" fn new_fd_entry() -> *mut fd_entry {
+pub unsafe fn new_fd_entry() -> *mut fd_entry {
     let mut fd: *mut fd_entry = ::core::ptr::null_mut::<fd_entry>();
     let mut i: ::core::ffi::c_int = 0;
     fd = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<fd_entry>() as size_t))
@@ -413,7 +254,7 @@ pub unsafe extern "C" fn new_fd_entry() -> *mut fd_entry {
     (*fd).gl_tree = ::core::ptr::null_mut::<avl_table>();
     return fd;
 }
-unsafe extern "C" fn new_cw_entry() -> *mut cw_entry {
+unsafe fn new_cw_entry() -> *mut cw_entry {
     let mut cw: *mut cw_entry = ::core::ptr::null_mut::<cw_entry>();
     cw = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<cw_entry>() as size_t))
         as *mut cw_entry;
@@ -421,10 +262,10 @@ unsafe extern "C" fn new_cw_entry() -> *mut cw_entry {
     (*cw).width = ::core::ptr::null_mut::<integer>();
     return cw;
 }
-unsafe extern "C" fn preset_fontmetrics(mut fd: *mut fd_entry, mut f: internalfontnumber) {
+unsafe fn preset_fontmetrics(mut fd: *mut fd_entry, mut f: internalfontnumber) {
     let mut i: ::core::ffi::c_int = 0;
     (*fd).font_dim[ITALIC_ANGLE_CODE as usize].val = zdividescaled(
-        (-atan(zgetslant(f) as ::core::ffi::c_double / 65536.0f64)
+        (-libm::atan(zgetslant(f) as ::core::ffi::c_double / 65536.0f64)
             * (180 as ::core::ffi::c_int as ::core::ffi::c_double
                 / 3.14159265358979323846264338327950288f64)) as scaled,
         *pdffontsize.offset(f as isize),
@@ -479,7 +320,7 @@ unsafe extern "C" fn preset_fontmetrics(mut fd: *mut fd_entry, mut f: internalfo
         i += 1;
     }
 }
-unsafe extern "C" fn fix_fontmetrics(mut fd: *mut fd_entry) {
+unsafe fn fix_fontmetrics(mut fd: *mut fd_entry) {
     let mut p: *mut intparm = &raw mut (*fd).font_dim as *mut intparm;
     if (*p.offset(FONTBBOX1_CODE as isize)).set == 0
         || (*p.offset(FONTBBOX2_CODE as isize)).set == 0
@@ -505,7 +346,7 @@ unsafe extern "C" fn fix_fontmetrics(mut fd: *mut fd_entry) {
         (*p.offset(CAPHEIGHT_CODE as isize)).set = true_0 as boolean;
     }
 }
-unsafe extern "C" fn write_fontmetrics(mut fd: *mut fd_entry) {
+unsafe fn write_fontmetrics(mut fd: *mut fd_entry) {
     let mut i: ::core::ffi::c_int = 0;
     fix_fontmetrics(fd);
     if (*fd).font_dim[FONTBBOX1_CODE as usize].set != 0
@@ -538,7 +379,7 @@ unsafe extern "C" fn write_fontmetrics(mut fd: *mut fd_entry) {
         i += 1;
     }
 }
-unsafe extern "C" fn preset_fontname(mut fo: *mut fo_entry) {
+unsafe fn preset_fontname(mut fo: *mut fo_entry) {
     if !(*(*fo).fm).ps_name.is_null() {
         (*(*fo).fd).fontname =
             xstrdup((*(*fo).fm).ps_name as const_string) as *mut ::core::ffi::c_char;
@@ -547,7 +388,7 @@ unsafe extern "C" fn preset_fontname(mut fo: *mut fo_entry) {
             xstrdup((*(*fo).fm).tfm_name as const_string) as *mut ::core::ffi::c_char;
     };
 }
-unsafe extern "C" fn write_fontname(mut fd: *mut fd_entry, mut key: *const ::core::ffi::c_char) {
+unsafe fn write_fontname(mut fd: *mut fd_entry, mut key: *const ::core::ffi::c_char) {
     if (*fd).fontname.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"write_fontname\0" as *const u8 as *const ::core::ffi::c_char,
@@ -575,7 +416,7 @@ unsafe extern "C" fn write_fontname(mut fd: *mut fd_entry, mut key: *const ::cor
         &[crate::utils::PrintfArg::from((*fd).fontname)],
     );
 }
-unsafe extern "C" fn write_fontname_object(mut fd: *mut fd_entry) {
+unsafe fn write_fontname_object(mut fd: *mut fd_entry) {
     if !((*fd).fn_objnum != 0 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long
         != 0
     {
@@ -591,8 +432,7 @@ unsafe extern "C" fn write_fontname_object(mut fd: *mut fd_entry) {
     write_fontname(fd, ::core::ptr::null::<::core::ffi::c_char>());
     pdfendobj();
 }
-#[no_mangle]
-pub unsafe extern "C" fn lookup_fd_entry(
+pub unsafe fn lookup_fd_entry(
     mut s: *mut ::core::ffi::c_char,
     mut slant: integer,
     mut extend: integer,
@@ -646,7 +486,7 @@ pub unsafe extern "C" fn lookup_fd_entry(
         fd_tree = avl_create(
             Some(
                 comp_fd_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -667,7 +507,7 @@ pub unsafe extern "C" fn lookup_fd_entry(
     }
     return avl_find(fd_tree, &raw mut fd as *const ::core::ffi::c_void) as *mut fd_entry;
 }
-unsafe extern "C" fn lookup_fontdescriptor(mut fo: *mut fo_entry) -> *mut fd_entry {
+unsafe fn lookup_fontdescriptor(mut fo: *mut fo_entry) -> *mut fd_entry {
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"lookup_fontdescriptor\0" as *const u8 as *const ::core::ffi::c_char,
@@ -697,14 +537,13 @@ unsafe extern "C" fn lookup_fontdescriptor(mut fo: *mut fo_entry) -> *mut fd_ent
     };
     return lookup_fd_entry((*(*fo).fm).ff_name, (*(*fo).fm).slant, (*(*fo).fm).extend);
 }
-#[no_mangle]
-pub unsafe extern "C" fn register_fd_entry(mut fd: *mut fd_entry) {
+pub unsafe fn register_fd_entry(mut fd: *mut fd_entry) {
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if fd_tree.is_null() {
         fd_tree = avl_create(
             Some(
                 comp_fd_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -760,7 +599,7 @@ pub unsafe extern "C" fn register_fd_entry(mut fd: *mut fd_entry) {
     } else {
     };
 }
-unsafe extern "C" fn create_fontdescriptor(mut fo: *mut fo_entry, mut f: internalfontnumber) {
+unsafe fn create_fontdescriptor(mut fo: *mut fo_entry, mut f: internalfontnumber) {
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"create_fontdescriptor\0" as *const u8 as *const ::core::ffi::c_char,
@@ -796,7 +635,7 @@ unsafe extern "C" fn create_fontdescriptor(mut fo: *mut fo_entry, mut f: interna
     (*(*fo).fd).gl_tree = avl_create(
         Some(
             comp_string_entry
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,
@@ -815,7 +654,7 @@ unsafe extern "C" fn create_fontdescriptor(mut fo: *mut fo_entry, mut f: interna
     } else {
     };
 }
-unsafe extern "C" fn mark_reenc_glyphs(mut fo: *mut fo_entry, mut f: internalfontnumber) {
+unsafe fn mark_reenc_glyphs(mut fo: *mut fo_entry, mut f: internalfontnumber) {
     let mut i: ::core::ffi::c_int = 0;
     let mut g: *mut *mut ::core::ffi::c_char = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
@@ -873,7 +712,7 @@ unsafe extern "C" fn mark_reenc_glyphs(mut fo: *mut fo_entry, mut f: internalfon
         }
     }
 }
-unsafe extern "C" fn mark_chars(
+unsafe fn mark_chars(
     mut fo: *mut fo_entry,
     mut tx_tree: *mut avl_table,
     mut f: internalfontnumber,
@@ -885,7 +724,7 @@ unsafe extern "C" fn mark_chars(
         tx_tree = avl_create(
             Some(
                 comp_int_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -933,7 +772,7 @@ unsafe extern "C" fn mark_chars(
     }
     return tx_tree;
 }
-unsafe extern "C" fn get_char_range(mut fo: *mut fo_entry, mut f: internalfontnumber) {
+unsafe fn get_char_range(mut fo: *mut fo_entry, mut f: internalfontnumber) {
     let mut i: ::core::ffi::c_int = 0;
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -981,7 +820,7 @@ unsafe extern "C" fn get_char_range(mut fo: *mut fo_entry, mut f: internalfontnu
             ((*fo).last_char as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as integer;
     }
 }
-unsafe extern "C" fn create_charwidth_array(mut fo: *mut fo_entry, mut f: internalfontnumber) {
+unsafe fn create_charwidth_array(mut fo: *mut fo_entry, mut f: internalfontnumber) {
     let mut i: ::core::ffi::c_int = 0;
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -1025,7 +864,7 @@ unsafe extern "C" fn create_charwidth_array(mut fo: *mut fo_entry, mut f: intern
         i += 1;
     }
 }
-unsafe extern "C" fn write_charwidth_array(mut fo: *mut fo_entry) {
+unsafe fn write_charwidth_array(mut fo: *mut fo_entry) {
     let mut i: ::core::ffi::c_int = 0;
     let mut j: ::core::ffi::c_int = 0;
     if (*fo).cw.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -1075,7 +914,7 @@ unsafe extern "C" fn write_charwidth_array(mut fo: *mut fo_entry) {
     pdf_puts(b"]\n\0" as *const u8 as *const ::core::ffi::c_char);
     pdfendobj();
 }
-unsafe extern "C" fn lookup_fo_entry(mut s: *mut ::core::ffi::c_char) -> *mut fo_entry {
+unsafe fn lookup_fo_entry(mut s: *mut ::core::ffi::c_char) -> *mut fo_entry {
     let mut fo: fo_entry = fo_entry_ {
         fo_objnum: 0,
         tex_font: 0,
@@ -1118,7 +957,7 @@ unsafe extern "C" fn lookup_fo_entry(mut s: *mut ::core::ffi::c_char) -> *mut fo
         fo_tree = avl_create(
             Some(
                 comp_fo_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -1139,13 +978,13 @@ unsafe extern "C" fn lookup_fo_entry(mut s: *mut ::core::ffi::c_char) -> *mut fo
     }
     return avl_find(fo_tree, &raw mut fo as *const ::core::ffi::c_void) as *mut fo_entry;
 }
-unsafe extern "C" fn register_fo_entry(mut fo: *mut fo_entry) {
+unsafe fn register_fo_entry(mut fo: *mut fo_entry) {
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if fo_tree.is_null() {
         fo_tree = avl_create(
             Some(
                 comp_fo_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -1214,7 +1053,7 @@ unsafe extern "C" fn register_fo_entry(mut fo: *mut fo_entry) {
     } else {
     };
 }
-unsafe extern "C" fn write_fontfile(mut fd: *mut fd_entry) {
+unsafe fn write_fontfile(mut fd: *mut fd_entry) {
     if !((*(*fd).fm).type_0 as ::core::ffi::c_int & 0x1 as ::core::ffi::c_int
         != 0 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long
         != 0
@@ -1291,7 +1130,7 @@ unsafe extern "C" fn write_fontfile(mut fd: *mut fd_entry) {
     fb_flush();
     pdfendstream();
 }
-unsafe extern "C" fn write_fontdescriptor(mut fd: *mut fd_entry) {
+unsafe fn write_fontdescriptor(mut fd: *mut fd_entry) {
     static mut std_flags: [::core::ffi::c_int; 14] = [
         1 as ::core::ffi::c_int
             + 2 as ::core::ffi::c_int
@@ -1439,7 +1278,7 @@ unsafe extern "C" fn write_fontdescriptor(mut fd: *mut fd_entry) {
     }
     pdfenddict();
 }
-unsafe extern "C" fn write_fontdescriptors() {
+unsafe fn write_fontdescriptors() {
     let mut fd: *mut fd_entry = ::core::ptr::null_mut::<fd_entry>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
@@ -1458,7 +1297,7 @@ unsafe extern "C" fn write_fontdescriptors() {
         fd = avl_t_next(&raw mut t) as *mut fd_entry;
     }
 }
-unsafe extern "C" fn write_fontdictionary(mut fo: *mut fo_entry) {
+unsafe fn write_fontdictionary(mut fo: *mut fo_entry) {
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"write_fontdictionary\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1626,7 +1465,7 @@ unsafe extern "C" fn write_fontdictionary(mut fo: *mut fo_entry) {
     }
     pdfenddict();
 }
-unsafe extern "C" fn write_fontdictionaries() {
+unsafe fn write_fontdictionaries() {
     let mut fo: *mut fo_entry = ::core::ptr::null_mut::<fo_entry>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
@@ -1645,13 +1484,12 @@ unsafe extern "C" fn write_fontdictionaries() {
         fo = avl_t_next(&raw mut t) as *mut fo_entry;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn writefontstuff() {
+pub unsafe fn writefontstuff() {
     write_fontdescriptors();
     write_fontencodings();
     write_fontdictionaries();
 }
-unsafe extern "C" fn create_fontdictionary(
+unsafe fn create_fontdictionary(
     mut fm: *mut fm_entry,
     mut font_objnum: integer,
     mut f: internalfontnumber,
@@ -1735,7 +1573,7 @@ unsafe extern "C" fn create_fontdictionary(
         write_fontdictionary(fo);
     };
 }
-unsafe extern "C" fn font_is_used(mut f: internalfontnumber) -> ::core::ffi::c_int {
+unsafe fn font_is_used(mut f: internalfontnumber) -> ::core::ffi::c_int {
     let mut i: ::core::ffi::c_int = 0;
     let mut s: ::core::ffi::c_int = 0;
     i = *fontbc.offset(f as isize) as ::core::ffi::c_int;
@@ -1767,8 +1605,7 @@ unsafe extern "C" fn font_is_used(mut f: internalfontnumber) -> ::core::ffi::c_i
         return 1 as ::core::ffi::c_int;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn dopdffont(mut font_objnum: integer, mut f: internalfontnumber) {
+pub unsafe fn dopdffont(mut font_objnum: integer, mut f: internalfontnumber) {
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     if font_is_used(f) == 0 {
         return;

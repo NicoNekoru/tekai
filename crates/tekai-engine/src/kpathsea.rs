@@ -20,7 +20,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 #[path = "format_cache.rs"]
 mod format_cache;
@@ -121,15 +121,8 @@ pub static mut kpse_def_inst: kpathsea_instance = kpathsea_instance {
 #[no_mangle]
 pub static mut kpse_def: kpathsea = ptr::null_mut();
 
-#[repr(C)]
-pub struct KpseGlyphFileType {
-    name: const_string,
-    dpi: c_uint,
-    format: kpse_file_format_type,
-    source: c_uint,
-}
+pub use crate::kpathsea_types::KpseGlyphFileType;
 
-static CNF_OVERRIDES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static FILE_INDEX: OnceLock<FileIndex> = OnceLock::new();
 
 thread_local! {
@@ -223,10 +216,6 @@ impl Iterator for IndexedPaths<'_> {
         self.next = file.next;
         Some(self.index.directories[file.directory as usize].join(self.name))
     }
-}
-
-fn overrides() -> &'static Mutex<HashMap<String, String>> {
-    CNF_OVERRIDES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 unsafe fn ensure_instance() {
@@ -375,11 +364,11 @@ fn materialize_embedded_pdflatex_format() -> io::Result<PathBuf> {
 /// Current format materialization cache policy, independent of the embedded
 /// texmf root's process-lifetime initialization.
 pub fn engine_cache_root() -> PathBuf {
-    if let Some(path) = std::env::var_os("TEKAI_ENGINE_CACHE") {
+    if let Some(path) = crate::environment::var_os("TEKAI_ENGINE_CACHE") {
         return PathBuf::from(path);
     }
     if cfg!(target_os = "macos") {
-        if let Some(home) = std::env::var_os("HOME") {
+        if let Some(home) = crate::environment::var_os("HOME") {
             return PathBuf::from(home)
                 .join("Library")
                 .join("Caches")
@@ -387,10 +376,10 @@ pub fn engine_cache_root() -> PathBuf {
                 .join("engine");
         }
     }
-    if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
+    if let Some(path) = crate::environment::var_os("XDG_CACHE_HOME") {
         return PathBuf::from(path).join("tekai").join("engine");
     }
-    if let Some(home) = std::env::var_os("HOME") {
+    if let Some(home) = crate::environment::var_os("HOME") {
         return PathBuf::from(home)
             .join(".cache")
             .join("tekai")
@@ -426,7 +415,7 @@ pub fn format_search_paths() -> Vec<crate::search::SearchPath> {
 fn build_format_search_dirs() -> Vec<PathBuf> {
     let mut dirs = vec![PathBuf::from(".")];
     for key in ["TEKAI_ENGINE_FORMATS", "TEXFORMATS"] {
-        if let Some(paths) = std::env::var_os(key) {
+        if let Some(paths) = crate::environment::var_os(key) {
             for item in std::env::split_paths(&paths) {
                 if item.as_os_str().is_empty() {
                     continue;
@@ -809,8 +798,7 @@ fn locate_in_session(
     ))
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_set_program_name(argv0: const_string, progname: const_string) {
+pub unsafe fn kpse_set_program_name(argv0: const_string, progname: const_string) {
     unsafe {
         ensure_instance();
         let invocation = c_str_to_string(argv0).unwrap_or_else(|| "tekai-engine".to_owned());
@@ -822,8 +810,7 @@ pub unsafe extern "C" fn kpse_set_program_name(argv0: const_string, progname: co
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_reset_program_name(progname: const_string) {
+pub unsafe fn kpse_reset_program_name(progname: const_string) {
     unsafe {
         ensure_instance();
         if let Some(program) = c_str_to_string(progname) {
@@ -832,20 +819,13 @@ pub unsafe extern "C" fn kpse_reset_program_name(progname: const_string) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_init_prog(
-    _: const_string,
-    _: c_uint,
-    _: const_string,
-    _: const_string,
-) {
+pub unsafe fn kpse_init_prog(_: const_string, _: c_uint, _: const_string, _: const_string) {
     unsafe {
         ensure_instance();
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_set_program_enabled(
+pub unsafe fn kpse_set_program_enabled(
     fmt: kpse_file_format_type,
     value: c_int,
     level: kpse_src_type,
@@ -859,33 +839,36 @@ pub unsafe extern "C" fn kpse_set_program_enabled(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_maketex_option(_: const_string, _: c_int) {}
+pub unsafe fn kpse_maketex_option(_: const_string, _: c_int) {}
 
-#[no_mangle]
-pub unsafe extern "C" fn kpathsea_cnf_line_env_progname(_: kpathsea, line: string) {
-    if let Some(line) = c_str_to_string(line) {
-        if let Some((key, value)) = line.split_once('=') {
-            overrides()
-                .lock()
-                .unwrap()
-                .insert(key.trim().to_owned(), value.trim().to_owned());
-        }
+pub unsafe fn kpathsea_cnf_line_env_progname(_: kpathsea, line: string) {
+    if line.is_null() {
+        return;
+    }
+    let line = unsafe { CStr::from_ptr(line) }.to_bytes();
+    let Some(separator) = line.iter().position(|&byte| byte == b'=') else {
+        return;
+    };
+    let key = OsStr::from_bytes(line[..separator].trim_ascii());
+    let value = OsStr::from_bytes(line[separator + 1..].trim_ascii());
+    if let Err(error) = crate::environment::set_cnf(key, value) {
+        crate::environment::report(&error);
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_var_value(var: const_string) -> string {
-    let Some(key) = c_str_to_string(var) else {
+pub unsafe fn kpse_var_value(var: const_string) -> string {
+    if var.is_null() {
         return ptr::null_mut();
-    };
-    if let Ok(value) = std::env::var(&key) {
-        return unsafe { alloc_string(&value) };
     }
-    if let Some(value) = overrides().lock().unwrap().get(&key).cloned() {
-        return unsafe { alloc_string(&value) };
+    let bytes = unsafe { CStr::from_ptr(var) }.to_bytes();
+    let name = OsStr::from_bytes(bytes);
+    if let Some(value) =
+        crate::environment::var_os(name).or_else(|| crate::environment::cnf_value(name))
+    {
+        return unsafe { alloc_bytes(value.as_bytes()) };
     }
-    let fallback = match key.as_str() {
+    let key = String::from_utf8_lossy(bytes);
+    let fallback = match key.as_ref() {
         "shell_escape" => Some("f"),
         "shell_escape_commands" => Some(""),
         "file_line_error_style" => Some("f"),
@@ -922,8 +905,7 @@ pub unsafe extern "C" fn kpse_var_value(var: const_string) -> string {
     fallback.map_or(ptr::null_mut(), |value| unsafe { alloc_string(value) })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_absolute_p(filename: const_string, relative_ok: c_int) -> c_int {
+pub unsafe fn kpse_absolute_p(filename: const_string, relative_ok: c_int) -> c_int {
     if filename.is_null() {
         return FALSE;
     }
@@ -937,18 +919,15 @@ pub unsafe extern "C" fn kpse_absolute_p(filename: const_string, relative_ok: c_
     FALSE
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_in_name_ok(_: const_string) -> c_int {
+pub unsafe fn kpse_in_name_ok(_: const_string) -> c_int {
     TRUE
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_out_name_ok(_: const_string) -> c_int {
+pub unsafe fn kpse_out_name_ok(_: const_string) -> c_int {
     TRUE
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_readable_file(name: string) -> string {
+pub unsafe fn kpse_readable_file(name: string) -> string {
     if name.is_null() {
         return ptr::null_mut();
     }
@@ -959,8 +938,7 @@ pub unsafe extern "C" fn kpse_readable_file(name: string) -> string {
     ptr::null_mut()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_find_file(
+pub unsafe fn kpse_find_file(
     name: const_string,
     format: kpse_file_format_type,
     _: c_int,
@@ -977,8 +955,7 @@ pub unsafe extern "C" fn kpse_find_file(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_find_glyph(
+pub unsafe fn kpse_find_glyph(
     font_name: const_string,
     dpi: c_uint,
     format: kpse_file_format_type,
@@ -1010,19 +987,37 @@ pub unsafe extern "C" fn kpse_find_glyph(
     ptr::null_mut()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_bitmap_tolerance(actual: c_double, expected: c_double) -> c_int {
+pub unsafe fn kpse_bitmap_tolerance(actual: c_double, expected: c_double) -> c_int {
     ((actual - expected).abs() <= 1.0) as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kpse_magstep_fix(dpi: c_int, _: c_int, _: const_string) -> c_int {
+pub unsafe fn kpse_magstep_fix(dpi: c_uint, _: c_uint, _: *mut c_int) -> c_uint {
     dpi
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn magstep_fix_uses_the_callers_unsigned_resolution_and_integer_pointer_types() {
+        let fix: unsafe fn(c_uint, c_uint, *mut c_int) -> c_uint = kpse_magstep_fix;
+        let _: unsafe fn(c_uint, c_uint, *mut c_int) -> c_uint =
+            crate::generated::backend::writet3::kpse_magstep_fix;
+        for dpi in [
+            0,
+            1,
+            300,
+            c_int::MAX as c_uint,
+            c_int::MAX as c_uint + 1,
+            c_uint::MAX,
+        ] {
+            let mut magstep = 17;
+            assert_eq!(unsafe { fix(dpi, 300, &mut magstep) }, dpi);
+            assert_eq!(magstep, 17);
+            assert_eq!(unsafe { fix(dpi, 300, ptr::null_mut()) }, dpi);
+        }
+    }
 
     #[test]
     fn cache_dependency_paths_cover_web2c_and_scheduler_routes() {

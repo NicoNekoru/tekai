@@ -85,6 +85,86 @@ impl Drop for Project {
 }
 
 #[test]
+fn bundled_engine_width_capacity_failures_are_normal_diagnostics() {
+    let project = Project::new();
+    fs::create_dir(project.0.join("build")).unwrap();
+    for (name, body) in [
+        ("paragraph", format!("{}é more text", "x".repeat(8190))),
+        ("hbox", format!("\\setbox0=\\hbox{{{}}}", "x".repeat(8190))),
+        (
+            "stretch",
+            "\\setbox0=\\hbox{\\hskip0pt plus16000pt\\hskip0pt plus16000pt\\hskip0pt plus16000pt}"
+                .to_owned(),
+        ),
+        (
+            "negative-kerns",
+            "\\setbox0=\\hbox{\\kern-16000pt\\kern-16000pt\\kern-16000pt}".to_owned(),
+        ),
+    ] {
+        project.write(
+            &format!("{name}.tex"),
+            &format!(
+                "\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"
+            ),
+        );
+        let source = format!("{name}.tex");
+        let job = format!("-jobname={name}");
+        let output = project.run(&[
+            "__tekai-engine",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            "-output-directory=build",
+            &job,
+            &source,
+        ]);
+        // This invokes the engine child directly, so SIGABRT cannot be hidden
+        // behind the outer build command's ordinary error exit status.
+        assert_eq!(output.status.code(), Some(1), "{name}: {output:?}");
+        let diagnostic = format!(
+            "{}\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+            fs::read_to_string(project.0.join(format!("build/{name}.log"))).unwrap_or_default()
+        );
+        assert!(
+            diagnostic.contains("TeX capacity exceeded"),
+            "{name}: {diagnostic}"
+        );
+        let normalized: String = diagnostic.split_ascii_whitespace().collect();
+        assert!(
+            normalized.contains("paragraphorboxwidthinscaledpoints=2147483647"),
+            "{name}: {diagnostic}"
+        );
+        assert!(!diagnostic.contains("panicked"), "{name}: {diagnostic}");
+        assert!(!diagnostic.contains("SIGABRT"), "{name}: {diagnostic}");
+        assert!(!project.0.join(format!("build/{name}.pdf")).exists());
+    }
+}
+
+#[test]
+fn bundled_engine_long_breakable_unicode_paragraph_keeps_valid_layout() {
+    let project = Project::new();
+    // Preserve the former preview fixture's UTF-8 byte offset while making
+    // every word legal and short enough for ordinary paragraph line breaking.
+    project.write(
+        "main.tex",
+        &format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n{}é more text\n\\end{{document}}\n",
+            "x ".repeat(4095)
+        ),
+    );
+    let report = project.success(&["build", "main.tex", "--once", "--report-json"]);
+    assert_eq!(report["tex_runs"], 1);
+    let pdf = fs::read(project.0.join("build/main.pdf")).unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+    assert!(pdf.windows(5).any(|bytes| bytes == b"%%EOF"));
+    let log = fs::read_to_string(project.0.join("build/main.log")).unwrap();
+    assert!(!log.contains("TeX capacity exceeded"), "{log}");
+    assert!(!log.contains("Overfull \\hbox"), "{log}");
+    assert!(log.contains("Output written on"), "{log}");
+}
+
+#[test]
 fn bundled_engine_embeds_owned_truetype_glyphs_with_reserved_composite_mapping() {
     fn put16(bytes: &mut [u8], offset: usize, value: u16) {
         bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());

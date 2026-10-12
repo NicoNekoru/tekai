@@ -1,12 +1,9 @@
+use crate::byte_string::memcpy;
+
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
 
 extern "C" {
-    fn memcpy(
-        __dst: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
     static mut strpool: *mut packedASCIIcode;
     static mut strstart: *mut poolpointer;
     static mut fontbc: *mut eightbits;
@@ -14,7 +11,6 @@ extern "C" {
     static mut vfpacketbase: *mut integer;
     static mut vfpacketlength: integer;
     static mut last_ptr_index: size_t;
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
 }
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
@@ -56,8 +52,7 @@ pub static mut vf_limit: size_t = 0;
 pub static mut vf_ptr: *mut vf_entry = ::core::ptr::null::<vf_entry>() as *mut vf_entry;
 static mut packet_data_ptr: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-#[no_mangle]
-pub unsafe extern "C" fn newvfpacket(mut f: internalfontnumber) -> integer {
+pub unsafe fn newvfpacket(mut f: internalfontnumber) -> integer {
     let mut i: ::core::ffi::c_int = 0;
     let mut n: ::core::ffi::c_int = *fontec.offset(f as isize) as ::core::ffi::c_int
         - *fontbc.offset(f as isize) as ::core::ffi::c_int
@@ -113,8 +108,7 @@ pub unsafe extern "C" fn newvfpacket(mut f: internalfontnumber) -> integer {
     vf_ptr = vf_ptr.offset(1);
     return fresh1.offset_from(vf_array) as ::core::ffi::c_long as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn storepacket(mut f: internalfontnumber, mut c: integer, mut s: strnumber) {
+pub unsafe fn storepacket(mut f: internalfontnumber, mut c: integer, mut s: strnumber) {
     let mut l: ::core::ffi::c_int = *strstart
         .offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize)
         as ::core::ffi::c_int
@@ -143,8 +137,7 @@ pub unsafe extern "C" fn storepacket(mut f: internalfontnumber, mut c: integer, 
         l as ::core::ffi::c_uint as size_t,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn startpacket(mut f: internalfontnumber, mut c: eightbits) {
+pub unsafe fn startpacket(mut f: internalfontnumber, mut c: eightbits) {
     packet_data_ptr = *(*vf_array.offset(*vfpacketbase.offset(f as isize) as isize))
         .data
         .offset(
@@ -156,15 +149,13 @@ pub unsafe extern "C" fn startpacket(mut f: internalfontnumber, mut c: eightbits
             (c as ::core::ffi::c_int - *fontbc.offset(f as isize) as ::core::ffi::c_int) as isize,
         ) as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn packetbyte() -> eightbits {
+pub unsafe fn packetbyte() -> eightbits {
     vfpacketlength -= 1;
     let fresh3 = packet_data_ptr;
     packet_data_ptr = packet_data_ptr.offset(1);
     return *fresh3 as eightbits;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pushpacketstate() {
+pub unsafe fn pushpacketstate() {
     if packet_array.is_null() {
         packet_limit = 256 as size_t;
         if 1 as ::core::ffi::c_int as ::core::ffi::c_uint > packet_limit as ::core::ffi::c_uint {
@@ -203,8 +194,7 @@ pub unsafe extern "C" fn pushpacketstate() {
     (*packet_ptr).len = vfpacketlength;
     packet_ptr = packet_ptr.offset(1);
 }
-#[no_mangle]
-pub unsafe extern "C" fn poppacketstate() {
+pub unsafe fn poppacketstate() {
     if packet_ptr == packet_array {
         crate::utils::pdftex_fail_args(
             b"packet stack empty, impossible to pop\0" as *const u8 as *const ::core::ffi::c_char,
@@ -215,8 +205,7 @@ pub unsafe extern "C" fn poppacketstate() {
     packet_data_ptr = (*packet_ptr).dataptr;
     vfpacketlength = (*packet_ptr).len;
 }
-#[no_mangle]
-pub unsafe extern "C" fn vf_free() {
+pub unsafe fn vf_free() {
     let mut v: *mut vf_entry = ::core::ptr::null_mut::<vf_entry>();
     let mut p: *mut *mut ::core::ffi::c_char = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     if !vf_array.is_null() {

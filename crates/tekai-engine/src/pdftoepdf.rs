@@ -1,3 +1,14 @@
+pub use crate::generated::backend::epdf::{
+    embed_whole_font, epdf_create_fontdescriptor, epdf_mark_glyphs, get_fd_objnum, get_fn_objnum,
+    is_subsetable,
+};
+pub use crate::generated::backend::mapfile::lookup_fontmap;
+pub use crate::generated::backend::writeenc::epdf_write_enc;
+pub use crate::generated::pdftex0::{
+    getpdfsuppressptexinfo, getpdfsuppresswarningpagegroup, getptexuseunderscore, pdfbeginstream,
+    pdfendobj, pdfendstream, pdfnewobjnum, zpdfbeginobj,
+};
+
 use libc::{c_char, c_float, c_int, c_long, c_void};
 use std::ffi::{CStr, CString};
 use std::ptr;
@@ -90,24 +101,6 @@ extern "C" {
     static mut pdfboxspecart: c_int;
     static mut notdef: [c_char; 8];
 
-    fn pdfnewobjnum() -> c_int;
-    fn zpdfbeginobj(_: c_int, _: c_int);
-    fn pdfendobj();
-    fn pdfbeginstream();
-    fn pdfendstream();
-
-    fn getpdfsuppresswarningpagegroup() -> c_int;
-    fn getpdfsuppressptexinfo() -> c_int;
-    fn getptexuseunderscore() -> c_int;
-
-    fn lookup_fontmap(_: *mut c_char) -> *mut FmEntry;
-    fn epdf_create_fontdescriptor(_: *mut FmEntry, _: c_int) -> *mut FdEntry;
-    fn epdf_mark_glyphs(_: *mut FdEntry, _: *mut c_char);
-    fn embed_whole_font(_: *mut FdEntry);
-    fn get_fd_objnum(_: *mut FdEntry) -> c_int;
-    fn get_fn_objnum(_: *mut FdEntry) -> c_int;
-    fn is_subsetable(_: *mut FmEntry) -> c_int;
-    fn epdf_write_enc(_: *mut *mut c_char, _: c_int);
 }
 
 static mut IN_OBJ_LIST: *mut InObj = ptr::null_mut();
@@ -140,7 +133,7 @@ unsafe fn c_string_dup(ptr: *const c_char) -> *mut c_char {
 unsafe fn find_add_document(file_name: *mut c_char) -> *mut PdfDocument {
     unsafe {
         let mut p = PDF_DOCUMENTS;
-        while !p.is_null() && libc::strcmp((*p).file_name, file_name) != 0 {
+        while !p.is_null() && crate::byte_string::strcmp((*p).file_name, file_name) != 0 {
             p = (*p).next;
         }
         if !p.is_null() {
@@ -316,13 +309,21 @@ unsafe fn copy_font_dict(obj: *mut Object, r: *mut InObj) {
         crate::utils::pdf_puts(c"<<\n".as_ptr());
         for i in 0..xpdf_object_dict_get_length(obj) {
             let key = xpdf_object_dict_get_key(obj, i);
-            if libc::strncmp(
+            if crate::byte_string::strncmp(
                 key,
                 c"FontDescriptor".as_ptr(),
                 c"FontDescriptor".to_bytes().len(),
             ) == 0
-                || libc::strncmp(key, c"BaseFont".as_ptr(), c"BaseFont".to_bytes().len()) == 0
-                || libc::strncmp(key, c"Encoding".as_ptr(), c"Encoding".to_bytes().len()) == 0
+                || crate::byte_string::strncmp(
+                    key,
+                    c"BaseFont".as_ptr(),
+                    c"BaseFont".to_bytes().len(),
+                ) == 0
+                || crate::byte_string::strncmp(
+                    key,
+                    c"Encoding".as_ptr(),
+                    c"Encoding".to_bytes().len(),
+                ) == 0
             {
                 continue;
             }
@@ -411,7 +412,10 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
             && {
                 xpdf_object_dict_lookup(fontdict.ptr, c"Subtype".as_ptr(), subtype.ptr);
                 xpdf_object_is_name(subtype.ptr) != 0
-                    && libc::strcmp(xpdf_object_get_name(subtype.ptr), c"Type1".as_ptr()) == 0
+                    && crate::byte_string::strcmp(
+                        xpdf_object_get_name(subtype.ptr),
+                        c"Type1".as_ptr(),
+                    ) == 0
             }
             && {
                 xpdf_object_dict_lookup(fontdict.ptr, c"BaseFont".as_ptr(), basefont.ptr);
@@ -442,7 +446,7 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
                                 ffsubtype.ptr,
                             );
                             xpdf_object_is_name(ffsubtype.ptr) != 0
-                                && libc::strcmp(
+                                && crate::byte_string::strcmp(
                                     xpdf_object_get_name(ffsubtype.ptr),
                                     c"Type1C".as_ptr(),
                                 ) == 0
@@ -520,7 +524,7 @@ unsafe fn copy_font_resources(obj: *mut Object) {
 
 unsafe fn copy_other_resources(obj: *mut Object, key: *mut c_char) {
     unsafe {
-        if libc::strcmp(c"Subtype".as_ptr(), key) == 0 {
+        if crate::byte_string::strcmp(c"Subtype".as_ptr(), key) == 0 {
             if xpdf_object_is_name(obj) == 0 {
                 pdftex_warn_args(
                     c"PDF inclusion: Subtype in Resources dict is not a name (key '%s', type <%s>); ignored.".as_ptr(),
@@ -600,7 +604,7 @@ unsafe fn copy_object(obj: *mut Object) {
             let gs = xpdf_object_get_string(obj);
             let p = xpdf_gstring_cstr(gs);
             let len = xpdf_gstring_len(gs);
-            if libc::strlen(p) as c_int == len {
+            if crate::byte_string::strlen(p) as c_int == len {
                 crate::utils::pdf_puts(c"(".as_ptr());
                 let mut q = p;
                 while *q != 0 {
@@ -767,8 +771,7 @@ unsafe fn get_pagebox(page: *mut Page, pagebox_spec: c_int) -> Rect {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn read_pdf_info(
+pub unsafe fn read_pdf_info(
     image_name: *mut c_char,
     page_name: *mut c_char,
     mut page_num: c_int,
@@ -885,8 +888,7 @@ unsafe fn write_page_dict_key(page_dict: *mut Dict, key: &'static CStr) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn write_epdf() {
+pub unsafe fn write_epdf() {
     unsafe {
         let pdf_doc = epdf_doc as *mut PdfDocument;
         (*pdf_doc).occurrences -= 1;
@@ -921,7 +923,7 @@ pub unsafe extern "C" fn write_epdf() {
                     PrintfArg::from(sep),
                     PrintfArg::from(crate::utils::convertStringToPDFString(
                         (*pdf_doc).file_name,
-                        libc::strlen((*pdf_doc).file_name) as c_int,
+                        crate::byte_string::strlen((*pdf_doc).file_name) as c_int,
                     )),
                 ],
             );
@@ -1053,9 +1055,9 @@ pub unsafe extern "C" fn write_epdf() {
                 xpdf_object_free_contents(obj2.ptr);
                 xpdf_object_dict_get_val(obj1.ptr, i, obj2.ptr);
                 let key = xpdf_object_dict_get_key(obj1.ptr, i);
-                if libc::strcmp(c"Font".as_ptr(), key) == 0 {
+                if crate::byte_string::strcmp(c"Font".as_ptr(), key) == 0 {
                     copy_font_resources(obj2.ptr);
-                } else if libc::strcmp(c"ProcSet".as_ptr(), key) == 0 {
+                } else if crate::byte_string::strcmp(c"ProcSet".as_ptr(), key) == 0 {
                     copy_proc_set(obj2.ptr);
                 } else {
                     copy_other_resources(obj2.ptr, key);
@@ -1125,8 +1127,7 @@ pub unsafe extern "C" fn write_epdf() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn epdf_delete() {
+pub unsafe fn epdf_delete() {
     unsafe {
         let pdf_doc = epdf_doc as *mut PdfDocument;
         XREF = (*pdf_doc).xref;
@@ -1136,8 +1137,7 @@ pub unsafe extern "C" fn epdf_delete() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn epdf_check_mem() {
+pub unsafe fn epdf_check_mem() {
     unsafe {
         if IS_INIT != 0 {
             let mut p = PDF_DOCUMENTS;

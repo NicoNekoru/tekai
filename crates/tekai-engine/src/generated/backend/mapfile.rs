@@ -1,3 +1,19 @@
+pub use crate::generated::backend::avlstuff::comp_string_entry;
+pub use crate::generated::backend::subfont::handle_subfont_fm;
+pub use crate::generated::backend::writeenc::get_fe_entry;
+pub use crate::generated::pdftex0::{
+    getnullstr, getpdfsuppresswarningdupmap, zflushstr, zpackfilename, ztokenstostring,
+};
+pub use crate::generated::pdftexextra::makecstring;
+pub use crate::kpathsea::kpse_find_file;
+pub use crate::utils::maketexstring;
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_delete, avl_destroy, avl_find, avl_item_func, avl_node,
+    avl_probe, avl_t_find, avl_t_next, avl_t_prev, avl_table, avl_traverser, libavl_allocator,
+};
+
+use crate::byte_string::isdigit;
 use crate::byte_string::{strcasecmp, strchr, strcmp, strlen, strncmp, strstr};
 
 use crate::backend_grammar::platform_encoding;
@@ -13,65 +29,20 @@ use std::ffi::CStr;
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xstrdup};
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
-    fn kpse_find_file(
-        name: const_string,
-        format: kpse_file_format_type,
-        must_exist: boolean,
-    ) -> string;
-    static mut _DefaultRuneLocale: _RuneLocale;
-    fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
     static mut nameoffile: *mut ASCIIcode;
     static mut fontname: *mut strnumber;
     static mut pdffontmap: *mut fmentryptr;
     static mut lasttokensstring: strnumber;
-    fn ztokenstostring(p: halfword) -> strnumber;
-    fn zflushstr(s: strnumber);
-    fn zpackfilename(n: strnumber, a: strnumber, e: strnumber);
-    fn getpdfsuppresswarningdupmap() -> integer;
-    fn getnullstr() -> strnumber;
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_destroy(_: *mut avl_table, _: Option<avl_item_func>);
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_delete(_: *mut avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
-    fn avl_t_find(
-        _: *mut avl_traverser,
-        _: *mut avl_table,
-        _: *mut ::core::ffi::c_void,
-    ) -> *mut ::core::ffi::c_void;
-    fn avl_t_next(_: *mut avl_traverser) -> *mut ::core::ffi::c_void;
-    fn avl_t_prev(_: *mut avl_traverser) -> *mut ::core::ffi::c_void;
     static mut avl_xallocator: libavl_allocator;
     static mut cur_file_name: *mut ::core::ffi::c_char;
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
-    fn tex_printf(_: *const ::core::ffi::c_char, ...);
-    fn handle_subfont_fm(_: *mut fm_entry, _: ::core::ffi::c_int) -> boolean;
-    fn maketexstring(_: *const ::core::ffi::c_char) -> strnumber;
-    fn get_fe_entry(_: *mut ::core::ffi::c_char) -> *mut fe_entry;
-    fn comp_string_entry(
-        _: *const ::core::ffi::c_void,
-        _: *const ::core::ffi::c_void,
-        _: *mut ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int;
 }
 pub type __uint32_t = u32;
 pub type __int64_t = i64;
-pub type __darwin_ct_rune_t = ::core::ffi::c_int;
 pub type __darwin_size_t = usize;
 pub type __darwin_wchar_t = ::libc::wchar_t;
-pub type __darwin_rune_t = __darwin_wchar_t;
 pub type __darwin_off_t = __int64_t;
 pub type size_t = __darwin_size_t;
 pub type fpos_t = __darwin_off_t;
@@ -142,144 +113,16 @@ pub const kpse_any_glyph_format: kpse_file_format_type = 2;
 pub const kpse_pk_format: kpse_file_format_type = 1;
 pub const kpse_gf_format: kpse_file_format_type = 0;
 pub type integer = ::core::ffi::c_int;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneEntry {
-    pub __min: __darwin_rune_t,
-    pub __max: __darwin_rune_t,
-    pub __map: __darwin_rune_t,
-    pub __types: *mut __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneRange {
-    pub __nranges: ::core::ffi::c_int,
-    pub __ranges: *mut _RuneEntry,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneCharClass {
-    pub __name: [::core::ffi::c_char; 14],
-    pub __mask: __uint32_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _RuneLocale {
-    pub __magic: [::core::ffi::c_char; 8],
-    pub __encoding: [::core::ffi::c_char; 32],
-    pub __sgetrune: Option<
-        unsafe extern "C" fn(
-            *const ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *const ::core::ffi::c_char,
-        ) -> __darwin_rune_t,
-    >,
-    pub __sputrune: Option<
-        unsafe extern "C" fn(
-            __darwin_rune_t,
-            *mut ::core::ffi::c_char,
-            __darwin_size_t,
-            *mut *mut ::core::ffi::c_char,
-        ) -> ::core::ffi::c_int,
-    >,
-    pub __invalid_rune: __darwin_rune_t,
-    pub __runetype: [__uint32_t; 256],
-    pub __maplower: [__darwin_rune_t; 256],
-    pub __mapupper: [__darwin_rune_t; 256],
-    pub __runetype_ext: _RuneRange,
-    pub __maplower_ext: _RuneRange,
-    pub __mapupper_ext: _RuneRange,
-    pub __variable: *mut ::core::ffi::c_void,
-    pub __variable_len: ::core::ffi::c_int,
-    pub __ncharclasses: ::core::ffi::c_int,
-    pub __charclasses: *mut _RuneCharClass,
-}
 pub type ASCIIcode = ::core::ffi::c_uchar;
 pub type strnumber = integer;
 pub type halfword = integer;
 pub type internalfontnumber = integer;
 pub type fmentryptr = *mut integer;
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-pub type avl_item_func =
-    unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> ();
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_traverser {
-    pub avl_table: *mut avl_table,
-    pub avl_node: *mut avl_node,
-    pub avl_stack: [*mut avl_node; 32],
-    pub avl_height: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _subfont_entry {
-    pub infix: *mut ::core::ffi::c_char,
-    pub charcodes: [::core::ffi::c_long; 256],
-    pub next: *mut subfont_entry,
-}
+pub use crate::backend_types::_subfont_entry;
 pub type subfont_entry = _subfont_entry;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fe_entry {
-    pub fe_objnum: integer,
-    pub name: *mut ::core::ffi::c_char,
-    pub glyph_names: *mut *mut ::core::ffi::c_char,
-    pub tx_tree: *mut avl_table,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fm_entry {
-    pub tfm_name: *mut ::core::ffi::c_char,
-    pub sfd_name: *mut ::core::ffi::c_char,
-    pub ps_name: *mut ::core::ffi::c_char,
-    pub fd_flags: integer,
-    pub slant: integer,
-    pub extend: integer,
-    pub encname: *mut ::core::ffi::c_char,
-    pub ff_name: *mut ::core::ffi::c_char,
-    pub type_0: ::core::ffi::c_ushort,
-    pub pid: ::core::ffi::c_short,
-    pub eid: ::core::ffi::c_short,
-    pub subfont: *mut subfont_entry,
-    pub links: ::core::ffi::c_ushort,
-    pub in_use: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct ff_entry {
-    pub ff_name: *mut ::core::ffi::c_char,
-    pub ff_path: *mut ::core::ffi::c_char,
-}
+pub use crate::backend_types::fe_entry;
+pub use crate::backend_types::ff_entry;
+pub use crate::backend_types::fm_entry;
 pub type mapitem = mitem;
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -311,31 +154,13 @@ pub const F_OTF: ::core::ffi::c_int = 0x40 as ::core::ffi::c_int;
 pub const F_PK: ::core::ffi::c_int = 0x80 as ::core::ffi::c_int;
 pub const LINK_TFM: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
 pub const LINK_PS: ::core::ffi::c_int = 0x2 as ::core::ffi::c_int;
-pub const _CACHED_RUNES: ::core::ffi::c_int = (1 as ::core::ffi::c_int) << 8 as ::core::ffi::c_int;
-pub const _CTYPE_D: ::core::ffi::c_long = 0x400 as ::core::ffi::c_long;
-unsafe fn __isctype(
-    mut _c: __darwin_ct_rune_t,
-    mut _f: ::core::ffi::c_ulong,
-) -> __darwin_ct_rune_t {
-    return if _c < 0 as ::core::ffi::c_int || _c >= _CACHED_RUNES {
-        0 as __darwin_ct_rune_t
-    } else {
-        (_DefaultRuneLocale.__runetype[_c as usize] as ::core::ffi::c_ulong & _f != 0)
-            as ::core::ffi::c_int
-    };
-}
-unsafe fn isdigit(mut _c: ::core::ffi::c_int) -> ::core::ffi::c_int {
-    return __isctype(_c as __darwin_ct_rune_t, _CTYPE_D as ::core::ffi::c_ulong)
-        as ::core::ffi::c_int;
-}
 pub const FD_FLAGS_NOT_SET_IN_MAPLINE: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 static mut fm_file: *mut FILE = ::core::ptr::null::<FILE>() as *mut FILE;
 #[no_mangle]
 pub static mut mitem: *mut mapitem = ::core::ptr::null::<mapitem>() as *mut mapitem;
 static mut nontfm: [::core::ffi::c_char; 9] =
     unsafe { ::core::mem::transmute::<[u8; 9], [::core::ffi::c_char; 9]>(*b"<nontfm>\0") };
-#[no_mangle]
-pub unsafe extern "C" fn new_fm_entry() -> *mut fm_entry {
+pub unsafe fn new_fm_entry() -> *mut fm_entry {
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     fm = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<fm_entry>() as size_t))
         as *mut fm_entry;
@@ -355,8 +180,7 @@ pub unsafe extern "C" fn new_fm_entry() -> *mut fm_entry {
     (*fm).in_use = false_0 as boolean;
     return fm;
 }
-#[no_mangle]
-pub unsafe extern "C" fn delete_fm_entry(mut fm: *mut fm_entry) {
+pub unsafe fn delete_fm_entry(mut fm: *mut fm_entry) {
     if !(*fm).tfm_name.is_null() {
         free((*fm).tfm_name as *mut ::core::ffi::c_void);
     }
@@ -378,7 +202,7 @@ pub unsafe extern "C" fn delete_fm_entry(mut fm: *mut fm_entry) {
     }
     fm = ::core::ptr::null_mut::<fm_entry>();
 }
-unsafe extern "C" fn new_ff_entry() -> *mut ff_entry {
+unsafe fn new_ff_entry() -> *mut ff_entry {
     let mut ff: *mut ff_entry = ::core::ptr::null_mut::<ff_entry>();
     ff = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<ff_entry>() as size_t))
         as *mut ff_entry;
@@ -386,7 +210,7 @@ unsafe extern "C" fn new_ff_entry() -> *mut ff_entry {
     (*ff).ff_path = ::core::ptr::null_mut::<::core::ffi::c_char>();
     return ff;
 }
-unsafe extern "C" fn delete_ff_entry(mut ff: *mut ff_entry) {
+unsafe fn delete_ff_entry(mut ff: *mut ff_entry) {
     if !(*ff).ff_name.is_null() {
         free((*ff).ff_name as *mut ::core::ffi::c_void);
     }
@@ -400,7 +224,7 @@ unsafe extern "C" fn delete_ff_entry(mut ff: *mut ff_entry) {
     }
     ff = ::core::ptr::null_mut::<ff_entry>();
 }
-unsafe extern "C" fn dummy_fm_entry() -> *mut fm_entry {
+unsafe fn dummy_fm_entry() -> *mut fm_entry {
     static mut const_fm_entry: fm_entry = fm_entry {
         tfm_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         sfd_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -427,7 +251,7 @@ pub static mut ps_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mu
 pub static mut ff_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
 #[no_mangle]
 pub static mut encname_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-unsafe extern "C" fn comp_fm_entry_tfm(
+unsafe fn comp_fm_entry_tfm(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -437,7 +261,7 @@ unsafe extern "C" fn comp_fm_entry_tfm(
         (*(pb as *const fm_entry)).tfm_name,
     );
 }
-unsafe extern "C" fn comp_fm_entry_ps(
+unsafe fn comp_fm_entry_ps(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -476,7 +300,7 @@ unsafe extern "C" fn comp_fm_entry_ps(
     }
     return 0 as ::core::ffi::c_int;
 }
-unsafe extern "C" fn comp_ff_entry(
+unsafe fn comp_ff_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -486,7 +310,7 @@ unsafe extern "C" fn comp_ff_entry(
         (*(pb as *const ff_entry)).ff_name,
     );
 }
-unsafe extern "C" fn create_avl_trees() {
+unsafe fn create_avl_trees() {
     if !tfm_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"create_avl_trees\0" as *const u8 as *const ::core::ffi::c_char,
@@ -499,7 +323,7 @@ unsafe extern "C" fn create_avl_trees() {
     tfm_tree = avl_create(
         Some(
             comp_fm_entry_tfm
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,
@@ -529,7 +353,7 @@ unsafe extern "C" fn create_avl_trees() {
     ps_tree = avl_create(
         Some(
             comp_fm_entry_ps
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,
@@ -559,7 +383,7 @@ unsafe extern "C" fn create_avl_trees() {
     ff_tree = avl_create(
         Some(
             comp_ff_entry
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,
@@ -589,7 +413,7 @@ unsafe extern "C" fn create_avl_trees() {
     encname_tree = avl_create(
         Some(
             comp_string_entry
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,
@@ -608,8 +432,7 @@ unsafe extern "C" fn create_avl_trees() {
     } else {
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_do_entry(
+pub unsafe fn avl_do_entry(
     mut fm: *mut fm_entry,
     mut mode: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
@@ -855,7 +678,7 @@ pub unsafe extern "C" fn avl_do_entry(
         return 0 as ::core::ffi::c_int;
     };
 }
-unsafe extern "C" fn add_encname(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+unsafe fn add_encname(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if s.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -892,10 +715,7 @@ unsafe extern "C" fn add_encname(mut s: *mut ::core::ffi::c_char) -> *mut ::core
     }
     return p;
 }
-unsafe extern "C" fn check_fm_entry(
-    mut fm: *mut fm_entry,
-    mut warn: boolean,
-) -> ::core::ffi::c_int {
+unsafe fn check_fm_entry(mut fm: *mut fm_entry, mut warn: boolean) -> ::core::ffi::c_int {
     let mut a: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     if fm.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -1042,8 +862,7 @@ unsafe extern "C" fn check_fm_entry(
     }
     return a;
 }
-#[no_mangle]
-pub unsafe extern "C" fn check_std_t1font(mut s: *mut ::core::ffi::c_char) -> ::core::ffi::c_int {
+pub unsafe fn check_std_t1font(mut s: *mut ::core::ffi::c_char) -> ::core::ffi::c_int {
     static mut std_t1font_names: [*const ::core::ffi::c_char; 14] = [
         b"Courier\0" as *const u8 as *const ::core::ffi::c_char,
         b"Courier-Bold\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1122,7 +941,7 @@ pub unsafe extern "C" fn check_std_t1font(mut s: *mut ::core::ffi::c_char) -> ::
     }
     return -(1 as ::core::ffi::c_int);
 }
-unsafe extern "C" fn fm_scan_line() {
+unsafe fn fm_scan_line() {
     let mut current_block: u64;
     let mut a: ::core::ffi::c_int = 0;
     let mut b: ::core::ffi::c_int = 0;
@@ -1332,16 +1151,25 @@ unsafe extern "C" fn fm_scan_line() {
                                 if *r as ::core::ffi::c_int == ' ' as i32 {
                                     r = r.offset(1);
                                 }
-                                let end = initialized_line_end
-                                    .get_or_insert_with(|| r.add(CStr::from_ptr(r).to_bytes().len()));
-                                let remaining = end.addr().checked_sub(r.addr()).unwrap_or_else(|| {
-                                    crate::utils::pdftex_fail_args(c"invalid map line cursor".as_ptr(), &[])
+                                let end = initialized_line_end.get_or_insert_with(|| {
+                                    r.add(CStr::from_ptr(r).to_bytes().len())
                                 });
+                                let remaining =
+                                    end.addr().checked_sub(r.addr()).unwrap_or_else(|| {
+                                        crate::utils::pdftex_fail_args(
+                                            c"invalid map line cursor".as_ptr(),
+                                            &[],
+                                        )
+                                    });
                                 let field = std::slice::from_raw_parts(r.cast::<u8>(), remaining);
                                 let operand = map_operand(field);
-                                if matches!(operand, Err(FloatError::NonFinite | FloatError::Overflow)) {
+                                if matches!(
+                                    operand,
+                                    Err(FloatError::NonFinite | FloatError::Overflow)
+                                ) {
                                     crate::utils::pdftex_warn_args(
-                                        c"invalid entry for `%s': floating field out of range".as_ptr(),
+                                        c"invalid entry for `%s': floating field out of range"
+                                            .as_ptr(),
                                         &[crate::utils::PrintfArg::from((*fm).tfm_name)],
                                     );
                                     delete_fm_entry(fm);
@@ -1627,8 +1455,7 @@ unsafe extern "C" fn fm_scan_line() {
     }
     delete_fm_entry(fm);
 }
-#[no_mangle]
-pub unsafe extern "C" fn fm_read_info() {
+pub unsafe fn fm_read_info() {
     if tfm_tree.is_null() {
         create_avl_trees();
     }
@@ -1688,7 +1515,7 @@ pub unsafe extern "C" fn fm_read_info() {
     (*mitem).line = ::core::ptr::null_mut::<::core::ffi::c_char>();
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-unsafe extern "C" fn fmlookup(mut f: internalfontnumber) -> fmentryptr {
+unsafe fn fmlookup(mut f: internalfontnumber) -> fmentryptr {
     let mut tfm: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     let mut tmp: fm_entry = fm_entry {
@@ -1731,8 +1558,7 @@ unsafe extern "C" fn fmlookup(mut f: internalfontnumber) -> fmentryptr {
     }
     return dummy_fm_entry() as fmentryptr;
 }
-#[no_mangle]
-pub unsafe extern "C" fn hasfmentry(mut f: internalfontnumber) -> boolean {
+pub unsafe fn hasfmentry(mut f: internalfontnumber) -> boolean {
     if (*pdffontmap.offset(f as isize)).is_null() {
         let ref mut fresh9 = *pdffontmap.offset(f as isize);
         *fresh9 = fmlookup(f);
@@ -1750,15 +1576,13 @@ pub unsafe extern "C" fn hasfmentry(mut f: internalfontnumber) -> boolean {
     return (*pdffontmap.offset(f as isize) != dummy_fm_entry() as fmentryptr)
         as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn isscalable(mut f: internalfontnumber) -> boolean {
+pub unsafe fn isscalable(mut f: internalfontnumber) -> boolean {
     return (hasfmentry(f) != 0
         && !((*(*pdffontmap.offset(f as isize) as *mut fm_entry)).type_0 as ::core::ffi::c_int
             & F_PK
             != 0 as ::core::ffi::c_int)) as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn hasspacechar(mut f: internalfontnumber) -> boolean {
+pub unsafe fn hasspacechar(mut f: internalfontnumber) -> boolean {
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     let mut fe: *mut fe_entry = ::core::ptr::null_mut::<fe_entry>();
     if isscalable(f) == 0 {
@@ -1788,7 +1612,7 @@ pub unsafe extern "C" fn hasspacechar(mut f: internalfontnumber) -> boolean {
     }
     return false_0;
 }
-unsafe extern "C" fn fm_valid_for_font_replacement(mut fm: *mut fm_entry) -> boolean {
+unsafe fn fm_valid_for_font_replacement(mut fm: *mut fm_entry) -> boolean {
     let mut ff: *mut ff_entry = ::core::ptr::null_mut::<ff_entry>();
     if fm.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -1835,8 +1659,7 @@ unsafe extern "C" fn fm_valid_for_font_replacement(mut fm: *mut fm_entry) -> boo
     }
     return true_0;
 }
-#[no_mangle]
-pub unsafe extern "C" fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -> *mut fm_entry {
+pub unsafe fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -> *mut fm_entry {
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     let mut fm2: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     let mut tmp: fm_entry = fm_entry {
@@ -1986,10 +1809,7 @@ pub unsafe extern "C" fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -
     }
     return ::core::ptr::null_mut::<fm_entry>();
 }
-unsafe extern "C" fn process_map_item(
-    mut s: *mut ::core::ffi::c_char,
-    mut type_0: ::core::ffi::c_int,
-) {
+unsafe fn process_map_item(mut s: *mut ::core::ffi::c_char, mut type_0: ::core::ffi::c_int) {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut mode: ::core::ffi::c_int = 0;
     if *s as ::core::ffi::c_int == ' ' as i32 {
@@ -2048,32 +1868,28 @@ unsafe extern "C" fn process_map_item(
         fm_read_info();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfmapfile(mut t: integer) {
+pub unsafe fn pdfmapfile(mut t: integer) {
     process_map_item(
         makecstring(ztokenstostring(t) as integer),
         MAPFILE as ::core::ffi::c_int,
     );
     zflushstr(lasttokensstring);
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfmapline(mut t: integer) {
+pub unsafe fn pdfmapline(mut t: integer) {
     process_map_item(
         makecstring(ztokenstostring(t) as integer),
         MAPLINE as ::core::ffi::c_int,
     );
     zflushstr(lasttokensstring);
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfmaplinesp() {
+pub unsafe fn pdfmaplinesp() {
     process_map_item(
         b"=pdftexspace PdfTeX-Space <pdftexspace.pfb\0" as *const u8 as *const ::core::ffi::c_char
             as *mut ::core::ffi::c_char,
         MAPLINE as ::core::ffi::c_int,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfinitmapfile(mut map_name: const_string) {
+pub unsafe fn pdfinitmapfile(mut map_name: const_string) {
     if !mitem.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"pdfinitmapfile\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2089,8 +1905,7 @@ pub unsafe extern "C" fn pdfinitmapfile(mut map_name: const_string) {
     (*mitem).type_0 = MAPFILE;
     (*mitem).line = xstrdup(map_name) as *mut ::core::ffi::c_char;
 }
-#[no_mangle]
-pub unsafe extern "C" fn check_ff_exist(
+pub unsafe fn check_ff_exist(
     mut ff_name: *mut ::core::ffi::c_char,
     mut is_tt: boolean,
 ) -> *mut ff_entry {
@@ -2135,10 +1950,7 @@ pub unsafe extern "C" fn check_ff_exist(
     }
     return ff;
 }
-unsafe extern "C" fn destroy_fm_entry_tfm(
-    mut pa: *mut ::core::ffi::c_void,
-    mut pb: *mut ::core::ffi::c_void,
-) {
+unsafe fn destroy_fm_entry_tfm(mut pa: *mut ::core::ffi::c_void, mut pb: *mut ::core::ffi::c_void) {
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     fm = pa as *mut fm_entry;
     if (*fm).links as ::core::ffi::c_int & LINK_PS == 0 {
@@ -2147,10 +1959,7 @@ unsafe extern "C" fn destroy_fm_entry_tfm(
         (*fm).links = ((*fm).links as ::core::ffi::c_int & !LINK_TFM) as ::core::ffi::c_ushort;
     };
 }
-unsafe extern "C" fn destroy_fm_entry_ps(
-    mut pa: *mut ::core::ffi::c_void,
-    mut pb: *mut ::core::ffi::c_void,
-) {
+unsafe fn destroy_fm_entry_ps(mut pa: *mut ::core::ffi::c_void, mut pb: *mut ::core::ffi::c_void) {
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     fm = pa as *mut fm_entry;
     if (*fm).links as ::core::ffi::c_int & LINK_TFM == 0 {
@@ -2159,25 +1968,18 @@ unsafe extern "C" fn destroy_fm_entry_ps(
         (*fm).links = ((*fm).links as ::core::ffi::c_int & !LINK_PS) as ::core::ffi::c_ushort;
     };
 }
-unsafe extern "C" fn destroy_ff_entry(
-    mut pa: *mut ::core::ffi::c_void,
-    mut pb: *mut ::core::ffi::c_void,
-) {
+unsafe fn destroy_ff_entry(mut pa: *mut ::core::ffi::c_void, mut pb: *mut ::core::ffi::c_void) {
     let mut ff: *mut ff_entry = ::core::ptr::null_mut::<ff_entry>();
     ff = pa as *mut ff_entry;
     delete_ff_entry(ff);
 }
-#[no_mangle]
-pub unsafe extern "C" fn fm_free() {
+pub unsafe fn fm_free() {
     if !tfm_tree.is_null() {
         avl_destroy(
             tfm_tree,
             Some(
                 destroy_fm_entry_tfm
-                    as unsafe extern "C" fn(
-                        *mut ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
+                    as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
         tfm_tree = ::core::ptr::null_mut::<avl_table>();
@@ -2187,10 +1989,7 @@ pub unsafe extern "C" fn fm_free() {
             ps_tree,
             Some(
                 destroy_fm_entry_ps
-                    as unsafe extern "C" fn(
-                        *mut ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
+                    as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
         ps_tree = ::core::ptr::null_mut::<avl_table>();
@@ -2200,10 +1999,7 @@ pub unsafe extern "C" fn fm_free() {
             ff_tree,
             Some(
                 destroy_ff_entry
-                    as unsafe extern "C" fn(
-                        *mut ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
+                    as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
         ff_tree = ::core::ptr::null_mut::<avl_table>();

@@ -1,38 +1,25 @@
+use crate::byte_string::memcpy;
+
 use crate::allocation::{free, malloc};
 
-extern "C" {
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
-    fn memcpy(
-        __dst: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-}
+use crate::termination::__assert_rtn;
+
+extern "C" {}
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
-pub type avl_comparison_func = unsafe extern "C" fn(
+pub type avl_comparison_func = unsafe fn(
     *const ::core::ffi::c_void,
     *const ::core::ffi::c_void,
     *mut ::core::ffi::c_void,
 ) -> ::core::ffi::c_int;
-pub type avl_item_func =
-    unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> ();
-pub type avl_copy_func = unsafe extern "C" fn(
-    *mut ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> *mut ::core::ffi::c_void;
+pub type avl_item_func = unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> ();
+pub type avl_copy_func =
+    unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
+    pub libavl_malloc: Option<unsafe fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
+    pub libavl_free: Option<unsafe fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -62,8 +49,7 @@ pub struct avl_traverser {
 }
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
-#[no_mangle]
-pub unsafe extern "C" fn avl_create(
+pub unsafe fn avl_create(
     mut compare: Option<avl_comparison_func>,
     mut param: *mut ::core::ffi::c_void,
     mut allocator: *mut libavl_allocator,
@@ -98,8 +84,7 @@ pub unsafe extern "C" fn avl_create(
     (*tree).avl_generation = 0 as ::core::ffi::c_ulong;
     return tree;
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_find(
+pub unsafe fn avl_find(
     mut tree: *const avl_table,
     mut item: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
@@ -130,8 +115,7 @@ pub unsafe extern "C" fn avl_find(
     }
     return NULL;
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_probe(
+pub unsafe fn avl_probe(
     mut tree: *mut avl_table,
     mut item: *mut ::core::ffi::c_void,
 ) -> *mut *mut ::core::ffi::c_void {
@@ -299,16 +283,14 @@ pub unsafe extern "C" fn avl_probe(
     (*tree).avl_generation = (*tree).avl_generation.wrapping_add(1);
     return &raw mut (*n).avl_data;
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_insert(
+pub unsafe fn avl_insert(
     mut table: *mut avl_table,
     mut item: *mut ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
     let mut p: *mut *mut ::core::ffi::c_void = avl_probe(table, item);
     return if p.is_null() || *p == item { NULL } else { *p };
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_replace(
+pub unsafe fn avl_replace(
     mut table: *mut avl_table,
     mut item: *mut ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
@@ -321,8 +303,7 @@ pub unsafe extern "C" fn avl_replace(
         return r;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_delete(
+pub unsafe fn avl_delete(
     mut tree: *mut avl_table,
     mut item: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
@@ -546,7 +527,7 @@ pub unsafe extern "C" fn avl_delete(
     (*tree).avl_generation = (*tree).avl_generation.wrapping_add(1);
     return res;
 }
-unsafe extern "C" fn trav_refresh(mut trav: *mut avl_traverser) {
+unsafe fn trav_refresh(mut trav: *mut avl_traverser) {
     if trav.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"trav_refresh\0" as *const u8 as *const ::core::ffi::c_char,
@@ -598,15 +579,13 @@ unsafe extern "C" fn trav_refresh(mut trav: *mut avl_traverser) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_init(mut trav: *mut avl_traverser, mut tree: *mut avl_table) {
+pub unsafe fn avl_t_init(mut trav: *mut avl_traverser, mut tree: *mut avl_table) {
     (*trav).avl_table = tree;
     (*trav).avl_node = ::core::ptr::null_mut::<avl_node>();
     (*trav).avl_height = 0 as size_t;
     (*trav).avl_generation = (*tree).avl_generation;
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_first(
+pub unsafe fn avl_t_first(
     mut trav: *mut avl_traverser,
     mut tree: *mut avl_table,
 ) -> *mut ::core::ffi::c_void {
@@ -647,8 +626,7 @@ pub unsafe extern "C" fn avl_t_first(
     (*trav).avl_node = x;
     return if !x.is_null() { (*x).avl_data } else { NULL };
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_last(
+pub unsafe fn avl_t_last(
     mut trav: *mut avl_traverser,
     mut tree: *mut avl_table,
 ) -> *mut ::core::ffi::c_void {
@@ -689,8 +667,7 @@ pub unsafe extern "C" fn avl_t_last(
     (*trav).avl_node = x;
     return if !x.is_null() { (*x).avl_data } else { NULL };
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_find(
+pub unsafe fn avl_t_find(
     mut trav: *mut avl_traverser,
     mut tree: *mut avl_table,
     mut item: *mut ::core::ffi::c_void,
@@ -746,8 +723,7 @@ pub unsafe extern "C" fn avl_t_find(
     (*trav).avl_node = ::core::ptr::null_mut::<avl_node>();
     return NULL;
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_insert(
+pub unsafe fn avl_t_insert(
     mut trav: *mut avl_traverser,
     mut tree: *mut avl_table,
     mut item: *mut ::core::ffi::c_void,
@@ -781,8 +757,7 @@ pub unsafe extern "C" fn avl_t_insert(
         return NULL;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_copy(
+pub unsafe fn avl_t_copy(
     mut trav: *mut avl_traverser,
     mut src: *const avl_traverser,
 ) -> *mut ::core::ffi::c_void {
@@ -815,8 +790,7 @@ pub unsafe extern "C" fn avl_t_copy(
         NULL
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_next(mut trav: *mut avl_traverser) -> *mut ::core::ffi::c_void {
+pub unsafe fn avl_t_next(mut trav: *mut avl_traverser) -> *mut ::core::ffi::c_void {
     let mut x: *mut avl_node = ::core::ptr::null_mut::<avl_node>();
     if trav.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -883,8 +857,7 @@ pub unsafe extern "C" fn avl_t_next(mut trav: *mut avl_traverser) -> *mut ::core
     (*trav).avl_node = x;
     return (*x).avl_data;
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_prev(mut trav: *mut avl_traverser) -> *mut ::core::ffi::c_void {
+pub unsafe fn avl_t_prev(mut trav: *mut avl_traverser) -> *mut ::core::ffi::c_void {
     let mut x: *mut avl_node = ::core::ptr::null_mut::<avl_node>();
     if trav.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -951,8 +924,7 @@ pub unsafe extern "C" fn avl_t_prev(mut trav: *mut avl_traverser) -> *mut ::core
     (*trav).avl_node = x;
     return (*x).avl_data;
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_cur(mut trav: *mut avl_traverser) -> *mut ::core::ffi::c_void {
+pub unsafe fn avl_t_cur(mut trav: *mut avl_traverser) -> *mut ::core::ffi::c_void {
     if trav.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"avl_t_cur\0" as *const u8 as *const ::core::ffi::c_char,
@@ -968,8 +940,7 @@ pub unsafe extern "C" fn avl_t_cur(mut trav: *mut avl_traverser) -> *mut ::core:
         NULL
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_t_replace(
+pub unsafe fn avl_t_replace(
     mut trav: *mut avl_traverser,
     mut new: *mut ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
@@ -991,7 +962,7 @@ pub unsafe extern "C" fn avl_t_replace(
     (*(*trav).avl_node).avl_data = new;
     return old;
 }
-unsafe extern "C" fn copy_error_recovery(
+unsafe fn copy_error_recovery(
     mut stack: *mut *mut avl_node,
     mut height: ::core::ffi::c_int,
     mut new: *mut avl_table,
@@ -1018,8 +989,7 @@ unsafe extern "C" fn copy_error_recovery(
     }
     avl_destroy(new, destroy);
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_copy(
+pub unsafe fn avl_copy(
     mut org: *const avl_table,
     mut copy: Option<avl_copy_func>,
     mut destroy: Option<avl_item_func>,
@@ -1147,8 +1117,7 @@ pub unsafe extern "C" fn avl_copy(
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_destroy(mut tree: *mut avl_table, mut destroy: Option<avl_item_func>) {
+pub unsafe fn avl_destroy(mut tree: *mut avl_table, mut destroy: Option<avl_item_func>) {
     let mut p: *mut avl_node = ::core::ptr::null_mut::<avl_node>();
     let mut q: *mut avl_node = ::core::ptr::null_mut::<avl_node>();
     if tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -1187,8 +1156,7 @@ pub unsafe extern "C" fn avl_destroy(mut tree: *mut avl_table, mut destroy: Opti
         (*tree).avl_alloc, tree as *mut ::core::ffi::c_void
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_malloc(
+pub unsafe fn avl_malloc(
     mut allocator: *mut libavl_allocator,
     mut size: size_t,
 ) -> *mut ::core::ffi::c_void {
@@ -1205,11 +1173,7 @@ pub unsafe extern "C" fn avl_malloc(
     };
     return malloc(size);
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_free(
-    mut allocator: *mut libavl_allocator,
-    mut block: *mut ::core::ffi::c_void,
-) {
+pub unsafe fn avl_free(mut allocator: *mut libavl_allocator, mut block: *mut ::core::ffi::c_void) {
     if !(!allocator.is_null() && !block.is_null()) as ::core::ffi::c_int as ::core::ffi::c_long != 0
     {
         __assert_rtn(
@@ -1226,19 +1190,14 @@ pub unsafe extern "C" fn avl_free(
 pub static mut avl_allocator_default: libavl_allocator = unsafe {
     libavl_allocator {
         libavl_malloc: Some(
-            avl_malloc
-                as unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void,
+            avl_malloc as unsafe fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void,
         ),
         libavl_free: Some(
-            avl_free as unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> (),
+            avl_free as unsafe fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> (),
         ),
     }
 };
-#[no_mangle]
-pub unsafe extern "C" fn avl_assert_insert(
-    mut table: *mut avl_table,
-    mut item: *mut ::core::ffi::c_void,
-) {
+pub unsafe fn avl_assert_insert(mut table: *mut avl_table, mut item: *mut ::core::ffi::c_void) {
     let mut p: *mut *mut ::core::ffi::c_void = avl_probe(table, item);
     if !(!p.is_null() && *p == item) as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -1250,8 +1209,7 @@ pub unsafe extern "C" fn avl_assert_insert(
     } else {
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn avl_assert_delete(
+pub unsafe fn avl_assert_delete(
     mut table: *mut avl_table,
     mut item: *mut ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {

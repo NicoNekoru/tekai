@@ -4,7 +4,6 @@ use crate::utils::xgetc;
 
 extern "C" {
     static mut t3_file: *mut FILE;
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -17,21 +16,10 @@ pub type address = *mut ::core::ffi::c_void;
 pub type integer = ::core::ffi::c_int;
 pub type halfword = integer;
 pub type shalfword = ::core::ffi::c_short;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct chardesc {
-    pub charcode: integer,
-    pub cwidth: integer,
-    pub cheight: integer,
-    pub xoff: integer,
-    pub yoff: integer,
-    pub xescape: integer,
-    pub rastersize: integer,
-    pub raster: *mut halfword,
-}
+pub use crate::backend_types::chardesc;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const EOF: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
-unsafe extern "C" fn pkbyte() -> shalfword {
+unsafe fn pkbyte() -> shalfword {
     let mut i: shalfword = 0;
     i = xgetc(t3_file) as shalfword;
     if i as ::core::ffi::c_int == EOF {
@@ -42,7 +30,7 @@ unsafe extern "C" fn pkbyte() -> shalfword {
     }
     return i;
 }
-unsafe extern "C" fn pkduo() -> integer {
+unsafe fn pkduo() -> integer {
     let mut i: integer = 0;
     i = pkbyte() as integer;
     if i > 127 as ::core::ffi::c_int {
@@ -52,7 +40,7 @@ unsafe extern "C" fn pkduo() -> integer {
         as integer;
     return i;
 }
-unsafe extern "C" fn pktrio() -> integer {
+unsafe fn pktrio() -> integer {
     let mut i: integer = 0;
     i = pkbyte() as integer;
     if i > 127 as ::core::ffi::c_int {
@@ -64,7 +52,7 @@ unsafe extern "C" fn pktrio() -> integer {
         as integer;
     return i;
 }
-unsafe extern "C" fn pkquad() -> integer {
+unsafe fn pkquad() -> integer {
     let mut i: integer = 0;
     i = pkbyte() as integer;
     if i > 127 as ::core::ffi::c_int {
@@ -83,7 +71,7 @@ static mut flagbyte: halfword = 0;
 static mut bitweight: halfword = 0;
 static mut dynf: halfword = 0;
 static mut repeatcount: halfword = 0;
-unsafe extern "C" fn getnyb() -> shalfword {
+unsafe fn getnyb() -> shalfword {
     let mut temp: halfword = 0;
     if bitweight == 0 as ::core::ffi::c_int {
         bitweight = 16 as ::core::ffi::c_int as halfword;
@@ -95,7 +83,7 @@ unsafe extern "C" fn getnyb() -> shalfword {
     }
     return temp as shalfword;
 }
-unsafe extern "C" fn getbit() -> boolean {
+unsafe fn getbit() -> boolean {
     bitweight >>= 1 as ::core::ffi::c_int;
     if bitweight == 0 as ::core::ffi::c_int {
         inputbyte = pkbyte() as halfword;
@@ -103,10 +91,10 @@ unsafe extern "C" fn getbit() -> boolean {
     }
     return inputbyte as boolean & bitweight as boolean;
 }
-static mut realfunc: Option<unsafe extern "C" fn() -> halfword> = None;
+static mut realfunc: Option<unsafe fn() -> halfword> = None;
 #[no_mangle]
 pub static mut pk_remainder: ::core::ffi::c_long = 0;
-unsafe extern "C" fn pkpackednum() -> halfword {
+unsafe fn pkpackednum() -> halfword {
     let mut i: halfword = 0;
     let mut j: halfword = 0;
     i = getnyb() as halfword;
@@ -145,7 +133,7 @@ unsafe extern "C" fn pkpackednum() -> halfword {
             .expect("non-null function pointer")();
     };
 }
-unsafe extern "C" fn rest() -> halfword {
+unsafe fn rest() -> halfword {
     let mut i: halfword = 0;
     if pk_remainder < 0 as ::core::ffi::c_long {
         pk_remainder = -pk_remainder;
@@ -157,8 +145,8 @@ unsafe extern "C" fn rest() -> halfword {
         } else {
             i = pk_remainder as halfword;
             pk_remainder = 0 as ::core::ffi::c_long;
-            realfunc = Some(pkpackednum as unsafe extern "C" fn() -> halfword)
-                as Option<unsafe extern "C" fn() -> halfword>;
+            realfunc =
+                Some(pkpackednum as unsafe fn() -> halfword) as Option<unsafe fn() -> halfword>;
             return i;
         }
     } else {
@@ -168,7 +156,7 @@ unsafe extern "C" fn rest() -> halfword {
         );
     };
 }
-unsafe extern "C" fn handlehuge(mut i: halfword, mut k: halfword) -> halfword {
+unsafe fn handlehuge(mut i: halfword, mut k: halfword) -> halfword {
     let mut j: ::core::ffi::c_long = k as ::core::ffi::c_long;
     while i != 0 {
         j = (j << 4 as ::core::ffi::c_long) + getnyb() as ::core::ffi::c_long;
@@ -178,8 +166,7 @@ unsafe extern "C" fn handlehuge(mut i: halfword, mut k: halfword) -> halfword {
         + ((13 as ::core::ffi::c_int - dynf as ::core::ffi::c_int) * 16 as ::core::ffi::c_int)
             as ::core::ffi::c_long
         + dynf as ::core::ffi::c_long;
-    realfunc = Some(rest as unsafe extern "C" fn() -> halfword)
-        as Option<unsafe extern "C" fn() -> halfword>;
+    realfunc = Some(rest as unsafe fn() -> halfword) as Option<unsafe fn() -> halfword>;
     return rest();
 }
 static mut gpower: [halfword; 17] = [
@@ -201,7 +188,7 @@ static mut gpower: [halfword; 17] = [
     32767 as ::core::ffi::c_int,
     65535 as ::core::ffi::c_int,
 ];
-unsafe extern "C" fn unpack(mut cd: *mut chardesc) {
+unsafe fn unpack(mut cd: *mut chardesc) {
     let mut i: integer = 0;
     let mut j: integer = 0;
     let mut word: halfword = 0;
@@ -230,8 +217,7 @@ unsafe extern "C" fn unpack(mut cd: *mut chardesc) {
         ) as *mut halfword;
     }
     raster = (*cd).raster;
-    realfunc = Some(pkpackednum as unsafe extern "C" fn() -> halfword)
-        as Option<unsafe extern "C" fn() -> halfword>;
+    realfunc = Some(pkpackednum as unsafe fn() -> halfword) as Option<unsafe fn() -> halfword>;
     dynf = (flagbyte as ::core::ffi::c_int / 16 as ::core::ffi::c_int) as halfword;
     turnon = (flagbyte as ::core::ffi::c_int & 8 as ::core::ffi::c_int) as boolean;
     if dynf == 14 as ::core::ffi::c_int {
@@ -336,11 +322,7 @@ unsafe extern "C" fn unpack(mut cd: *mut chardesc) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn readchar(
-    mut check_preamble: boolean,
-    mut cd: *mut chardesc,
-) -> ::core::ffi::c_int {
+pub unsafe fn readchar(mut check_preamble: boolean, mut cd: *mut chardesc) -> ::core::ffi::c_int {
     let mut i: shalfword = 0;
     let mut k: integer = 0;
     let mut length: integer = 0 as integer;

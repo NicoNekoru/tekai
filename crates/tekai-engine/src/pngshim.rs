@@ -43,7 +43,7 @@ pub struct png_color_struct {
     pub blue: u8,
 }
 
-type PngErrorPtr = Option<unsafe extern "C" fn(*mut png_struct_def, *const c_char)>;
+type PngErrorPtr = Option<unsafe fn(*mut png_struct_def, *const c_char)>;
 
 struct PngInfo {
     state: *mut PngState,
@@ -311,13 +311,11 @@ unsafe fn png_decode_fail(error: String) -> ! {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn png_get_libpng_ver(_: *mut c_void) -> *const c_char {
+pub fn png_get_libpng_ver(_: *mut c_void) -> *const c_char {
     PNG_LIBPNG_VER_STRING.as_ptr().cast()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_create_read_struct(
+pub unsafe fn png_create_read_struct(
     _user_png_ver: *const c_char,
     _error_ptr: *mut c_void,
     _error_fn: PngErrorPtr,
@@ -326,10 +324,7 @@ pub unsafe extern "C" fn png_create_read_struct(
     Box::into_raw(Box::new(PngState::new())).cast()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_create_info_struct(
-    png_ptr: *const png_struct_def,
-) -> *mut png_info_def {
+pub unsafe fn png_create_info_struct(png_ptr: *const png_struct_def) -> *mut png_info_def {
     let Some(state) = state(png_ptr) else {
         return ptr::null_mut();
     };
@@ -346,8 +341,7 @@ pub(crate) unsafe fn png_init_io(png_ptr: *mut png_struct_def, fp: *mut crate::s
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_read_info(png_ptr: *mut png_struct_def, _info_ptr: *mut png_info_def) {
+pub unsafe fn png_read_info(png_ptr: *mut png_struct_def, _info_ptr: *mut png_info_def) {
     let Some(state) = state(png_ptr) else {
         return;
     };
@@ -375,8 +369,7 @@ pub unsafe extern "C" fn png_read_info(png_ptr: *mut png_struct_def, _info_ptr: 
     state.trns = metadata.trns;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_destroy_read_struct(
+pub unsafe fn png_destroy_read_struct(
     png_ptr_ptr: *mut *mut png_struct_def,
     info_ptr_ptr: *mut *mut png_info_def,
     _end_info_ptr_ptr: *mut *mut png_info_def,
@@ -397,37 +390,32 @@ pub unsafe extern "C" fn png_destroy_read_struct(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_set_tRNS_to_alpha(png_ptr: *mut png_struct_def) {
+pub unsafe fn png_set_tRNS_to_alpha(png_ptr: *mut png_struct_def) {
     if let Some(state) = state(png_ptr) {
         state.trns_to_alpha = true;
         state.invalidate_decode();
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_set_strip_alpha(png_ptr: *mut png_struct_def) {
+pub unsafe fn png_set_strip_alpha(png_ptr: *mut png_struct_def) {
     if let Some(state) = state(png_ptr) {
         state.strip_alpha = true;
         state.invalidate_decode();
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_set_interlace_handling(_png_ptr: *mut png_struct_def) -> c_int {
+pub unsafe fn png_set_interlace_handling(_png_ptr: *mut png_struct_def) -> c_int {
     1
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_set_strip_16(png_ptr: *mut png_struct_def) {
+pub unsafe fn png_set_strip_16(png_ptr: *mut png_struct_def) {
     if let Some(state) = state(png_ptr) {
         state.strip_16 = true;
         state.invalidate_decode();
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_set_gamma(
+pub unsafe fn png_set_gamma(
     png_ptr: *mut png_struct_def,
     screen_gamma: c_double,
     override_file_gamma: c_double,
@@ -438,11 +426,7 @@ pub unsafe extern "C" fn png_set_gamma(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_read_update_info(
-    png_ptr: *mut png_struct_def,
-    _info_ptr: *mut png_info_def,
-) {
+pub unsafe fn png_read_update_info(png_ptr: *mut png_struct_def, _info_ptr: *mut png_info_def) {
     if let Some(state) = state(png_ptr) {
         if state.strip_16 || state.trns_to_alpha || state.strip_alpha || state.gamma.is_some() {
             if let Err(error) = state.ensure_decoded() {
@@ -452,12 +436,7 @@ pub unsafe extern "C" fn png_read_update_info(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_read_row(
-    png_ptr: *mut png_struct_def,
-    row: *mut u8,
-    _display_row: *mut u8,
-) {
+pub unsafe fn png_read_row(png_ptr: *mut png_struct_def, row: *mut u8, _display_row: *mut u8) {
     let Some(state) = state(png_ptr) else {
         return;
     };
@@ -475,8 +454,7 @@ pub unsafe extern "C" fn png_read_row(
     state.row_cursor = state.row_cursor.saturating_add(1);
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_read_image(png_ptr: *mut png_struct_def, image: *mut *mut u8) {
+pub unsafe fn png_read_image(png_ptr: *mut png_struct_def, image: *mut *mut u8) {
     let Some(state) = state(png_ptr) else {
         return;
     };
@@ -503,8 +481,7 @@ pub unsafe extern "C" fn png_read_image(png_ptr: *mut png_struct_def, image: *mu
     state.row_cursor = state.height as usize;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_decoded_data(
+pub unsafe fn png_decoded_data(
     png_ptr: *mut c_void,
     rowbytes: *mut usize,
     len: *mut usize,
@@ -527,15 +504,13 @@ pub unsafe extern "C" fn png_decoded_data(
     decoded.data.as_ptr()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_io_ptr(png_ptr: *const png_struct_def) -> *mut c_void {
+pub unsafe fn png_get_io_ptr(png_ptr: *const png_struct_def) -> *mut c_void {
     state(png_ptr)
         .map(|state| state.file.cast::<c_void>())
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_valid(
+pub unsafe fn png_get_valid(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
     flag: c_uint,
@@ -545,8 +520,7 @@ pub unsafe extern "C" fn png_get_valid(
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_rowbytes(
+pub unsafe fn png_get_rowbytes(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
 ) -> usize {
@@ -555,8 +529,7 @@ pub unsafe extern "C" fn png_get_rowbytes(
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_image_width(
+pub unsafe fn png_get_image_width(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
 ) -> c_uint {
@@ -565,8 +538,7 @@ pub unsafe extern "C" fn png_get_image_width(
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_image_height(
+pub unsafe fn png_get_image_height(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
 ) -> c_uint {
@@ -575,8 +547,7 @@ pub unsafe extern "C" fn png_get_image_height(
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_bit_depth(
+pub unsafe fn png_get_bit_depth(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
 ) -> u8 {
@@ -585,8 +556,7 @@ pub unsafe extern "C" fn png_get_bit_depth(
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_color_type(
+pub unsafe fn png_get_color_type(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
 ) -> u8 {
@@ -595,8 +565,7 @@ pub unsafe extern "C" fn png_get_color_type(
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_interlace_type(
+pub unsafe fn png_get_interlace_type(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
 ) -> u8 {
@@ -605,8 +574,7 @@ pub unsafe extern "C" fn png_get_interlace_type(
         .unwrap_or(PNG_INTERLACE_NONE)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_x_pixels_per_meter(
+pub unsafe fn png_get_x_pixels_per_meter(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
 ) -> c_uint {
@@ -615,8 +583,7 @@ pub unsafe extern "C" fn png_get_x_pixels_per_meter(
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_y_pixels_per_meter(
+pub unsafe fn png_get_y_pixels_per_meter(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
 ) -> c_uint {
@@ -625,8 +592,7 @@ pub unsafe extern "C" fn png_get_y_pixels_per_meter(
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_gAMA(
+pub unsafe fn png_get_gAMA(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
     file_gamma: *mut c_double,
@@ -641,8 +607,7 @@ pub unsafe extern "C" fn png_get_gAMA(
     PNG_INFO_GAMA
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_gAMA_fixed(
+pub unsafe fn png_get_gAMA_fixed(
     png_ptr: *const png_struct_def,
     info_ptr: *const png_info_def,
     int_file_gamma: *mut c_int,
@@ -657,8 +622,7 @@ pub unsafe extern "C" fn png_get_gAMA_fixed(
     PNG_INFO_GAMA
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_get_PLTE(
+pub unsafe fn png_get_PLTE(
     png_ptr: *const png_struct_def,
     info_ptr: *mut png_info_def,
     palette: *mut *mut png_color_struct,
@@ -684,8 +648,7 @@ pub unsafe extern "C" fn png_get_PLTE(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn png_set_option(
+pub unsafe fn png_set_option(
     _png_ptr: *mut png_struct_def,
     _option: c_int,
     _onoff: c_int,

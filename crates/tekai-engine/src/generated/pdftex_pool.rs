@@ -1,8 +1,10 @@
+pub use crate::generated::pdftex0::makestring;
+
+use crate::byte_string::strlen;
+
 extern "C" {
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     static mut strpool: *mut packedASCIIcode;
     static mut poolptr: poolpointer;
-    fn makestring() -> strnumber;
 }
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
@@ -2220,8 +2222,7 @@ static mut poolfilearr: [*const ::core::ffi::c_char; 1850] = [
     b"synctex\0" as *const u8 as *const ::core::ffi::c_char,
     ::core::ptr::null::<::core::ffi::c_char>(),
 ];
-#[no_mangle]
-pub unsafe extern "C" fn loadpoolstrings(mut spare_size: integer) -> ::core::ffi::c_int {
+pub unsafe fn loadpoolstrings(mut spare_size: integer) -> ::core::ffi::c_int {
     let mut s: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut g: strnumber = 0 as strnumber;
     let mut i: ::core::ffi::c_int = 0 as ::core::ffi::c_int;

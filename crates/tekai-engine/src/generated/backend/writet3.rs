@@ -1,3 +1,22 @@
+pub use crate::generated::backend::avlstuff::comp_string_entry;
+pub use crate::generated::backend::pkin::readchar;
+pub use crate::generated::backend::tounicode::write_tounicode;
+pub use crate::generated::backend::writeenc::get_fe_entry;
+pub use crate::generated::pdftex0::{
+    getnullstr, makenamestring, pdfbeginstream, pdfenddict, pdfendobj, pdfendstream, pdfflush,
+    pdfnewobjnum, zdividescaled, zgetcharwidth, zpackfilename, zpdfbegindict, zpdfbeginobj,
+    zpdfnewdict, zpdfosgetosbuf, zpdfprint, zpdfprintreal,
+};
+pub use crate::generated::pdftexextra::makecstring;
+pub use crate::kpathsea::{kpse_bitmap_tolerance, kpse_find_glyph, kpse_magstep_fix};
+pub use crate::openclose::recorder_record_input;
+pub use crate::utils::{maketexstring, pdf_puts};
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_destroy, avl_find, avl_item_func, avl_node, avl_probe,
+    avl_table, libavl_allocator,
+};
+
 use crate::byte_string::{strchr, strcmp, strlen, strncmp};
 
 use crate::backend_grammar::glyph_preamble;
@@ -11,15 +30,9 @@ use crate::web2c::zround;
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
-    fn recorder_record_input(_: const_string);
-    fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
     static mut nameoffile: *mut ASCIIcode;
     static mut fontdsize: *mut scaled;
     static mut fontname: *mut strnumber;
@@ -39,65 +52,10 @@ extern "C" {
     static mut pdffontnobuiltintounicode: *mut boolean;
     static mut pdfcharused: *mut charusedarray;
     static mut pdffontsize: *mut scaled;
-    fn zpdfosgetosbuf(s: integer);
-    fn zpdfprint(s: strnumber);
-    fn zdividescaled(s: scaled, m: scaled, dd: integer) -> scaled;
-    fn pdfnewobjnum() -> integer;
-    fn zpdfbeginobj(i: integer, pdfoslevel: integer);
-    fn pdfendobj();
-    fn zpdfbegindict(i: integer, pdfoslevel: integer);
-    fn zpdfnewdict(t: integer, i: integer, pdfos: integer);
-    fn pdfenddict();
-    fn zpackfilename(n: strnumber, a: strnumber, e: strnumber);
-    fn makenamestring() -> strnumber;
-    fn zgetcharwidth(f: internalfontnumber, c: eightbits) -> scaled;
-    fn pdfflush();
-    fn pdfbeginstream();
-    fn pdfendstream();
-    fn zpdfprintreal(m: integer, d: integer);
-    fn getnullstr() -> strnumber;
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_destroy(_: *mut avl_table, _: Option<avl_item_func>);
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
     static mut avl_xallocator: libavl_allocator;
     static mut cur_file_name: *mut ::core::ffi::c_char;
     static mut last_ptr_index: size_t;
     static mut notdef: [::core::ffi::c_char; 0];
-    fn pdf_printf(_: *const ::core::ffi::c_char, ...);
-    fn pdf_puts(_: *const ::core::ffi::c_char);
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
-    fn tex_printf(_: *const ::core::ffi::c_char, ...);
-    fn readchar(_: boolean, _: *mut chardesc) -> ::core::ffi::c_int;
-    fn write_tounicode(
-        _: *mut *mut ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-    ) -> integer;
-    fn maketexstring(_: *const ::core::ffi::c_char) -> strnumber;
-    fn get_fe_entry(_: *mut ::core::ffi::c_char) -> *mut fe_entry;
-    fn comp_string_entry(
-        _: *const ::core::ffi::c_void,
-        _: *const ::core::ffi::c_void,
-        _: *mut ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int;
-    fn kpse_find_glyph(
-        font_name: const_string,
-        dpi: ::core::ffi::c_uint,
-        format: kpse_file_format_type,
-        glyph_file: *mut kpse_glyph_file_type,
-    ) -> string;
-    fn kpse_bitmap_tolerance(dpi1: ::core::ffi::c_double, dpi2: ::core::ffi::c_double) -> boolean;
-    fn kpse_magstep_fix(
-        dpi: ::core::ffi::c_uint,
-        bdpi: ::core::ffi::c_uint,
-        m_ret: *mut ::core::ffi::c_int,
-    ) -> ::core::ffi::c_uint;
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -178,101 +136,14 @@ pub type scaled = integer;
 pub type halfword = integer;
 pub type internalfontnumber = integer;
 pub type charusedarray = [eightbits; 32];
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-pub type avl_item_func =
-    unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> ();
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct key_entry {
-    pub pdfname: *const ::core::ffi::c_char,
-    pub t1name: *const ::core::ffi::c_char,
-    pub value: ::core::ffi::c_float,
-    pub valid: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _subfont_entry {
-    pub infix: *mut ::core::ffi::c_char,
-    pub charcodes: [::core::ffi::c_long; 256],
-    pub next: *mut subfont_entry,
-}
+pub use crate::backend_types::_subfont_entry;
+pub use crate::backend_types::key_entry;
 pub type subfont_entry = _subfont_entry;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fe_entry {
-    pub fe_objnum: integer,
-    pub name: *mut ::core::ffi::c_char,
-    pub glyph_names: *mut *mut ::core::ffi::c_char,
-    pub tx_tree: *mut avl_table,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fm_entry {
-    pub tfm_name: *mut ::core::ffi::c_char,
-    pub sfd_name: *mut ::core::ffi::c_char,
-    pub ps_name: *mut ::core::ffi::c_char,
-    pub fd_flags: integer,
-    pub slant: integer,
-    pub extend: integer,
-    pub encname: *mut ::core::ffi::c_char,
-    pub ff_name: *mut ::core::ffi::c_char,
-    pub type_0: ::core::ffi::c_ushort,
-    pub pid: ::core::ffi::c_short,
-    pub eid: ::core::ffi::c_short,
-    pub subfont: *mut subfont_entry,
-    pub links: ::core::ffi::c_ushort,
-    pub in_use: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct chardesc {
-    pub charcode: integer,
-    pub cwidth: integer,
-    pub cheight: integer,
-    pub xoff: integer,
-    pub yoff: integer,
-    pub xescape: integer,
-    pub rastersize: integer,
-    pub raster: *mut halfword,
-}
+pub use crate::backend_types::chardesc;
+pub use crate::backend_types::fe_entry;
+pub use crate::backend_types::fm_entry;
 pub type t3_line_entry = ::core::ffi::c_char;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct kpse_glyph_file_type {
-    pub name: const_string,
-    pub dpi: ::core::ffi::c_uint,
-    pub format: kpse_file_format_type,
-    pub source: kpse_glyph_source_type,
-}
+pub use crate::kpathsea_types::KpseGlyphFileType as kpse_glyph_file_type;
 pub type kpse_glyph_source_type = ::core::ffi::c_uint;
 pub const kpse_glyph_source_fallback: kpse_glyph_source_type = 4;
 pub const kpse_glyph_source_fallback_res: kpse_glyph_source_type = 3;
@@ -375,7 +246,7 @@ static mut t3_b2: integer = 0;
 static mut t3_b0: integer = 0;
 static mut t3_b1: integer = 0;
 static mut is_pk_font: boolean = 0;
-unsafe extern "C" fn t3_getline() {
+unsafe fn t3_getline() {
     let mut c: ::core::ffi::c_int = 0;
     loop {
         t3_line_ptr = t3_line_array;
@@ -535,7 +406,7 @@ unsafe extern "C" fn t3_getline() {
         }
     }
 }
-unsafe extern "C" fn t3_putline() {
+unsafe fn t3_putline() {
     let mut p: *mut ::core::ffi::c_char = t3_line_array as *mut ::core::ffi::c_char;
     while p < t3_line_ptr {
         if (1 as integer + pdfptr) as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
@@ -559,7 +430,7 @@ unsafe extern "C" fn t3_putline() {
         *pdfbuf.offset(fresh3 as isize) = *fresh2 as eightbits;
     }
 }
-unsafe extern "C" fn update_bbox(
+unsafe fn update_bbox(
     mut llx: integer,
     mut lly: integer,
     mut urx: integer,
@@ -586,7 +457,7 @@ unsafe extern "C" fn update_bbox(
         }
     };
 }
-unsafe extern "C" fn t3_write_glyph(mut f: internalfontnumber) {
+unsafe fn t3_write_glyph(mut f: internalfontnumber) {
     static mut t3_begin_glyph_str: [::core::ffi::c_char; 10] =
         unsafe { ::core::mem::transmute::<[u8; 10], [::core::ffi::c_char; 10]>(*b"\\pdfglyph\0") };
     static mut t3_end_glyph_str: [::core::ffi::c_char; 10] =
@@ -728,7 +599,7 @@ unsafe extern "C" fn t3_write_glyph(mut f: internalfontnumber) {
     pdf_puts(b"Q\n\0" as *const u8 as *const ::core::ffi::c_char);
     pdfendstream();
 }
-unsafe extern "C" fn get_pk_font_scale(mut f: internalfontnumber) -> integer {
+unsafe fn get_pk_font_scale(mut f: internalfontnumber) -> integer {
     return zdividescaled(
         pkscalefactor,
         zdividescaled(
@@ -739,20 +610,19 @@ unsafe extern "C" fn get_pk_font_scale(mut f: internalfontnumber) -> integer {
         0 as ::core::ffi::c_int,
     ) as integer;
 }
-unsafe extern "C" fn pk_char_width(mut f: internalfontnumber, mut w: scaled) -> integer {
+unsafe fn pk_char_width(mut f: internalfontnumber, mut w: scaled) -> integer {
     return zdividescaled(
         zdividescaled(w, *pdffontsize.offset(f as isize), 7 as ::core::ffi::c_int),
         get_pk_font_scale(f),
         0 as ::core::ffi::c_int,
     ) as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getpkcharwidth(mut f: internalfontnumber, mut w: scaled) -> scaled {
+pub unsafe fn getpkcharwidth(mut f: internalfontnumber, mut w: scaled) -> scaled {
     return (get_pk_font_scale(f) as ::core::ffi::c_double / 100000.0f64
         * (pk_char_width(f, w) as ::core::ffi::c_double / 100.0f64)
         * *pdffontsize.offset(f as isize) as ::core::ffi::c_double) as scaled;
 }
-unsafe extern "C" fn writepk(mut f: internalfontnumber) -> boolean {
+unsafe fn writepk(mut f: internalfontnumber) -> boolean {
     let mut font_ret: kpse_glyph_file_type = kpse_glyph_file_type {
         name: ::core::ptr::null::<::core::ffi::c_char>(),
         dpi: 0,
@@ -1020,7 +890,7 @@ unsafe extern "C" fn writepk(mut f: internalfontnumber) -> boolean {
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
     return true_0;
 }
-unsafe extern "C" fn remove_duplicate_glyph_names(
+unsafe fn remove_duplicate_glyph_names(
     mut g: *mut *mut ::core::ffi::c_char,
     mut encname: *const ::core::ffi::c_char,
 ) {
@@ -1030,7 +900,7 @@ unsafe extern "C" fn remove_duplicate_glyph_names(
     gl_tree = avl_create(
         Some(
             comp_string_entry
-                as unsafe extern "C" fn(
+                as unsafe fn(
                     *const ::core::ffi::c_void,
                     *const ::core::ffi::c_void,
                     *mut ::core::ffi::c_void,
@@ -1089,8 +959,7 @@ unsafe extern "C" fn remove_duplicate_glyph_names(
     }
     avl_destroy(gl_tree, None);
 }
-#[no_mangle]
-pub unsafe extern "C" fn writet3(
+pub unsafe fn writet3(
     mut fm: *mut fm_entry,
     mut objnum: ::core::ffi::c_int,
     mut f: internalfontnumber,
@@ -1153,10 +1022,15 @@ pub unsafe extern "C" fn writet3(
             )],
         );
         t3_getline();
-        let written = t3_line_ptr.addr().checked_sub(t3_line_array.addr())
+        let written = t3_line_ptr
+            .addr()
+            .checked_sub(t3_line_array.addr())
             .filter(|&written| !t3_line_array.is_null() && written < t3_line_limit)
             .unwrap_or_else(|| {
-                crate::utils::pdftex_fail_args(c"invalid font scale initialized line span".as_ptr(), &[])
+                crate::utils::pdftex_fail_args(
+                    c"invalid font scale initialized line span".as_ptr(),
+                    &[],
+                )
             });
         let line = std::slice::from_raw_parts(t3_line_array.cast::<u8>(), written);
         let Ok(scale) = font_scale_line(line) else {

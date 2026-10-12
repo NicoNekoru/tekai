@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a2d4fc4aadacdc9ff5d6b7fc28ce27a4b2c00361010cf0c32ba7f6baf972b9b4 # shrinks to pattern = "(())?b", text = [98], icase = false
+cc 51550de9d43b1c7a5fa164374e8ed1454850148a2f766ac2c4af22ae4a97fc7e # shrinks to pattern = "(()){0,2}", text = [], icase = false
+cc 09e98857118f0257eaeaeeb539704d69502f5800f62e6822ff88d2eb0cf17008 # shrinks to pattern = "[^a]([ab])?.([ab]){0,2}", text = [98, 99, 97, 97, 97], icase = false
+cc 851d5e1b0fe72341d46727e984fc6f5186505b718213670d46a49c3d8ebf6974 # shrinks to pattern = "c.(()|a)(.)?", text = [99, 99, 98, 97], icase = false
+cc 1104177d3f20e7645195bc9fd6367394441ee321de4ace5b03062bafbc522bfd # shrinks to pattern = "((b)?b|(.))", text = [66, 98], icase = true

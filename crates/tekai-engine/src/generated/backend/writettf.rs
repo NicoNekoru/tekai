@@ -1,3 +1,13 @@
+pub use crate::generated::pdftex0::{getnullstr, pdfflush, zpackfilename};
+pub use crate::utils::{fb_offset, fb_putchar, fb_seek, make_subset_tag, maketexstring};
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_destroy, avl_find, avl_item_func, avl_node, avl_probe,
+    avl_t_first, avl_t_init, avl_t_next, avl_table, avl_traverser, libavl_allocator,
+};
+
+use crate::byte_string::{strcasecmp, strchr, strcmp, strncmp};
+
 use crate::allocation::free;
 use crate::backend_grammar::{numeric_glyph_name, NumericGlyphName};
 use crate::openclose::open_input;
@@ -9,63 +19,16 @@ use crate::utils::xgetc;
 use std::ffi::CStr;
 use std::io::Read;
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn memcpy(
-        __dst: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
-    fn strcasecmp(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
     static mut nameoffile: *mut ASCIIcode;
     static mut pdfptr: integer;
     static mut pdfgone: longinteger;
     static mut pdfsaveoffset: longinteger;
-    fn zpackfilename(n: strnumber, a: strnumber, e: strnumber);
-    fn pdfflush();
-    fn getnullstr() -> strnumber;
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_destroy(_: *mut avl_table, _: Option<avl_item_func>);
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
-    fn avl_t_init(_: *mut avl_traverser, _: *mut avl_table);
-    fn avl_t_first(_: *mut avl_traverser, _: *mut avl_table) -> *mut ::core::ffi::c_void;
-    fn avl_t_next(_: *mut avl_traverser) -> *mut ::core::ffi::c_void;
     static mut avl_xallocator: libavl_allocator;
     static mut cur_file_name: *mut ::core::ffi::c_char;
     static mut fb_array: *mut ::core::ffi::c_char;
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
-    fn tex_printf(_: *const ::core::ffi::c_char, ...);
-    fn maketexstring(_: *const ::core::ffi::c_char) -> strnumber;
-    fn fb_offset() -> integer;
-    fn fb_putchar(b: eightbits);
-    fn fb_seek(_: integer);
-    fn make_subset_tag(_: *mut fd_entry);
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -147,105 +110,12 @@ pub type longinteger = off_t;
 pub type ASCIIcode = ::core::ffi::c_uchar;
 pub type eightbits = ::core::ffi::c_uchar;
 pub type strnumber = integer;
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-pub type avl_item_func =
-    unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> ();
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_traverser {
-    pub avl_table: *mut avl_table,
-    pub avl_node: *mut avl_node,
-    pub avl_stack: [*mut avl_node; 32],
-    pub avl_height: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _subfont_entry {
-    pub infix: *mut ::core::ffi::c_char,
-    pub charcodes: [::core::ffi::c_long; 256],
-    pub next: *mut subfont_entry,
-}
+pub use crate::backend_types::_subfont_entry;
 pub type subfont_entry = _subfont_entry;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fe_entry {
-    pub fe_objnum: integer,
-    pub name: *mut ::core::ffi::c_char,
-    pub glyph_names: *mut *mut ::core::ffi::c_char,
-    pub tx_tree: *mut avl_table,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fm_entry {
-    pub tfm_name: *mut ::core::ffi::c_char,
-    pub sfd_name: *mut ::core::ffi::c_char,
-    pub ps_name: *mut ::core::ffi::c_char,
-    pub fd_flags: integer,
-    pub slant: integer,
-    pub extend: integer,
-    pub encname: *mut ::core::ffi::c_char,
-    pub ff_name: *mut ::core::ffi::c_char,
-    pub type_0: ::core::ffi::c_ushort,
-    pub pid: ::core::ffi::c_short,
-    pub eid: ::core::ffi::c_short,
-    pub subfont: *mut subfont_entry,
-    pub links: ::core::ffi::c_ushort,
-    pub in_use: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct intparm {
-    pub val: ::core::ffi::c_int,
-    pub set: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fd_entry_ {
-    pub fd_objnum: integer,
-    pub fontname: *mut ::core::ffi::c_char,
-    pub subset_tag: *mut ::core::ffi::c_char,
-    pub ff_found: boolean,
-    pub ff_objnum: integer,
-    pub fn_objnum: integer,
-    pub all_glyphs: boolean,
-    pub write_ttf_glyph_names: boolean,
-    pub font_dim: [intparm; 11],
-    pub fe: *mut fe_entry,
-    pub builtin_glyph_names: *mut *mut ::core::ffi::c_char,
-    pub fm: *mut fm_entry,
-    pub tx_tree: *mut avl_table,
-    pub gl_tree: *mut avl_table,
-}
+pub use crate::backend_types::fd_entry_;
+pub use crate::backend_types::fe_entry;
+pub use crate::backend_types::fm_entry;
+pub use crate::backend_types::intparm;
 pub type fd_entry = fd_entry_;
 pub type TTF_USHORT = ::core::ffi::c_ushort;
 #[derive(Copy, Clone)]
@@ -759,7 +629,7 @@ static mut newtabnames: [*const ::core::ffi::c_char; 14] = [
     b"post\0" as *const u8 as *const ::core::ffi::c_char,
     b"prep\0" as *const u8 as *const ::core::ffi::c_char,
 ];
-unsafe extern "C" fn new_ttf_cmap_entry() -> *mut ttf_cmap_entry {
+unsafe fn new_ttf_cmap_entry() -> *mut ttf_cmap_entry {
     let mut e: *mut ttf_cmap_entry = ::core::ptr::null_mut::<ttf_cmap_entry>();
     e = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<ttf_cmap_entry>() as size_t))
         as *mut ttf_cmap_entry;
@@ -767,7 +637,7 @@ unsafe extern "C" fn new_ttf_cmap_entry() -> *mut ttf_cmap_entry {
     (*e).table = ::core::ptr::null_mut::<::core::ffi::c_long>();
     return e;
 }
-unsafe extern "C" fn destroy_ttf_cmap_entry(
+unsafe fn destroy_ttf_cmap_entry(
     mut pa: *mut ::core::ffi::c_void,
     mut pb: *mut ::core::ffi::c_void,
 ) {
@@ -786,22 +656,18 @@ unsafe extern "C" fn destroy_ttf_cmap_entry(
     }
     p = ::core::ptr::null_mut::<ttf_cmap_entry>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn ttf_free() {
+pub unsafe fn ttf_free() {
     if !ttf_cmap_tree.is_null() {
         avl_destroy(
             ttf_cmap_tree,
             Some(
                 destroy_ttf_cmap_entry
-                    as unsafe extern "C" fn(
-                        *mut ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
+                    as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
     }
 }
-unsafe extern "C" fn comp_ttf_cmap_entry(
+unsafe fn comp_ttf_cmap_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -840,7 +706,7 @@ unsafe extern "C" fn comp_ttf_cmap_entry(
     }
     return 0 as ::core::ffi::c_int;
 }
-unsafe extern "C" fn ttf_addchksm(mut b: ::core::ffi::c_uchar) -> ::core::ffi::c_uchar {
+unsafe fn ttf_addchksm(mut b: ::core::ffi::c_uchar) -> ::core::ffi::c_uchar {
     tmp_ulong = (tmp_ulong << 8 as ::core::ffi::c_int).wrapping_add(b as TTF_ULONG);
     tab_length = tab_length.wrapping_add(1);
     if tab_length.wrapping_rem(4 as TTF_ULONG) == 0 as TTF_ULONG {
@@ -849,16 +715,13 @@ unsafe extern "C" fn ttf_addchksm(mut b: ::core::ffi::c_uchar) -> ::core::ffi::c
     }
     return b;
 }
-unsafe extern "C" fn ttf_getchksm() -> TTF_ULONG {
+unsafe fn ttf_getchksm() -> TTF_ULONG {
     while tab_length.wrapping_rem(4 as TTF_ULONG) != 0 as TTF_ULONG {
         fb_putchar(ttf_addchksm(0 as ::core::ffi::c_uchar) as eightbits);
     }
     return checksum;
 }
-unsafe extern "C" fn ttf_putnum(
-    mut s: ::core::ffi::c_int,
-    mut n: ::core::ffi::c_long,
-) -> ::core::ffi::c_long {
+unsafe fn ttf_putnum(mut s: ::core::ffi::c_int, mut n: ::core::ffi::c_long) -> ::core::ffi::c_long {
     let mut i: ::core::ffi::c_long = n;
     let mut buf: [::core::ffi::c_char; 5] = [0; 5];
     let mut p: *mut ::core::ffi::c_char = &raw mut buf as *mut ::core::ffi::c_char;
@@ -881,7 +744,7 @@ unsafe extern "C" fn ttf_putnum(
     }
     return n;
 }
-unsafe extern "C" fn ttf_getnum(mut s: ::core::ffi::c_int) -> ::core::ffi::c_long {
+unsafe fn ttf_getnum(mut s: ::core::ffi::c_int) -> ::core::ffi::c_long {
     let mut i: ::core::ffi::c_long = 0 as ::core::ffi::c_long;
     let mut c: ::core::ffi::c_int = 0;
     while s > 0 as ::core::ffi::c_int {
@@ -897,7 +760,7 @@ unsafe extern "C" fn ttf_getnum(mut s: ::core::ffi::c_int) -> ::core::ffi::c_lon
     }
     return i;
 }
-unsafe extern "C" fn ttf_funit(mut n: ::core::ffi::c_long) -> ::core::ffi::c_long {
+unsafe fn ttf_funit(mut n: ::core::ffi::c_long) -> ::core::ffi::c_long {
     if n < 0 as ::core::ffi::c_long {
         return -(-n / upem as ::core::ffi::c_long * 1000 as ::core::ffi::c_long
             + -n % upem as ::core::ffi::c_long * 1000 as ::core::ffi::c_long
@@ -908,7 +771,7 @@ unsafe extern "C" fn ttf_funit(mut n: ::core::ffi::c_long) -> ::core::ffi::c_lon
                 / upem as ::core::ffi::c_long;
     };
 }
-unsafe extern "C" fn ttf_ncopy(mut n: ::core::ffi::c_int) {
+unsafe fn ttf_ncopy(mut n: ::core::ffi::c_int) {
     loop {
         let fresh4 = n;
         n = n - 1;
@@ -921,7 +784,7 @@ unsafe extern "C" fn ttf_ncopy(mut n: ::core::ffi::c_int) {
         );
     }
 }
-unsafe extern "C" fn ttf_name_lookup(
+unsafe fn ttf_name_lookup(
     mut s: *const ::core::ffi::c_char,
     mut required: boolean,
 ) -> *mut dirtab_entry {
@@ -950,7 +813,7 @@ unsafe extern "C" fn ttf_name_lookup(
     }
     return tab;
 }
-unsafe extern "C" fn ttf_seek_tab(
+unsafe fn ttf_seek_tab(
     mut name: *const ::core::ffi::c_char,
     mut offset: TTF_LONG,
 ) -> *mut dirtab_entry {
@@ -963,7 +826,7 @@ unsafe extern "C" fn ttf_seek_tab(
     );
     return tab;
 }
-unsafe extern "C" fn ttf_seek_off(mut offset: TTF_LONG) {
+unsafe fn ttf_seek_off(mut offset: TTF_LONG) {
     xfseek(
         ttf_file,
         offset as ::core::ffi::c_long,
@@ -971,7 +834,7 @@ unsafe extern "C" fn ttf_seek_off(mut offset: TTF_LONG) {
         cur_file_name as const_string,
     );
 }
-unsafe extern "C" fn ttf_copy_encoding() {
+unsafe fn ttf_copy_encoding() {
     let mut i: ::core::ffi::c_int = 0;
     let mut q: *mut ::core::ffi::c_int = ::core::ptr::null_mut::<::core::ffi::c_int>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
@@ -1163,7 +1026,7 @@ unsafe fn ttf_read_name() -> NameTable {
     }
     names
 }
-unsafe extern "C" fn ttf_read_mapx() {
+unsafe fn ttf_read_mapx() {
     let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
     ttf_seek_tab(
         b"maxp\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1202,7 +1065,7 @@ unsafe extern "C" fn ttf_read_mapx() {
     *glyph_index.offset(0 as ::core::ffi::c_int as isize) = 0 as ::core::ffi::c_long;
     *glyph_index.offset(1 as ::core::ffi::c_int as isize) = 1 as ::core::ffi::c_long;
 }
-unsafe extern "C" fn ttf_read_head() {
+unsafe fn ttf_read_head() {
     ttf_seek_tab(
         b"head\0" as *const u8 as *const ::core::ffi::c_char,
         2 as TTF_LONG * TTF_FIXED_SIZE as TTF_LONG
@@ -1230,7 +1093,7 @@ unsafe extern "C" fn ttf_read_head() {
     ttf_getnum(2 as ::core::ffi::c_int * 2 as ::core::ffi::c_int + 2 as ::core::ffi::c_int);
     loca_format = ttf_getnum(TTF_SHORT_SIZE) as TTF_SHORT;
 }
-unsafe extern "C" fn ttf_read_hhea() {
+unsafe fn ttf_read_hhea() {
     ttf_seek_tab(
         b"hhea\0" as *const u8 as *const ::core::ffi::c_char,
         TTF_FIXED_SIZE as TTF_LONG,
@@ -1251,7 +1114,7 @@ unsafe extern "C" fn ttf_read_hhea() {
     );
     nhmtxs = ttf_getnum(TTF_USHORT_SIZE) as TTF_USHORT;
 }
-unsafe extern "C" fn ttf_read_pclt() {
+unsafe fn ttf_read_pclt() {
     if ttf_name_lookup(
         b"PCLT\0" as *const u8 as *const ::core::ffi::c_char,
         false_0,
@@ -1274,7 +1137,7 @@ unsafe extern "C" fn ttf_read_pclt() {
     (*fd_cur).font_dim[XHEIGHT_CODE as usize].set = true_0 as boolean;
     (*fd_cur).font_dim[CAPHEIGHT_CODE as usize].set = true_0 as boolean;
 }
-unsafe extern "C" fn ttf_read_hmtx() {
+unsafe fn ttf_read_hmtx() {
     let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
     let mut last_advWidth: TTF_UFWORD = 0;
     if checked_glyph_index(nhmtxs as ::core::ffi::c_long - 1, glyphs_count).is_none() {
@@ -1419,7 +1282,7 @@ unsafe fn ttf_read_post() -> Option<PostNames> {
     }
     None
 }
-unsafe extern "C" fn ttf_read_loca() {
+unsafe fn ttf_read_loca() {
     let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
     ttf_seek_tab(
         b"loca\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1444,7 +1307,7 @@ unsafe extern "C" fn ttf_read_loca() {
         }
     };
 }
-unsafe extern "C" fn ttf_read_tabdir() {
+unsafe fn ttf_read_tabdir() {
     let mut i: ::core::ffi::c_int = 0;
     let mut tab: *mut dirtab_entry = ::core::ptr::null_mut::<dirtab_entry>();
     ttf_getnum(4 as ::core::ffi::c_int);
@@ -1466,7 +1329,7 @@ unsafe extern "C" fn ttf_read_tabdir() {
         tab = tab.offset(1);
     }
 }
-unsafe extern "C" fn ttf_read_cmap(
+unsafe fn ttf_read_cmap(
     mut ttf_name: *mut ::core::ffi::c_char,
     mut pid: ::core::ffi::c_int,
     mut eid: ::core::ffi::c_int,
@@ -1503,7 +1366,7 @@ unsafe extern "C" fn ttf_read_cmap(
         ttf_cmap_tree = avl_create(
             Some(
                 comp_ttf_cmap_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -1765,7 +1628,7 @@ unsafe fn ttf_read_font() -> (Option<PostNames>, NameTable) {
     let names = ttf_read_name();
     (glyph_names, names)
 }
-unsafe extern "C" fn ttf_reset_chksm(mut tab: *mut dirtab_entry) {
+unsafe fn ttf_reset_chksm(mut tab: *mut dirtab_entry) {
     checksum = 0 as TTF_ULONG;
     tab_length = 0 as TTF_ULONG;
     tmp_ulong = 0 as TTF_ULONG;
@@ -1780,11 +1643,11 @@ unsafe extern "C" fn ttf_reset_chksm(mut tab: *mut dirtab_entry) {
         );
     }
 }
-unsafe extern "C" fn ttf_set_chksm(mut tab: *mut dirtab_entry) {
+unsafe fn ttf_set_chksm(mut tab: *mut dirtab_entry) {
     (*tab).length = (fb_offset() as TTF_ULONG).wrapping_sub((*tab).offset);
     (*tab).checksum = ttf_getchksm();
 }
-unsafe extern "C" fn ttf_copytab(mut name: *const ::core::ffi::c_char) {
+unsafe fn ttf_copytab(mut name: *const ::core::ffi::c_char) {
     let mut i: ::core::ffi::c_long = 0;
     let mut tab: *mut dirtab_entry = ttf_seek_tab(name, 0 as TTF_LONG);
     ttf_reset_chksm(tab);
@@ -1800,7 +1663,7 @@ unsafe extern "C" fn ttf_copytab(mut name: *const ::core::ffi::c_char) {
 }
 pub const BYTE_ENCODING_LENGTH: ::core::ffi::c_int =
     256 as ::core::ffi::c_int * TTF_BYTE_SIZE + 3 as ::core::ffi::c_int * TTF_USHORT_SIZE;
-unsafe extern "C" fn ttf_byte_encoding() {
+unsafe fn ttf_byte_encoding() {
     let mut e: *mut ttfenc_entry = ::core::ptr::null_mut::<ttfenc_entry>();
     ttf_putnum(TTF_USHORT_SIZE, 0 as ::core::ffi::c_long);
     ttf_putnum(
@@ -1835,7 +1698,7 @@ unsafe extern "C" fn ttf_byte_encoding() {
 }
 pub const TRIMMED_TABLE_MAP_LENGTH: ::core::ffi::c_int =
     TTF_USHORT_SIZE * (5 as ::core::ffi::c_int + 256 as ::core::ffi::c_int);
-unsafe extern "C" fn ttf_trimmed_table_map() {
+unsafe fn ttf_trimmed_table_map() {
     let mut e: *mut ttfenc_entry = ::core::ptr::null_mut::<ttfenc_entry>();
     ttf_putnum(TTF_USHORT_SIZE, 6 as ::core::ffi::c_long);
     ttf_putnum(
@@ -1856,7 +1719,7 @@ unsafe extern "C" fn ttf_trimmed_table_map() {
 }
 pub const SEG_MAP_DELTA_LENGTH: ::core::ffi::c_int =
     (16 as ::core::ffi::c_int + 256 as ::core::ffi::c_int) * TTF_USHORT_SIZE;
-unsafe extern "C" fn ttf_seg_map_delta() {
+unsafe fn ttf_seg_map_delta() {
     let mut e: *mut ttfenc_entry = ::core::ptr::null_mut::<ttfenc_entry>();
     ttf_putnum(TTF_USHORT_SIZE, 4 as ::core::ffi::c_long);
     ttf_putnum(
@@ -1891,7 +1754,7 @@ unsafe extern "C" fn ttf_seg_map_delta() {
 }
 pub const CMAP_ENTRY_LENGTH: ::core::ffi::c_int =
     2 as ::core::ffi::c_int * TTF_USHORT_SIZE + TTF_ULONG_SIZE;
-unsafe extern "C" fn ttf_select_cmap() {
+unsafe fn ttf_select_cmap() {
     if !(::core::mem::size_of::<[cmap_entry; 2]>() as usize
         <= (2 as usize).wrapping_mul(::core::mem::size_of::<cmap_entry>() as usize))
         as ::core::ffi::c_int as ::core::ffi::c_long
@@ -1918,7 +1781,7 @@ unsafe extern "C" fn ttf_select_cmap() {
     new_cmap_tab[1 as ::core::ffi::c_int as usize].encoding_id = 0 as TTF_USHORT;
     new_cmap_tab[1 as ::core::ffi::c_int as usize].format = 4 as TTF_USHORT;
 }
-unsafe extern "C" fn ttf_write_cmap() {
+unsafe fn ttf_write_cmap() {
     let mut ce: *mut cmap_entry = ::core::ptr::null_mut::<cmap_entry>();
     let mut offset: ::core::ffi::c_long = 0;
     let mut tab: *mut dirtab_entry =
@@ -2000,7 +1863,7 @@ unsafe fn ttf_write_name(names: &NameTable) {
     });
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn ttf_write_dirtab() {
+unsafe fn ttf_write_dirtab() {
     let mut tab: *mut dirtab_entry = ::core::ptr::null_mut::<dirtab_entry>();
     let mut i: TTF_ULONG = 0;
     let mut k_0: TTF_ULONG = 0;
@@ -2070,7 +1933,7 @@ unsafe extern "C" fn ttf_write_dirtab() {
     ttf_putnum(TTF_ULONG_SIZE, k_0 as ::core::ffi::c_long);
     fb_seek(save_offset as integer);
 }
-unsafe extern "C" fn ttf_write_glyf() {
+unsafe fn ttf_write_glyf() {
     let mut id: *mut ::core::ffi::c_long = ::core::ptr::null_mut::<::core::ffi::c_long>();
     let mut k_0: ::core::ffi::c_long = 0;
     let mut idx: TTF_USHORT = 0;
@@ -2161,7 +2024,7 @@ unsafe extern "C" fn ttf_write_glyf() {
     last_glyf_offset = (fb_offset() as ::core::ffi::c_long - new_glyf_offset) as TTF_ULONG;
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn ttf_reindex_glyphs() {
+unsafe fn ttf_reindex_glyphs() {
     let mut current_block: u64;
     let mut e: *mut ttfenc_entry = ::core::ptr::null_mut::<ttfenc_entry>();
     let mut glyph: *mut glyph_entry = ::core::ptr::null_mut::<glyph_entry>();
@@ -2410,7 +2273,7 @@ unsafe extern "C" fn ttf_reindex_glyphs() {
         e = e.offset(1);
     }
 }
-unsafe extern "C" fn ttf_write_head() {
+unsafe fn ttf_write_head() {
     let mut tab: *mut dirtab_entry = ::core::ptr::null_mut::<dirtab_entry>();
     tab = ttf_seek_tab(
         b"head\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2437,7 +2300,7 @@ unsafe extern "C" fn ttf_write_head() {
     }
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn ttf_write_hhea() {
+unsafe fn ttf_write_hhea() {
     let mut tab: *mut dirtab_entry = ::core::ptr::null_mut::<dirtab_entry>();
     tab = ttf_seek_tab(
         b"hhea\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2454,7 +2317,7 @@ unsafe extern "C" fn ttf_write_hhea() {
     ttf_putnum(TTF_USHORT_SIZE, new_glyphs_count as ::core::ffi::c_long);
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn ttf_write_htmx() {
+unsafe fn ttf_write_htmx() {
     let mut id: *mut ::core::ffi::c_long = ::core::ptr::null_mut::<::core::ffi::c_long>();
     let mut tab: *mut dirtab_entry = ttf_seek_tab(
         b"hmtx\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2477,7 +2340,7 @@ unsafe extern "C" fn ttf_write_htmx() {
     }
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn ttf_write_loca() {
+unsafe fn ttf_write_loca() {
     let mut id: *mut ::core::ffi::c_long = ::core::ptr::null_mut::<::core::ffi::c_long>();
     let mut tab: *mut dirtab_entry = ttf_seek_tab(
         b"loca\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2531,7 +2394,7 @@ unsafe extern "C" fn ttf_write_loca() {
     }
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn ttf_write_mapx() {
+unsafe fn ttf_write_mapx() {
     let mut tab: *mut dirtab_entry = ttf_seek_tab(
         b"maxp\0" as *const u8 as *const ::core::ffi::c_char,
         TTF_FIXED_SIZE as TTF_LONG + TTF_USHORT_SIZE as TTF_LONG,
@@ -2542,7 +2405,7 @@ unsafe extern "C" fn ttf_write_mapx() {
     ttf_ncopy(13 as ::core::ffi::c_int * TTF_USHORT_SIZE);
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn ttf_write_OS2() {
+unsafe fn ttf_write_OS2() {
     let mut tab: *mut dirtab_entry = ttf_seek_tab(
         b"OS/2\0" as *const u8 as *const ::core::ffi::c_char,
         0 as TTF_LONG,
@@ -2579,7 +2442,7 @@ unsafe extern "C" fn ttf_write_OS2() {
     ttf_putnum(TTF_ULONG_SIZE, 0 as ::core::ffi::c_long);
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn unsafe_name(mut s: *const ::core::ffi::c_char) -> boolean {
+unsafe fn unsafe_name(mut s: *const ::core::ffi::c_char) -> boolean {
     let mut p: *mut *const ::core::ffi::c_char =
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
     p = &raw mut ambiguous_names as *mut *const ::core::ffi::c_char;
@@ -2591,7 +2454,7 @@ unsafe extern "C" fn unsafe_name(mut s: *const ::core::ffi::c_char) -> boolean {
     }
     return false_0;
 }
-unsafe extern "C" fn ttf_write_post() {
+unsafe fn ttf_write_post() {
     let mut tab: *mut dirtab_entry = ttf_seek_tab(
         b"post\0" as *const u8 as *const ::core::ffi::c_char,
         TTF_FIXED_SIZE as TTF_LONG,
@@ -2640,7 +2503,7 @@ unsafe extern "C" fn ttf_write_post() {
     }
     ttf_set_chksm(tab);
 }
-unsafe extern "C" fn ttf_init_font(mut n: ::core::ffi::c_int) {
+unsafe fn ttf_init_font(mut n: ::core::ffi::c_int) {
     let mut i: ::core::ffi::c_int = 0;
     let mut k_0: ::core::ffi::c_int = 0;
     i = 1 as ::core::ffi::c_int;
@@ -2712,7 +2575,7 @@ unsafe fn ttf_subset_font(names: &NameTable) {
     ttf_write_cmap();
     ttf_write_dirtab();
 }
-unsafe extern "C" fn ttf_copy_font() {
+unsafe fn ttf_copy_font() {
     let mut tab: *mut dirtab_entry = ::core::ptr::null_mut::<dirtab_entry>();
     ttf_init_font(ntabs as ::core::ffi::c_int);
     tab = dir_tab;
@@ -2731,8 +2594,7 @@ unsafe extern "C" fn ttf_copy_font() {
     }
     ttf_write_dirtab();
 }
-#[no_mangle]
-pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
+pub unsafe fn writettf(mut fd: *mut fd_entry) {
     fd_cur = fd;
     if (*fd_cur).fm.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -2867,8 +2729,7 @@ pub unsafe extern "C" fn writettf(mut fd: *mut fd_entry) {
     }
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn writeotf(mut fd: *mut fd_entry) {
+pub unsafe fn writeotf(mut fd: *mut fd_entry) {
     let mut tab: *mut dirtab_entry = ::core::ptr::null_mut::<dirtab_entry>();
     let mut i: ::core::ffi::c_long = 0;
     fd_cur = fd;

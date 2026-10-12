@@ -1,28 +1,18 @@
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_find, avl_node, avl_probe, avl_table, libavl_allocator,
+};
+
+use crate::byte_string::strcmp;
+
 use crate::allocation::free;
 use crate::openclose::xmalloc;
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
     static mut strpool: *mut packedASCIIcode;
     static mut strstart: *mut poolpointer;
     static mut objtab: *mut objentry;
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -42,36 +32,6 @@ pub struct objentry {
     pub int2: longinteger,
     pub int3: integer,
     pub int4: integer,
-}
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
 }
 pub type oentry = oentry_;
 #[derive(Copy, Clone)]
@@ -94,7 +54,7 @@ static mut PdfObjTree: [*mut avl_table; 11] = [
     ::core::ptr::null::<avl_table>() as *mut avl_table,
     ::core::ptr::null::<avl_table>() as *mut avl_table,
 ];
-unsafe extern "C" fn avl_xmalloc(
+unsafe fn avl_xmalloc(
     mut allocator: *mut libavl_allocator,
     mut size: size_t,
 ) -> *mut ::core::ffi::c_void {
@@ -111,10 +71,7 @@ unsafe extern "C" fn avl_xmalloc(
     };
     return xmalloc(size) as *mut ::core::ffi::c_void;
 }
-unsafe extern "C" fn avl_xfree(
-    mut allocator: *mut libavl_allocator,
-    mut block: *mut ::core::ffi::c_void,
-) {
+unsafe fn avl_xfree(mut allocator: *mut libavl_allocator, mut block: *mut ::core::ffi::c_void) {
     if !(!allocator.is_null() && !block.is_null()) as ::core::ffi::c_int as ::core::ffi::c_long != 0
     {
         __assert_rtn(
@@ -134,17 +91,14 @@ unsafe extern "C" fn avl_xfree(
 pub static mut avl_xallocator: libavl_allocator = unsafe {
     libavl_allocator {
         libavl_malloc: Some(
-            avl_xmalloc
-                as unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void,
+            avl_xmalloc as unsafe fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void,
         ),
         libavl_free: Some(
-            avl_xfree
-                as unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> (),
+            avl_xfree as unsafe fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> (),
         ),
     }
 };
-#[no_mangle]
-pub unsafe extern "C" fn comp_int_entry(
+pub unsafe fn comp_int_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -157,8 +111,7 @@ pub unsafe extern "C" fn comp_int_entry(
     }
     return 0 as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn comp_string_entry(
+pub unsafe fn comp_string_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -168,7 +121,7 @@ pub unsafe extern "C" fn comp_string_entry(
         pb as *const ::core::ffi::c_char,
     );
 }
-unsafe extern "C" fn compare_info(
+unsafe fn compare_info(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut param: *mut ::core::ffi::c_void,
@@ -222,13 +175,12 @@ unsafe extern "C" fn compare_info(
     }
     return 0 as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn avlputobj(mut objptr: integer, mut t: integer) {
+pub unsafe fn avlputobj(mut objptr: integer, mut t: integer) {
     if PdfObjTree[t as usize].is_null() {
         PdfObjTree[t as usize] = avl_create(
             Some(
                 compare_info
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -291,12 +243,7 @@ unsafe fn insert_object_entry(tree: *mut avl_table, entry: oentry) {
         release_object_entry(candidate);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn avlfindobj(
-    mut t: integer,
-    mut i: integer,
-    mut byname: integer,
-) -> integer {
+pub unsafe fn avlfindobj(mut t: integer, mut i: integer, mut byname: integer) -> integer {
     static mut p: *mut oentry = ::core::ptr::null::<oentry>() as *mut oentry;
     static mut tmp: oentry = oentry_ { int0: 0, objptr: 0 };
     if byname > 0 as ::core::ffi::c_int {
@@ -384,10 +331,7 @@ mod tests {
         }
     }
 
-    unsafe extern "C" fn release_test_entry(
-        entry: *mut ::core::ffi::c_void,
-        _: *mut ::core::ffi::c_void,
-    ) {
+    unsafe fn release_test_entry(entry: *mut ::core::ffi::c_void, _: *mut ::core::ffi::c_void) {
         unsafe { release_object_entry(entry as *mut oentry) };
     }
 

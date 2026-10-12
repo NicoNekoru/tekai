@@ -714,6 +714,25 @@ class RunnerTests(unittest.TestCase):
         self.audit = ci.PerformanceCI(self.args, self.work)
         self.addCleanup(self.audit.close)
 
+    def test_unicode_preview_keeps_byte_offset_with_legal_word_breaks(self):
+        process = Mock()
+        process.poll.return_value = None
+        process.timed_out = False
+        ready = 'built /fixture/build/.tekai-hmr-warm/main.pdf\n'
+        with patch.object(self.audit, 'start', return_value=process), \
+                patch.object(self.audit, 'captured', return_value=('', ready, False)), \
+                patch.object(self.audit, 'stop'):
+            self.audit.preview()
+        source = (self.work / 'unicode-preview/main.tex').read_bytes()
+        prefix = b'\\documentclass{article}\n\\begin{document}\n'
+        self.assertEqual(source.index('é'.encode()), len(prefix) + 8190)
+        body = source[len(prefix):source.index('é'.encode())]
+        self.assertEqual(body, b'x ' * 4095)
+        self.assertEqual(max(map(len, body.split())), 1)
+        result = self.audit.report['results'][-1]
+        self.assertEqual(result['case'], 'unicode-preview')
+        self.assertEqual(result['correctness']['status'], 'passed')
+
     def test_all_caches_and_home_paths_are_fixture_owned(self):
         for key in ('HOME', 'USERPROFILE', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
                     'TMPDIR', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA', 'TEKAI_ENGINE_CACHE'):

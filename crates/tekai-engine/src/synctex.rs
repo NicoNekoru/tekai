@@ -333,8 +333,7 @@ fn record_rule(node: Halfword) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn synctexinitcommand() {
+pub fn synctexinitcommand() {
     unsafe {
         let option = engine::synctexoption;
         let context = context_mut();
@@ -350,8 +349,7 @@ pub extern "C" fn synctexinitcommand() {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn synctexabort(_log_opened: Boolean) {
+pub fn synctexabort(_log_opened: Boolean) {
     unsafe {
         if let Some(context) = CONTEXT.as_mut() {
             context.off = true;
@@ -360,8 +358,7 @@ pub extern "C" fn synctexabort(_log_opened: Boolean) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn synctexstartinput() {
+pub fn synctexstartinput() {
     unsafe {
         let context = context_mut();
         if context.off {
@@ -377,8 +374,7 @@ pub extern "C" fn synctexstartinput() {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn synctexterminate(log_opened: Boolean) {
+pub fn synctexterminate(log_opened: Boolean) {
     let context = unsafe { CONTEXT.take() };
     if log_opened == 0 {
         return;
@@ -392,8 +388,7 @@ pub extern "C" fn synctexterminate(log_opened: Boolean) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn synctexsheet(magnification: Integer) {
+pub fn synctexsheet(magnification: Integer) {
     unsafe {
         let context = context_mut();
         if context.off || synctex_value() == 0 {
@@ -404,8 +399,7 @@ pub extern "C" fn synctexsheet(magnification: Integer) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn synctexteehs() {
+pub fn synctexteehs() {
     unsafe {
         let context = context_mut();
         if context.off || !context.content_ready {
@@ -415,52 +409,41 @@ pub extern "C" fn synctexteehs() {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn synctexpdfxform(_node: Halfword) {}
+pub fn synctexpdfxform(_node: Halfword) {}
 
-#[no_mangle]
-pub extern "C" fn synctexmrofxfdp() {}
+pub fn synctexmrofxfdp() {}
 
-#[no_mangle]
-pub extern "C" fn synctexpdfrefxform(_object_number: Integer) {}
+pub fn synctexpdfrefxform(_object_number: Integer) {}
 
-#[no_mangle]
-pub extern "C" fn synctexvlist(node: Halfword) {
+pub fn synctexvlist(node: Halfword) {
     record_box(node, '[');
 }
 
-#[no_mangle]
-pub extern "C" fn synctextsilv(_node: Halfword) {
+pub fn synctextsilv(_node: Halfword) {
     close_box(']');
 }
 
-#[no_mangle]
-pub extern "C" fn synctexvoidvlist(node: Halfword, _parent: Halfword) {
+pub fn synctexvoidvlist(node: Halfword, _parent: Halfword) {
     record_box(node, 'v');
 }
 
-#[no_mangle]
-pub extern "C" fn synctexhlist(node: Halfword) {
+pub fn synctexhlist(node: Halfword) {
     record_box(node, '(');
 }
 
-#[no_mangle]
-pub extern "C" fn synctextsilh(_node: Halfword) {
+pub fn synctextsilh(_node: Halfword) {
     close_box(')');
 }
 
-#[no_mangle]
-pub extern "C" fn synctexvoidhlist(node: Halfword, _parent: Halfword) {
+pub fn synctexvoidhlist(node: Halfword, _parent: Halfword) {
     record_box(node, 'h');
 }
 
-#[no_mangle]
-pub extern "C" fn synctexmath(node: Halfword, _parent: Halfword) {
+pub fn synctexmath(node: Halfword, _parent: Halfword) {
     record_medium_node(node, '$', false);
 }
 
-#[no_mangle]
-pub extern "C" fn synctexhorizontalruleorglue(node: Halfword, _parent: Halfword) {
+pub fn synctexhorizontalruleorglue(node: Halfword, _parent: Halfword) {
     match node_type(node) {
         RULE_NODE => record_rule(node),
         GLUE_NODE => record_medium_node(node, 'g', false),
@@ -469,19 +452,15 @@ pub extern "C" fn synctexhorizontalruleorglue(node: Halfword, _parent: Halfword)
     }
 }
 
-#[no_mangle]
-pub extern "C" fn synctexkern(node: Halfword, _parent: Halfword) {
+pub fn synctexkern(node: Halfword, _parent: Halfword) {
     record_medium_node(node, 'k', true);
 }
 
-#[no_mangle]
-pub extern "C" fn synctexchar(_node: Halfword) {}
+pub fn synctexchar(_node: Halfword) {}
 
-#[no_mangle]
-pub extern "C" fn synctexnode(_node: Halfword, _parent: Halfword) {}
+pub fn synctexnode(_node: Halfword, _parent: Halfword) {}
 
-#[no_mangle]
-pub extern "C" fn synctexcurrent() {
+pub fn synctexcurrent() {
     unsafe {
         let context = context_mut();
         if context.off

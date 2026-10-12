@@ -1,3 +1,14 @@
+pub use crate::generated::backend::mapfile::{avl_do_entry, delete_fm_entry, new_fm_entry};
+pub use crate::generated::pdftex0::{getnullstr, zpackfilename};
+pub use crate::utils::maketexstring;
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func, avl_create, avl_destroy, avl_find, avl_item_func, avl_node, avl_probe,
+    avl_table, libavl_allocator,
+};
+
+use crate::byte_string::{strchr, strcmp};
+
 use crate::backend_parse::{checked_inclusive_span, checked_span, Cursor};
 use crate::integer_parse::IntegerBase;
 use crate::openclose::open_input;
@@ -8,38 +19,11 @@ use std::ffi::CStr;
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xstrdup};
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
-    fn zpackfilename(n: strnumber, a: strnumber, e: strnumber);
-    fn getnullstr() -> strnumber;
-    fn avl_create(
-        _: Option<avl_comparison_func>,
-        _: *mut ::core::ffi::c_void,
-        _: *mut libavl_allocator,
-    ) -> *mut avl_table;
-    fn avl_destroy(_: *mut avl_table, _: Option<avl_item_func>);
-    fn avl_probe(_: *mut avl_table, _: *mut ::core::ffi::c_void) -> *mut *mut ::core::ffi::c_void;
-    fn avl_find(_: *const avl_table, _: *const ::core::ffi::c_void) -> *mut ::core::ffi::c_void;
     static mut avl_xallocator: libavl_allocator;
     static mut cur_file_name: *mut ::core::ffi::c_char;
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn pdftex_warn(_: *const ::core::ffi::c_char, ...);
-    fn tex_printf(_: *const ::core::ffi::c_char, ...);
-    fn new_fm_entry() -> *mut fm_entry;
-    fn delete_fm_entry(_: *mut fm_entry);
-    fn avl_do_entry(_: *mut fm_entry, _: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn maketexstring(_: *const ::core::ffi::c_char) -> strnumber;
 }
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
@@ -118,45 +102,7 @@ pub const kpse_pk_format: C2RustUnnamed = 1;
 pub const kpse_gf_format: C2RustUnnamed = 0;
 pub type integer = ::core::ffi::c_int;
 pub type strnumber = integer;
-pub type avl_comparison_func = unsafe extern "C" fn(
-    *const ::core::ffi::c_void,
-    *const ::core::ffi::c_void,
-    *mut ::core::ffi::c_void,
-) -> ::core::ffi::c_int;
-pub type avl_item_func =
-    unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> ();
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct libavl_allocator {
-    pub libavl_malloc:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void>,
-    pub libavl_free:
-        Option<unsafe extern "C" fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> ()>,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_table {
-    pub avl_root: *mut avl_node,
-    pub avl_compare: Option<avl_comparison_func>,
-    pub avl_param: *mut ::core::ffi::c_void,
-    pub avl_alloc: *mut libavl_allocator,
-    pub avl_count: size_t,
-    pub avl_generation: ::core::ffi::c_ulong,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct avl_node {
-    pub avl_link: [*mut avl_node; 2],
-    pub avl_data: *mut ::core::ffi::c_void,
-    pub avl_balance: ::core::ffi::c_schar,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _subfont_entry {
-    pub infix: *mut ::core::ffi::c_char,
-    pub charcodes: [::core::ffi::c_long; 256],
-    pub next: *mut subfont_entry,
-}
+pub use crate::backend_types::_subfont_entry;
 pub type subfont_entry = _subfont_entry;
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -164,24 +110,7 @@ pub struct sfd_entry {
     pub name: *mut ::core::ffi::c_char,
     pub subfont: *mut subfont_entry,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct fm_entry {
-    pub tfm_name: *mut ::core::ffi::c_char,
-    pub sfd_name: *mut ::core::ffi::c_char,
-    pub ps_name: *mut ::core::ffi::c_char,
-    pub fd_flags: integer,
-    pub slant: integer,
-    pub extend: integer,
-    pub encname: *mut ::core::ffi::c_char,
-    pub ff_name: *mut ::core::ffi::c_char,
-    pub type_0: ::core::ffi::c_ushort,
-    pub pid: ::core::ffi::c_short,
-    pub eid: ::core::ffi::c_short,
-    pub subfont: *mut subfont_entry,
-    pub links: ::core::ffi::c_ushort,
-    pub in_use: boolean,
-}
+pub use crate::backend_types::fm_entry;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const EOF: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 pub const FOPEN_RBIN_MODE: [::core::ffi::c_char; 3] =
@@ -192,7 +121,7 @@ pub const F_SUBFONT: ::core::ffi::c_int = 0x8 as ::core::ffi::c_int;
 static mut sfd_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
 static mut sfd_file: *mut FILE = ::core::ptr::null::<FILE>() as *mut FILE;
 static mut sfd_line: [::core::ffi::c_char; 256] = [0; 256];
-unsafe extern "C" fn new_subfont_entry() -> *mut subfont_entry {
+unsafe fn new_subfont_entry() -> *mut subfont_entry {
     let mut i: ::core::ffi::c_int = 0;
     let mut subfont: *mut subfont_entry = ::core::ptr::null_mut::<subfont_entry>();
     subfont = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<subfont_entry>() as size_t))
@@ -206,7 +135,7 @@ unsafe extern "C" fn new_subfont_entry() -> *mut subfont_entry {
     (*subfont).next = ::core::ptr::null_mut::<subfont_entry>();
     return subfont;
 }
-unsafe extern "C" fn new_sfd_entry() -> *mut sfd_entry {
+unsafe fn new_sfd_entry() -> *mut sfd_entry {
     let mut sfd: *mut sfd_entry = ::core::ptr::null_mut::<sfd_entry>();
     sfd = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<sfd_entry>() as size_t))
         as *mut sfd_entry;
@@ -214,10 +143,7 @@ unsafe extern "C" fn new_sfd_entry() -> *mut sfd_entry {
     (*sfd).subfont = ::core::ptr::null_mut::<subfont_entry>();
     return sfd;
 }
-unsafe extern "C" fn destroy_sfd_entry(
-    mut pa: *mut ::core::ffi::c_void,
-    mut pb: *mut ::core::ffi::c_void,
-) {
+unsafe fn destroy_sfd_entry(mut pa: *mut ::core::ffi::c_void, mut pb: *mut ::core::ffi::c_void) {
     let mut p: *mut subfont_entry = ::core::ptr::null_mut::<subfont_entry>();
     let mut q: *mut subfont_entry = ::core::ptr::null_mut::<subfont_entry>();
     let mut sfd: *mut sfd_entry = ::core::ptr::null_mut::<sfd_entry>();
@@ -240,7 +166,7 @@ unsafe extern "C" fn destroy_sfd_entry(
     }
     (*sfd).name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-unsafe extern "C" fn comp_sfd_entry(
+unsafe fn comp_sfd_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
     mut p: *mut ::core::ffi::c_void,
@@ -250,22 +176,18 @@ unsafe extern "C" fn comp_sfd_entry(
         (*(pb as *const sfd_entry)).name,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn sfd_free() {
+pub unsafe fn sfd_free() {
     if !sfd_tree.is_null() {
         avl_destroy(
             sfd_tree,
             Some(
                 destroy_sfd_entry
-                    as unsafe extern "C" fn(
-                        *mut ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
+                    as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
     }
 }
-unsafe extern "C" fn sfd_getline(mut expect_eof: boolean) {
+unsafe fn sfd_getline(mut expect_eof: boolean) {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut c: ::core::ffi::c_int = 0;
     loop {
@@ -359,7 +281,7 @@ unsafe extern "C" fn sfd_getline(mut expect_eof: boolean) {
         }
     }
 }
-unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
+unsafe fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     let mut sfd: *mut sfd_entry = ::core::ptr::null_mut::<sfd_entry>();
     let mut tmp_sfd: sfd_entry = sfd_entry {
@@ -377,7 +299,7 @@ unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sf
         sfd_tree = avl_create(
             Some(
                 comp_sfd_entry
-                    as unsafe extern "C" fn(
+                    as unsafe fn(
                         *const ::core::ffi::c_void,
                         *const ::core::ffi::c_void,
                         *mut ::core::ffi::c_void,
@@ -523,11 +445,7 @@ unsafe extern "C" fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sf
     };
     return sfd;
 }
-#[no_mangle]
-pub unsafe extern "C" fn handle_subfont_fm(
-    mut fm: *mut fm_entry,
-    mut mode: ::core::ffi::c_int,
-) -> boolean {
+pub unsafe fn handle_subfont_fm(mut fm: *mut fm_entry, mut mode: ::core::ffi::c_int) -> boolean {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut q: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut r: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();

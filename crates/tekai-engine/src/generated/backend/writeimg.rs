@@ -1,3 +1,14 @@
+pub use crate::generated::backend::writejbig2::{read_jbig2_info, write_jbig2};
+pub use crate::generated::backend::writejpg::{read_jpg_info, write_jpg};
+pub use crate::generated::backend::writepng::{read_png_info, write_png};
+pub use crate::generated::pdftexextra::{find_input_file, makecstring};
+pub use crate::kpathsea::kpse_find_file;
+pub use crate::openclose::recorder_record_input;
+pub use crate::pdftoepdf::{epdf_delete, read_pdf_info, write_epdf};
+pub use crate::pngshim::{png_destroy_read_struct, png_get_bit_depth, png_get_io_ptr};
+
+use crate::byte_string::{strcasecmp, strlen, strncmp, strrchr};
+
 use crate::generated::pdftexextra::{do_dump, do_undump};
 use crate::stdio::feof;
 use crate::support::{xfclose, xfopen};
@@ -7,71 +18,17 @@ use crate::web2c::zround;
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc, xstrdup};
 
-#[repr(C)]
-pub struct png_struct_def {
-    _unused: [u8; 0],
-}
+pub use crate::pngshim::png_struct_def;
 
-#[repr(C)]
-pub struct png_info_def {
-    _unused: [u8; 0],
-}
+pub use crate::pngshim::png_info_def;
 
 extern "C" {
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
-    fn strrchr(
-        __s: *const ::core::ffi::c_char,
-        __c: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
-    fn strcasecmp(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn kpse_find_file(
-        name: const_string,
-        format: kpse_file_format_type,
-        must_exist: boolean,
-    ) -> string;
-    fn recorder_record_input(_: const_string);
-    fn find_input_file(s: integer) -> string;
-    fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
     static mut iniversion: boolean;
     static mut onehundredbp: scaled;
     static mut pdfimageprocset: integer;
     static mut fmtfile: wordfile;
     static mut cur_file_name: *mut ::core::ffi::c_char;
     static mut last_ptr_index: size_t;
-    fn epdf_delete();
-    fn read_pdf_info(
-        _: *mut ::core::ffi::c_char,
-        _: *mut ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
-    fn pdftex_fail(_: *const ::core::ffi::c_char, ...) -> !;
-    fn tex_printf(_: *const ::core::ffi::c_char, ...);
-    fn write_epdf();
-    fn png_destroy_read_struct(
-        png_ptr_ptr: png_structpp,
-        info_ptr_ptr: png_infopp,
-        end_info_ptr_ptr: png_infopp,
-    );
-    fn png_get_io_ptr(png_ptr: png_const_structrp) -> png_voidp;
-    fn png_get_bit_depth(png_ptr: png_const_structrp, info_ptr: png_const_inforp) -> png_byte;
-    fn read_png_info(_: integer);
-    fn write_png(_: integer);
-    fn read_jpg_info(_: integer);
-    fn write_jpg(_: integer);
-    fn read_jbig2_info(_: integer);
-    fn write_jbig2(_: integer);
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -151,63 +108,16 @@ pub type gzFile = *mut gzFile_s;
 pub type strnumber = integer;
 pub type scaled = integer;
 pub type wordfile = gzFile;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct image_entry {
-    pub image_name: *mut ::core::ffi::c_char,
-    pub image_type: ::core::ffi::c_int,
-    pub color_type: ::core::ffi::c_int,
-    pub width: integer,
-    pub height: integer,
-    pub rotate: integer,
-    pub x_res: integer,
-    pub y_res: integer,
-    pub num_pages: integer,
-    pub colorspace_ref: integer,
-    pub group_ref: integer,
-    pub image_struct: C2RustUnnamed,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub union C2RustUnnamed {
-    pub pdf: *mut pdf_image_struct,
-    pub png: png_image_struct,
-    pub jpg: *mut JPG_IMAGE_INFO,
-    pub jbig2: *mut JBIG2_IMAGE_INFO,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct JBIG2_IMAGE_INFO {
-    pub selected_page: integer,
-    pub file: *mut FILE,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct JPG_IMAGE_INFO {
-    pub color_space: ::core::ffi::c_int,
-    pub bits_per_component: ::core::ffi::c_uchar,
-    pub length: ::core::ffi::c_ulong,
-    pub file: *mut FILE,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct png_image_struct {
-    pub png_ptr: png_structp,
-    pub info_ptr: png_infop,
-}
+pub use crate::backend_types::image_entry;
+pub use crate::backend_types::png_image_struct;
+pub use crate::backend_types::ImageData as C2RustUnnamed;
+pub use crate::backend_types::JBIG2_IMAGE_INFO;
+pub use crate::backend_types::JPG_IMAGE_INFO;
 pub type png_infop = *mut png_info;
 pub type png_info = png_info_def;
 pub type png_structp = *mut png_struct;
 pub type png_struct = png_struct_def;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct pdf_image_struct {
-    pub orig_x: integer,
-    pub orig_y: integer,
-    pub selected_page: integer,
-    pub page_box: integer,
-    pub doc: *mut ::core::ffi::c_void,
-}
+pub use crate::backend_types::pdf_image_struct;
 pub type png_byte = ::core::ffi::c_uchar;
 pub type png_const_inforp = *const png_info;
 pub type png_const_structrp = *const png_struct;
@@ -255,7 +165,7 @@ pub static mut epdf_doc: *mut ::core::ffi::c_void =
     ::core::ptr::null::<::core::ffi::c_void>() as *mut ::core::ffi::c_void;
 #[no_mangle]
 pub static mut epdf_has_page_group: ::core::ffi::c_int = 0;
-unsafe extern "C" fn new_image_entry() -> integer {
+unsafe fn new_image_entry() -> integer {
     if image_array.is_null() {
         image_limit = 256 as ::core::ffi::c_int as integer;
         if 1 as ::core::ffi::c_int as ::core::ffi::c_uint > image_limit as ::core::ffi::c_uint {
@@ -304,70 +214,54 @@ unsafe extern "C" fn new_image_entry() -> integer {
     image_ptr = image_ptr.offset(1);
     return fresh5.offset_from(image_array) as ::core::ffi::c_long as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn imagecolor(mut img: integer) -> integer {
+pub unsafe fn imagecolor(mut img: integer) -> integer {
     return (*image_array.offset(img as isize)).color_type as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn imagewidth(mut img: integer) -> integer {
+pub unsafe fn imagewidth(mut img: integer) -> integer {
     return (*image_array.offset(img as isize)).width;
 }
-#[no_mangle]
-pub unsafe extern "C" fn imageheight(mut img: integer) -> integer {
+pub unsafe fn imageheight(mut img: integer) -> integer {
     return (*image_array.offset(img as isize)).height;
 }
-#[no_mangle]
-pub unsafe extern "C" fn imagerotate(mut img: integer) -> integer {
+pub unsafe fn imagerotate(mut img: integer) -> integer {
     return (*image_array.offset(img as isize)).rotate;
 }
-#[no_mangle]
-pub unsafe extern "C" fn imagexres(mut img: integer) -> integer {
+pub unsafe fn imagexres(mut img: integer) -> integer {
     return (*image_array.offset(img as isize)).x_res;
 }
-#[no_mangle]
-pub unsafe extern "C" fn imageyres(mut img: integer) -> integer {
+pub unsafe fn imageyres(mut img: integer) -> integer {
     return (*image_array.offset(img as isize)).y_res;
 }
-#[no_mangle]
-pub unsafe extern "C" fn ispdfimage(mut img: integer) -> boolean {
+pub unsafe fn ispdfimage(mut img: integer) -> boolean {
     return ((*image_array.offset(img as isize)).image_type == IMAGE_TYPE_PDF)
         as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn ispngimage(mut img: integer) -> boolean {
+pub unsafe fn ispngimage(mut img: integer) -> boolean {
     return ((*image_array.offset(img as isize)).image_type == IMAGE_TYPE_PNG)
         as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn checkimageb(mut procset: integer) -> boolean {
+pub unsafe fn checkimageb(mut procset: integer) -> boolean {
     return procset as boolean & IMAGE_COLOR_B;
 }
-#[no_mangle]
-pub unsafe extern "C" fn checkimagec(mut procset: integer) -> boolean {
+pub unsafe fn checkimagec(mut procset: integer) -> boolean {
     return procset as boolean & IMAGE_COLOR_C;
 }
-#[no_mangle]
-pub unsafe extern "C" fn checkimagei(mut procset: integer) -> boolean {
+pub unsafe fn checkimagei(mut procset: integer) -> boolean {
     return procset as boolean & IMAGE_COLOR_I;
 }
-#[no_mangle]
-pub unsafe extern "C" fn updateimageprocset(mut img: integer) {
+pub unsafe fn updateimageprocset(mut img: integer) {
     pdfimageprocset |= (*image_array.offset(img as isize)).color_type;
 }
-#[no_mangle]
-pub unsafe extern "C" fn epdforigx(mut img: integer) -> integer {
+pub unsafe fn epdforigx(mut img: integer) -> integer {
     return (*(*image_array.offset(img as isize)).image_struct.pdf).orig_x;
 }
-#[no_mangle]
-pub unsafe extern "C" fn epdforigy(mut img: integer) -> integer {
+pub unsafe fn epdforigy(mut img: integer) -> integer {
     return (*(*image_array.offset(img as isize)).image_struct.pdf).orig_y;
 }
-#[no_mangle]
-pub unsafe extern "C" fn imagepages(mut img: integer) -> integer {
+pub unsafe fn imagepages(mut img: integer) -> integer {
     return (*image_array.offset(img as isize)).num_pages;
 }
-#[no_mangle]
-pub unsafe extern "C" fn imagecolordepth(mut img: integer) -> integer {
+pub unsafe fn imagecolordepth(mut img: integer) -> integer {
     match (*image_array.offset(img as isize)).image_type {
         IMAGE_TYPE_PNG => {
             return png_get_bit_depth(
@@ -392,12 +286,10 @@ pub unsafe extern "C" fn imagecolordepth(mut img: integer) -> integer {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn getimagegroupref(mut img: integer) -> integer {
+pub unsafe fn getimagegroupref(mut img: integer) -> integer {
     return (*image_array.offset(img as isize)).group_ref;
 }
-#[no_mangle]
-pub unsafe extern "C" fn setimagegroupref(mut img: integer, mut value: integer) {
+pub unsafe fn setimagegroupref(mut img: integer, mut value: integer) {
     (*image_array.offset(img as isize)).group_ref = value;
 }
 pub const HEADER_JPG: [::core::ffi::c_char; 3] =
@@ -410,7 +302,7 @@ pub const HEADER_PDF: [::core::ffi::c_char; 8] =
     unsafe { ::core::mem::transmute::<[u8; 8], [::core::ffi::c_char; 8]>(*b"%PDF-1.\0") };
 pub const MAX_HEADER: usize =
     (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as usize).wrapping_sub(1 as usize);
-unsafe extern "C" fn checktypebyheader(mut img: integer) {
+unsafe fn checktypebyheader(mut img: integer) {
     let mut i: ::core::ffi::c_int = 0;
     let mut file: *mut FILE = ::core::ptr::null_mut::<FILE>();
     let mut header: [::core::ffi::c_char; 8] = [0; 8];
@@ -466,7 +358,7 @@ unsafe extern "C" fn checktypebyheader(mut img: integer) {
         (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_PDF;
     }
 }
-unsafe extern "C" fn checktypebyextension(mut img: integer) {
+unsafe fn checktypebyextension(mut img: integer) {
     let mut image_suffix: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if (*image_array.offset(img as isize)).image_type != IMAGE_TYPE_NONE {
         return;
@@ -508,8 +400,7 @@ unsafe extern "C" fn checktypebyextension(mut img: integer) {
         (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_PDF;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn readimage(
+pub unsafe fn readimage(
     mut s: strnumber,
     mut page_num: integer,
     mut page_name: strnumber,
@@ -623,8 +514,7 @@ pub unsafe extern "C" fn readimage(
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
     return img;
 }
-#[no_mangle]
-pub unsafe extern "C" fn writeimage(mut img: integer) {
+pub unsafe fn writeimage(mut img: integer) {
     cur_file_name = (*image_array.offset(img as isize)).image_name;
     crate::utils::tex_printf_args(
         b" <%s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -660,8 +550,7 @@ pub unsafe extern "C" fn writeimage(mut img: integer) {
     crate::utils::tex_printf_args(b">\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn deleteimage(mut img: integer) {
+pub unsafe fn deleteimage(mut img: integer) {
     if iniversion != 0 {
         return;
     }
@@ -707,15 +596,13 @@ pub unsafe extern "C" fn deleteimage(mut img: integer) {
     let ref mut fresh6 = (*image_array.offset(img as isize)).image_name;
     *fresh6 = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn img_free() {
+pub unsafe fn img_free() {
     if !image_array.is_null() {
         free(image_array as *mut ::core::ffi::c_void);
     }
     image_array = ::core::ptr::null_mut::<image_entry>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn dumpimagemeta() {
+pub unsafe fn dumpimagemeta() {
     let mut cur_image: ::core::ffi::c_int = 0;
     let mut img: ::core::ffi::c_int = 0;
     do_dump(
@@ -839,8 +726,7 @@ pub unsafe extern "C" fn dumpimagemeta() {
         img += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn undumpimagemeta(
+pub unsafe fn undumpimagemeta(
     mut pdfmajorversion: integer,
     mut pdfminorversion: integer,
     mut pdfinclusionerrorlevel: integer,

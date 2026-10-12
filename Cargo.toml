@@ -33,7 +33,7 @@ incremental = false
 [profile.release]
 codegen-units = 1
 lto = "fat"
-panic = "abort"
+panic = "unwind"
 
 [dependencies]
 anyhow = "1.0"

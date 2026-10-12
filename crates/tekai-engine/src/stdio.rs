@@ -1,21 +1,25 @@
 //! Owned Rust streams for the translated engine's remaining pointer-based IO.
 //!
 //! Files, console handles and pipe endpoints use Rust IO. No libc FILE object
-//! enters this module. Raw handles stay confined to the engine thread until the
-//! later run-state migration can replace them with borrowed typed owners.
+//! enters this module. A pinned invocation session owns streams and console
+//! buffers. The thread-local routing pointer borrows it only within its scope.
 
 #![warn(clippy::all)]
 
 use flate2::{read::MultiGzDecoder, write::GzEncoder, Compression};
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::ffi::{c_char, c_int, c_long, c_void, CStr, OsStr};
 use std::fs::{File, Metadata, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::marker::{PhantomData, PhantomPinned};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::process::ExitStatusExt;
+use std::pin::Pin;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::ptr;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const EOF: c_int = -1;
@@ -54,7 +58,7 @@ pub struct Stream {
     readable: bool,
     writable: bool,
     append: bool,
-    owned: bool,
+    owner: *const StreamSession,
     buffering: Buffering,
     buffer_size: usize,
     input: Vec<u8>,
@@ -68,14 +72,11 @@ pub struct Stream {
 }
 
 thread_local! {
-    // Registration occurs only at open/close. Hot-path byte IO has no lock or
-    // registry lookup. Legacy exit paths use this list to flush live buffers.
-    static OPEN_STREAMS: RefCell<Vec<*mut Stream>> = const { RefCell::new(Vec::new()) };
-    static CONSOLE: Console = Console {
-        input: UnsafeCell::new(Stream::new(Backing::Stdin(io::stdin()), true, false, false, Buffering::Full)),
-        output: UnsafeCell::new(Stream::new(Backing::Stdout(io::stdout()), false, true, false, Buffering::Line)),
-        error: UnsafeCell::new(Stream::new(Backing::Stderr(io::stderr()), false, true, false, Buffering::None)),
-    };
+    static ACTIVE_SESSION: Cell<*const StreamSession> = const { Cell::new(ptr::null()) };
+    // Low-level unit tests exercise adapters without entering the engine. This
+    // test-only owner is never available to a production invocation.
+    #[cfg(test)]
+    static TEST_SESSION: Pin<Box<StreamSession>> = StreamSession::new();
 }
 
 struct Console {
@@ -84,20 +85,115 @@ struct Console {
     error: UnsafeCell<Stream>,
 }
 
-// Console handles live for one engine thread/process and are not reopened by a
-// getter after fclose. Closing a console consumes its stream state, not the
-// process-global std descriptor; later IO on that handle fails with EBADF.
+/// Own every stream, including read-ahead and console state, for one invocation.
+/// Boxes keep raw stream addresses stable while the ownership vector changes.
+/// Pinning protects console addresses and the owner pointers held by streams.
+pub(crate) struct StreamSession {
+    // The translated engine keeps addresses of streams across vector growth.
+    #[allow(clippy::vec_box)]
+    streams: RefCell<Vec<Box<Stream>>>,
+    console: Console,
+    _thread_confined: PhantomData<Rc<()>>,
+    _pinned: PhantomPinned,
+}
+
+impl StreamSession {
+    pub(crate) fn new() -> Pin<Box<Self>> {
+        Box::pin(Self {
+            streams: RefCell::new(Vec::new()),
+            console: Console {
+                input: UnsafeCell::new(Stream::new(
+                    Backing::Stdin(io::stdin()),
+                    true,
+                    false,
+                    false,
+                    Buffering::Full,
+                )),
+                output: UnsafeCell::new(Stream::new(
+                    Backing::Stdout(io::stdout()),
+                    false,
+                    true,
+                    false,
+                    Buffering::Line,
+                )),
+                error: UnsafeCell::new(Stream::new(
+                    Backing::Stderr(io::stderr()),
+                    false,
+                    true,
+                    false,
+                    Buffering::None,
+                )),
+            },
+            _thread_confined: PhantomData,
+            _pinned: PhantomPinned,
+        })
+    }
+
+    pub(crate) fn scope<T>(self: Pin<&mut Self>, operation: impl FnOnce() -> T) -> T {
+        struct RoutingGuard;
+        impl Drop for RoutingGuard {
+            fn drop(&mut self) {
+                ACTIVE_SESSION.with(|active| active.set(ptr::null()));
+            }
+        }
+        ACTIVE_SESSION.with(|active| {
+            assert!(active.get().is_null(), "nested engine stream session");
+            active.set(self.as_ref().get_ref());
+        });
+        let _routing = RoutingGuard;
+        operation()
+    }
+
+    /// Flush and close residual files and reap residual pipe children. Explicit
+    /// pclose still waits for the child's normal status. Teardown terminates a
+    /// child that would otherwise outlive its invocation or block it forever.
+    pub(crate) fn finish(self: Pin<&mut Self>) -> io::Result<()> {
+        let session = self.as_ref().get_ref();
+        let mut first_error = None;
+        for mut stream in session.streams.borrow_mut().drain(..) {
+            if let Err(error) = stream.close_for_teardown() {
+                first_error.get_or_insert(error);
+            }
+        }
+        for stream in [session.console.output.get(), session.console.error.get()] {
+            // SAFETY: the session is pinned, thread-confined and outside its
+            // routing scope. No callback retains a mutable Stream reference.
+            if let Err(error) = unsafe { &mut *stream }.flush_output() {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+}
+
+fn with_session<T>(operation: impl FnOnce(&StreamSession) -> T) -> T {
+    ACTIVE_SESSION.with(|active| {
+        let pointer = active.get();
+        if !pointer.is_null() {
+            // SAFETY: scope keeps the pinned owner alive, excludes nesting and
+            // clears this thread's routing pointer even during unwinding.
+            return operation(unsafe { &*pointer });
+        }
+        #[cfg(test)]
+        return TEST_SESSION.with(|session| operation(session.as_ref().get_ref()));
+        #[cfg(not(test))]
+        panic!("engine IO outside its invocation session");
+    })
+}
+
+// Closing a console consumes its invocation-local state, not the process-global
+// OS descriptor. A subsequent getter does not reopen it within that invocation.
 
 pub(crate) fn stdin() -> *mut Stream {
-    CONSOLE.with(|console| console.input.get())
+    with_session(|session| session.console.input.get())
 }
 
 pub(crate) fn stdout() -> *mut Stream {
-    CONSOLE.with(|console| console.output.get())
+    with_session(|session| session.console.output.get())
 }
 
 pub(crate) fn stderr() -> *mut Stream {
-    CONSOLE.with(|console| console.error.get())
+    with_session(|session| session.console.error.get())
 }
 
 fn set_errno(code: c_int) {
@@ -128,7 +224,7 @@ impl Stream {
             readable,
             writable,
             append,
-            owned: false,
+            owner: ptr::null(),
             buffering,
             buffer_size: BUFFER_SIZE,
             input: Vec::new(),
@@ -143,10 +239,13 @@ impl Stream {
     }
 
     fn into_handle(mut self) -> *mut Self {
-        self.owned = true;
-        let pointer = Box::into_raw(Box::new(self));
-        OPEN_STREAMS.with(|streams| streams.borrow_mut().push(pointer));
-        pointer
+        with_session(|session| {
+            self.owner = session;
+            let mut stream = Box::new(self);
+            let pointer = &mut *stream as *mut Self;
+            session.streams.borrow_mut().push(stream);
+            pointer
+        })
     }
 
     fn record_error(&mut self, error: io::Error) {
@@ -422,6 +521,14 @@ impl Stream {
     }
 
     fn close(&mut self) -> io::Result<c_int> {
+        self.close_impl(false)
+    }
+
+    fn close_for_teardown(&mut self) -> io::Result<c_int> {
+        self.close_impl(true)
+    }
+
+    fn close_impl(&mut self, terminate_pipe: bool) -> io::Result<c_int> {
         let flushed = if matches!(
             self.backing,
             Backing::GzipWrite(..) | Backing::GzipEncoder(_)
@@ -441,11 +548,17 @@ impl Stream {
         let status = match backing {
             Backing::ReadPipe(mut child, output) => {
                 drop(output);
+                if terminate_pipe && child.try_wait()?.is_none() {
+                    child.kill()?;
+                }
                 use std::os::unix::process::ExitStatusExt;
                 child.wait()?.into_raw()
             }
             Backing::WritePipe(mut child, input) => {
                 drop(input);
+                if terminate_pipe && child.try_wait()?.is_none() {
+                    child.kill()?;
+                }
                 use std::os::unix::process::ExitStatusExt;
                 child.wait()?.into_raw()
             }
@@ -467,7 +580,7 @@ impl Stream {
 impl Drop for Stream {
     fn drop(&mut self) {
         if !matches!(self.backing, Backing::Closed) {
-            let _ = self.close();
+            let _ = self.close_for_teardown();
         }
     }
 }
@@ -762,7 +875,7 @@ pub(crate) unsafe fn puts(text: *const c_char) -> c_int {
     unsafe { putc(b'\n' as c_int, stdout()) }
 }
 
-fn error_text(code: c_int) -> String {
+pub(crate) fn error_text(code: c_int) -> String {
     let text = io_error(code).to_string();
     let suffix = format!(" (os error {code})");
     text.strip_suffix(&suffix).unwrap_or(&text).to_owned()
@@ -881,7 +994,7 @@ unsafe fn close_handle(pointer: *mut Stream, pipe_status: bool) -> c_int {
         return EOF;
     };
     let result = stream.close();
-    let owned = stream.owned;
+    let owner = stream.owner;
     let status = match result {
         Ok(status) => {
             if pipe_status {
@@ -895,11 +1008,16 @@ unsafe fn close_handle(pointer: *mut Stream, pipe_status: bool) -> c_int {
             EOF
         }
     };
-    if owned {
-        OPEN_STREAMS.with(|streams| streams.borrow_mut().retain(|stream| *stream != pointer));
-        unsafe {
-            drop(Box::from_raw(pointer));
-        }
+    if !owner.is_null() {
+        // SAFETY: owned handles are boxed by this pinned, thread-confined
+        // session. Every access must precede session teardown.
+        let owner = unsafe { &*owner };
+        let mut streams = owner.streams.borrow_mut();
+        let index = streams
+            .iter()
+            .position(|stream| std::ptr::eq(&**stream, pointer))
+            .expect("stream absent from its invocation owner");
+        streams.swap_remove(index);
     }
     status
 }
@@ -917,6 +1035,11 @@ pub(crate) unsafe fn popen(command: *const c_char, mode: *const c_char) -> *mut 
     }
     let mut builder = Command::new("/bin/sh");
     builder.arg("-c").arg(command);
+    if let Err(error) = crate::environment::configure_command(&mut builder) {
+        crate::environment::report(&error);
+        set_errno(libc::EINVAL);
+        return ptr::null_mut();
+    }
     if kind == b'r' {
         builder.stdout(Stdio::piped());
     } else {
@@ -936,6 +1059,30 @@ pub(crate) unsafe fn popen(command: *const c_char, mode: *const c_char) -> *mut 
         Err(error) => {
             set_errno(error.raw_os_error().unwrap_or(libc::EIO));
             ptr::null_mut()
+        }
+    }
+}
+
+/// # Safety
+/// A non-null command must point to a terminated C string. Child environment
+/// values are copied from the active invocation, never written to the parent.
+pub(crate) unsafe fn system(command: *const c_char) -> c_int {
+    if command.is_null() {
+        return i32::from(std::path::Path::new("/bin/sh").is_file());
+    }
+    let command = OsStr::from_bytes(unsafe { CStr::from_ptr(command) }.to_bytes());
+    let mut builder = Command::new("/bin/sh");
+    builder.arg("-c").arg(command);
+    if let Err(error) = crate::environment::configure_command(&mut builder) {
+        crate::environment::report(&error);
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    match builder.status() {
+        Ok(status) => status.into_raw(),
+        Err(error) => {
+            set_errno(error.raw_os_error().unwrap_or(libc::EIO));
+            -1
         }
     }
 }
@@ -1090,11 +1237,11 @@ pub(crate) unsafe fn gzclose(stream: *mut Stream) -> c_int {
 
 pub(crate) unsafe fn flush_all() -> c_int {
     let mut result = 0;
-    OPEN_STREAMS.with(|streams| {
-        for &stream in streams.borrow().iter() {
+    with_session(|session| {
+        for stream in session.streams.borrow_mut().iter_mut() {
             // fflush(NULL) flushes pending output, not read-ahead buffers.
-            if let Err(error) = unsafe { &mut *stream }.flush_output() {
-                unsafe { &mut *stream }.record_error(error);
+            if let Err(error) = stream.flush_output() {
+                stream.record_error(error);
                 result = EOF;
             }
         }
@@ -1111,7 +1258,7 @@ pub(crate) fn exit(status: c_int) -> ! {
     unsafe {
         flush_all();
     }
-    std::process::exit(status)
+    crate::termination::exit(status)
 }
 
 #[cfg(test)]
@@ -1133,6 +1280,143 @@ mod tests {
         let handle = Handle(unsafe { tmpfile() });
         assert!(!handle.0.is_null());
         handle
+    }
+
+    #[test]
+    fn session_releases_unclosed_files_and_console_state() {
+        let mut session = StreamSession::new();
+        let (descriptor, original) = session.as_mut().scope(|| unsafe {
+            let stream = tmpfile();
+            assert!(!stream.is_null());
+            assert_eq!(fwrite(b"pending".as_ptr().cast(), 1, 7, stream), 7);
+            let input = stdin();
+            (*input).pushback.push(b'x');
+            (*input).eof = true;
+            assert_eq!(session_count(), 1);
+            let Backing::File(file) = &(*stream).backing else {
+                panic!()
+            };
+            (fileno(stream), file.try_clone().unwrap())
+        });
+        session.as_mut().finish().unwrap();
+        assert_eq!(session.streams.borrow().len(), 0);
+        assert_descriptor_released(descriptor, &original);
+        drop(session);
+
+        let mut next = StreamSession::new();
+        next.as_mut().scope(|| unsafe {
+            assert!((*stdin()).pushback.is_empty());
+            assert!(!(*stdin()).eof);
+            assert_eq!(session_count(), 0);
+        });
+        next.as_mut().finish().unwrap();
+    }
+
+    fn session_count() -> usize {
+        with_session(|session| session.streams.borrow().len())
+    }
+
+    fn assert_descriptor_released(descriptor: c_int, original: &File) {
+        use std::os::unix::fs::MetadataExt;
+        let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+        let result = unsafe { libc::fstat(descriptor, metadata.as_mut_ptr()) };
+        if result == -1 {
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
+        } else {
+            // Another parallel test can reuse the released descriptor number.
+            // Holding a duplicate keeps this unlinked temporary file's inode
+            // live, so a different identity proves this handle was released.
+            let metadata = unsafe { metadata.assume_init() };
+            let original = original.metadata().unwrap();
+            // libc's field widths vary across supported Unix targets.
+            #[allow(clippy::unnecessary_cast)]
+            let identity = (metadata.st_dev as u64, metadata.st_ino as u64);
+            assert_ne!(
+                identity,
+                (original.dev(), original.ino()),
+                "invocation retained its open file descriptor",
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_close_removes_the_owner_without_double_close_at_teardown() {
+        let mut session = StreamSession::new();
+        session.as_mut().scope(|| unsafe {
+            let handles = (0..32).map(|_| tmpfile()).collect::<Vec<_>>();
+            assert!(handles.iter().all(|handle| !handle.is_null()));
+            assert_eq!(session_count(), 32);
+            for (remaining, handle) in handles.into_iter().enumerate() {
+                assert_eq!(fclose(handle), 0);
+                assert_eq!(session_count(), 31 - remaining);
+            }
+        });
+        session.as_mut().finish().unwrap();
+    }
+
+    #[test]
+    fn session_unwinding_restores_routing_and_drops_remaining_handles() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let mut descriptor = -1;
+        let mut original = None;
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let mut session = StreamSession::new();
+            session.as_mut().scope(|| unsafe {
+                let handle = tmpfile();
+                assert!(!handle.is_null());
+                descriptor = fileno(handle);
+                let Backing::File(file) = &(*handle).backing else {
+                    panic!()
+                };
+                original = Some(file.try_clone().unwrap());
+                panic!("test stream session unwind");
+            });
+        }));
+        assert!(result.is_err());
+        assert!(ACTIVE_SESSION.with(Cell::get).is_null());
+        assert_descriptor_released(descriptor, original.as_ref().unwrap());
+    }
+
+    #[test]
+    fn nested_session_does_not_replace_outer_routing() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let mut outer = StreamSession::new();
+        let mut inner = StreamSession::new();
+        outer.as_mut().scope(|| {
+            let initial = stdout();
+            assert!(catch_unwind(AssertUnwindSafe(|| {
+                inner.as_mut().scope(|| unreachable!());
+            }))
+            .is_err());
+            assert_eq!(stdout(), initial);
+        });
+        outer.as_mut().finish().unwrap();
+        inner.as_mut().finish().unwrap();
+    }
+
+    #[test]
+    fn teardown_reaps_a_pipe_child_that_does_not_exit_on_eof() {
+        let mut session = StreamSession::new();
+        let process = session.as_mut().scope(|| unsafe {
+            let handle = popen(c"exec sleep 600".as_ptr(), c"w".as_ptr());
+            assert!(!handle.is_null());
+            let Backing::WritePipe(child, _) = &(*handle).backing else {
+                panic!()
+            };
+            child.id()
+        });
+        session.as_mut().finish().unwrap();
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(process as i32, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
     }
 
     // Native FILE objects are an oracle only. They never cross the production

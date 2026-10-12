@@ -4,7 +4,9 @@ use crate::openclose::{xmalloc, xrealloc};
 use crate::stdio::Stream as FILE;
 use crate::web2c::uexit;
 use libc::{c_char, c_double, c_int, c_long, c_void, off_t, size_t};
+use std::ffi::OsStr;
 use std::ffi::{CStr, CString};
+use std::os::unix::ffi::OsStrExt;
 use std::ptr;
 
 #[no_mangle]
@@ -33,12 +35,7 @@ unsafe fn c_bytes(s: *const c_char) -> &'static [u8] {
     unsafe { CStr::from_ptr(s).to_bytes() }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn concat3(
-    s1: *const c_char,
-    s2: *const c_char,
-    s3: *const c_char,
-) -> *mut c_char {
+pub unsafe fn concat3(s1: *const c_char, s2: *const c_char, s3: *const c_char) -> *mut c_char {
     let s1 = unsafe { c_bytes(s1) };
     let s2 = unsafe { c_bytes(s2) };
     let s3 = unsafe { c_bytes(s3) };
@@ -53,13 +50,11 @@ pub unsafe extern "C" fn concat3(
     out as *mut c_char
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn concat(s1: *const c_char, s2: *const c_char) -> *mut c_char {
+pub unsafe fn concat(s1: *const c_char, s2: *const c_char) -> *mut c_char {
     unsafe { concat3(s1, s2, c"".as_ptr()) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xdirname(name: *const c_char) -> *mut c_char {
+pub unsafe fn xdirname(name: *const c_char) -> *mut c_char {
     unsafe {
         let bytes = c_bytes(name);
         let slash = bytes.iter().rposition(|&b| b == b'/');
@@ -71,25 +66,26 @@ pub unsafe extern "C" fn xdirname(name: *const c_char) -> *mut c_char {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xgetcwd() -> *mut c_char {
+pub unsafe fn xgetcwd() -> *mut c_char {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let cwd = CString::new(cwd.to_string_lossy().as_bytes()).expect("cwd contained NUL");
     unsafe { copy_bytes_with_nul(cwd.as_bytes()) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xputenv(var: *const c_char, value: *const c_char) {
+pub unsafe fn xputenv(var: *const c_char, value: *const c_char) {
     unsafe {
         if var.is_null() || value.is_null() {
             return;
         }
-        libc::setenv(var, value, 1);
+        let name = OsStr::from_bytes(CStr::from_ptr(var).to_bytes());
+        let value = OsStr::from_bytes(CStr::from_ptr(value).to_bytes());
+        if let Err(error) = crate::environment::set(name, value) {
+            crate::environment::report(&error);
+        }
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn dir_p(name: *mut c_char) -> c_int {
+pub unsafe fn dir_p(name: *mut c_char) -> c_int {
     if name.is_null() {
         return 0;
     }
@@ -99,8 +95,7 @@ pub unsafe extern "C" fn dir_p(name: *mut c_char) -> c_int {
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn find_suffix(name: *const c_char) -> *const c_char {
+pub unsafe fn find_suffix(name: *const c_char) -> *const c_char {
     unsafe {
         if name.is_null() {
             return ptr::null();
@@ -224,8 +219,7 @@ pub(crate) unsafe fn read_line(f: *mut FILE) -> *mut c_char {
     line as *mut c_char
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xbasename(name: *const c_char) -> *const c_char {
+pub unsafe fn xbasename(name: *const c_char) -> *const c_char {
     unsafe {
         let mut base = name;
         let mut p = name;
@@ -239,8 +233,7 @@ pub unsafe extern "C" fn xbasename(name: *const c_char) -> *const c_char {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn basenamechangesuffix(
+pub unsafe fn basenamechangesuffix(
     name: *const c_char,
     old_suffix: *const c_char,
     new_suffix: *const c_char,
@@ -265,8 +258,7 @@ pub unsafe extern "C" fn basenamechangesuffix(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn chartostring(ch: c_char) -> *mut c_char {
+pub unsafe fn chartostring(ch: c_char) -> *mut c_char {
     unsafe { copy_bytes_with_nul(&[ch as u8]) }
 }
 
@@ -311,8 +303,7 @@ unsafe fn scan_integers(destinations: &[*mut c_int]) -> usize {
     destinations.len()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn zinput2ints(a: *mut c_int, b: *mut c_int) {
+pub unsafe fn zinput2ints(a: *mut c_int, b: *mut c_int) {
     unsafe {
         while scan_integers(&[a, b]) != 2 {
             if discard_stdin_line() == libc::EOF {
@@ -328,8 +319,7 @@ pub unsafe extern "C" fn zinput2ints(a: *mut c_int, b: *mut c_int) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn zinput3ints(a: *mut c_int, b: *mut c_int, c: *mut c_int) {
+pub unsafe fn zinput3ints(a: *mut c_int, b: *mut c_int, c: *mut c_int) {
     unsafe {
         while scan_integers(&[a, b, c]) != 3 {
             if discard_stdin_line() == libc::EOF {
@@ -345,8 +335,7 @@ pub unsafe extern "C" fn zinput3ints(a: *mut c_int, b: *mut c_int, c: *mut c_int
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn usage(str_: *const c_char) {
+pub unsafe fn usage(str_: *const c_char) {
     unsafe {
         crate::stdio::fprintf_args(
             crate::stdio::stderr(),
@@ -357,8 +346,7 @@ pub unsafe extern "C" fn usage(str_: *const c_char) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn usagehelp(mut message: *mut *const c_char, mut bug_email: *const c_char) {
+pub unsafe fn usagehelp(mut message: *mut *const c_char, mut bug_email: *const c_char) {
     unsafe {
         if bug_email.is_null() {
             bug_email = c"tex-k@tug.org".as_ptr();
@@ -373,9 +361,9 @@ pub unsafe extern "C" fn usagehelp(mut message: *mut *const c_char, mut bug_emai
             c"\nEmail bug reports to %s".as_ptr(),
             &[crate::utils::PrintfArg::from(bug_email)],
         );
-        if libc::strlen(bug_email) > 9 {
-            let domain = libc::strchr(bug_email, b'@' as c_int);
-            if !domain.is_null() && libc::strcmp(domain, c"@tug.org".as_ptr()) == 0 {
+        if crate::byte_string::strlen(bug_email) > 9 {
+            let domain = crate::byte_string::strchr(bug_email, b'@' as c_int);
+            if !domain.is_null() && crate::byte_string::strcmp(domain, c"@tug.org".as_ptr()) == 0 {
                 crate::stdio::printf_args(c" (https://lists.tug.org/".as_ptr(), &[]);
                 let mut ptr = bug_email;
                 while ptr < domain {
@@ -390,16 +378,15 @@ pub unsafe extern "C" fn usagehelp(mut message: *mut *const c_char, mut bug_emai
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn printversionandexit(
+pub unsafe fn printversionandexit(
     banner: *const c_char,
     _copyright_holder: *const c_char,
     _author: *const c_char,
     extra_info: *const c_char,
 ) {
     unsafe {
-        let prog_name_end = libc::strchr(banner, b',' as c_int);
-        let prog_version = libc::strrchr(banner, b' ' as c_int);
+        let prog_name_end = crate::byte_string::strchr(banner, b',' as c_int);
+        let prog_version = crate::byte_string::strrchr(banner, b' ' as c_int);
         if prog_name_end.is_null() || prog_version.is_null() {
             libc::abort();
         }
@@ -409,7 +396,8 @@ pub unsafe extern "C" fn printversionandexit(
         prog_name.extend_from_slice(std::slice::from_raw_parts(banner as *const u8, len));
         prog_name.push(0);
 
-        let prog_name_start = libc::strrchr(prog_name.as_ptr() as *const c_char, b' ' as c_int);
+        let prog_name_start =
+            crate::byte_string::strrchr(prog_name.as_ptr() as *const c_char, b' ' as c_int);
         if prog_name_start.is_null() {
             libc::abort();
         }

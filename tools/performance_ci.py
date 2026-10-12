@@ -1006,8 +1006,10 @@ class PerformanceCI(Audit):
                     engine_log=log.read_text(errors='replace')[-LOG_TAIL_BYTES:] if log.is_file() else '', **result)
 
     def preview(self):
+        # Keep the original Unicode byte boundary, with legal word breaks.
+        # An uninterrupted 8190-glyph word is a separate width-capacity case.
         project = self.project('unicode-preview', '\\documentclass{article}\n\\begin{document}\n'
-                               + 'x' * 8190 + 'é more text\n\\end{document}\n')
+                               + 'x ' * 4095 + 'é more text\n\\end{document}\n')
         command = [self.args.engine, 'watch', project / 'main.tex', '--out-dir',
                    project / 'build', '--no-lint', '--preview']
         process = self.start(command, project, self.environment(project))

@@ -1,5 +1,8 @@
 //! Rust-owned web2c file opening and configuration shims.
 
+pub use crate::kpathsea::{kpse_absolute_p, kpse_find_file, kpse_var_value};
+pub use crate::support::{dir_p, xdirname, xgetcwd};
+
 use crate::stdio::Stream as FILE;
 use crate::support::xfopen;
 use libc::{c_char, c_int, c_uint, c_void, size_t};
@@ -34,12 +37,6 @@ extern "C" {
     static mut nameoffile: *mut u8;
     static mut namelength: c_int;
 
-    fn dir_p(name: *mut c_char) -> c_int;
-    fn kpse_absolute_p(filename: *const c_char, relative_ok: c_int) -> c_int;
-    fn kpse_find_file(name: *const c_char, format: c_uint, must_exist: c_int) -> *mut c_char;
-    fn kpse_var_value(var: *const c_char) -> *mut c_char;
-    fn xgetcwd() -> *mut c_char;
-    fn xdirname(name: *const c_char) -> *mut c_char;
 }
 
 #[inline]
@@ -48,7 +45,7 @@ unsafe fn fast_fgetc(stream: *mut FILE) -> c_int {
 }
 
 fn c_strlen(s: *const c_char) -> usize {
-    unsafe { libc::strlen(s) as usize }
+    unsafe { crate::byte_string::strlen(s) }
 }
 
 fn c_bytes(s: *const c_char) -> &'static [u8] {
@@ -162,8 +159,7 @@ unsafe fn recorder_start() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn recorder_change_filename(new_name: *mut c_char) {
+pub unsafe fn recorder_change_filename(new_name: *mut c_char) {
     unsafe {
         if RECORDER_FILE.is_null() {
             return;
@@ -186,13 +182,11 @@ pub unsafe extern "C" fn recorder_change_filename(new_name: *mut c_char) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn recorder_record_input(name: *const c_char) {
+pub unsafe fn recorder_record_input(name: *const c_char) {
     unsafe { record_name(c"INPUT".as_ptr(), name) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn recorder_record_output(name: *const c_char) {
+pub unsafe fn recorder_record_output(name: *const c_char) {
     unsafe { record_name(c"OUTPUT".as_ptr(), name) }
 }
 
@@ -279,7 +273,7 @@ pub(crate) unsafe fn open_input_with_dirname(
         let top_dir = xdirname(fname);
         if !top_dir.is_null()
             && *top_dir != 0
-            && libc::strcmp(top_dir, c".".as_ptr()) != 0
+            && crate::byte_string::strcmp(top_dir, c".".as_ptr()) != 0
             && kpse_absolute_p(nameoffile_body(), TRUE) == 0
         {
             let newname = concat3_ptr(top_dir, c"/".as_ptr(), nameoffile_body());
@@ -366,8 +360,7 @@ pub(crate) unsafe fn close_file(f: *mut FILE) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn setupboundvariable(var: *mut c_int, var_name: *const c_char, dflt: c_int) {
+pub unsafe fn setupboundvariable(var: *mut c_int, var_name: *const c_char, dflt: c_int) {
     unsafe {
         *var = dflt;
         let expansion = kpse_var_value(var_name);

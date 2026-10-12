@@ -137,7 +137,7 @@ impl LookupSession {
             indices: BudgetCache::new(INDEX_BUDGET, INDEX_LIMIT),
             budget: INDEX_BUDGET,
             oversized: Vec::new(),
-            exclusion_config: std::env::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES"),
+            exclusion_config: crate::environment::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES"),
             policy_generation: POLICY_GENERATION.with(Cell::get),
             project_exclusions: project_exclusions(),
             observed_files: HashMap::new(),
@@ -163,7 +163,7 @@ impl LookupSession {
         entry: &str,
         implicit_project: bool,
     ) -> Option<PathBuf> {
-        if self.exclusion_config != std::env::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES")
+        if self.exclusion_config != crate::environment::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES")
             || self.policy_generation != POLICY_GENERATION.with(Cell::get)
         {
             *self = Self::new();
@@ -593,7 +593,7 @@ fn project_exclusions() -> Vec<PathBuf> {
     if let Some(paths) = SCOPED_PROJECT_EXCLUSIONS.with(|paths| paths.borrow().clone()) {
         return paths;
     }
-    std::env::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES")
+    crate::environment::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES")
         .map(|value| {
             std::env::split_paths(&value)
                 .filter_map(|path| path.canonicalize().ok())

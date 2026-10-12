@@ -13,7 +13,7 @@ pub struct SearchPath {
 }
 
 pub fn mode() -> std::io::Result<String> {
-    let mode = std::env::var("TEKAI_TEXMF_MODE").unwrap_or_else(|_| "shared".into());
+    let mode = crate::environment::var("TEKAI_TEXMF_MODE").unwrap_or_else(|_| "shared".into());
     match mode.as_str() {
         "shared" | "bundled" => Ok(mode),
         _ => Err(std::io::Error::other(format!(
@@ -23,20 +23,23 @@ pub fn mode() -> std::io::Result<String> {
 }
 
 fn variable(name: &str) -> Option<String> {
-    std::env::var(name).ok().or_else(|| match name {
-        "TEXMFHOME" => std::env::var("HOME").ok().map(|home| {
-            Path::new(&home)
-                .join(if cfg!(target_os = "macos") {
-                    "Library/texmf"
-                } else {
-                    "texmf"
-                })
-                .to_string_lossy()
-                .into_owned()
-        }),
-        "TEXMFLOCAL" => Some("/usr/local/texlive/texmf-local".into()),
-        _ => None,
-    })
+    crate::environment::var(name)
+        .ok()
+        .or_else(|| crate::environment::cnf_value(name).and_then(|value| value.into_string().ok()))
+        .or_else(|| match name {
+            "TEXMFHOME" => crate::environment::var("HOME").ok().map(|home| {
+                Path::new(&home)
+                    .join(if cfg!(target_os = "macos") {
+                        "Library/texmf"
+                    } else {
+                        "texmf"
+                    })
+                    .to_string_lossy()
+                    .into_owned()
+            }),
+            "TEXMFLOCAL" => Some("/usr/local/texlive/texmf-local".into()),
+            _ => None,
+        })
 }
 
 fn expand_variables(value: &str, get: &impl Fn(&str) -> Option<String>, depth: usize) -> String {

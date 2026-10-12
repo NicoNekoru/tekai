@@ -1,3 +1,47 @@
+pub use crate::generated::backend::avlstuff::{avlfindobj, avlputobj};
+pub use crate::generated::backend::mapfile::{
+    hasfmentry, hasspacechar, isscalable, pdfmapfile, pdfmapline, pdfmaplinesp,
+};
+pub use crate::generated::backend::tounicode::deftounicode;
+pub use crate::generated::backend::vfpacket::{
+    newvfpacket, packetbyte, poppacketstate, pushpacketstate, startpacket, storepacket,
+};
+pub use crate::generated::backend::writefont::{dopdffont, writefontstuff};
+pub use crate::generated::backend::writeimg::{
+    checkimageb, checkimagec, checkimagei, deleteimage, epdforigx, epdforigy, getimagegroupref,
+    imagecolordepth, imageheight, imagepages, imagerotate, imagewidth, imagexres, imageyres,
+    ispdfimage, ispngimage, readimage, setimagegroupref, updateimageprocset, writeimage,
+};
+pub use crate::generated::backend::writejbig2::flushjbig2page0objects;
+pub use crate::generated::backend::writet3::getpkcharwidth;
+pub use crate::generated::pdftexextra::{
+    calledit, get_date_and_time, get_seconds_and_micros, getcreationdate, getfiledump,
+    getfilemoddate, getfilesize, getjobname, getmd5sum, ipcpage, isnewsource, makecstring,
+    makefullnamestring, makesrcspecial, remembersourceinfo, runsystem, texmf_yesno, topenin,
+};
+pub use crate::kpathsea::{
+    kpse_in_name_ok, kpse_init_prog, kpse_out_name_ok, kpse_set_program_enabled,
+};
+pub use crate::openclose::recorder_change_filename;
+pub use crate::synctex::{
+    synctexabort, synctexcurrent, synctexhlist, synctexhorizontalruleorglue, synctexkern,
+    synctexmath, synctexmrofxfdp, synctexpdfrefxform, synctexpdfxform, synctexsheet,
+    synctexstartinput, synctexteehs, synctexterminate, synctextsilh, synctextsilv, synctexvlist,
+    synctexvoidhlist, synctexvoidvlist,
+};
+pub use crate::utils::{
+    allocvffnts, checkpdfrestore, checkpdfsave, colorstackcurrent, colorstackpop, colorstackpush,
+    colorstackset, colorstackskippagestart, colorstackused, escapehex, escapename, escapestring,
+    extxnoverd, garbagewarning, getllx, getlly, getresnameprefix, geturx, getury, libpdffinish,
+    matrixrecalculate, matrixtransformrect, matrixused, newcolorstack, pdfsetmatrix,
+    pdfshipoutbegin, pdfshipoutend, printID, printIDalt, printcreationdate, printmoddate,
+    removepdffile, setjobid, unescapehex, writestreamlength,
+};
+
+use crate::byte_string::strlen;
+use crate::generated::backend::writezip::writezip;
+use crate::utils::{getmatch, matchstrings};
+
 pub use crate::core_types::{
     AsciiCode as ASCIIcode, Boolean as boolean, CharUsedArray as charusedarray,
     DestinationNameEntry as destnameentry, EightBits as eightbits, FmEntryPtr as fmentryptr,
@@ -114,156 +158,14 @@ use crate::web2c::{eof, uexit, zround};
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
 
+use crate::termination::__assert_rtn;
+
 extern "C" {
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn __assert_rtn(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *const ::core::ffi::c_char,
-    ) -> !;
     static mut kpse_def_inst: kpathsea_instance;
     static mut kpse_def: kpathsea;
-    fn kpse_init_prog(
-        prefix: const_string,
-        dpi: ::core::ffi::c_uint,
-        mode: const_string,
-        fallback: const_string,
-    );
-    fn kpse_set_program_enabled(fmt: kpse_file_format_type, value: boolean, level: kpse_src_type);
-    fn kpse_in_name_ok(fname: const_string) -> boolean;
-    fn kpse_out_name_ok(fname: const_string) -> boolean;
-    fn recorder_change_filename(_: string);
-    fn texmf_yesno(_: const_string) -> boolean;
     static mut versionstring: *const ::core::ffi::c_char;
     static mut tfmtemp: ::core::ffi::c_int;
     static mut texinputtype: ::core::ffi::c_int;
-    fn makecstring(s: integer) -> *mut ::core::ffi::c_char;
-    fn getcreationdate();
-    fn getfilemoddate(s: integer);
-    fn getfilesize(s: integer);
-    fn getfiledump(s: integer, offset: ::core::ffi::c_int, length: ::core::ffi::c_int);
-    fn getmd5sum(s: integer, file: ::core::ffi::c_int);
-    fn runsystem(cmd: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn ipcpage(_: ::core::ffi::c_int);
-    fn get_date_and_time(_: *mut integer, _: *mut integer, _: *mut integer, _: *mut integer);
-    fn get_seconds_and_micros(_: *mut integer, _: *mut integer);
-    fn topenin();
-    fn synctexabort(log_opened: boolean);
-    fn synctexstartinput();
-    fn synctexterminate(log_opened: boolean);
-    fn synctexsheet(mag: integer);
-    fn synctexteehs();
-    fn synctexpdfxform(p: halfword);
-    fn synctexmrofxfdp();
-    fn synctexpdfrefxform(objnum: ::core::ffi::c_int);
-    fn synctexvlist(this_box: halfword);
-    fn synctextsilv(this_box: halfword);
-    fn synctexvoidvlist(p: halfword, this_box: halfword);
-    fn synctexhlist(this_box: halfword);
-    fn synctextsilh(this_box: halfword);
-    fn synctexvoidhlist(p: halfword, this_box: halfword);
-    fn synctexmath(p: halfword, this_box: halfword);
-    fn synctexhorizontalruleorglue(p: halfword, this_box: halfword);
-    fn synctexkern(p: halfword, this_box: halfword);
-    fn synctexcurrent();
-    fn getjobname(_: strnumber) -> strnumber;
-    fn calledit(_: *mut packedASCIIcode, _: poolpointer, _: integer, _: integer);
-    fn makefullnamestring() -> strnumber;
-    fn isnewsource(_: strnumber, _: ::core::ffi::c_int) -> boolean;
-    fn makesrcspecial(_: strnumber, _: ::core::ffi::c_int) -> poolpointer;
-    fn remembersourceinfo(_: strnumber, _: ::core::ffi::c_int);
-    fn hasfmentry(_: internalfontnumber) -> boolean;
-    fn isscalable(_: internalfontnumber) -> boolean;
-    fn hasspacechar(_: internalfontnumber) -> boolean;
-    fn pdfmapfile(_: integer);
-    fn pdfmapline(_: integer);
-    fn pdfmaplinesp();
-    fn deftounicode(_: strnumber, _: strnumber);
-    fn extxnoverd(_: scaled, _: scaled, _: scaled) -> scaled;
-    fn getresnameprefix() -> strnumber;
-    fn libpdffinish();
-    fn setjobid(
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-    );
-    fn writestreamlength(_: longinteger, _: longinteger);
-    fn printID(_: strnumber);
-    fn printIDalt(_: strnumber);
-    fn printcreationdate();
-    fn printmoddate();
-    fn escapename(in_0: poolpointer);
-    fn escapestring(in_0: poolpointer);
-    fn escapehex(in_0: poolpointer);
-    fn unescapehex(in_0: poolpointer);
-    fn matchstrings(s: strnumber, t: strnumber, subcount: ::core::ffi::c_int, icase: boolean);
-    fn getmatch(i: ::core::ffi::c_int);
-    fn removepdffile();
-    fn garbagewarning();
-    fn newcolorstack(s: integer, literal_mode: integer, pagestart: boolean) -> ::core::ffi::c_int;
-    fn colorstackused() -> ::core::ffi::c_int;
-    fn colorstackset(colstack_no: ::core::ffi::c_int, s: integer) -> integer;
-    fn colorstackpush(colstack_no: ::core::ffi::c_int, s: integer) -> integer;
-    fn colorstackpop(colstack_no: ::core::ffi::c_int) -> integer;
-    fn colorstackcurrent(colstack_no: ::core::ffi::c_int) -> integer;
-    fn colorstackskippagestart(colstack_no: ::core::ffi::c_int) -> integer;
-    fn checkpdfsave(cur_h: ::core::ffi::c_int, cur_v: ::core::ffi::c_int);
-    fn checkpdfrestore(cur_h: ::core::ffi::c_int, cur_v: ::core::ffi::c_int);
-    fn pdfshipoutbegin(shipping_page: boolean);
-    fn pdfshipoutend(shipping_page: boolean);
-    fn pdfsetmatrix(in_0: poolpointer, cur_h: scaled, cur_v: scaled) -> integer;
-    fn matrixtransformrect(llx: scaled, lly: scaled, urx: scaled, ury: scaled);
-    fn matrixused() -> boolean;
-    fn matrixrecalculate(urx: scaled);
-    fn getllx() -> scaled;
-    fn getlly() -> scaled;
-    fn geturx() -> scaled;
-    fn getury() -> scaled;
-    fn allocvffnts();
-    fn newvfpacket(_: internalfontnumber) -> integer;
-    fn storepacket(_: internalfontnumber, _: integer, _: strnumber);
-    fn startpacket(_: internalfontnumber, _: eightbits);
-    fn packetbyte() -> eightbits;
-    fn poppacketstate();
-    fn pushpacketstate();
-    fn dopdffont(_: integer, _: internalfontnumber);
-    fn writefontstuff();
-    fn checkimageb(_: integer) -> boolean;
-    fn checkimagec(_: integer) -> boolean;
-    fn checkimagei(_: integer) -> boolean;
-    fn ispdfimage(_: integer) -> boolean;
-    fn ispngimage(_: integer) -> boolean;
-    fn epdforigx(_: integer) -> integer;
-    fn epdforigy(_: integer) -> integer;
-    fn imageheight(_: integer) -> integer;
-    fn imagerotate(_: integer) -> integer;
-    fn imagepages(_: integer) -> integer;
-    fn imagewidth(_: integer) -> integer;
-    fn imagexres(_: integer) -> integer;
-    fn imageyres(_: integer) -> integer;
-    fn imagecolordepth(_: integer) -> integer;
-    fn getimagegroupref(_: integer) -> integer;
-    fn setimagegroupref(_: integer, _: integer);
-    fn readimage(
-        _: strnumber,
-        _: integer,
-        _: strnumber,
-        _: integer,
-        _: integer,
-        _: integer,
-        _: integer,
-        _: integer,
-    ) -> integer;
-    fn deleteimage(_: integer);
-    fn updateimageprocset(_: integer);
-    fn writeimage(_: integer);
-    fn flushjbig2page0objects();
-    fn getpkcharwidth(_: internalfontnumber, _: scaled) -> scaled;
-    fn writezip(_: boolean);
-    fn avlputobj(_: integer, _: integer);
-    fn avlfindobj(_: integer, _: integer, _: integer) -> integer;
 }
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
@@ -279,49 +181,17 @@ pub type off_t = __darwin_off_t;
 pub type string = *mut ::core::ffi::c_char;
 pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
-pub type p_record_input = Option<unsafe extern "C" fn(const_string) -> ()>;
-pub type p_record_output = Option<unsafe extern "C" fn(const_string) -> ()>;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct str_llist_elt {
-    pub str_0: string,
-    pub moved: boolean,
-    pub next: *mut str_llist_elt,
-}
-pub type str_llist_type = *mut str_llist_elt;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct cache_entry {
-    pub key: const_string,
-    pub value: *mut str_llist_type,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct expansion_type {
-    pub var: const_string,
-    pub expanding: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct hash_element_struct {
-    pub key: const_string,
-    pub value: const_string,
-    pub next: *mut hash_element_struct,
-}
-pub type hash_element_type = hash_element_struct;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct hash_table_type {
-    pub buckets: *mut *mut hash_element_type,
-    pub size: ::core::ffi::c_uint,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct str_list_type {
-    pub length: ::core::ffi::c_uint,
-    pub list: *mut string,
-}
-pub type kpse_file_format_type = ::core::ffi::c_uint;
+pub use crate::kpathsea_types::cache_entry;
+pub use crate::kpathsea_types::expansion_type;
+pub use crate::kpathsea_types::hash_element_struct;
+pub use crate::kpathsea_types::hash_element_type;
+pub use crate::kpathsea_types::hash_table_type;
+pub use crate::kpathsea_types::kpse_file_format_type;
+pub use crate::kpathsea_types::p_record_input;
+pub use crate::kpathsea_types::p_record_output;
+pub use crate::kpathsea_types::str_list_type;
+pub use crate::kpathsea_types::str_llist_elt;
+pub use crate::kpathsea_types::str_llist_type;
 pub const kpse_last_format: kpse_file_format_type = 59;
 pub const kpse_bltxml_format: kpse_file_format_type = 58;
 pub const kpse_ris_format: kpse_file_format_type = 57;
@@ -382,7 +252,7 @@ pub const kpse_tfm_format: kpse_file_format_type = 3;
 pub const kpse_any_glyph_format: kpse_file_format_type = 2;
 pub const kpse_pk_format: kpse_file_format_type = 1;
 pub const kpse_gf_format: kpse_file_format_type = 0;
-pub type kpse_src_type = ::core::ffi::c_uint;
+pub use crate::kpathsea_types::kpse_src_type;
 pub const kpse_src_cmdline: kpse_src_type = 6;
 pub const kpse_src_x: kpse_src_type = 5;
 pub const kpse_src_env: kpse_src_type = 4;
@@ -390,66 +260,9 @@ pub const kpse_src_client_cnf: kpse_src_type = 3;
 pub const kpse_src_texmf_cnf: kpse_src_type = 2;
 pub const kpse_src_compile: kpse_src_type = 1;
 pub const kpse_src_implicit: kpse_src_type = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct kpse_format_info_type {
-    pub type_0: const_string,
-    pub path: string,
-    pub raw_path: const_string,
-    pub path_source: const_string,
-    pub override_path: const_string,
-    pub client_path: const_string,
-    pub cnf_path: const_string,
-    pub default_path: const_string,
-    pub suffix: *mut const_string,
-    pub alt_suffix: *mut const_string,
-    pub suffix_search_only: boolean,
-    pub program: const_string,
-    pub argc: ::core::ffi::c_int,
-    pub argv: *mut const_string,
-    pub program_enabled_p: boolean,
-    pub program_enable_level: kpse_src_type,
-    pub binmode: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct kpathsea_instance {
-    pub record_input: p_record_input,
-    pub record_output: p_record_output,
-    pub cnf_hash: hash_table_type,
-    pub doing_cnf_init: boolean,
-    pub db: hash_table_type,
-    pub alias_db: hash_table_type,
-    pub db_dir_list: str_list_type,
-    pub debug: ::core::ffi::c_uint,
-    pub link_table: hash_table_type,
-    pub the_cache: *mut cache_entry,
-    pub cache_length: ::core::ffi::c_uint,
-    pub map: hash_table_type,
-    pub map_path: const_string,
-    pub debug_hash_lookup_int: boolean,
-    pub elt: string,
-    pub elt_alloc: ::core::ffi::c_uint,
-    pub path: const_string,
-    pub followup_search: boolean,
-    pub log_file: *mut FILE,
-    pub log_opened: boolean,
-    pub invocation_name: string,
-    pub invocation_short_name: string,
-    pub program_name: string,
-    pub ll_verbose: ::core::ffi::c_int,
-    pub fallback_font: const_string,
-    pub fallback_resolutions_string: const_string,
-    pub fallback_resolutions: *mut ::core::ffi::c_uint,
-    pub format_info: [kpse_format_info_type; 59],
-    pub make_tex_discard_errors: boolean,
-    pub missfont: *mut FILE,
-    pub expansions: *mut expansion_type,
-    pub expansion_len: ::core::ffi::c_uint,
-    pub saved_env: *mut *mut ::core::ffi::c_char,
-    pub saved_count: ::core::ffi::c_int,
-}
-pub type kpathsea = *mut kpathsea_instance;
+pub use crate::kpathsea_types::kpathsea;
+pub use crate::kpathsea_types::kpathsea_instance;
+pub use crate::kpathsea_types::kpse_format_info_type;
 pub use crate::stdio::Stream as gzFile_s;
 pub type gzFile = *mut gzFile_s;
 pub type alphafile = text;
@@ -480,8 +293,7 @@ pub const supdestnamessize: ::core::ffi::c_long = 500000 as ::core::ffi::c_long;
 pub const vfmaxrecursion: ::core::ffi::c_int = 10 as ::core::ffi::c_int;
 pub const vfstacksize: ::core::ffi::c_int = 100 as ::core::ffi::c_int;
 pub const pdfmaxlinklevel: ::core::ffi::c_int = 10 as ::core::ffi::c_int;
-#[no_mangle]
-pub unsafe extern "C" fn println() {
+pub unsafe fn println() {
     match selector as ::core::ffi::c_int {
         19 => {
             putc('\n' as i32, crate::stdio::stdout());
@@ -503,8 +315,7 @@ pub unsafe extern "C" fn println() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintchar(mut s: ASCIIcode) {
+pub unsafe fn zprintchar(mut s: ASCIIcode) {
     let mut eqtb: *mut memoryword = zeqtb;
     if s as ::core::ffi::c_int == (*eqtb.offset(29326 as ::core::ffi::c_int as isize)).u.CINT {
         if (selector as ::core::ffi::c_int) < 20 as ::core::ffi::c_int {
@@ -568,8 +379,7 @@ pub unsafe extern "C" fn zprintchar(mut s: ASCIIcode) {
     }
     tally += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprint(mut s: integer) {
+pub unsafe fn zprint(mut s: integer) {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut j: poolpointer = 0;
     let mut nl: integer = 0;
@@ -627,8 +437,7 @@ pub unsafe extern "C" fn zprint(mut s: integer) {
         j += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zslowprint(mut s: integer) {
+pub unsafe fn zslowprint(mut s: integer) {
     let mut j: poolpointer = 0;
     if s >= strptr || s < 256 as ::core::ffi::c_int {
         zprint(s);
@@ -640,8 +449,7 @@ pub unsafe extern "C" fn zslowprint(mut s: integer) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintnl(mut s: strnumber) {
+pub unsafe fn zprintnl(mut s: strnumber) {
     if (selector as ::core::ffi::c_int) < 16 as ::core::ffi::c_int
         || termoffset > 0 as ::core::ffi::c_int
             && selector as ::core::ffi::c_int & 1 as ::core::ffi::c_int != 0
@@ -652,8 +460,7 @@ pub unsafe extern "C" fn zprintnl(mut s: strnumber) {
     }
     zprint(s);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintesc(mut s: strnumber) {
+pub unsafe fn zprintesc(mut s: strnumber) {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut c_0: integer = 0;
     c_0 = (*eqtb.offset(29322 as ::core::ffi::c_int as isize)).u.CINT;
@@ -664,8 +471,7 @@ pub unsafe extern "C" fn zprintesc(mut s: strnumber) {
     }
     zslowprint(s);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintthedigs(mut k: eightbits) {
+pub unsafe fn zprintthedigs(mut k: eightbits) {
     while k as ::core::ffi::c_int > 0 as ::core::ffi::c_int {
         k = k.wrapping_sub(1);
         if (dig[k as usize] as ::core::ffi::c_int) < 10 as ::core::ffi::c_int {
@@ -679,8 +485,7 @@ pub unsafe extern "C" fn zprintthedigs(mut k: eightbits) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintint(mut n: longinteger) {
+pub unsafe fn zprintint(mut n: longinteger) {
     let mut k: ::core::ffi::c_uchar = 0;
     let mut m: longinteger = 0;
     k = 0 as ::core::ffi::c_uchar;
@@ -711,8 +516,7 @@ pub unsafe extern "C" fn zprintint(mut n: longinteger) {
     }
     zprintthedigs(k);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintcs(mut p: integer) {
+pub unsafe fn zprintcs(mut p: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut q: halfword = 0;
@@ -788,8 +592,7 @@ pub unsafe extern "C" fn zprintcs(mut p: integer) {
         zprintchar(32 as ::core::ffi::c_int as ASCIIcode);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsprintcs(mut p: halfword) {
+pub unsafe fn zsprintcs(mut p: halfword) {
     if p < 514 as ::core::ffi::c_int {
         if p < 257 as ::core::ffi::c_int {
             zprint(p as ::core::ffi::c_int - 1 as ::core::ffi::c_int);
@@ -810,8 +613,7 @@ pub unsafe extern "C" fn zsprintcs(mut p: halfword) {
         zprintesc((*hash.offset(p as isize)).v.RH);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintfilename(mut n: integer, mut a: integer, mut e: integer) {
+pub unsafe fn zprintfilename(mut n: integer, mut a: integer, mut e: integer) {
     let mut mustquote: boolean = 0;
     let mut j: poolpointer = 0;
     mustquote = false_0 as boolean;
@@ -912,8 +714,7 @@ pub unsafe extern "C" fn zprintfilename(mut n: integer, mut a: integer, mut e: i
         zprintchar(34 as ::core::ffi::c_int as ASCIIcode);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintsize(mut s: integer) {
+pub unsafe fn zprintsize(mut s: integer) {
     if s == 0 as ::core::ffi::c_int {
         zprintesc(433 as ::core::ffi::c_int);
     } else if s == 16 as ::core::ffi::c_int {
@@ -922,8 +723,7 @@ pub unsafe extern "C" fn zprintsize(mut s: integer) {
         zprintesc(435 as ::core::ffi::c_int);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintwritewhatsit(mut s: strnumber, mut p: halfword) {
+pub unsafe fn zprintwritewhatsit(mut s: strnumber, mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     zprintesc(s);
     if ((*mem.offset((p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
@@ -966,8 +766,7 @@ pub unsafe extern "C" fn zprintwritewhatsit(mut s: strnumber, mut p: halfword) {
         zprintchar(62 as ::core::ffi::c_int as ASCIIcode);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintsanum(mut q: halfword) {
+pub unsafe fn zprintsanum(mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut n: halfword = 0;
     if ((*mem.offset(q as isize)).hh.u.B0 as ::core::ffi::c_int) < 32 as ::core::ffi::c_int {
@@ -994,8 +793,7 @@ pub unsafe extern "C" fn zprintsanum(mut q: halfword) {
     }
     zprintint(n as longinteger);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintcsnames(mut hstart: integer, mut hfinish: integer) {
+pub unsafe fn zprintcsnames(mut hstart: integer, mut hfinish: integer) {
     let mut c_0: integer = 0;
     let mut h: integer = 0;
     crate::stdio::fprintf_args(
@@ -1070,8 +868,7 @@ pub unsafe extern "C" fn zprintcsnames(mut hstart: integer, mut hfinish: integer
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn printfileline() {
+pub unsafe fn printfileline() {
     let mut level: integer = 0;
     level = inopen;
     while level > 0 as ::core::ffi::c_int
@@ -1096,8 +893,7 @@ pub unsafe extern "C" fn printfileline() {
         zprint(660 as ::core::ffi::c_int);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zzreadbuffer(mut i: *mut integer) -> ASCIIcode {
+pub unsafe fn zzreadbuffer(mut i: *mut integer) -> ASCIIcode {
     let mut current_block: u64;
     let mut Result: ASCIIcode = 0;
     let mut mem: *mut memoryword = zmem;
@@ -1262,8 +1058,7 @@ unsafe fn readbuffer_for_getnext(i: *mut integer, mubyte_enabled: bool) -> ASCII
         zzreadbuffer(i)
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zzprintbuffer(mut i: *mut integer) {
+pub unsafe fn zzprintbuffer(mut i: *mut integer) {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut c_0: ASCIIcode = 0;
     if (*eqtb.offset(29338 as ::core::ffi::c_int as isize)).u.CINT == 0 as ::core::ffi::c_int {
@@ -1281,8 +1076,7 @@ pub unsafe extern "C" fn zzprintbuffer(mut i: *mut integer) {
     }
     *i += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn jumpout() -> ! {
+pub unsafe fn jumpout() -> ! {
     closefilesandterminate();
     fflush(crate::stdio::stdout());
     readyalready = 0 as ::core::ffi::c_int as integer;
@@ -1294,8 +1088,7 @@ pub unsafe extern "C" fn jumpout() -> ! {
         uexit(0 as ::core::ffi::c_int);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn error() {
+pub unsafe fn error() {
     let mut c_0: ASCIIcode = 0;
     let mut s1: integer = 0;
     let mut s2: integer = 0;
@@ -1540,8 +1333,7 @@ pub unsafe extern "C" fn error() {
         return;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfatalerror(mut s: strnumber) -> ! {
+pub unsafe fn zfatalerror(mut s: strnumber) -> ! {
     normalizeselector();
     interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
     if filelineerrorstylep != 0 {
@@ -1561,8 +1353,7 @@ pub unsafe extern "C" fn zfatalerror(mut s: strnumber) -> ! {
     history = 3 as ::core::ffi::c_uchar;
     jumpout();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zoverflow(mut s: strnumber, mut n: integer) -> ! {
+pub unsafe fn zoverflow(mut s: strnumber, mut n: integer) -> ! {
     normalizeselector();
     interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
     if filelineerrorstylep != 0 {
@@ -1587,8 +1378,7 @@ pub unsafe extern "C" fn zoverflow(mut s: strnumber, mut n: integer) -> ! {
     history = 3 as ::core::ffi::c_uchar;
     jumpout();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zconfusion(mut s: strnumber) -> ! {
+pub unsafe fn zconfusion(mut s: strnumber) -> ! {
     normalizeselector();
     if (history as ::core::ffi::c_int) < 2 as ::core::ffi::c_int {
         interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
@@ -1623,8 +1413,7 @@ pub unsafe extern "C" fn zconfusion(mut s: strnumber) -> ! {
     history = 3 as ::core::ffi::c_uchar;
     jumpout();
 }
-#[no_mangle]
-pub unsafe extern "C" fn initterminal() -> boolean {
+pub unsafe fn initterminal() -> boolean {
     let mut Result: boolean = 0;
     topenin();
     if last > first {
@@ -1679,8 +1468,7 @@ pub unsafe extern "C" fn initterminal() -> boolean {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn makestring() -> strnumber {
+pub unsafe fn makestring() -> strnumber {
     let mut Result: strnumber = 0;
     if strptr == maxstrings {
         zoverflow(
@@ -1693,8 +1481,7 @@ pub unsafe extern "C" fn makestring() -> strnumber {
     Result = (strptr as ::core::ffi::c_int - 1 as ::core::ffi::c_int) as strnumber;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zstreqbuf(mut s: strnumber, mut k: integer) -> boolean {
+pub unsafe fn zstreqbuf(mut s: strnumber, mut k: integer) -> boolean {
     let start = *strstart.offset(s as isize);
     let end = *strstart.offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize);
     let len = (end - start) as usize;
@@ -1793,8 +1580,7 @@ fn small_node_cache_index(s: integer) -> Option<usize> {
 fn expand_font_cache_index(font: internalfontnumber, e: integer) -> usize {
     ((font as u32).wrapping_mul(131) ^ e as u32) as usize & (EXPAND_FONT_CACHE_SIZE - 1)
 }
-#[no_mangle]
-pub unsafe extern "C" fn zstreqstr(mut s: strnumber, mut t: strnumber) -> boolean {
+pub unsafe fn zstreqstr(mut s: strnumber, mut t: strnumber) -> boolean {
     let mut current_block: u64;
     let mut Result: boolean = 0;
     let mut j: poolpointer = 0;
@@ -1833,8 +1619,7 @@ pub unsafe extern "C" fn zstreqstr(mut s: strnumber, mut t: strnumber) -> boolea
     Result = result;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsearchstring(mut search: strnumber) -> strnumber {
+pub unsafe fn zsearchstring(mut search: strnumber) -> strnumber {
     let mut Result: strnumber = 0;
     let mut result: strnumber = 0;
     let mut s: strnumber = 0;
@@ -1862,8 +1647,7 @@ pub unsafe extern "C" fn zsearchstring(mut search: strnumber) -> strnumber {
     Result = result;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn slowmakestring() -> strnumber {
+pub unsafe fn slowmakestring() -> strnumber {
     let mut Result: strnumber = 0;
     let mut s: strnumber = 0;
     let mut t: strnumber = 0;
@@ -1878,8 +1662,7 @@ pub unsafe extern "C" fn slowmakestring() -> strnumber {
     Result = t;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprinttwo(mut n: integer) {
+pub unsafe fn zprinttwo(mut n: integer) {
     n = ((if n >= 0 as ::core::ffi::c_int { n } else { -n }) % 100 as ::core::ffi::c_int)
         as integer;
     zprintchar(
@@ -1891,8 +1674,7 @@ pub unsafe extern "C" fn zprinttwo(mut n: integer) {
             as ASCIIcode,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprinthex(mut n: integer) {
+pub unsafe fn zprinthex(mut n: integer) {
     let mut k: ::core::ffi::c_uchar = 0;
     k = 0 as ::core::ffi::c_uchar;
     zprintchar(34 as ::core::ffi::c_int as ASCIIcode);
@@ -1907,8 +1689,7 @@ pub unsafe extern "C" fn zprinthex(mut n: integer) {
     }
     zprintthedigs(k);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintromanint(mut n: integer) {
+pub unsafe fn zprintromanint(mut n: integer) {
     let mut j: poolpointer = 0;
     let mut k: poolpointer = 0;
     let mut u: nonnegativeinteger = 0;
@@ -1950,8 +1731,7 @@ pub unsafe extern "C" fn zprintromanint(mut n: integer) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn printcurrentstring() {
+pub unsafe fn printcurrentstring() {
     let mut j: poolpointer = 0;
     j = *strstart.offset(strptr as isize);
     while j < poolptr {
@@ -1959,8 +1739,7 @@ pub unsafe extern "C" fn printcurrentstring() {
         j += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn terminput() {
+pub unsafe fn terminput() {
     let mut k: integer = 0;
     fflush(crate::stdio::stdout());
     if input_line(crate::stdio::stdin()) == 0 {
@@ -1976,15 +1755,13 @@ pub unsafe extern "C" fn terminput() {
     println();
     selector = selector.wrapping_add(1);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zinterror(mut n: integer) {
+pub unsafe fn zinterror(mut n: integer) {
     zprint(286 as ::core::ffi::c_int);
     zprintint(n as longinteger);
     zprintchar(41 as ::core::ffi::c_int as ASCIIcode);
     error();
 }
-#[no_mangle]
-pub unsafe extern "C" fn normalizeselector() {
+pub unsafe fn normalizeselector() {
     if logopened != 0 {
         selector = 19 as ::core::ffi::c_uchar;
     } else {
@@ -1997,8 +1774,7 @@ pub unsafe extern "C" fn normalizeselector() {
         selector = selector.wrapping_sub(1);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn pauseforinstructions() {
+pub unsafe fn pauseforinstructions() {
     if OKtointerrupt != 0 {
         interaction = 3 as ::core::ffi::c_uchar;
         if selector as ::core::ffi::c_int == 18 as ::core::ffi::c_int
@@ -2023,8 +1799,7 @@ pub unsafe extern "C" fn pauseforinstructions() {
         interrupt = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zhalf(mut x: integer) -> integer {
+pub unsafe fn zhalf(mut x: integer) -> integer {
     let mut Result: integer = 0;
     if x as ::core::ffi::c_int & 1 as ::core::ffi::c_int != 0 {
         Result = ((x as ::core::ffi::c_int + 1 as ::core::ffi::c_int) / 2 as ::core::ffi::c_int)
@@ -2034,8 +1809,7 @@ pub unsafe extern "C" fn zhalf(mut x: integer) -> integer {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zrounddecimals(mut k: smallnumber) -> scaled {
+pub unsafe fn zrounddecimals(mut k: smallnumber) -> scaled {
     let mut Result: scaled = 0;
     let mut a: integer = 0;
     a = 0 as ::core::ffi::c_int as integer;
@@ -2049,8 +1823,7 @@ pub unsafe extern "C" fn zrounddecimals(mut k: smallnumber) -> scaled {
         ((a as ::core::ffi::c_int + 1 as ::core::ffi::c_int) / 2 as ::core::ffi::c_int) as scaled;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintscaled(mut s: scaled) {
+pub unsafe fn zprintscaled(mut s: scaled) {
     let mut delta_0: scaled = 0;
     if s < 0 as ::core::ffi::c_int {
         zprintchar(45 as ::core::ffi::c_int as ASCIIcode);
@@ -2077,8 +1850,7 @@ pub unsafe extern "C" fn zprintscaled(mut s: scaled) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmultandadd(
+pub unsafe fn zmultandadd(
     mut n: integer,
     mut x: scaled,
     mut y: scaled,
@@ -2101,8 +1873,7 @@ pub unsafe extern "C" fn zmultandadd(
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zxovern(mut x: scaled, mut n: integer) -> scaled {
+pub unsafe fn zxovern(mut x: scaled, mut n: integer) -> scaled {
     let mut Result: scaled = 0;
     let mut negative: boolean = 0;
     negative = false_0 as boolean;
@@ -2129,8 +1900,7 @@ pub unsafe extern "C" fn zxovern(mut x: scaled, mut n: integer) -> scaled {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zxnoverd(mut x: scaled, mut n: integer, mut d: integer) -> scaled {
+pub unsafe fn zxnoverd(mut x: scaled, mut n: integer, mut d: integer) -> scaled {
     let mut Result: scaled = 0;
     let mut positive: boolean = 0;
     let mut t: nonnegativeinteger = 0;
@@ -2163,8 +1933,7 @@ pub unsafe extern "C" fn zxnoverd(mut x: scaled, mut n: integer, mut d: integer)
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zbadness(mut t: scaled, mut s: scaled) -> halfword {
+pub unsafe fn zbadness(mut t: scaled, mut s: scaled) -> halfword {
     let mut Result: halfword = 0;
     let mut r: integer = 0;
     if t == 0 as ::core::ffi::c_int {
@@ -2189,8 +1958,7 @@ pub unsafe extern "C" fn zbadness(mut t: scaled, mut s: scaled) -> halfword {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakefrac(mut p: integer, mut q: integer) -> integer {
+pub unsafe fn zmakefrac(mut p: integer, mut q: integer) -> integer {
     let mut Result: integer = 0;
     let mut f_0: integer = 0;
     let mut n: integer = 0;
@@ -2246,8 +2014,7 @@ pub unsafe extern "C" fn zmakefrac(mut p: integer, mut q: integer) -> integer {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn ztakefrac(mut q: integer, mut f_0: integer) -> integer {
+pub unsafe fn ztakefrac(mut q: integer, mut f_0: integer) -> integer {
     let mut Result: integer = 0;
     let mut p: integer = 0;
     let mut negative: boolean = 0;
@@ -2318,8 +2085,7 @@ pub unsafe extern "C" fn ztakefrac(mut q: integer, mut f_0: integer) -> integer 
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmlog(mut x: integer) -> integer {
+pub unsafe fn zmlog(mut x: integer) -> integer {
     let mut Result: integer = 0;
     let mut y: integer = 0;
     let mut z: integer = 0;
@@ -2367,13 +2133,7 @@ pub unsafe extern "C" fn zmlog(mut x: integer) -> integer {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zabvscd(
-    mut a: integer,
-    mut b: integer,
-    mut c_0: integer,
-    mut d: integer,
-) -> integer {
+pub unsafe fn zabvscd(mut a: integer, mut b: integer, mut c_0: integer, mut d: integer) -> integer {
     let mut Result: integer = 0;
     let mut q: integer = 0;
     let mut r: integer = 0;
@@ -2460,8 +2220,7 @@ pub unsafe extern "C" fn zabvscd(
         d = r;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn newrandoms() {
+pub unsafe fn newrandoms() {
     let mut k: ::core::ffi::c_uchar = 0;
     let mut x: integer = 0;
     let mut for_end: integer = 0;
@@ -2502,8 +2261,7 @@ pub unsafe extern "C" fn newrandoms() {
     }
     jrandom = 54 as ::core::ffi::c_uchar;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zinitrandoms(mut seed: integer) {
+pub unsafe fn zinitrandoms(mut seed: integer) {
     let mut j: integer = 0;
     let mut jj: integer = 0;
     let mut k: integer = 0;
@@ -2541,8 +2299,7 @@ pub unsafe extern "C" fn zinitrandoms(mut seed: integer) {
     newrandoms();
     newrandoms();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zunifrand(mut x: integer) -> integer {
+pub unsafe fn zunifrand(mut x: integer) -> integer {
     let mut Result: integer = 0;
     let mut y: integer = 0;
     if jrandom as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
@@ -2563,8 +2320,7 @@ pub unsafe extern "C" fn zunifrand(mut x: integer) -> integer {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn normrand() -> integer {
+pub unsafe fn normrand() -> integer {
     let mut Result: integer = 0;
     let mut x: integer = 0;
     let mut u: integer = 0;
@@ -2600,8 +2356,7 @@ pub unsafe extern "C" fn normrand() -> integer {
     Result = x;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zshowtokenlist(mut p: integer, mut q: integer, mut l_0: integer) {
+pub unsafe fn zshowtokenlist(mut p: integer, mut q: integer, mut l_0: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut m: integer = 0;
     let mut c_0: integer = 0;
@@ -2680,8 +2435,7 @@ pub unsafe extern "C" fn zshowtokenlist(mut p: integer, mut q: integer, mut l_0:
         zprintesc(429 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn runaway() {
+pub unsafe fn runaway() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     if scannerstatus as ::core::ffi::c_int > 1 as ::core::ffi::c_int {
@@ -2713,8 +2467,7 @@ pub unsafe extern "C" fn runaway() {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn getavail() -> halfword {
+pub unsafe fn getavail() -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -2737,8 +2490,7 @@ pub unsafe extern "C" fn getavail() -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zflushlist(mut p: halfword) {
+pub unsafe fn zflushlist(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
     let mut r: halfword = 0;
@@ -2756,8 +2508,7 @@ pub unsafe extern "C" fn zflushlist(mut p: halfword) {
         avail = p;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetnode(mut s: integer) -> halfword {
+pub unsafe fn zgetnode(mut s: integer) -> halfword {
     let mut current_block: u64;
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
@@ -2954,8 +2705,7 @@ pub unsafe extern "C" fn zgetnode(mut s: integer) -> halfword {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfreenode(mut p: halfword, mut s: halfword) {
+pub unsafe fn zfreenode(mut p: halfword, mut s: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
     if let Some(cache_index) = small_node_cache_index(s as integer) {
@@ -2992,8 +2742,7 @@ pub unsafe extern "C" fn zfreenode(mut p: halfword, mut s: halfword) {
         .RH = p;
     varused = (varused as halfword - s) as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn newnullbox() -> halfword {
+pub unsafe fn newnullbox() -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -3029,8 +2778,7 @@ pub unsafe extern "C" fn newnullbox() -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn newrule() -> halfword {
+pub unsafe fn newrule() -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -3049,8 +2797,7 @@ pub unsafe extern "C" fn newrule() -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewligature(
+pub unsafe fn znewligature(
     mut f_0: internalfontnumber,
     mut c_0: quarterword,
     mut q: halfword,
@@ -3076,8 +2823,7 @@ pub unsafe extern "C" fn znewligature(
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewligitem(mut c_0: quarterword) -> halfword {
+pub unsafe fn znewligitem(mut c_0: quarterword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -3090,8 +2836,7 @@ pub unsafe extern "C" fn znewligitem(mut c_0: quarterword) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn newdisc() -> halfword {
+pub unsafe fn newdisc() -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -3109,8 +2854,7 @@ pub unsafe extern "C" fn newdisc() -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewmath(mut w: scaled, mut s: smallnumber) -> halfword {
+pub unsafe fn znewmath(mut w: scaled, mut s: smallnumber) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -3123,8 +2867,7 @@ pub unsafe extern "C" fn znewmath(mut w: scaled, mut s: smallnumber) -> halfword
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewspec(mut p: halfword) -> halfword {
+pub unsafe fn znewspec(mut p: halfword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
@@ -3149,8 +2892,7 @@ pub unsafe extern "C" fn znewspec(mut p: halfword) -> halfword {
     Result = q;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewparamglue(mut n: smallnumber) -> halfword {
+pub unsafe fn znewparamglue(mut n: smallnumber) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -3177,8 +2919,7 @@ pub unsafe extern "C" fn znewparamglue(mut n: smallnumber) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewglue(mut q: halfword) -> halfword {
+pub unsafe fn znewglue(mut q: halfword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -3198,8 +2939,7 @@ pub unsafe extern "C" fn znewglue(mut q: halfword) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewskipparam(mut n: smallnumber) -> halfword {
+pub unsafe fn znewskipparam(mut n: smallnumber) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -3217,8 +2957,7 @@ pub unsafe extern "C" fn znewskipparam(mut n: smallnumber) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewkern(mut w: scaled) -> halfword {
+pub unsafe fn znewkern(mut w: scaled) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -3231,8 +2970,7 @@ pub unsafe extern "C" fn znewkern(mut w: scaled) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewpenalty(mut m: integer) -> halfword {
+pub unsafe fn znewpenalty(mut m: integer) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -3245,8 +2983,7 @@ pub unsafe extern "C" fn znewpenalty(mut m: integer) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdferror(mut t: strnumber, mut p: strnumber) {
+pub unsafe fn zpdferror(mut t: strnumber, mut p: strnumber) {
     normalizeselector();
     interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
     if filelineerrorstylep != 0 {
@@ -3271,8 +3008,7 @@ pub unsafe extern "C" fn zpdferror(mut t: strnumber, mut p: strnumber) {
     history = 3 as ::core::ffi::c_uchar;
     jumpout();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfwarning(
+pub unsafe fn zpdfwarning(
     mut t: strnumber,
     mut p: strnumber,
     mut prependnl: boolean,
@@ -3297,8 +3033,7 @@ pub unsafe extern "C" fn zpdfwarning(
         history = 1 as ::core::ffi::c_uchar;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfosgetosbuf(mut s: integer) {
+pub unsafe fn zpdfosgetosbuf(mut s: integer) {
     let mut a: integer = 0;
     if s as ::core::ffi::c_long > suppdfosbufsize - pdfptr as ::core::ffi::c_long {
         zoverflow(1040 as ::core::ffi::c_int, pdfosbufsize);
@@ -3322,8 +3057,7 @@ pub unsafe extern "C" fn zpdfosgetosbuf(mut s: integer) {
         pdfbufsize = pdfosbufsize;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn removelastspace() {
+pub unsafe fn removelastspace() {
     if pdfptr > 0 as ::core::ffi::c_int
         && *pdfbuf.offset((pdfptr as ::core::ffi::c_int - 1 as ::core::ffi::c_int) as isize)
             as ::core::ffi::c_int
@@ -3332,8 +3066,7 @@ pub unsafe extern "C" fn removelastspace() {
         pdfptr -= 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintoctal(mut n: integer) {
+pub unsafe fn zpdfprintoctal(mut n: integer) {
     let mut k: ::core::ffi::c_uchar = 0;
     k = 0 as ::core::ffi::c_uchar;
     loop {
@@ -3390,8 +3123,7 @@ pub unsafe extern "C" fn zpdfprintoctal(mut n: integer) {
         pdfptr += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintchar(mut f_0: internalfontnumber, mut c_0: integer) {
+pub unsafe fn zpdfprintchar(mut f_0: internalfontnumber, mut c_0: integer) {
     let ref mut fresh44 = (*pdfcharused.offset(f_0 as isize))
         [(c_0 as ::core::ffi::c_int / 8 as ::core::ffi::c_int) as usize];
     *fresh44 = (*fresh44 as ::core::ffi::c_int
@@ -3425,8 +3157,7 @@ pub unsafe extern "C" fn zpdfprintchar(mut f_0: internalfontnumber, mut c_0: int
         pdfptr += 1;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprint(mut s: strnumber) {
+pub unsafe fn zpdfprint(mut s: strnumber) {
     let start = *strstart.offset(s as isize);
     let end = *strstart.offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize);
     if end > start {
@@ -3436,8 +3167,7 @@ pub unsafe extern "C" fn zpdfprint(mut s: strnumber) {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zstrinstr(mut s: strnumber, mut r: strnumber, mut i: integer) -> boolean {
+pub unsafe fn zstrinstr(mut s: strnumber, mut r: strnumber, mut i: integer) -> boolean {
     let mut Result: boolean = 0;
     let mut j: poolpointer = 0;
     let mut k: poolpointer = 0;
@@ -3466,8 +3196,7 @@ pub unsafe extern "C" fn zstrinstr(mut s: strnumber, mut r: strnumber, mut i: in
     Result = true_0 as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintint(mut n: longinteger) {
+pub unsafe fn zpdfprintint(mut n: longinteger) {
     let mut k: integer = 0;
     let mut m: longinteger = 0;
     k = 0 as ::core::ffi::c_int as integer;
@@ -3518,8 +3247,7 @@ pub unsafe extern "C" fn zpdfprintint(mut n: longinteger) {
         pdfptr += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprinttwo(mut n: integer) {
+pub unsafe fn zpdfprinttwo(mut n: integer) {
     n = ((if n >= 0 as ::core::ffi::c_int { n } else { -n }) % 100 as ::core::ffi::c_int)
         as integer;
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
@@ -3545,8 +3273,7 @@ pub unsafe extern "C" fn zpdfprinttwo(mut n: integer) {
         as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn ztokenstostring(mut p: halfword) -> strnumber {
+pub unsafe fn ztokenstostring(mut p: halfword) -> strnumber {
     let mut Result: strnumber = 0;
     let mut mem: *mut memoryword = zmem;
     if selector as ::core::ffi::c_int == 21 as ::core::ffi::c_int {
@@ -3564,8 +3291,7 @@ pub unsafe extern "C" fn ztokenstostring(mut p: halfword) -> strnumber {
     Result = lasttokensstring;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdividescaled(mut s: scaled, mut m: scaled, mut dd: integer) -> scaled {
+pub unsafe fn zdividescaled(mut s: scaled, mut m: scaled, mut dd: integer) -> scaled {
     let mut Result: scaled = 0;
     let mut q: scaled = 0;
     let mut r: scaled = 0;
@@ -3611,8 +3337,7 @@ pub unsafe extern "C" fn zdividescaled(mut s: scaled, mut m: scaled, mut dd: int
     Result = sign as scaled * q;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zroundxnoverd(mut x: scaled, mut n: integer, mut d: integer) -> scaled {
+pub unsafe fn zroundxnoverd(mut x: scaled, mut n: integer, mut d: integer) -> scaled {
     let mut Result: scaled = 0;
     let mut positive: boolean = 0;
     let mut t: nonnegativeinteger = 0;
@@ -3647,8 +3372,7 @@ pub unsafe extern "C" fn zroundxnoverd(mut x: scaled, mut n: integer, mut d: int
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zisbitset(mut n: integer, mut s: smallnumber) -> boolean {
+pub unsafe fn zisbitset(mut n: integer, mut s: smallnumber) -> boolean {
     let mut Result: boolean = 0;
     let mut m: integer = 0;
     let mut i: integer = 0;
@@ -3670,8 +3394,7 @@ pub unsafe extern "C" fn zisbitset(mut n: integer, mut s: smallnumber) -> boolea
         (n as ::core::ffi::c_int / m as ::core::ffi::c_int % 2 as ::core::ffi::c_int) as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zappenddestname(mut s: strnumber, mut n: integer) {
+pub unsafe fn zappenddestname(mut s: strnumber, mut n: integer) {
     let mut a: integer = 0;
     if pdfdestnamesptr as ::core::ffi::c_long == supdestnamessize {
         zoverflow(1078 as ::core::ffi::c_int, destnamessize);
@@ -3693,8 +3416,7 @@ pub unsafe extern "C" fn zappenddestname(mut s: strnumber, mut n: integer) {
     (*destnames.offset(pdfdestnamesptr as isize)).objnum = n;
     pdfdestnamesptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfcreateobj(mut t: integer, mut i: integer) {
+pub unsafe fn zpdfcreateobj(mut t: integer, mut i: integer) {
     let mut a: integer = 0;
     let mut p: integer = 0;
     let mut q: integer = 0;
@@ -3744,15 +3466,13 @@ pub unsafe extern "C" fn zpdfcreateobj(mut t: integer, mut i: integer) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfnewobjnum() -> integer {
+pub unsafe fn pdfnewobjnum() -> integer {
     let mut Result: integer = 0;
     zpdfcreateobj(0 as ::core::ffi::c_int, 0 as ::core::ffi::c_int);
     Result = objptr;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfosswitch(mut pdfos: boolean) {
+pub unsafe fn zpdfosswitch(mut pdfos: boolean) {
     if pdfos != 0 && pdfosenable != 0 {
         if pdfosmode == 0 {
             pdfopptr = pdfptr;
@@ -3769,8 +3489,7 @@ pub unsafe extern "C" fn zpdfosswitch(mut pdfos: boolean) {
         pdfosmode = false_0 as boolean;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfosprepareobj(mut i: integer, mut pdfoslevel: integer) {
+pub unsafe fn zpdfosprepareobj(mut i: integer, mut pdfoslevel: integer) {
     zpdfosswitch(
         (pdfoslevel > 0 as ::core::ffi::c_int && fixedpdfobjcompresslevel >= pdfoslevel)
             as ::core::ffi::c_int,
@@ -3794,8 +3513,7 @@ pub unsafe extern "C" fn zpdfosprepareobj(mut i: integer, mut pdfoslevel: intege
         (*objtab.offset(i as isize)).int3 = -(1 as ::core::ffi::c_int) as integer;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfbeginobj(mut i: integer, mut pdfoslevel: integer) {
+pub unsafe fn zpdfbeginobj(mut i: integer, mut pdfoslevel: integer) {
     let mut eqtb: *mut memoryword = zeqtb;
     checkpdfversion();
     zpdfosprepareobj(i, pdfoslevel);
@@ -3827,13 +3545,11 @@ pub unsafe extern "C" fn zpdfbeginobj(mut i: integer, mut pdfoslevel: integer) {
         pdfptr += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfnewobj(mut t: integer, mut i: integer, mut pdfos: integer) {
+pub unsafe fn zpdfnewobj(mut t: integer, mut i: integer, mut pdfos: integer) {
     zpdfcreateobj(t, i);
     zpdfbeginobj(objptr, pdfos);
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfendobj() {
+pub unsafe fn pdfendobj() {
     if pdfosmode != 0 {
         if pdfosobjidx == pdfosmaxobjs - 1 as ::core::ffi::c_int {
             pdfoswriteobjstream();
@@ -3851,8 +3567,7 @@ pub unsafe extern "C" fn pdfendobj() {
         pdfptr += 1;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfbegindict(mut i: integer, mut pdfoslevel: integer) {
+pub unsafe fn zpdfbegindict(mut i: integer, mut pdfoslevel: integer) {
     let mut eqtb: *mut memoryword = zeqtb;
     checkpdfversion();
     zpdfosprepareobj(i, pdfoslevel);
@@ -3894,13 +3609,11 @@ pub unsafe extern "C" fn zpdfbegindict(mut i: integer, mut pdfoslevel: integer) 
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfnewdict(mut t: integer, mut i: integer, mut pdfos: integer) {
+pub unsafe fn zpdfnewdict(mut t: integer, mut i: integer, mut pdfos: integer) {
     zpdfcreateobj(t, i);
     zpdfbegindict(objptr, pdfos);
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfenddict() {
+pub unsafe fn pdfenddict() {
     if pdfosmode != 0 {
         zpdfprint(1035 as ::core::ffi::c_int);
         if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
@@ -3938,8 +3651,7 @@ pub unsafe extern "C" fn pdfenddict() {
         pdfptr += 1;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfoswriteobjstream() {
+pub unsafe fn pdfoswriteobjstream() {
     let mut i: halfword = 0;
     let mut j: halfword = 0;
     let mut p: halfword = 0;
@@ -4043,8 +3755,7 @@ pub unsafe extern "C" fn pdfoswriteobjstream() {
     pdfendstream();
     pdfoscurobjnum = 0 as ::core::ffi::c_int as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zappendptr(mut p: halfword, mut i: integer) -> halfword {
+pub unsafe fn zappendptr(mut p: halfword, mut i: integer) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
@@ -4071,8 +3782,7 @@ pub unsafe extern "C" fn zappendptr(mut p: halfword, mut i: integer) -> halfword
     (*mem.offset(p as isize)).hh.v.RH = q;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdflookuplist(mut p: halfword, mut i: integer) -> halfword {
+pub unsafe fn zpdflookuplist(mut p: halfword, mut i: integer) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     Result = -(268435455 as ::core::ffi::c_long) as halfword;
@@ -4085,8 +3795,7 @@ pub unsafe extern "C" fn zpdflookuplist(mut p: halfword, mut i: integer) -> half
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprevrightmost(mut s: halfword, mut e: halfword) -> halfword {
+pub unsafe fn zprevrightmost(mut s: halfword, mut e: halfword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -4104,8 +3813,7 @@ pub unsafe extern "C" fn zprevrightmost(mut s: halfword, mut e: halfword) -> hal
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfcheckobj(mut t: integer, mut n: integer) {
+pub unsafe fn zpdfcheckobj(mut t: integer, mut n: integer) {
     let mut k: integer = 0;
     k = headtab[t as usize];
     while k != 0 as ::core::ffi::c_int && k != n {
@@ -4115,21 +3823,18 @@ pub unsafe extern "C" fn zpdfcheckobj(mut t: integer, mut n: integer) {
         zpdferror(1792 as ::core::ffi::c_int, 1817 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfindobj(mut t: integer, mut i: integer, mut byname: boolean) -> integer {
+pub unsafe fn zfindobj(mut t: integer, mut i: integer, mut byname: boolean) -> integer {
     let mut Result: integer = 0;
     Result = avlfindobj(t, i, byname as integer);
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zflushstr(mut s: strnumber) {
+pub unsafe fn zflushstr(mut s: strnumber) {
     if s == strptr as ::core::ffi::c_int - 1 as ::core::ffi::c_int {
         strptr -= 1;
         poolptr = *strstart.offset(strptr as isize) as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetobj(mut t: integer, mut i: integer, mut byname: boolean) -> integer {
+pub unsafe fn zgetobj(mut t: integer, mut i: integer, mut byname: boolean) -> integer {
     let mut Result: integer = 0;
     let mut r: integer = 0;
     let mut s: strnumber = 0;
@@ -4158,8 +3863,7 @@ pub unsafe extern "C" fn zgetobj(mut t: integer, mut i: integer, mut byname: boo
     Result = r;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getmicrointerval() -> integer {
+pub unsafe fn getmicrointerval() -> integer {
     let mut Result: integer = 0;
     let mut s: integer = 0;
     let mut m: integer = 0;
@@ -4184,8 +3888,7 @@ pub unsafe extern "C" fn getmicrointerval() -> integer {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintfontidentifier(mut f_0: internalfontnumber) {
+pub unsafe fn zprintfontidentifier(mut f_0: internalfontnumber) {
     let mut eqtb: *mut memoryword = zeqtb;
     if *pdffontblink.offset(f_0 as isize) == 0 as ::core::ffi::c_int {
         zprintesc(
@@ -4220,8 +3923,7 @@ pub unsafe extern "C" fn zprintfontidentifier(mut f_0: internalfontnumber) {
         zprint(41 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zshortdisplay(mut p: integer) {
+pub unsafe fn zshortdisplay(mut p: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut n: integer = 0;
     while p > memmin {
@@ -4304,8 +4006,7 @@ pub unsafe extern "C" fn zshortdisplay(mut p: integer) {
         p = (*mem.offset(p as isize)).hh.v.RH as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintfontandchar(mut p: integer) {
+pub unsafe fn zprintfontandchar(mut p: integer) {
     let mut mem: *mut memoryword = zmem;
     if p > memend {
         zprintesc(314 as ::core::ffi::c_int);
@@ -4319,8 +4020,7 @@ pub unsafe extern "C" fn zprintfontandchar(mut p: integer) {
         zprint((*mem.offset(p as isize)).hh.u.B1 as integer);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintmark(mut p: integer) {
+pub unsafe fn zprintmark(mut p: integer) {
     let mut mem: *mut memoryword = zmem;
     zprintchar(123 as ::core::ffi::c_int as ASCIIcode);
     if p < himemmin || p > memend {
@@ -4334,16 +4034,14 @@ pub unsafe extern "C" fn zprintmark(mut p: integer) {
     }
     zprintchar(125 as ::core::ffi::c_int as ASCIIcode);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintruledimen(mut d: scaled) {
+pub unsafe fn zprintruledimen(mut d: scaled) {
     if d as ::core::ffi::c_long == -(1073741824 as ::core::ffi::c_long) {
         zprintchar(42 as ::core::ffi::c_int as ASCIIcode);
     } else {
         zprintscaled(d);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintglue(mut d: scaled, mut order: integer, mut s: strnumber) {
+pub unsafe fn zprintglue(mut d: scaled, mut order: integer, mut s: strnumber) {
     zprintscaled(d);
     if order < 0 as ::core::ffi::c_int || order > 3 as ::core::ffi::c_int {
         zprint(315 as ::core::ffi::c_int);
@@ -4357,8 +4055,7 @@ pub unsafe extern "C" fn zprintglue(mut d: scaled, mut order: integer, mut s: st
         zprint(s);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintspec(mut p: integer, mut s: strnumber) {
+pub unsafe fn zprintspec(mut p: integer, mut s: strnumber) {
     let mut mem: *mut memoryword = zmem;
     if p < memmin || p >= lomemmax {
         zprintchar(42 as ::core::ffi::c_int as ASCIIcode);
@@ -4401,16 +4098,14 @@ pub unsafe extern "C" fn zprintspec(mut p: integer, mut s: strnumber) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintfamandchar(mut p: halfword) {
+pub unsafe fn zprintfamandchar(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     zprintesc(485 as ::core::ffi::c_int);
     zprintint((*mem.offset(p as isize)).hh.u.B0 as longinteger);
     zprintchar(32 as ::core::ffi::c_int as ASCIIcode);
     zprint((*mem.offset(p as isize)).hh.u.B1 as integer);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintdelimiter(mut p: halfword) {
+pub unsafe fn zprintdelimiter(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut a: integer = 0;
     a = ((*mem.offset(p as isize)).v.QQQQ.u.B0 as ::core::ffi::c_int * 256 as ::core::ffi::c_int
@@ -4424,8 +4119,7 @@ pub unsafe extern "C" fn zprintdelimiter(mut p: halfword) {
         zprinthex(a);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintsubsidiarydata(mut p: halfword, mut c_0: ASCIIcode) {
+pub unsafe fn zprintsubsidiarydata(mut p: halfword, mut c_0: ASCIIcode) {
     let mut mem: *mut memoryword = zmem;
     if poolptr as poolpointer - *strstart.offset(strptr as isize) >= depththreshold {
         if (*mem.offset(p as isize)).hh.v.RH != 0 as ::core::ffi::c_int {
@@ -4460,8 +4154,7 @@ pub unsafe extern "C" fn zprintsubsidiarydata(mut p: halfword, mut c_0: ASCIIcod
         poolptr -= 1;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintstyle(mut c_0: integer) {
+pub unsafe fn zprintstyle(mut c_0: integer) {
     match c_0 as ::core::ffi::c_int / 2 as ::core::ffi::c_int {
         0 => {
             zprintesc(1283 as ::core::ffi::c_int);
@@ -4480,8 +4173,7 @@ pub unsafe extern "C" fn zprintstyle(mut c_0: integer) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintskipparam(mut n: integer) {
+pub unsafe fn zprintskipparam(mut n: integer) {
     match n {
         0 => {
             zprintesc(394 as ::core::ffi::c_int);
@@ -4542,8 +4234,7 @@ pub unsafe extern "C" fn zprintskipparam(mut n: integer) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zshownodelist(mut p: integer) {
+pub unsafe fn zshownodelist(mut p: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut n: integer = 0;
     let mut g_0: real = 0.;
@@ -6338,8 +6029,7 @@ pub unsafe extern "C" fn zshownodelist(mut p: integer) {
         p = (*mem.offset(p as isize)).hh.v.RH as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zshowbox(mut p: halfword) {
+pub unsafe fn zshowbox(mut p: halfword) {
     let mut eqtb: *mut memoryword = zeqtb;
     depththreshold = (*eqtb.offset(29302 as ::core::ffi::c_int as isize)).u.CINT;
     breadthmax = (*eqtb.offset(29301 as ::core::ffi::c_int as isize)).u.CINT;
@@ -6354,8 +6044,7 @@ pub unsafe extern "C" fn zshowbox(mut p: halfword) {
     zshownodelist(p);
     println();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdeletetokenref(mut p: halfword) {
+pub unsafe fn zdeletetokenref(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     if (*mem.offset(p as isize)).hh.v.LH as ::core::ffi::c_long
         == -(268435455 as ::core::ffi::c_long)
@@ -6366,8 +6055,7 @@ pub unsafe extern "C" fn zdeletetokenref(mut p: halfword) {
         *fresh31 -= 1;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdeleteglueref(mut p: halfword) {
+pub unsafe fn zdeleteglueref(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     if (*mem.offset(p as isize)).hh.v.RH as ::core::ffi::c_long
         == -(268435455 as ::core::ffi::c_long)
@@ -6378,8 +6066,7 @@ pub unsafe extern "C" fn zdeleteglueref(mut p: halfword) {
         *fresh46 -= 1;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zflushnodelist(mut p: halfword) {
+pub unsafe fn zflushnodelist(mut p: halfword) {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
@@ -7096,8 +6783,7 @@ pub unsafe extern "C" fn zflushnodelist(mut p: halfword) {
         p = q;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcopynodelist(mut p: halfword) -> halfword {
+pub unsafe fn zcopynodelist(mut p: halfword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut h: halfword = 0;
@@ -7701,8 +7387,7 @@ pub unsafe extern "C" fn zcopynodelist(mut p: halfword) -> halfword {
     Result = q;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintmode(mut m: integer) {
+pub unsafe fn zprintmode(mut m: integer) {
     if m > 0 as ::core::ffi::c_int {
         match m as ::core::ffi::c_int / 104 as ::core::ffi::c_int {
             0 => {
@@ -7733,8 +7418,7 @@ pub unsafe extern "C" fn zprintmode(mut m: integer) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintinmode(mut m: integer) {
+pub unsafe fn zprintinmode(mut m: integer) {
     if m > 0 as ::core::ffi::c_int {
         match m as ::core::ffi::c_int / 104 as ::core::ffi::c_int {
             0 => {
@@ -7765,8 +7449,7 @@ pub unsafe extern "C" fn zprintinmode(mut m: integer) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn pushnest() {
+pub unsafe fn pushnest() {
     if nestptr > maxneststack {
         maxneststack = nestptr;
         if nestptr == nestsize {
@@ -7781,8 +7464,7 @@ pub unsafe extern "C" fn pushnest() {
     curlist.mlfield = line;
     curlist.eTeXauxfield = -(268435455 as ::core::ffi::c_long) as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn popnest() {
+pub unsafe fn popnest() {
     let mut mem: *mut memoryword = zmem;
     (*mem.offset(curlist.headfield as isize)).hh.v.RH = avail;
     avail = curlist.headfield;
@@ -7790,8 +7472,7 @@ pub unsafe extern "C" fn popnest() {
     nestptr -= 1;
     curlist = *nest.offset(nestptr as isize);
 }
-#[no_mangle]
-pub unsafe extern "C" fn showactivities() {
+pub unsafe fn showactivities() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: integer = 0;
@@ -7993,8 +7674,7 @@ pub unsafe extern "C" fn showactivities() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintparam(mut n: integer) {
+pub unsafe fn zprintparam(mut n: integer) {
     match n {
         0 => {
             zprintesc(441 as ::core::ffi::c_int);
@@ -8343,8 +8023,7 @@ pub unsafe extern "C" fn zprintparam(mut n: integer) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn fixdateandtime() {
+pub unsafe fn fixdateandtime() {
     let mut eqtb: *mut memoryword = zeqtb;
     get_date_and_time(
         &raw mut systime,
@@ -8357,8 +8036,7 @@ pub unsafe extern "C" fn fixdateandtime() {
     (*eqtb.offset(29299 as ::core::ffi::c_int as isize)).u.CINT = sysmonth;
     (*eqtb.offset(29300 as ::core::ffi::c_int as isize)).u.CINT = sysyear;
 }
-#[no_mangle]
-pub unsafe extern "C" fn begindiagnostic() {
+pub unsafe fn begindiagnostic() {
     let mut eqtb: *mut memoryword = zeqtb;
     oldsetting = selector;
     if (*eqtb.offset(29306 as ::core::ffi::c_int as isize)).u.CINT <= 0 as ::core::ffi::c_int
@@ -8370,16 +8048,14 @@ pub unsafe extern "C" fn begindiagnostic() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zenddiagnostic(mut blankline: boolean) {
+pub unsafe fn zenddiagnostic(mut blankline: boolean) {
     zprintnl(345 as ::core::ffi::c_int);
     if blankline != 0 {
         println();
     }
     selector = oldsetting;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintlengthparam(mut n: integer) {
+pub unsafe fn zprintlengthparam(mut n: integer) {
     match n {
         0 => {
             zprintesc(548 as ::core::ffi::c_int);
@@ -8488,8 +8164,7 @@ pub unsafe extern "C" fn zprintlengthparam(mut n: integer) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintcmdchr(mut cmd: quarterword, mut chrcode: halfword) {
+pub unsafe fn zprintcmdchr(mut cmd: quarterword, mut chrcode: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut n: integer = 0;
     match cmd as ::core::ffi::c_int {
@@ -9881,8 +9556,7 @@ pub unsafe extern "C" fn zprintcmdchr(mut cmd: quarterword, mut chrcode: halfwor
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zshoweqtb(mut n: halfword) {
+pub unsafe fn zshoweqtb(mut n: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     if n < 1 as ::core::ffi::c_int {
@@ -10096,8 +9770,7 @@ pub unsafe extern "C" fn zshoweqtb(mut n: halfword) {
         zprintchar(63 as ::core::ffi::c_int as ASCIIcode);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zidlookup(mut j: integer, mut l_0: integer) -> halfword {
+pub unsafe fn zidlookup(mut j: integer, mut l_0: integer) -> halfword {
     let mut Result: halfword = 0;
     let mut h: integer = 0;
     let mut d: integer = 0;
@@ -10219,8 +9892,7 @@ pub unsafe extern "C" fn zidlookup(mut j: integer, mut l_0: integer) -> halfword
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprimlookup(mut s: strnumber) -> halfword {
+pub unsafe fn zprimlookup(mut s: strnumber) -> halfword {
     let mut current_block: u64;
     let mut Result: halfword = 0;
     let mut h: integer = 0;
@@ -10329,8 +10001,7 @@ pub unsafe extern "C" fn zprimlookup(mut s: strnumber) -> halfword {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zrestoretrace(mut p: halfword, mut s: strnumber) {
+pub unsafe fn zrestoretrace(mut p: halfword, mut s: strnumber) {
     begindiagnostic();
     zprintchar(123 as ::core::ffi::c_int as ASCIIcode);
     zprint(s);
@@ -10339,8 +10010,7 @@ pub unsafe extern "C" fn zrestoretrace(mut p: halfword, mut s: strnumber) {
     zprintchar(125 as ::core::ffi::c_int as ASCIIcode);
     zenddiagnostic(0 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprintgroup(mut e: boolean) {
+pub unsafe fn zprintgroup(mut e: boolean) {
     match curgroup as ::core::ffi::c_int {
         0 => {
             zprint(2007 as ::core::ffi::c_int);
@@ -10414,8 +10084,7 @@ pub unsafe extern "C" fn zprintgroup(mut e: boolean) {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgrouptrace(mut e: boolean) {
+pub unsafe fn zgrouptrace(mut e: boolean) {
     begindiagnostic();
     zprintchar(123 as ::core::ffi::c_int as ASCIIcode);
     if e != 0 {
@@ -10427,8 +10096,7 @@ pub unsafe extern "C" fn zgrouptrace(mut e: boolean) {
     zprintchar(125 as ::core::ffi::c_int as ASCIIcode);
     zenddiagnostic(0 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn pseudoinput() -> boolean {
+pub unsafe fn pseudoinput() -> boolean {
     let mut Result: boolean = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -10495,8 +10163,7 @@ pub unsafe extern "C" fn pseudoinput() -> boolean {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pseudoclose() {
+pub unsafe fn pseudoclose() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut q: halfword = 0;
@@ -10512,8 +10179,7 @@ pub unsafe extern "C" fn pseudoclose() {
         zfreenode(p, (*mem.offset(p as isize)).hh.v.LH);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn groupwarning() {
+pub unsafe fn groupwarning() {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut i: integer = 0;
     let mut w: boolean = 0;
@@ -10549,8 +10215,7 @@ pub unsafe extern "C" fn groupwarning() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn ifwarning() {
+pub unsafe fn ifwarning() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut i: integer = 0;
@@ -10591,8 +10256,7 @@ pub unsafe extern "C" fn ifwarning() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn filewarning() {
+pub unsafe fn filewarning() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -10648,8 +10312,7 @@ pub unsafe extern "C" fn filewarning() {
         history = 1 as ::core::ffi::c_uchar;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdeletesaref(mut q: halfword) {
+pub unsafe fn zdeletesaref(mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut i: smallnumber = 0;
@@ -10737,8 +10400,7 @@ pub unsafe extern "C" fn zdeletesaref(mut q: halfword) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zshowsa(mut p: halfword, mut s: strnumber) {
+pub unsafe fn zshowsa(mut p: halfword, mut s: strnumber) {
     let mut mem: *mut memoryword = zmem;
     let mut t: smallnumber = 0;
     begindiagnostic();
@@ -10807,8 +10469,7 @@ pub unsafe extern "C" fn zshowsa(mut p: halfword, mut s: strnumber) {
     zprintchar(125 as ::core::ffi::c_int as ASCIIcode);
     zenddiagnostic(0 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsasave(mut p: halfword) {
+pub unsafe fn zsasave(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
     let mut i: quarterword = 0;
@@ -10872,8 +10533,7 @@ pub unsafe extern "C" fn zsasave(mut p: halfword) {
     .LH;
     *fresh67 += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsadestroy(mut p: halfword) {
+pub unsafe fn zsadestroy(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     if ((*mem.offset(p as isize)).hh.u.B0 as ::core::ffi::c_int) < 64 as ::core::ffi::c_int {
         zdeleteglueref(
@@ -10905,8 +10565,7 @@ pub unsafe extern "C" fn zsadestroy(mut p: halfword) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsadef(mut p: halfword, mut e: halfword) {
+pub unsafe fn zsadef(mut p: halfword, mut e: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let ref mut fresh68 = (*mem
@@ -10946,8 +10605,7 @@ pub unsafe extern "C" fn zsadef(mut p: halfword, mut e: halfword) {
     }
     zdeletesaref(p);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsawdef(mut p: halfword, mut w: integer) {
+pub unsafe fn zsawdef(mut p: halfword, mut w: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let ref mut fresh69 = (*mem
@@ -10982,8 +10640,7 @@ pub unsafe extern "C" fn zsawdef(mut p: halfword, mut w: integer) {
     }
     zdeletesaref(p);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgsadef(mut p: halfword, mut e: halfword) {
+pub unsafe fn zgsadef(mut p: halfword, mut e: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let ref mut fresh70 = (*mem
@@ -11006,8 +10663,7 @@ pub unsafe extern "C" fn zgsadef(mut p: halfword, mut e: halfword) {
     }
     zdeletesaref(p);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgsawdef(mut p: halfword, mut w: integer) {
+pub unsafe fn zgsawdef(mut p: halfword, mut w: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let ref mut fresh71 = (*mem
@@ -11028,8 +10684,7 @@ pub unsafe extern "C" fn zgsawdef(mut p: halfword, mut w: integer) {
     }
     zdeletesaref(p);
 }
-#[no_mangle]
-pub unsafe extern "C" fn sarestore() {
+pub unsafe fn sarestore() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -11094,8 +10749,7 @@ pub unsafe extern "C" fn sarestore() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewsavelevel(mut c_0: groupcode) {
+pub unsafe fn znewsavelevel(mut c_0: groupcode) {
     let mut eqtb: *mut memoryword = zeqtb;
     if saveptr > maxsavestack {
         maxsavestack = saveptr;
@@ -11123,8 +10777,7 @@ pub unsafe extern "C" fn znewsavelevel(mut c_0: groupcode) {
     curlevel = curlevel.wrapping_add(1);
     saveptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zeqdestroy(mut w: memoryword) {
+pub unsafe fn zeqdestroy(mut w: memoryword) {
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
     match w.hh.u.B0 as ::core::ffi::c_int {
@@ -11158,8 +10811,7 @@ pub unsafe extern "C" fn zeqdestroy(mut w: memoryword) {
         _ => {}
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zeqsave(mut p: halfword, mut l_0: quarterword) {
+pub unsafe fn zeqsave(mut p: halfword, mut l_0: quarterword) {
     let mut eqtb: *mut memoryword = zeqtb;
     if saveptr > maxsavestack {
         maxsavestack = saveptr;
@@ -11178,8 +10830,7 @@ pub unsafe extern "C" fn zeqsave(mut p: halfword, mut l_0: quarterword) {
     (*savestack.offset(saveptr as isize)).hh.v.RH = p;
     saveptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zeqdefine(mut p: halfword, mut t: quarterword, mut e: halfword) {
+pub unsafe fn zeqdefine(mut p: halfword, mut t: quarterword, mut e: halfword) {
     let mut eqtb: *mut memoryword = zeqtb;
     if eTeXmode as ::core::ffi::c_int == 1 as ::core::ffi::c_int
         && (*eqtb.offset(p as isize)).hh.u.B0 as ::core::ffi::c_int == t as ::core::ffi::c_int
@@ -11206,8 +10857,7 @@ pub unsafe extern "C" fn zeqdefine(mut p: halfword, mut t: quarterword, mut e: h
         zrestoretrace(p, 634 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zeqworddefine(mut p: halfword, mut w: integer) {
+pub unsafe fn zeqworddefine(mut p: halfword, mut w: integer) {
     let mut eqtb: *mut memoryword = zeqtb;
     if eTeXmode as ::core::ffi::c_int == 1 as ::core::ffi::c_int
         && (*eqtb.offset(p as isize)).u.CINT == w
@@ -11240,8 +10890,7 @@ pub unsafe extern "C" fn zeqworddefine(mut p: halfword, mut w: integer) {
         zrestoretrace(p, 634 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgeqdefine(mut p: halfword, mut t: quarterword, mut e: halfword) {
+pub unsafe fn zgeqdefine(mut p: halfword, mut t: quarterword, mut e: halfword) {
     let mut eqtb: *mut memoryword = zeqtb;
     if (*eqtb.offset(29379 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int {
         zrestoretrace(p, 635 as ::core::ffi::c_int);
@@ -11254,8 +10903,7 @@ pub unsafe extern "C" fn zgeqdefine(mut p: halfword, mut t: quarterword, mut e: 
         zrestoretrace(p, 634 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgeqworddefine(mut p: halfword, mut w: integer) {
+pub unsafe fn zgeqworddefine(mut p: halfword, mut w: integer) {
     let mut eqtb: *mut memoryword = zeqtb;
     if (*eqtb.offset(29379 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int {
         zrestoretrace(p, 635 as ::core::ffi::c_int);
@@ -11268,8 +10916,7 @@ pub unsafe extern "C" fn zgeqworddefine(mut p: halfword, mut w: integer) {
         zrestoretrace(p, 634 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsaveforafter(mut t: halfword) {
+pub unsafe fn zsaveforafter(mut t: halfword) {
     if curlevel as ::core::ffi::c_int > 1 as ::core::ffi::c_int {
         if saveptr > maxsavestack {
             maxsavestack = saveptr;
@@ -11283,8 +10930,7 @@ pub unsafe extern "C" fn zsaveforafter(mut t: halfword) {
         saveptr += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn unsave() {
+pub unsafe fn unsave() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -11397,8 +11043,7 @@ pub unsafe extern "C" fn unsave() {
         zconfusion(636 as ::core::ffi::c_int);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn preparemag() {
+pub unsafe fn preparemag() {
     let mut eqtb: *mut memoryword = zeqtb;
     if magset > 0 as ::core::ffi::c_int
         && (*eqtb.offset(29294 as ::core::ffi::c_int as isize)).u.CINT != magset
@@ -11437,8 +11082,7 @@ pub unsafe extern "C" fn preparemag() {
     }
     magset = (*eqtb.offset(29294 as ::core::ffi::c_int as isize)).u.CINT;
 }
-#[no_mangle]
-pub unsafe extern "C" fn ztokenshow(mut p: halfword) {
+pub unsafe fn ztokenshow(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     if p as ::core::ffi::c_long != -(268435455 as ::core::ffi::c_long) {
         zshowtokenlist(
@@ -11448,8 +11092,7 @@ pub unsafe extern "C" fn ztokenshow(mut p: halfword) {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn printmeaning() {
+pub unsafe fn printmeaning() {
     zprintcmdchr(curcmd, curchr);
     if curcmd as ::core::ffi::c_int >= 114 as ::core::ffi::c_int {
         zprintchar(58 as ::core::ffi::c_int as ASCIIcode);
@@ -11463,8 +11106,7 @@ pub unsafe extern "C" fn printmeaning() {
         ztokenshow(curmark[curchr as usize]);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn showcurcmdchr() {
+pub unsafe fn showcurcmdchr() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut n: integer = 0;
@@ -11509,8 +11151,7 @@ pub unsafe extern "C" fn showcurcmdchr() {
     zprintchar(125 as ::core::ffi::c_int as ASCIIcode);
     zenddiagnostic(0 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn showcontext() {
+pub unsafe fn showcontext() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
@@ -11775,8 +11416,7 @@ pub unsafe extern "C" fn showcontext() {
     }
     curinput = *inputstack.offset(inputptr as isize);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zbegintokenlist(mut p: halfword, mut t: quarterword) {
+pub unsafe fn zbegintokenlist(mut p: halfword, mut t: quarterword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     if inputptr > maxinstack {
@@ -11824,8 +11464,7 @@ pub unsafe extern "C" fn zbegintokenlist(mut p: halfword, mut t: quarterword) {
         curinput.locfield = p;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn endtokenlist() {
+pub unsafe fn endtokenlist() {
     let index = curinput.indexfield as ::core::ffi::c_int;
     if index >= 5 as ::core::ffi::c_int {
         zdeletetokenref(curinput.startfield);
@@ -11853,8 +11492,7 @@ pub unsafe extern "C" fn endtokenlist() {
         pauseforinstructions();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn backinput() {
+pub unsafe fn backinput() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     while curinput.locfield as ::core::ffi::c_long == -(268435455 as ::core::ffi::c_long)
@@ -11885,23 +11523,20 @@ pub unsafe extern "C" fn backinput() {
     curinput.indexfield = 3 as quarterword;
     curinput.locfield = p;
 }
-#[no_mangle]
-pub unsafe extern "C" fn backerror() {
+pub unsafe fn backerror() {
     OKtointerrupt = false_0 as boolean;
     backinput();
     OKtointerrupt = true_0 as boolean;
     error();
 }
-#[no_mangle]
-pub unsafe extern "C" fn inserror() {
+pub unsafe fn inserror() {
     OKtointerrupt = false_0 as boolean;
     backinput();
     curinput.indexfield = 4 as quarterword;
     OKtointerrupt = true_0 as boolean;
     error();
 }
-#[no_mangle]
-pub unsafe extern "C" fn beginfilereading() {
+pub unsafe fn beginfilereading() {
     if inopen == maxinopen {
         zoverflow(690 as ::core::ffi::c_int, maxinopen);
     }
@@ -11931,8 +11566,7 @@ pub unsafe extern "C" fn beginfilereading() {
     curinput.namefield = 0 as ::core::ffi::c_int as halfword;
     curinput.synctextagfield = 0 as ::core::ffi::c_int as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn endfilereading() {
+pub unsafe fn endfilereading() {
     first = curinput.startfield as integer;
     line = *linestack.offset(curinput.indexfield as isize);
     if curinput.namefield == 18 as ::core::ffi::c_int
@@ -11946,8 +11580,7 @@ pub unsafe extern "C" fn endfilereading() {
     curinput = *inputstack.offset(inputptr as isize);
     inopen -= 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn clearforerrorprompt() {
+pub unsafe fn clearforerrorprompt() {
     while curinput.statefield as ::core::ffi::c_int != 0 as ::core::ffi::c_int
         && curinput.namefield == 0 as ::core::ffi::c_int
         && inputptr > 0 as ::core::ffi::c_int
@@ -11957,8 +11590,7 @@ pub unsafe extern "C" fn clearforerrorprompt() {
     }
     println();
 }
-#[no_mangle]
-pub unsafe extern "C" fn mubyteupdate() {
+pub unsafe fn mubyteupdate() {
     let mut mem: *mut memoryword = zmem;
     let mut j: poolpointer = 0;
     let mut p: halfword = 0;
@@ -12067,8 +11699,7 @@ pub unsafe extern "C" fn mubyteupdate() {
     (*mem.offset(p as isize)).hh.u.B0 = mubyteprefix as ::core::ffi::c_short;
     (*mem.offset(p as isize)).hh.v.RH = mubytestoken;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdisposemunode(mut p: halfword) {
+pub unsafe fn zdisposemunode(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
     if (*mem.offset(p as isize)).hh.u.B0 as ::core::ffi::c_int > 0 as ::core::ffi::c_int
@@ -12100,8 +11731,7 @@ pub unsafe extern "C" fn zdisposemunode(mut p: halfword) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdisposemutableout(mut cs: halfword) {
+pub unsafe fn zdisposemutableout(mut cs: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut q: halfword = 0;
@@ -12143,8 +11773,7 @@ pub unsafe extern "C" fn zdisposemutableout(mut cs: halfword) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn checkoutervalidity() {
+pub unsafe fn checkoutervalidity() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut q: halfword = 0;
@@ -12243,8 +11872,7 @@ pub unsafe extern "C" fn checkoutervalidity() {
         deletionsallowed = true_0 as boolean;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn getnext() {
+pub unsafe fn getnext() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -13230,8 +12858,7 @@ pub unsafe extern "C" fn getnext() {
         alignstate = 1000000 as ::core::ffi::c_long as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn firmuptheline() {
+pub unsafe fn firmuptheline() {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut k: integer = 0;
     curinput.limitfield = last as halfword;
@@ -13265,8 +12892,7 @@ pub unsafe extern "C" fn firmuptheline() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn gettoken() {
+pub unsafe fn gettoken() {
     nonewcontrolsequence = false_0 as boolean;
     getnext();
     nonewcontrolsequence = true_0 as boolean;
@@ -13276,8 +12902,7 @@ pub unsafe extern "C" fn gettoken() {
         curtok = 4095 as halfword + curcs;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn macrocall() {
+pub unsafe fn macrocall() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -13707,16 +13332,14 @@ pub unsafe extern "C" fn macrocall() {
     scannerstatus = savescannerstatus as ::core::ffi::c_uchar;
     warningindex = savewarningindex;
 }
-#[no_mangle]
-pub unsafe extern "C" fn insertrelax() {
+pub unsafe fn insertrelax() {
     curtok = 4095 as halfword + curcs;
     backinput();
     curtok = 19616 as ::core::ffi::c_int as halfword;
     backinput();
     curinput.indexfield = 4 as quarterword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewindex(mut i: quarterword, mut q: halfword) {
+pub unsafe fn znewindex(mut i: quarterword, mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut k: smallnumber = 0;
     curptr = zgetnode(9 as ::core::ffi::c_int);
@@ -13737,8 +13360,7 @@ pub unsafe extern "C" fn znewindex(mut i: quarterword, mut q: halfword) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfindsaelement(mut t: smallnumber, mut n: halfword, mut w: boolean) {
+pub unsafe fn zfindsaelement(mut t: smallnumber, mut n: halfword, mut w: boolean) {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
@@ -14027,8 +13649,7 @@ pub unsafe extern "C" fn zfindsaelement(mut t: smallnumber, mut n: halfword, mut
     let ref mut fresh80 = (*mem.offset(q as isize)).hh.u.B1;
     *fresh80 += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn expand() {
+pub unsafe fn expand() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut t: halfword = 0;
@@ -14390,8 +14011,7 @@ pub unsafe extern "C" fn expand() {
         .RH = backupbackup;
     expanddepthcount -= 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getxtoken() {
+pub unsafe fn getxtoken() {
     loop {
         getnext();
         if curcmd as ::core::ffi::c_int <= 103 as ::core::ffi::c_int {
@@ -14415,8 +14035,7 @@ pub unsafe extern "C" fn getxtoken() {
         curtok = 4095 as halfword + curcs;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn xtoken() {
+pub unsafe fn xtoken() {
     while curcmd as ::core::ffi::c_int > 103 as ::core::ffi::c_int {
         expand();
         getnext();
@@ -14427,8 +14046,7 @@ pub unsafe extern "C" fn xtoken() {
         curtok = 4095 as halfword + curcs;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanleftbrace() {
+pub unsafe fn scanleftbrace() {
     loop {
         getxtoken();
         if curcmd as ::core::ffi::c_int != 10 as ::core::ffi::c_int
@@ -14457,8 +14075,7 @@ pub unsafe extern "C" fn scanleftbrace() {
         alignstate += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanoptionalequals() {
+pub unsafe fn scanoptionalequals() {
     loop {
         getxtoken();
         if curcmd as ::core::ffi::c_int != 10 as ::core::ffi::c_int {
@@ -14469,8 +14086,7 @@ pub unsafe extern "C" fn scanoptionalequals() {
         backinput();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscankeyword(mut s: strnumber) -> boolean {
+pub unsafe fn zscankeyword(mut s: strnumber) -> boolean {
     let mut Result: boolean = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -14522,8 +14138,7 @@ pub unsafe extern "C" fn zscankeyword(mut s: strnumber) -> boolean {
     Result = true_0 as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn muerror() {
+pub unsafe fn muerror() {
     interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
     if filelineerrorstylep != 0 {
         printfileline();
@@ -14535,8 +14150,7 @@ pub unsafe extern "C" fn muerror() {
     helpline[0 as ::core::ffi::c_int as usize] = 761 as ::core::ffi::c_int as strnumber;
     error();
 }
-#[no_mangle]
-pub unsafe extern "C" fn scaneightbitint() {
+pub unsafe fn scaneightbitint() {
     scanint();
     if curval < 0 as ::core::ffi::c_int || curval > 255 as ::core::ffi::c_int {
         interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
@@ -14553,8 +14167,7 @@ pub unsafe extern "C" fn scaneightbitint() {
         curval = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scancharnum() {
+pub unsafe fn scancharnum() {
     scanint();
     if curval < 0 as ::core::ffi::c_int || curval > 255 as ::core::ffi::c_int {
         interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
@@ -14571,8 +14184,7 @@ pub unsafe extern "C" fn scancharnum() {
         curval = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanfourbitint() {
+pub unsafe fn scanfourbitint() {
     scanint();
     if curval < 0 as ::core::ffi::c_int || curval > 15 as ::core::ffi::c_int {
         interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
@@ -14589,8 +14201,7 @@ pub unsafe extern "C" fn scanfourbitint() {
         curval = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanfifteenbitint() {
+pub unsafe fn scanfifteenbitint() {
     scanint();
     if curval < 0 as ::core::ffi::c_int || curval > 32767 as ::core::ffi::c_int {
         interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
@@ -14607,8 +14218,7 @@ pub unsafe extern "C" fn scanfifteenbitint() {
         curval = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scantwentysevenbitint() {
+pub unsafe fn scantwentysevenbitint() {
     scanint();
     if curval < 0 as ::core::ffi::c_int
         || curval as ::core::ffi::c_long > 134217727 as ::core::ffi::c_long
@@ -14627,8 +14237,7 @@ pub unsafe extern "C" fn scantwentysevenbitint() {
         curval = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanregisternum() {
+pub unsafe fn scanregisternum() {
     scanint();
     if curval < 0 as ::core::ffi::c_int || curval > maxregnum {
         interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
@@ -14645,8 +14254,7 @@ pub unsafe extern "C" fn scanregisternum() {
         curval = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanfourbitintor18() {
+pub unsafe fn scanfourbitintor18() {
     scanint();
     if curval < 0 as ::core::ffi::c_int
         || curval > 15 as ::core::ffi::c_int && curval != 18 as ::core::ffi::c_int
@@ -14665,8 +14273,7 @@ pub unsafe extern "C" fn scanfourbitintor18() {
         curval = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn getxorprotected() {
+pub unsafe fn getxorprotected() {
     let mut mem: *mut memoryword = zmem;
     loop {
         gettoken();
@@ -14688,8 +14295,7 @@ pub unsafe extern "C" fn getxorprotected() {
         expand();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zeffectivechar(
+pub unsafe fn zeffectivechar(
     mut errp: boolean,
     mut f_0: internalfontnumber,
     mut c_0: quarterword,
@@ -14803,8 +14409,7 @@ pub unsafe extern "C" fn zeffectivechar(
     Result = result;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn ztestnoligatures(mut f_0: internalfontnumber) -> integer {
+pub unsafe fn ztestnoligatures(mut f_0: internalfontnumber) -> integer {
     let mut Result: integer = 0;
     let mut c_0: integer = 0;
     Result = 1 as ::core::ffi::c_int as integer;
@@ -14842,8 +14447,7 @@ pub unsafe extern "C" fn ztestnoligatures(mut f_0: internalfontnumber) -> intege
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgettagcode(mut f_0: internalfontnumber, mut c_0: eightbits) -> integer {
+pub unsafe fn zgettagcode(mut f_0: internalfontnumber, mut c_0: eightbits) -> integer {
     let mut Result: integer = 0;
     let mut i: smallnumber = 0;
     if *fontbc.offset(f_0 as isize) as ::core::ffi::c_int <= c_0 as ::core::ffi::c_int
@@ -14881,8 +14485,7 @@ pub unsafe extern "C" fn zgettagcode(mut f_0: internalfontnumber, mut c_0: eight
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanfontident() {
+pub unsafe fn scanfontident() {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut f_0: internalfontnumber = 0;
     let mut m: halfword = 0;
@@ -14919,8 +14522,7 @@ pub unsafe extern "C" fn scanfontident() {
     }
     curval = f_0 as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfindfontdimen(mut writing: boolean) {
+pub unsafe fn zfindfontdimen(mut writing: boolean) {
     let mut f_0: internalfontnumber = 0;
     let mut n: integer = 0;
     scanint();
@@ -14984,8 +14586,7 @@ pub unsafe extern "C" fn zfindfontdimen(mut writing: boolean) {
         error();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscansomethinginternal(mut level: smallnumber, mut negative: boolean) {
+pub unsafe fn zscansomethinginternal(mut level: smallnumber, mut negative: boolean) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut m: halfword = 0;
@@ -16030,8 +15631,7 @@ pub unsafe extern "C" fn zscansomethinginternal(mut level: smallnumber, mut nega
         *fresh82 += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanint() {
+pub unsafe fn scanint() {
     let mut current_block: u64;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut negative: boolean = 0;
@@ -16220,8 +15820,7 @@ pub unsafe extern "C" fn scanint() {
         curval = -curval;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscandimen(mut mu: boolean, mut inf: boolean, mut shortcut: boolean) {
+pub unsafe fn zscandimen(mut mu: boolean, mut inf: boolean, mut shortcut: boolean) {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -16700,8 +16299,7 @@ pub unsafe extern "C" fn zscandimen(mut mu: boolean, mut inf: boolean, mut short
         curval = -curval;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscanglue(mut level: smallnumber) {
+pub unsafe fn zscanglue(mut level: smallnumber) {
     let mut mem: *mut memoryword = zmem;
     let mut negative: boolean = 0;
     let mut q: halfword = 0;
@@ -16765,8 +16363,7 @@ pub unsafe extern "C" fn zscanglue(mut level: smallnumber) {
     }
     curval = q as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zaddorsub(
+pub unsafe fn zaddorsub(
     mut x: integer,
     mut y: integer,
     mut maxanswer: integer,
@@ -16793,8 +16390,7 @@ pub unsafe extern "C" fn zaddorsub(
     Result = a;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zquotient(mut n: integer, mut d: integer) -> integer {
+pub unsafe fn zquotient(mut n: integer, mut d: integer) -> integer {
     let mut Result: integer = 0;
     let mut negative: boolean = 0;
     let mut a: integer = 0;
@@ -16825,8 +16421,7 @@ pub unsafe extern "C" fn zquotient(mut n: integer, mut d: integer) -> integer {
     Result = a;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfract(
+pub unsafe fn zfract(
     mut x: integer,
     mut n: integer,
     mut d: integer,
@@ -16954,8 +16549,7 @@ pub unsafe extern "C" fn zfract(
     Result = a;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanexpr() {
+pub unsafe fn scanexpr() {
     let mut mem: *mut memoryword = zmem;
     let mut a: boolean = 0;
     let mut b: boolean = 0;
@@ -17526,16 +17120,13 @@ pub unsafe extern "C" fn scanexpr() {
     curval = e;
     curvallevel = l_0 as ::core::ffi::c_uchar;
 }
-#[no_mangle]
-pub unsafe extern "C" fn scannormalglue() {
+pub unsafe fn scannormalglue() {
     zscanglue(2 as ::core::ffi::c_int as smallnumber);
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanmuglue() {
+pub unsafe fn scanmuglue() {
     zscanglue(3 as ::core::ffi::c_int as smallnumber);
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanrulespec() -> halfword {
+pub unsafe fn scanrulespec() -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
@@ -17588,8 +17179,7 @@ pub unsafe extern "C" fn scanrulespec() -> halfword {
     Result = q;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn scangeneraltext() {
+pub unsafe fn scangeneraltext() {
     let mut mem: *mut memoryword = zmem;
     let mut s: ::core::ffi::c_uchar = 0;
     let mut w: halfword = 0;
@@ -17641,8 +17231,7 @@ pub unsafe extern "C" fn scangeneraltext() {
     warningindex = w;
     defref = d;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pseudostart() {
+pub unsafe fn pseudostart() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
@@ -17766,8 +17355,7 @@ pub unsafe extern "C" fn pseudostart() {
         curinput.synctextagfield = 0 as ::core::ffi::c_int as integer;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zstrtoks(mut b: poolpointer) -> halfword {
+pub unsafe fn zstrtoks(mut b: poolpointer) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -17807,8 +17395,7 @@ pub unsafe extern "C" fn zstrtoks(mut b: poolpointer) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn thetoks() -> halfword {
+pub unsafe fn thetoks() -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
@@ -17898,8 +17485,7 @@ pub unsafe extern "C" fn thetoks() -> halfword {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn insthetoks() {
+pub unsafe fn insthetoks() {
     let mut mem: *mut memoryword = zmem;
     (*mem.offset((memtop as ::core::ffi::c_int - 12 as ::core::ffi::c_int) as isize))
         .hh
@@ -17913,8 +17499,7 @@ pub unsafe extern "C" fn insthetoks() {
         4 as ::core::ffi::c_int as quarterword,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn convtoks() {
+pub unsafe fn convtoks() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
@@ -18881,8 +18466,7 @@ pub unsafe extern "C" fn convtoks() {
         4 as ::core::ffi::c_int as quarterword,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscantoks(mut macrodef: boolean, mut xpand: boolean) -> halfword {
+pub unsafe fn zscantoks(mut macrodef: boolean, mut xpand: boolean) -> halfword {
     let mut current_block: u64;
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
@@ -19105,8 +18689,7 @@ pub unsafe extern "C" fn zscantoks(mut macrodef: boolean, mut xpand: boolean) ->
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zreadtoks(mut n: integer, mut r: halfword, mut j: halfword) {
+pub unsafe fn zreadtoks(mut n: integer, mut r: halfword, mut j: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -19235,8 +18818,7 @@ pub unsafe extern "C" fn zreadtoks(mut n: integer, mut r: halfword, mut j: halfw
     scannerstatus = 0 as ::core::ffi::c_uchar;
     alignstate = s;
 }
-#[no_mangle]
-pub unsafe extern "C" fn passtext() {
+pub unsafe fn passtext() {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut l_0: integer = 0;
     let mut savescannerstatus: smallnumber = 0;
@@ -19262,8 +18844,7 @@ pub unsafe extern "C" fn passtext() {
         showcurcmdchr();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zchangeiflimit(mut l_0: smallnumber, mut p: halfword) {
+pub unsafe fn zchangeiflimit(mut l_0: smallnumber, mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
     if p == condptr {
@@ -19282,8 +18863,7 @@ pub unsafe extern "C" fn zchangeiflimit(mut l_0: smallnumber, mut p: halfword) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn conditional() {
+pub unsafe fn conditional() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -19841,14 +19421,12 @@ pub unsafe extern "C" fn conditional() {
         iflimit = 2 as ::core::ffi::c_uchar;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn beginname() {
+pub unsafe fn beginname() {
     areadelimiter = 0 as ::core::ffi::c_int as poolpointer;
     extdelimiter = 0 as ::core::ffi::c_int as poolpointer;
     quotedfilename = false_0 as boolean;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmorename(mut c_0: ASCIIcode) -> boolean {
+pub unsafe fn zmorename(mut c_0: ASCIIcode) -> boolean {
     let mut Result: boolean = 0;
     if c_0 as ::core::ffi::c_int == 32 as ::core::ffi::c_int
         && stopatspace != 0
@@ -19877,8 +19455,7 @@ pub unsafe extern "C" fn zmorename(mut c_0: ASCIIcode) -> boolean {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn endname() {
+pub unsafe fn endname() {
     let mut tempstr: strnumber = 0;
     let mut j: poolpointer = 0;
     let mut s: poolpointer = 0;
@@ -20103,8 +19680,7 @@ pub unsafe extern "C" fn endname() {
         curext = slowmakestring();
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpackfilename(mut n: strnumber, mut a: strnumber, mut e: strnumber) {
+pub unsafe fn zpackfilename(mut n: strnumber, mut a: strnumber, mut e: strnumber) {
     let mut k: integer = 0;
     let mut c_0: ASCIIcode = 0;
     let mut j: poolpointer = 0;
@@ -20197,8 +19773,7 @@ pub unsafe extern "C" fn zpackfilename(mut n: strnumber, mut a: strnumber, mut e
     *nameoffile.offset((namelength as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize) =
         0 as ASCIIcode;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpackbufferedname(mut n: smallnumber, mut a: integer, mut b: integer) {
+pub unsafe fn zpackbufferedname(mut n: smallnumber, mut a: integer, mut b: integer) {
     let mut k: integer = 0;
     let mut c_0: ASCIIcode = 0;
     let mut j: integer = 0;
@@ -20285,8 +19860,7 @@ pub unsafe extern "C" fn zpackbufferedname(mut n: smallnumber, mut a: integer, m
     *nameoffile.offset((namelength as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize) =
         0 as ASCIIcode;
 }
-#[no_mangle]
-pub unsafe extern "C" fn makenamestring() -> strnumber {
+pub unsafe fn makenamestring() -> strnumber {
     let mut Result: strnumber = 0;
     let mut k: integer = 0;
     let mut saveareadelimiter: poolpointer = 0;
@@ -20334,26 +19908,22 @@ pub unsafe extern "C" fn makenamestring() -> strnumber {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zamakenamestring(mut f_0: alphafile) -> strnumber {
+pub unsafe fn zamakenamestring(mut f_0: alphafile) -> strnumber {
     let mut Result: strnumber = 0;
     Result = makenamestring();
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zbmakenamestring(mut f_0: bytefile) -> strnumber {
+pub unsafe fn zbmakenamestring(mut f_0: bytefile) -> strnumber {
     let mut Result: strnumber = 0;
     Result = makenamestring();
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zzwmakenamestring(mut f_0: *mut wordfile) -> strnumber {
+pub unsafe fn zzwmakenamestring(mut f_0: *mut wordfile) -> strnumber {
     let mut Result: strnumber = 0;
     Result = makenamestring();
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanfilename() {
+pub unsafe fn scanfilename() {
     let mut savewarningindex: halfword = 0;
     nameinprogress = true_0 as boolean;
     savewarningindex = warningindex;
@@ -20400,15 +19970,13 @@ pub unsafe extern "C" fn scanfilename() {
     nameinprogress = false_0 as boolean;
     warningindex = savewarningindex;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpackjobname(mut s: strnumber) {
+pub unsafe fn zpackjobname(mut s: strnumber) {
     curarea = 345 as ::core::ffi::c_int as strnumber;
     curext = s;
     curname = jobname;
     zpackfilename(curname, curarea, curext);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpromptfilename(mut s: strnumber, mut e: strnumber) {
+pub unsafe fn zpromptfilename(mut s: strnumber, mut e: strnumber) {
     let mut k: integer = 0;
     let mut savedcurname: strnumber = 0;
     let mut savedcurext: strnumber = 0;
@@ -20487,8 +20055,7 @@ pub unsafe extern "C" fn zpromptfilename(mut s: strnumber, mut e: strnumber) {
     }
     zpackfilename(curname, curarea, curext);
 }
-#[no_mangle]
-pub unsafe extern "C" fn openlogfile() {
+pub unsafe fn openlogfile() {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
     let mut k: integer = 0;
@@ -20675,8 +20242,7 @@ pub unsafe extern "C" fn openlogfile() {
     selector =
         (oldsetting_0 as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as ::core::ffi::c_uchar;
 }
-#[no_mangle]
-pub unsafe extern "C" fn startinput() {
+pub unsafe fn startinput() {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut tempstr: strnumber = 0;
     let mut v: halfword = 0;
@@ -20765,8 +20331,7 @@ pub unsafe extern "C" fn startinput() {
     first = (curinput.limitfield as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as integer;
     curinput.locfield = curinput.startfield;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zeffectivecharinfo(
+pub unsafe fn zeffectivecharinfo(
     mut f_0: internalfontnumber,
     mut c_0: quarterword,
 ) -> fourquarters {
@@ -20844,8 +20409,7 @@ pub unsafe extern "C" fn zeffectivecharinfo(
     Result = nullcharacter;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zreadfontinfo(
+pub unsafe fn zreadfontinfo(
     mut u: halfword,
     mut nom: strnumber,
     mut aire: strnumber,
@@ -21997,8 +21561,7 @@ pub unsafe extern "C" fn zreadfontinfo(
     Result = g_0;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zstorescaledf(mut sq: scaled, mut z: scaled) -> scaled {
+pub unsafe fn zstorescaledf(mut sq: scaled, mut z: scaled) -> scaled {
     let mut Result: scaled = 0;
     let mut a: eightbits = 0;
     let mut b: eightbits = 0;
@@ -22052,8 +21615,7 @@ pub unsafe extern "C" fn zstorescaledf(mut sq: scaled, mut z: scaled) -> scaled 
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcharwarning(mut f_0: internalfontnumber, mut c_0: eightbits) {
+pub unsafe fn zcharwarning(mut f_0: internalfontnumber, mut c_0: eightbits) {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut oldsetting_0: integer = 0;
     if (*eqtb.offset(29312 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int {
@@ -22096,11 +21658,7 @@ pub unsafe extern "C" fn zcharwarning(mut f_0: internalfontnumber, mut c_0: eigh
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewcharacter(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-) -> halfword {
+pub unsafe fn znewcharacter(mut f_0: internalfontnumber, mut c_0: eightbits) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -22130,8 +21688,7 @@ pub unsafe extern "C" fn znewcharacter(
     Result = -(268435455 as ::core::ffi::c_long) as halfword;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn dviswap() {
+pub unsafe fn dviswap() {
     if dviptr as ::core::ffi::c_long
         > 2147483647 as ::core::ffi::c_long - dvioffset as ::core::ffi::c_long
     {
@@ -22189,8 +21746,7 @@ pub unsafe extern "C" fn dviswap() {
     }
     dvigone = dvigone + halfbuf;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdvifour(mut x: integer) {
+pub unsafe fn zdvifour(mut x: integer) {
     if x >= 0 as ::core::ffi::c_int {
         *dvibuf.offset(dviptr as isize) =
             (x as ::core::ffi::c_long / 16777216 as ::core::ffi::c_long) as eightbits;
@@ -22230,8 +21786,7 @@ pub unsafe extern "C" fn zdvifour(mut x: integer) {
         dviswap();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdvipop(mut l_0: integer) {
+pub unsafe fn zdvipop(mut l_0: integer) {
     if l_0 == dvioffset + dviptr && dviptr > 0 as ::core::ffi::c_int {
         dviptr -= 1;
     } else {
@@ -22242,8 +21797,7 @@ pub unsafe extern "C" fn zdvipop(mut l_0: integer) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdvifontdef(mut f_0: internalfontnumber) {
+pub unsafe fn zdvifontdef(mut f_0: internalfontnumber) {
     let mut k: poolpointer = 0;
     if f_0 <= 256 as ::core::ffi::c_int {
         *dvibuf.offset(dviptr as isize) = 243 as eightbits;
@@ -22357,8 +21911,7 @@ pub unsafe extern "C" fn zdvifontdef(mut f_0: internalfontnumber) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmovement(mut w: scaled, mut o: eightbits) {
+pub unsafe fn zmovement(mut w: scaled, mut o: eightbits) {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut mstate: smallnumber = 0;
@@ -22676,8 +22229,7 @@ pub unsafe extern "C" fn zmovement(mut w: scaled, mut o: eightbits) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprunemovements(mut l_0: integer) {
+pub unsafe fn zprunemovements(mut l_0: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     while downptr as ::core::ffi::c_long != -(268435455 as ::core::ffi::c_long) {
@@ -22705,8 +22257,7 @@ pub unsafe extern "C" fn zprunemovements(mut l_0: integer) {
         zfreenode(p, 3 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zspecialout(mut p: halfword) {
+pub unsafe fn zspecialout(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
@@ -22894,8 +22445,7 @@ pub unsafe extern "C" fn zspecialout(mut p: halfword) {
         zflushlist(defref);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zwriteout(mut p: halfword) {
+pub unsafe fn zwriteout(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
@@ -23092,8 +22642,7 @@ pub unsafe extern "C" fn zwriteout(mut p: halfword) {
     }
     selector = oldsetting_0;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zoutwhat(mut p: halfword) {
+pub unsafe fn zoutwhat(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut j: smallnumber = 0;
@@ -23202,8 +22751,7 @@ pub unsafe extern "C" fn zoutwhat(mut p: halfword) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewedge(mut s: smallnumber, mut w: scaled) -> halfword {
+pub unsafe fn znewedge(mut s: smallnumber, mut w: scaled) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -23219,8 +22767,7 @@ pub unsafe extern "C" fn znewedge(mut s: smallnumber, mut w: scaled) -> halfword
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zzreverse(
+pub unsafe fn zzreverse(
     mut thisbox: halfword,
     mut t: halfword,
     mut curg: *mut scaled,
@@ -23565,8 +23112,7 @@ pub unsafe extern "C" fn zzreverse(
     Result = l_0;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn hlistout() {
+pub unsafe fn hlistout() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -24673,8 +24219,7 @@ pub unsafe extern "C" fn hlistout() {
     }
     curs -= 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn vlistout() {
+pub unsafe fn vlistout() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut leftedge: scaled = 0;
@@ -25101,8 +24646,7 @@ pub unsafe extern "C" fn vlistout() {
     }
     curs -= 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdvishipout(mut p: halfword) {
+pub unsafe fn zdvishipout(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut pageloc: integer = 0;
@@ -25517,43 +25061,37 @@ pub unsafe extern "C" fn zdvishipout(mut p: halfword) {
     }
     synctexteehs();
 }
-#[no_mangle]
-pub unsafe extern "C" fn getpdfcompresslevel() -> integer {
+pub unsafe fn getpdfcompresslevel() -> integer {
     let mut Result: integer = 0;
     let mut eqtb: *mut memoryword = zeqtb;
     Result = (*eqtb.offset(29343 as ::core::ffi::c_int as isize)).u.CINT;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getpdfsuppresswarningdupmap() -> integer {
+pub unsafe fn getpdfsuppresswarningdupmap() -> integer {
     let mut Result: integer = 0;
     let mut eqtb: *mut memoryword = zeqtb;
     Result = (*eqtb.offset(29371 as ::core::ffi::c_int as isize)).u.CINT;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getpdfsuppresswarningpagegroup() -> integer {
+pub unsafe fn getpdfsuppresswarningpagegroup() -> integer {
     let mut Result: integer = 0;
     let mut eqtb: *mut memoryword = zeqtb;
     Result = (*eqtb.offset(29372 as ::core::ffi::c_int as isize)).u.CINT;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getpdfsuppressptexinfo() -> integer {
+pub unsafe fn getpdfsuppressptexinfo() -> integer {
     let mut Result: integer = 0;
     let mut eqtb: *mut memoryword = zeqtb;
     Result = (*eqtb.offset(29374 as ::core::ffi::c_int as isize)).u.CINT;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getpdfomitcharset() -> integer {
+pub unsafe fn getpdfomitcharset() -> integer {
     let mut Result: integer = 0;
     let mut eqtb: *mut memoryword = zeqtb;
     Result = (*eqtb.offset(29375 as ::core::ffi::c_int as isize)).u.CINT;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getptexuseunderscore() -> boolean {
+pub unsafe fn getptexuseunderscore() -> boolean {
     let mut Result: boolean = 0;
     let mut eqtb: *mut memoryword = zeqtb;
     Result = ((*eqtb.offset(29378 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int
@@ -25561,54 +25099,46 @@ pub unsafe extern "C" fn getptexuseunderscore() -> boolean {
         as ::core::ffi::c_int as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getnullfont() -> internalfontnumber {
+pub unsafe fn getnullfont() -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     Result = 0 as ::core::ffi::c_int as internalfontnumber;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getfontbase() -> internalfontnumber {
+pub unsafe fn getfontbase() -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     Result = 0 as ::core::ffi::c_int as internalfontnumber;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getnullcs() -> halfword {
+pub unsafe fn getnullcs() -> halfword {
     let mut Result: halfword = 0;
     Result = 513 as ::core::ffi::c_int as halfword;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getnullptr() -> halfword {
+pub unsafe fn getnullptr() -> halfword {
     let mut Result: halfword = 0;
     Result = -(268435455 as ::core::ffi::c_long) as halfword;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgettexint(mut code: integer) -> integer {
+pub unsafe fn zgettexint(mut code: integer) -> integer {
     let mut Result: integer = 0;
     let mut eqtb: *mut memoryword = zeqtb;
     Result = (*eqtb.offset((29277 as integer + code) as isize)).u.CINT;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgettexdimen(mut code: integer) -> scaled {
+pub unsafe fn zgettexdimen(mut code: integer) -> scaled {
     let mut Result: scaled = 0;
     let mut eqtb: *mut memoryword = zeqtb;
     Result = (*eqtb.offset((29903 as integer + code) as isize)).u.CINT as scaled;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetxheight(mut f_0: internalfontnumber) -> scaled {
+pub unsafe fn zgetxheight(mut f_0: internalfontnumber) -> scaled {
     let mut Result: scaled = 0;
     Result = (*fontinfo.offset((5 as integer + *parambase.offset(f_0 as isize)) as isize))
         .u
         .CINT as scaled;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetcharwidth(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
+pub unsafe fn zgetcharwidth(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
     let mut Result: scaled = 0;
     if *fontbc.offset(f_0 as isize) as ::core::ffi::c_int <= c_0 as ::core::ffi::c_int
         && c_0 as ::core::ffi::c_int <= *fontec.offset(f_0 as isize) as ::core::ffi::c_int
@@ -25640,8 +25170,7 @@ pub unsafe extern "C" fn zgetcharwidth(mut f_0: internalfontnumber, mut c_0: eig
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetcharheight(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
+pub unsafe fn zgetcharheight(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
     let mut Result: scaled = 0;
     if *fontbc.offset(f_0 as isize) as ::core::ffi::c_int <= c_0 as ::core::ffi::c_int
         && c_0 as ::core::ffi::c_int <= *fontec.offset(f_0 as isize) as ::core::ffi::c_int
@@ -25674,8 +25203,7 @@ pub unsafe extern "C" fn zgetcharheight(mut f_0: internalfontnumber, mut c_0: ei
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetchardepth(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
+pub unsafe fn zgetchardepth(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
     let mut Result: scaled = 0;
     if *fontbc.offset(f_0 as isize) as ::core::ffi::c_int <= c_0 as ::core::ffi::c_int
         && c_0 as ::core::ffi::c_int <= *fontec.offset(f_0 as isize) as ::core::ffi::c_int
@@ -25708,24 +25236,21 @@ pub unsafe extern "C" fn zgetchardepth(mut f_0: internalfontnumber, mut c_0: eig
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetquad(mut f_0: internalfontnumber) -> scaled {
+pub unsafe fn zgetquad(mut f_0: internalfontnumber) -> scaled {
     let mut Result: scaled = 0;
     Result = (*fontinfo.offset((6 as integer + *parambase.offset(f_0 as isize)) as isize))
         .u
         .CINT as scaled;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetslant(mut f_0: internalfontnumber) -> scaled {
+pub unsafe fn zgetslant(mut f_0: internalfontnumber) -> scaled {
     let mut Result: scaled = 0;
     Result = (*fontinfo.offset((1 as integer + *parambase.offset(f_0 as isize)) as isize))
         .u
         .CINT as scaled;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zshortdisplayn(mut p: integer, mut m: integer) {
+pub unsafe fn zshortdisplayn(mut p: integer, mut m: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut n: integer = 0;
     let mut i: integer = 0;
@@ -25869,8 +25394,7 @@ pub unsafe extern "C" fn zshortdisplayn(mut p: integer, mut m: integer) {
     }
     fflush(crate::stdio::stdout());
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfgetmem(mut s: integer) -> integer {
+pub unsafe fn zpdfgetmem(mut s: integer) -> integer {
     let mut Result: integer = 0;
     let mut a: integer = 0;
     if s as ::core::ffi::c_long > suppdfmemsize - pdfmemptr as ::core::ffi::c_long {
@@ -25895,8 +25419,7 @@ pub unsafe extern "C" fn zpdfgetmem(mut s: integer) -> integer {
     pdfmemptr = pdfmemptr + s;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfixint(mut val: integer, mut min: integer, mut max: integer) -> integer {
+pub unsafe fn zfixint(mut val: integer, mut min: integer, mut max: integer) -> integer {
     let mut Result: integer = 0;
     if val < min {
         Result = min;
@@ -25907,8 +25430,7 @@ pub unsafe extern "C" fn zfixint(mut val: integer, mut min: integer, mut max: in
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn checkpdfversion() {
+pub unsafe fn checkpdfversion() {
     let mut eqtb: *mut memoryword = zeqtb;
     if pdfversionwritten == 0 {
         pdfversionwritten = true_0 as boolean;
@@ -26067,8 +25589,7 @@ pub unsafe extern "C" fn checkpdfversion() {
         zpdferror(1028 as ::core::ffi::c_int, 1029 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn ensurepdfopen() {
+pub unsafe fn ensurepdfopen() {
     if outputfilename != 0 as ::core::ffi::c_int {
         return;
     }
@@ -26083,8 +25604,7 @@ pub unsafe extern "C" fn ensurepdfopen() {
     }
     outputfilename = zbmakenamestring(pdffile);
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfflush() {
+pub unsafe fn pdfflush() {
     let mut savedpdfgone: longinteger = 0;
     if pdfosmode == 0 {
         savedpdfgone = pdfgone;
@@ -26128,8 +25648,7 @@ pub unsafe extern "C" fn pdfflush() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfbeginstream() {
+pub unsafe fn pdfbeginstream() {
     let mut eqtb: *mut memoryword = zeqtb;
     zpdfprint(1033 as ::core::ffi::c_int);
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
@@ -26202,8 +25721,7 @@ pub unsafe extern "C" fn pdfbeginstream() {
         pdfsaveoffset = pdfgone + pdfptr as longinteger;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfendstream() {
+pub unsafe fn pdfendstream() {
     if zipwritestate == 1 as ::core::ffi::c_int {
         zipwritestate = 2 as ::core::ffi::c_int as integer;
     } else {
@@ -26235,8 +25753,7 @@ pub unsafe extern "C" fn pdfendstream() {
     pdfptr += 1;
     pdfendobj();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zadvcharwidth(mut f_0: internalfontnumber, mut c_0: eightbits) {
+pub unsafe fn zadvcharwidth(mut f_0: internalfontnumber, mut c_0: eightbits) {
     let mut w: scaled = 0;
     let mut sout: scaled = 0;
     let mut s: integer = 0;
@@ -26289,8 +25806,7 @@ pub unsafe extern "C" fn zadvcharwidth(mut f_0: internalfontnumber, mut c_0: eig
         pdfdeltah = pdfdeltah + getpkcharwidth(f_0, w);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintreal(mut m: integer, mut d: integer) {
+pub unsafe fn zpdfprintreal(mut m: integer, mut d: integer) {
     if m < 0 as ::core::ffi::c_int {
         if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
             zpdfosgetosbuf(1 as ::core::ffi::c_int);
@@ -26334,8 +25850,7 @@ pub unsafe extern "C" fn zpdfprintreal(mut m: integer, mut d: integer) {
         zpdfprintint(m as longinteger);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintbp(mut s: scaled) {
+pub unsafe fn zpdfprintbp(mut s: scaled) {
     zpdfprintreal(
         zdividescaled(
             s,
@@ -26345,8 +25860,7 @@ pub unsafe extern "C" fn zpdfprintbp(mut s: scaled) {
         fixeddecimaldigits,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintmagbp(mut s: scaled) {
+pub unsafe fn zpdfprintmagbp(mut s: scaled) {
     let mut eqtb: *mut memoryword = zeqtb;
     preparemag();
     if (*eqtb.offset(29294 as ::core::ffi::c_int as isize)).u.CINT != 1000 as ::core::ffi::c_int {
@@ -26358,8 +25872,7 @@ pub unsafe extern "C" fn zpdfprintmagbp(mut s: scaled) {
     }
     zpdfprintbp(s);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfsetorigin(mut h: scaled, mut v: scaled) {
+pub unsafe fn zpdfsetorigin(mut h: scaled, mut v: scaled) {
     if (if h - pdforiginh >= 0 as ::core::ffi::c_int {
         h - pdforiginh
     } else {
@@ -26400,8 +25913,7 @@ pub unsafe extern "C" fn zpdfsetorigin(mut h: scaled, mut v: scaled) {
     pdftjstarth = pdfh;
     pdfv = pdforiginv;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfsetorigintemp(mut h: scaled, mut v: scaled) {
+pub unsafe fn zpdfsetorigintemp(mut h: scaled, mut v: scaled) {
     if (if h - pdforiginh >= 0 as ::core::ffi::c_int {
         h - pdforiginh
     } else {
@@ -26437,15 +25949,13 @@ pub unsafe extern "C" fn zpdfsetorigintemp(mut h: scaled, mut v: scaled) {
         pdfptr += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfendstring() {
+pub unsafe fn pdfendstring() {
     if pdfdoingstring != 0 {
         zpdfprint(1048 as ::core::ffi::c_int);
         pdfdoingstring = false_0 as boolean;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfendstringnl() {
+pub unsafe fn pdfendstringnl() {
     if pdfdoingstring != 0 {
         zpdfprint(1048 as ::core::ffi::c_int);
         if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
@@ -26460,8 +25970,7 @@ pub unsafe extern "C" fn pdfendstringnl() {
         pdfdoingstring = false_0 as boolean;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetfontautoexpandratio(mut f_0: internalfontnumber) -> integer {
+pub unsafe fn zgetfontautoexpandratio(mut f_0: internalfontnumber) -> integer {
     let mut Result: integer = 0;
     if *pdffontautoexpand.offset(f_0 as isize) != 0 {
         Result = *pdffontexpandratio.offset(f_0 as isize);
@@ -26470,12 +25979,7 @@ pub unsafe extern "C" fn zgetfontautoexpandratio(mut f_0: internalfontnumber) ->
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfsettextpos(
-    mut v: scaled,
-    mut vout: scaled,
-    mut f_0: internalfontnumber,
-) {
+pub unsafe fn zpdfsettextpos(mut v: scaled, mut vout: scaled, mut f_0: internalfontnumber) {
     let mut pdfnewTma: integer = 0;
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
         zpdfosgetosbuf(1 as ::core::ffi::c_int);
@@ -26537,8 +26041,7 @@ pub unsafe extern "C" fn zpdfsettextpos(
     pdftjstarth = pdfh;
     pdfdeltah = 0 as ::core::ffi::c_int as scaled;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfusefont(mut f_0: internalfontnumber, mut fontnum: integer) {
+pub unsafe fn zpdfusefont(mut f_0: internalfontnumber, mut fontnum: integer) {
     let mut eqtb: *mut memoryword = zeqtb;
     zdividescaled(
         *fontsize.offset(f_0 as isize),
@@ -26574,8 +26077,7 @@ pub unsafe extern "C" fn zpdfusefont(mut f_0: internalfontnumber, mut fontnum: i
             0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfinitfont(mut f_0: internalfontnumber) {
+pub unsafe fn zpdfinitfont(mut f_0: internalfontnumber) {
     let mut k: internalfontnumber = 0;
     let mut b: internalfontnumber = 0;
     let mut i: integer = 0;
@@ -26660,12 +26162,10 @@ pub unsafe extern "C" fn zpdfinitfont(mut f_0: internalfontnumber) {
         as boolean;
     zpdfusefont(f_0, objptr);
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfinitfontcurval() {
+pub unsafe fn pdfinitfontcurval() {
     zpdfinitfont(curval);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfsetfont(mut f_0: internalfontnumber) {
+pub unsafe fn zpdfsetfont(mut f_0: internalfontnumber) {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -26734,8 +26234,7 @@ pub unsafe extern "C" fn zpdfsetfont(mut f_0: internalfontnumber) {
     pdflastf = k;
     pdflastfs = *fontsize.offset(f_0 as isize) as internalfontnumber;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfbegintext() {
+pub unsafe fn pdfbegintext() {
     zpdfsetorigin(0 as ::core::ffi::c_int, curpageheight);
     zpdfprint(1057 as ::core::ffi::c_int);
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
@@ -26754,8 +26253,7 @@ pub unsafe extern "C" fn pdfbegintext() {
     pdfdoingstring = false_0 as boolean;
     pdfcurTma = 0 as ::core::ffi::c_int as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfreaddummyfont() {
+pub unsafe fn pdfreaddummyfont() {
     if pdfdummyfont == 0 as ::core::ffi::c_int {
         pdfdummyfont = zreadfontinfo(
             513 as ::core::ffi::c_int,
@@ -26771,14 +26269,12 @@ pub unsafe extern "C" fn pdfreaddummyfont() {
             as eightbits;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfinsertinterwordspace() {
+pub unsafe fn pdfinsertinterwordspace() {
     pdfreaddummyfont();
     zpdfsetfont(pdfdummyfont);
     zpdfprint(1058 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfbeginstring(mut f_0: internalfontnumber) {
+pub unsafe fn zpdfbeginstring(mut f_0: internalfontnumber) {
     let mut sout: scaled = 0;
     let mut v: scaled = 0;
     let mut vout: scaled = 0;
@@ -26955,8 +26451,7 @@ pub unsafe extern "C" fn zpdfbeginstring(mut f_0: internalfontnumber) {
     }
     pdfdoingstring = true_0 as boolean;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfinsertfakespace() {
+pub unsafe fn pdfinsertfakespace() {
     let mut s: integer = 0;
     s = genfakedinterwordspace as integer;
     genfakedinterwordspace = 0 as ::core::ffi::c_int as boolean;
@@ -26967,8 +26462,7 @@ pub unsafe extern "C" fn pdfinsertfakespace() {
     pdfendstringnl();
     genfakedinterwordspace = s as boolean;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfendtext() {
+pub unsafe fn pdfendtext() {
     if pdfdoingtext != 0 {
         pdfendstringnl();
         zpdfprint(1060 as ::core::ffi::c_int);
@@ -26984,8 +26478,7 @@ pub unsafe extern "C" fn pdfendtext() {
         pdfdoingtext = false_0 as boolean;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfsetrule(mut x: scaled, mut y: scaled, mut w: scaled, mut h: scaled) {
+pub unsafe fn zpdfsetrule(mut x: scaled, mut y: scaled, mut w: scaled, mut h: scaled) {
     pdfendtext();
     zpdfprint(113 as ::core::ffi::c_int);
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
@@ -27075,8 +26568,7 @@ pub unsafe extern "C" fn zpdfsetrule(mut x: scaled, mut y: scaled, mut w: scaled
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfrectangle(
+pub unsafe fn zpdfrectangle(
     mut left: scaled,
     mut top: scaled,
     mut right: scaled,
@@ -27126,8 +26618,7 @@ pub unsafe extern "C" fn zpdfrectangle(
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zslowprintsubstr(mut s: integer, mut maxlen: integer) {
+pub unsafe fn zslowprintsubstr(mut s: integer, mut maxlen: integer) {
     let mut j: poolpointer = 0;
     if s >= strptr || s < 256 as ::core::ffi::c_int {
         zprint(s);
@@ -27144,8 +26635,7 @@ pub unsafe extern "C" fn zslowprintsubstr(mut s: integer, mut maxlen: integer) {
         zprint(277 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zliteral(mut s: strnumber, mut literalmode: integer, mut warn: boolean) {
+pub unsafe fn zliteral(mut s: strnumber, mut literalmode: integer, mut warn: boolean) {
     let mut j: poolpointer = 0;
     j = *strstart.offset(s as isize);
     if literalmode == 3 as ::core::ffi::c_int {
@@ -27233,8 +26723,7 @@ pub unsafe extern "C" fn zliteral(mut s: strnumber, mut literalmode: integer, mu
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintfwint(mut n: longinteger, mut w: integer) {
+pub unsafe fn zpdfprintfwint(mut n: longinteger, mut w: integer) {
     let mut k: integer = 0;
     k = 0 as ::core::ffi::c_int as integer;
     loop {
@@ -27259,8 +26748,7 @@ pub unsafe extern "C" fn zpdfprintfwint(mut n: longinteger, mut w: integer) {
         pdfptr += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfoutbytes(mut n: longinteger, mut w: integer) {
+pub unsafe fn zpdfoutbytes(mut n: longinteger, mut w: integer) {
     let mut k: integer = 0;
     let mut byte: [integer; 8] = [0; 8];
     k = 0 as ::core::ffi::c_int as integer;
@@ -27285,8 +26773,7 @@ pub unsafe extern "C" fn zpdfoutbytes(mut n: longinteger, mut w: integer) {
         pdfptr += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfintentry(mut s: strnumber, mut v: integer) {
+pub unsafe fn zpdfintentry(mut s: strnumber, mut v: integer) {
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
         zpdfosgetosbuf(1 as ::core::ffi::c_int);
     } else if pdfosmode == 0 && 1 as ::core::ffi::c_int > pdfbufsize {
@@ -27308,8 +26795,7 @@ pub unsafe extern "C" fn zpdfintentry(mut s: strnumber, mut v: integer) {
     pdfptr += 1;
     zpdfprintint(v as longinteger);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfintentryln(mut s: strnumber, mut v: integer) {
+pub unsafe fn zpdfintentryln(mut s: strnumber, mut v: integer) {
     zpdfintentry(s, v);
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
         zpdfosgetosbuf(1 as ::core::ffi::c_int);
@@ -27321,8 +26807,7 @@ pub unsafe extern "C" fn zpdfintentryln(mut s: strnumber, mut v: integer) {
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfindirect(mut s: strnumber, mut o: integer) {
+pub unsafe fn zpdfindirect(mut s: strnumber, mut o: integer) {
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
         zpdfosgetosbuf(1 as ::core::ffi::c_int);
     } else if pdfosmode == 0 && 1 as ::core::ffi::c_int > pdfbufsize {
@@ -27345,8 +26830,7 @@ pub unsafe extern "C" fn zpdfindirect(mut s: strnumber, mut o: integer) {
     zpdfprintint(o as longinteger);
     zpdfprint(1087 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfindirectln(mut s: strnumber, mut o: integer) {
+pub unsafe fn zpdfindirectln(mut s: strnumber, mut o: integer) {
     zpdfindirect(s, o);
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
         zpdfosgetosbuf(1 as ::core::ffi::c_int);
@@ -27358,8 +26842,7 @@ pub unsafe extern "C" fn zpdfindirectln(mut s: strnumber, mut o: integer) {
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintstr(mut s: strnumber) {
+pub unsafe fn zpdfprintstr(mut s: strnumber) {
     let mut current_block: u64;
     let mut i: poolpointer = 0;
     let mut j: poolpointer = 0;
@@ -27459,8 +26942,7 @@ pub unsafe extern "C" fn zpdfprintstr(mut s: strnumber) {
         pdfptr += 1;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintstrln(mut s: strnumber) {
+pub unsafe fn zpdfprintstrln(mut s: strnumber) {
     zpdfprintstr(s);
     if pdfosmode != 0 && 1 as integer + pdfptr > pdfbufsize {
         zpdfosgetosbuf(1 as ::core::ffi::c_int);
@@ -27472,8 +26954,7 @@ pub unsafe extern "C" fn zpdfprintstrln(mut s: strnumber) {
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfstrentry(mut s: strnumber, mut v: strnumber) {
+pub unsafe fn zpdfstrentry(mut s: strnumber, mut v: strnumber) {
     if v == 0 as ::core::ffi::c_int {
         return;
     }
@@ -27498,8 +26979,7 @@ pub unsafe extern "C" fn zpdfstrentry(mut s: strnumber, mut v: strnumber) {
     pdfptr += 1;
     zpdfprintstr(v);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfstrentryln(mut s: strnumber, mut v: strnumber) {
+pub unsafe fn zpdfstrentryln(mut s: strnumber, mut v: strnumber) {
     if v == 0 as ::core::ffi::c_int {
         return;
     }
@@ -27514,12 +26994,7 @@ pub unsafe extern "C" fn zpdfstrentryln(mut s: strnumber, mut v: strnumber) {
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsettagcode(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-    mut i: integer,
-) {
+pub unsafe fn zsettagcode(mut f_0: internalfontnumber, mut c_0: eightbits, mut i: integer) {
     let mut fixedi: integer = 0;
     if *fontbc.offset(f_0 as isize) as ::core::ffi::c_int <= c_0 as ::core::ffi::c_int
         && c_0 as ::core::ffi::c_int <= *fontec.offset(f_0 as isize) as ::core::ffi::c_int
@@ -27640,8 +27115,7 @@ pub unsafe extern "C" fn zsettagcode(
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetnoligatures(mut f_0: internalfontnumber) {
+pub unsafe fn zsetnoligatures(mut f_0: internalfontnumber) {
     let mut c_0: integer = 0;
     let mut for_end: integer = 0;
     c_0 = *fontbc.offset(f_0 as isize) as integer;
@@ -27683,8 +27157,7 @@ pub unsafe extern "C" fn zsetnoligatures(mut f_0: internalfontnumber) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zinitfontbase(mut v: integer) -> integer {
+pub unsafe fn zinitfontbase(mut v: integer) -> integer {
     let mut Result: integer = 0;
     let mut i: integer = 0;
     let mut j: integer = 0;
@@ -27705,12 +27178,7 @@ pub unsafe extern "C" fn zinitfontbase(mut v: integer) -> integer {
     Result = i;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetlpcode(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-    mut i: integer,
-) {
+pub unsafe fn zsetlpcode(mut f_0: internalfontnumber, mut c_0: eightbits, mut i: integer) {
     if *pdffontlpbase.offset(f_0 as isize) == 0 as ::core::ffi::c_int {
         *pdffontlpbase.offset(f_0 as isize) = zinitfontbase(0 as ::core::ffi::c_int);
     }
@@ -27719,12 +27187,7 @@ pub unsafe extern "C" fn zsetlpcode(
             as isize,
     ) = zfixint(i, -(1000 as ::core::ffi::c_int), 1000 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetrpcode(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-    mut i: integer,
-) {
+pub unsafe fn zsetrpcode(mut f_0: internalfontnumber, mut c_0: eightbits, mut i: integer) {
     if *pdffontrpbase.offset(f_0 as isize) == 0 as ::core::ffi::c_int {
         *pdffontrpbase.offset(f_0 as isize) = zinitfontbase(0 as ::core::ffi::c_int);
     }
@@ -27733,12 +27196,7 @@ pub unsafe extern "C" fn zsetrpcode(
             as isize,
     ) = zfixint(i, -(1000 as ::core::ffi::c_int), 1000 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetefcode(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-    mut i: integer,
-) {
+pub unsafe fn zsetefcode(mut f_0: internalfontnumber, mut c_0: eightbits, mut i: integer) {
     if *pdffontefbase.offset(f_0 as isize) == 0 as ::core::ffi::c_int {
         *pdffontefbase.offset(f_0 as isize) = zinitfontbase(1000 as ::core::ffi::c_int);
     }
@@ -27747,12 +27205,7 @@ pub unsafe extern "C" fn zsetefcode(
             as isize,
     ) = zfixint(i, 0 as ::core::ffi::c_int, 1000 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetknbscode(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-    mut i: integer,
-) {
+pub unsafe fn zsetknbscode(mut f_0: internalfontnumber, mut c_0: eightbits, mut i: integer) {
     if *pdffontknbsbase.offset(f_0 as isize) == 0 as ::core::ffi::c_int {
         *pdffontknbsbase.offset(f_0 as isize) = zinitfontbase(0 as ::core::ffi::c_int);
     }
@@ -27761,12 +27214,7 @@ pub unsafe extern "C" fn zsetknbscode(
             as isize,
     ) = zfixint(i, -(1000 as ::core::ffi::c_int), 1000 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetstbscode(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-    mut i: integer,
-) {
+pub unsafe fn zsetstbscode(mut f_0: internalfontnumber, mut c_0: eightbits, mut i: integer) {
     if *pdffontstbsbase.offset(f_0 as isize) == 0 as ::core::ffi::c_int {
         *pdffontstbsbase.offset(f_0 as isize) = zinitfontbase(0 as ::core::ffi::c_int);
     }
@@ -27775,12 +27223,7 @@ pub unsafe extern "C" fn zsetstbscode(
             as isize,
     ) = zfixint(i, -(1000 as ::core::ffi::c_int), 1000 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetshbscode(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-    mut i: integer,
-) {
+pub unsafe fn zsetshbscode(mut f_0: internalfontnumber, mut c_0: eightbits, mut i: integer) {
     if *pdffontshbsbase.offset(f_0 as isize) == 0 as ::core::ffi::c_int {
         *pdffontshbsbase.offset(f_0 as isize) = zinitfontbase(0 as ::core::ffi::c_int);
     }
@@ -27789,12 +27232,7 @@ pub unsafe extern "C" fn zsetshbscode(
             as isize,
     ) = zfixint(i, -(1000 as ::core::ffi::c_int), 1000 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetknbccode(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-    mut i: integer,
-) {
+pub unsafe fn zsetknbccode(mut f_0: internalfontnumber, mut c_0: eightbits, mut i: integer) {
     if *pdffontknbcbase.offset(f_0 as isize) == 0 as ::core::ffi::c_int {
         *pdffontknbcbase.offset(f_0 as isize) = zinitfontbase(0 as ::core::ffi::c_int);
     }
@@ -27803,12 +27241,7 @@ pub unsafe extern "C" fn zsetknbccode(
             as isize,
     ) = zfixint(i, -(1000 as ::core::ffi::c_int), 1000 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetknaccode(
-    mut f_0: internalfontnumber,
-    mut c_0: eightbits,
-    mut i: integer,
-) {
+pub unsafe fn zsetknaccode(mut f_0: internalfontnumber, mut c_0: eightbits, mut i: integer) {
     if *pdffontknacbase.offset(f_0 as isize) == 0 as ::core::ffi::c_int {
         *pdffontknacbase.offset(f_0 as isize) = zinitfontbase(0 as ::core::ffi::c_int);
     }
@@ -27817,8 +27250,7 @@ pub unsafe extern "C" fn zsetknaccode(
             as isize,
     ) = zfixint(i, -(1000 as ::core::ffi::c_int), 1000 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zadjustinterwordglue(mut p: halfword, mut g_0: halfword) {
+pub unsafe fn zadjustinterwordglue(mut p: halfword, mut g_0: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut kn: scaled = 0;
     let mut st: scaled = 0;
@@ -27959,8 +27391,7 @@ pub unsafe extern "C" fn zadjustinterwordglue(mut p: halfword, mut g_0: halfword
             .LH = q;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetautokern(
+pub unsafe fn zgetautokern(
     mut f_0: internalfontnumber,
     mut l_0: halfword,
     mut r: halfword,
@@ -28036,8 +27467,7 @@ pub unsafe extern "C" fn zgetautokern(
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zexpandfontname(mut f_0: internalfontnumber, mut e: integer) -> strnumber {
+pub unsafe fn zexpandfontname(mut f_0: internalfontnumber, mut e: integer) -> strnumber {
     let mut Result: strnumber = 0;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
     oldsetting_0 = selector;
@@ -28051,11 +27481,7 @@ pub unsafe extern "C" fn zexpandfontname(mut f_0: internalfontnumber, mut e: int
     Result = makestring();
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zautoexpandfont(
-    mut f_0: internalfontnumber,
-    mut e: integer,
-) -> internalfontnumber {
+pub unsafe fn zautoexpandfont(mut f_0: internalfontnumber, mut e: integer) -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     let mut k: internalfontnumber = 0;
     let mut nw: integer = 0;
@@ -28175,8 +27601,7 @@ pub unsafe extern "C" fn zautoexpandfont(
     Result = k;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcopyexpandparams(
+pub unsafe fn zcopyexpandparams(
     mut k: internalfontnumber,
     mut f_0: internalfontnumber,
     mut e: integer,
@@ -28218,8 +27643,7 @@ pub unsafe extern "C" fn zcopyexpandparams(
     *pdffontknbcbase.offset(k as isize) = *pdffontknbcbase.offset(f_0 as isize);
     *pdffontknacbase.offset(k as isize) = *pdffontknacbase.offset(f_0 as isize);
 }
-#[no_mangle]
-pub unsafe extern "C" fn ztfmlookup(mut s: strnumber, mut fs: scaled) -> internalfontnumber {
+pub unsafe fn ztfmlookup(mut s: strnumber, mut fs: scaled) -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     let mut k: internalfontnumber = 0;
     if fs != 0 as ::core::ffi::c_int {
@@ -28267,11 +27691,7 @@ pub unsafe extern "C" fn ztfmlookup(mut s: strnumber, mut fs: scaled) -> interna
     Result = 0 as ::core::ffi::c_int as internalfontnumber;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zloadexpandfont(
-    mut f_0: internalfontnumber,
-    mut e: integer,
-) -> internalfontnumber {
+pub unsafe fn zloadexpandfont(mut f_0: internalfontnumber, mut e: integer) -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     let mut s: strnumber = 0;
     let mut k: internalfontnumber = 0;
@@ -28295,8 +27715,7 @@ pub unsafe extern "C" fn zloadexpandfont(
     Result = k;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfixexpandvalue(mut f_0: internalfontnumber, mut e: integer) -> integer {
+pub unsafe fn zfixexpandvalue(mut f_0: internalfontnumber, mut e: integer) -> integer {
     let mut Result: integer = 0;
     let mut step: integer = 0;
     let mut maxexpand: integer = 0;
@@ -28327,11 +27746,7 @@ pub unsafe extern "C" fn zfixexpandvalue(mut f_0: internalfontnumber, mut e: int
     Result = e;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetexpandfont(
-    mut f_0: internalfontnumber,
-    mut e: integer,
-) -> internalfontnumber {
+pub unsafe fn zgetexpandfont(mut f_0: internalfontnumber, mut e: integer) -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     let mut k: internalfontnumber = 0;
     let cache_index = expand_font_cache_index(f_0, e);
@@ -28359,11 +27774,7 @@ pub unsafe extern "C" fn zgetexpandfont(
     Result = k;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zexpandfont(
-    mut f_0: internalfontnumber,
-    mut e: integer,
-) -> internalfontnumber {
+pub unsafe fn zexpandfont(mut f_0: internalfontnumber, mut e: integer) -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     Result = f_0;
     if e == 0 as ::core::ffi::c_int {
@@ -28379,8 +27790,7 @@ pub unsafe extern "C" fn zexpandfont(
     Result = zgetexpandfont(f_0, e);
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetexpandparams(
+pub unsafe fn zsetexpandparams(
     mut f_0: internalfontnumber,
     mut autoexpand: boolean,
     mut stretchlimit: integer,
@@ -28400,8 +27810,7 @@ pub unsafe extern "C" fn zsetexpandparams(
         *pdffontexpandratio.offset(f_0 as isize) = expandratio;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvfexpandlocalfonts(mut f_0: internalfontnumber) {
+pub unsafe fn zvfexpandlocalfonts(mut f_0: internalfontnumber) {
     let mut lf: internalfontnumber = 0;
     let mut k: integer = 0;
     if !(*pdffonttype.offset(f_0 as isize) as ::core::ffi::c_int == 1 as ::core::ffi::c_int)
@@ -28442,8 +27851,7 @@ pub unsafe extern "C" fn zvfexpandlocalfonts(mut f_0: internalfontnumber) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn readexpandfont() {
+pub unsafe fn readexpandfont() {
     let mut shrinklimit: integer = 0;
     let mut stretchlimit: integer = 0;
     let mut fontstep: integer = 0;
@@ -28536,8 +27944,7 @@ pub unsafe extern "C" fn readexpandfont() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zletterspacefont(
+pub unsafe fn zletterspacefont(
     mut u: halfword,
     mut f_0: internalfontnumber,
     mut e: integer,
@@ -28736,8 +28143,7 @@ pub unsafe extern "C" fn zletterspacefont(
     Result = k;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewletterspacedfont(mut a: smallnumber) {
+pub unsafe fn znewletterspacedfont(mut a: smallnumber) {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut u: halfword = 0;
     let mut t: strnumber = 0;
@@ -28800,8 +28206,7 @@ pub unsafe extern "C" fn znewletterspacedfont(mut a: smallnumber) {
         .v
         .RH = t as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zisletterspacedfont(mut f_0: internalfontnumber) -> boolean {
+pub unsafe fn zisletterspacedfont(mut f_0: internalfontnumber) -> boolean {
     let mut Result: boolean = 0;
     let mut i: poolpointer = 0;
     let mut j: poolpointer = 0;
@@ -28841,8 +28246,7 @@ pub unsafe extern "C" fn zisletterspacedfont(mut f_0: internalfontnumber) -> boo
     Result = true_0 as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcopyfontinfo(mut f_0: internalfontnumber) -> internalfontnumber {
+pub unsafe fn zcopyfontinfo(mut f_0: internalfontnumber) -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     let mut lf: halfword = 0;
     let mut bc: halfword = 0;
@@ -28920,8 +28324,7 @@ pub unsafe extern "C" fn zcopyfontinfo(mut f_0: internalfontnumber) -> internalf
     Result = k;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakefontcopy(mut a: smallnumber) {
+pub unsafe fn zmakefontcopy(mut a: smallnumber) {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut u: halfword = 0;
     let mut t: strnumber = 0;
@@ -28975,8 +28378,7 @@ pub unsafe extern "C" fn zmakefontcopy(mut a: smallnumber) {
         .v
         .RH = t as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvferror(mut filename: strnumber, mut msg: strnumber) {
+pub unsafe fn zvferror(mut filename: strnumber, mut msg: strnumber) {
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
     let mut s: strnumber = 0;
     if poolptr as ::core::ffi::c_int
@@ -28999,8 +28401,7 @@ pub unsafe extern "C" fn zvferror(mut filename: strnumber, mut msg: strnumber) {
     selector = oldsetting_0;
     zpdferror(s, msg);
 }
-#[no_mangle]
-pub unsafe extern "C" fn vfbyte() -> eightbits {
+pub unsafe fn vfbyte() -> eightbits {
     let mut Result: eightbits = 0;
     let mut i: integer = 0;
     i = fast_fgetc(vffile as *mut FILE) as integer;
@@ -29010,8 +28411,7 @@ pub unsafe extern "C" fn vfbyte() -> eightbits {
     Result = i as eightbits;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvfreadsigned(mut k: integer) -> integer {
+pub unsafe fn zvfreadsigned(mut k: integer) -> integer {
     let mut Result: integer = 0;
     let mut i: integer = 0;
     if !(k > 0 as ::core::ffi::c_int && k <= 4 as ::core::ffi::c_int) as ::core::ffi::c_int
@@ -29039,8 +28439,7 @@ pub unsafe extern "C" fn zvfreadsigned(mut k: integer) -> integer {
     Result = i;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvfreadunsigned(mut k: integer) -> integer {
+pub unsafe fn zvfreadunsigned(mut k: integer) -> integer {
     let mut Result: integer = 0;
     let mut i: integer = 0;
     if !(k > 0 as ::core::ffi::c_int && k <= 4 as ::core::ffi::c_int) as ::core::ffi::c_int
@@ -29068,8 +28467,7 @@ pub unsafe extern "C" fn zvfreadunsigned(mut k: integer) -> integer {
     Result = i;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvflocalfontwarning(
+pub unsafe fn zvflocalfontwarning(
     mut f_0: internalfontnumber,
     mut k: internalfontnumber,
     mut s: strnumber,
@@ -29081,8 +28479,7 @@ pub unsafe extern "C" fn zvflocalfontwarning(
     zprint(*fontname.offset(f_0 as isize));
     zprint(1118 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvfdeffont(mut f_0: internalfontnumber) -> internalfontnumber {
+pub unsafe fn zvfdeffont(mut f_0: internalfontnumber) -> internalfontnumber {
     let mut Result: internalfontnumber = 0;
     let mut k: internalfontnumber = 0;
     let mut s: strnumber = 0;
@@ -29169,8 +28566,7 @@ pub unsafe extern "C" fn zvfdeffont(mut f_0: internalfontnumber) -> internalfont
     Result = k;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdovf(mut f_0: internalfontnumber) {
+pub unsafe fn zdovf(mut f_0: internalfontnumber) {
     let mut cmd: integer = 0;
     let mut k: integer = 0;
     let mut n: integer = 0;
@@ -29484,8 +28880,7 @@ pub unsafe extern "C" fn zdovf(mut f_0: internalfontnumber) {
     close_file_or_pipe(vffile as *mut FILE);
     *pdffonttype.offset(f_0 as isize) = 1 as eightbits;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfcheckvfcurval() {
+pub unsafe fn pdfcheckvfcurval() {
     let mut f_0: internalfontnumber = 0;
     f_0 = curval as internalfontnumber;
     zdovf(f_0);
@@ -29493,8 +28888,7 @@ pub unsafe extern "C" fn pdfcheckvfcurval() {
         zpdferror(604 as ::core::ffi::c_int, 1139 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zautoexpandvf(mut f_0: internalfontnumber) -> boolean {
+pub unsafe fn zautoexpandvf(mut f_0: internalfontnumber) -> boolean {
     let mut Result: boolean = 0;
     let mut bf: internalfontnumber = 0;
     let mut lf: internalfontnumber = 0;
@@ -29544,8 +28938,7 @@ pub unsafe extern "C" fn zautoexpandvf(mut f_0: internalfontnumber) -> boolean {
     Result = true_0 as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpacketreadsigned(mut k: integer) -> integer {
+pub unsafe fn zpacketreadsigned(mut k: integer) -> integer {
     let mut Result: integer = 0;
     let mut i: integer = 0;
     if !(k > 0 as ::core::ffi::c_int && k <= 4 as ::core::ffi::c_int) as ::core::ffi::c_int
@@ -29573,8 +28966,7 @@ pub unsafe extern "C" fn zpacketreadsigned(mut k: integer) -> integer {
     Result = i;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpacketreadunsigned(mut k: integer) -> integer {
+pub unsafe fn zpacketreadunsigned(mut k: integer) -> integer {
     let mut Result: integer = 0;
     let mut i: integer = 0;
     if !(k > 0 as ::core::ffi::c_int && k <= 4 as ::core::ffi::c_int) as ::core::ffi::c_int
@@ -29602,14 +28994,12 @@ pub unsafe extern "C" fn zpacketreadunsigned(mut k: integer) -> integer {
     Result = i;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpacketscaled(mut k: integer, mut fs: scaled) -> scaled {
+pub unsafe fn zpacketscaled(mut k: integer, mut fs: scaled) -> scaled {
     let mut Result: scaled = 0;
     Result = zstorescaledf(zpacketreadsigned(k), fs);
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdovfpacket(mut vff: internalfontnumber, mut c_0: eightbits) {
+pub unsafe fn zdovfpacket(mut vff: internalfontnumber, mut c_0: eightbits) {
     let mut f_0: internalfontnumber = 0;
     let mut k: internalfontnumber = 0;
     let mut n: internalfontnumber = 0;
@@ -29863,8 +29253,7 @@ pub unsafe extern "C" fn zdovfpacket(mut vff: internalfontnumber, mut c_0: eight
     curh = savecurh;
     vfcurs -= 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfoutliteral(mut p: halfword) {
+pub unsafe fn zpdfoutliteral(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
     let mut s: strnumber = 0;
@@ -29944,8 +29333,7 @@ pub unsafe extern "C" fn zpdfoutliteral(mut p: halfword) {
         zflushlist(defref);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfoutcolorstack(mut p: halfword) {
+pub unsafe fn zpdfoutcolorstack(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
     let mut s: strnumber = 0;
@@ -30017,8 +29405,7 @@ pub unsafe extern "C" fn zpdfoutcolorstack(mut p: halfword) {
         zflushstr(s);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfoutcolorstackstartpage() {
+pub unsafe fn pdfoutcolorstackstartpage() {
     let mut i: integer = 0;
     let mut max: integer = 0;
     let mut startstatus: integer = 0;
@@ -30040,8 +29427,7 @@ pub unsafe extern "C" fn pdfoutcolorstackstartpage() {
         i += 1;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfoutsetmatrix(mut p: halfword) {
+pub unsafe fn zpdfoutsetmatrix(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
     let mut s: strnumber = 0;
@@ -30101,8 +29487,7 @@ pub unsafe extern "C" fn zpdfoutsetmatrix(mut p: halfword) {
     }
     zflushstr(s);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfoutsave(mut p: halfword) {
+pub unsafe fn zpdfoutsave(mut p: halfword) {
     checkpdfsave(curh as ::core::ffi::c_int, curv as ::core::ffi::c_int);
     zliteral(
         113 as ::core::ffi::c_int,
@@ -30110,8 +29495,7 @@ pub unsafe extern "C" fn zpdfoutsave(mut p: halfword) {
         0 as ::core::ffi::c_int,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfoutrestore(mut p: halfword) {
+pub unsafe fn zpdfoutrestore(mut p: halfword) {
     checkpdfrestore(curh as ::core::ffi::c_int, curv as ::core::ffi::c_int);
     zliteral(
         81 as ::core::ffi::c_int,
@@ -30119,8 +29503,7 @@ pub unsafe extern "C" fn zpdfoutrestore(mut p: halfword) {
         0 as ::core::ffi::c_int,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfspecial(mut p: halfword) {
+pub unsafe fn zpdfspecial(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
     let mut s: strnumber = 0;
@@ -30194,8 +29577,7 @@ pub unsafe extern "C" fn zpdfspecial(mut p: halfword) {
         zflushlist(defref);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprinttoks(mut p: halfword) {
+pub unsafe fn zpdfprinttoks(mut p: halfword) {
     let mut s: strnumber = 0;
     s = ztokenstostring(p);
     if *strstart.offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize)
@@ -30206,8 +29588,7 @@ pub unsafe extern "C" fn zpdfprinttoks(mut p: halfword) {
     }
     zflushstr(s);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprinttoksln(mut p: halfword) {
+pub unsafe fn zpdfprinttoksln(mut p: halfword) {
     let mut s: strnumber = 0;
     s = ztokenstostring(p);
     if *strstart.offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize)
@@ -30227,8 +29608,7 @@ pub unsafe extern "C" fn zpdfprinttoksln(mut p: halfword) {
     }
     zflushstr(s);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfwriteobj(mut n: integer) {
+pub unsafe fn zpdfwriteobj(mut n: integer) {
     let mut s: strnumber = 0;
     let mut f_0: bytefile = ::core::ptr::null_mut::<FILE>();
     s = ztokenstostring(*pdfmem.offset(
@@ -30357,8 +29737,7 @@ pub unsafe extern "C" fn zpdfwriteobj(mut n: integer) {
     }
     zflushstr(s);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zflushwhatsitnode(mut p: halfword, mut s: smallnumber) {
+pub unsafe fn zflushwhatsitnode(mut p: halfword, mut s: smallnumber) {
     let mut mem: *mut memoryword = zmem;
     (*mem.offset(p as isize)).hh.u.B0 = 8 as ::core::ffi::c_short;
     (*mem.offset(p as isize)).hh.u.B1 = s as ::core::ffi::c_short;
@@ -30369,8 +29748,7 @@ pub unsafe extern "C" fn zflushwhatsitnode(mut p: halfword, mut s: smallnumber) 
     }
     zflushnodelist(p);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfwriteimage(mut n: integer) {
+pub unsafe fn zpdfwriteimage(mut n: integer) {
     zpdfbegindict(n, 0 as ::core::ffi::c_int);
     if *pdfmem.offset(
         ((*objtab.offset(n as isize)).int4 as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
@@ -30402,8 +29780,7 @@ pub unsafe extern "C" fn zpdfwriteimage(mut n: integer) {
             as isize,
     ));
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfprintrectspec(mut r: halfword) {
+pub unsafe fn zpdfprintrectspec(mut r: halfword) {
     let mut mem: *mut memoryword = zmem;
     zpdfprintmagbp(
         (*mem.offset((r as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
@@ -30457,8 +29834,7 @@ pub unsafe extern "C" fn zpdfprintrectspec(mut r: halfword) {
                 .CINT,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn zwarndestdup(
+pub unsafe fn zwarndestdup(
     mut id: integer,
     mut byname: smallnumber,
     mut s1: strnumber,
@@ -30486,8 +29862,7 @@ pub unsafe extern "C" fn zwarndestdup(
     println();
     showcontext();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zwriteaction(mut p: halfword) {
+pub unsafe fn zwriteaction(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut s: strnumber = 0;
     let mut d: integer = 0;
@@ -30727,8 +30102,7 @@ pub unsafe extern "C" fn zwriteaction(mut p: halfword) {
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetrectdimens(
+pub unsafe fn zsetrectdimens(
     mut p: halfword,
     mut parentbox: halfword,
     mut x: scaled,
@@ -30833,13 +30207,7 @@ pub unsafe extern "C" fn zsetrectdimens(
         .CINT as scaled
         + margin) as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdoannot(
-    mut p: halfword,
-    mut parentbox: halfword,
-    mut x: scaled,
-    mut y: scaled,
-) {
+pub unsafe fn zdoannot(mut p: halfword, mut parentbox: halfword, mut x: scaled, mut y: scaled) {
     let mut mem: *mut memoryword = zmem;
     if isshippingpage == 0 {
         zpdferror(1875 as ::core::ffi::c_int, 1960 as ::core::ffi::c_int);
@@ -30901,8 +30269,7 @@ pub unsafe extern "C" fn zdoannot(
         .int2 = -(1 as ::core::ffi::c_int) as longinteger;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpushlinklevel(mut p: halfword) {
+pub unsafe fn zpushlinklevel(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     if pdflinkstackptr as ::core::ffi::c_int >= pdfmaxlinklevel {
         zoverflow(1961 as ::core::ffi::c_int, 10 as ::core::ffi::c_int);
@@ -30926,8 +30293,7 @@ pub unsafe extern "C" fn zpushlinklevel(mut p: halfword) {
     pdflinkstack[pdflinkstackptr as usize].linknode = zcopynodelist(p);
     pdflinkstack[pdflinkstackptr as usize].reflinknode = p;
 }
-#[no_mangle]
-pub unsafe extern "C" fn poplinklevel() {
+pub unsafe fn poplinklevel() {
     if !(pdflinkstackptr as ::core::ffi::c_int > 0 as ::core::ffi::c_int) as ::core::ffi::c_int
         as ::core::ffi::c_long
         != 0
@@ -30943,13 +30309,7 @@ pub unsafe extern "C" fn poplinklevel() {
     zflushnodelist(pdflinkstack[pdflinkstackptr as usize].linknode);
     pdflinkstackptr = pdflinkstackptr.wrapping_sub(1);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdolink(
-    mut p: halfword,
-    mut parentbox: halfword,
-    mut x: scaled,
-    mut y: scaled,
-) {
+pub unsafe fn zdolink(mut p: halfword, mut parentbox: halfword, mut x: scaled, mut y: scaled) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     if isshippingpage == 0 {
@@ -31022,8 +30382,7 @@ pub unsafe extern "C" fn zdolink(
         .int2 = -(1 as ::core::ffi::c_int) as longinteger;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn endlink() {
+pub unsafe fn endlink() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -31077,8 +30436,7 @@ pub unsafe extern "C" fn endlink() {
     }
     poplinklevel();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zappendlink(
+pub unsafe fn zappendlink(
     mut parentbox: halfword,
     mut x: scaled,
     mut y: scaled,
@@ -31124,8 +30482,7 @@ pub unsafe extern "C" fn zappendlink(
     pdfappendlistarg = objptr;
     pdflinklist = zappendptr(pdflinklist, pdfappendlistarg);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zappendbead(mut p: halfword) {
+pub unsafe fn zappendbead(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut a: integer = 0;
     let mut b: integer = 0;
@@ -31209,13 +30566,7 @@ pub unsafe extern "C" fn zappendbead(mut p: halfword) {
     pdfappendlistarg = b;
     pdfbeadlist = zappendptr(pdfbeadlist, pdfappendlistarg);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdothread(
-    mut p: halfword,
-    mut parentbox: halfword,
-    mut x: scaled,
-    mut y: scaled,
-) {
+pub unsafe fn zdothread(mut p: halfword, mut parentbox: halfword, mut x: scaled, mut y: scaled) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     if doingleaders != 0 {
@@ -31275,8 +30626,7 @@ pub unsafe extern "C" fn zdothread(
     zappendbead(p);
     lastthread = p;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zappendthread(mut parentbox: halfword, mut x: scaled, mut y: scaled) {
+pub unsafe fn zappendthread(mut parentbox: halfword, mut x: scaled, mut y: scaled) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -31340,8 +30690,7 @@ pub unsafe extern "C" fn zappendthread(mut parentbox: halfword, mut x: scaled, m
     zappendbead(p);
     lastthread = p;
 }
-#[no_mangle]
-pub unsafe extern "C" fn endthread() {
+pub unsafe fn endthread() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     if pdfthreadlevel != curs {
@@ -31359,8 +30708,7 @@ pub unsafe extern "C" fn endthread() {
     }
     lastthread = -(268435455 as ::core::ffi::c_long) as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zopensubentries(mut p: halfword) -> integer {
+pub unsafe fn zopensubentries(mut p: halfword) -> integer {
     let mut Result: integer = 0;
     let mut k: integer = 0;
     let mut c_0: integer = 0;
@@ -31410,13 +30758,7 @@ pub unsafe extern "C" fn zopensubentries(mut p: halfword) -> integer {
     Result = k;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdodest(
-    mut p: halfword,
-    mut parentbox: halfword,
-    mut x: scaled,
-    mut y: scaled,
-) {
+pub unsafe fn zdodest(mut p: halfword, mut parentbox: halfword, mut x: scaled, mut y: scaled) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut k: integer = 0;
@@ -31577,8 +30919,7 @@ pub unsafe extern "C" fn zdodest(
         1 | 4 | _ => {}
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zoutform(mut p: halfword) {
+pub unsafe fn zoutform(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     synctexpdfrefxform(
         (*mem.offset((p as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize))
@@ -31680,8 +31021,7 @@ pub unsafe extern "C" fn zoutform(mut p: halfword) {
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zoutimage(mut p: halfword) {
+pub unsafe fn zoutimage(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut image: integer = 0;
     let mut groupref: integer = 0;
@@ -31906,8 +31246,7 @@ pub unsafe extern "C" fn zoutimage(mut p: halfword) {
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgapamount(mut p: halfword, mut curpos: scaled) -> scaled {
+pub unsafe fn zgapamount(mut p: halfword, mut curpos: scaled) -> scaled {
     let mut Result: scaled = 0;
     let mut mem: *mut memoryword = zmem;
     let mut snapunit: scaled = 0;
@@ -32000,8 +31339,7 @@ pub unsafe extern "C" fn zgapamount(mut p: halfword, mut curpos: scaled) -> scal
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetvpos(mut p: halfword, mut q: halfword, mut b: halfword) -> halfword {
+pub unsafe fn zgetvpos(mut p: halfword, mut q: halfword, mut b: halfword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut tmpv: scaled = 0;
@@ -32133,8 +31471,7 @@ pub unsafe extern "C" fn zgetvpos(mut p: halfword, mut q: halfword, mut b: halfw
     Result = tmpv as halfword;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdosnapycomp(mut p: halfword, mut b: halfword) {
+pub unsafe fn zdosnapycomp(mut p: halfword, mut b: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
     let mut tmpv: scaled = 0;
@@ -32179,8 +31516,7 @@ pub unsafe extern "C" fn zdosnapycomp(mut p: halfword, mut b: halfword) {
         q = (*mem.offset(q as isize)).hh.v.RH;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdosnapy(mut p: halfword) {
+pub unsafe fn zdosnapy(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     countdosnapy += 1;
     if (*mem.offset((p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
@@ -32196,8 +31532,7 @@ pub unsafe extern "C" fn zdosnapy(mut p: halfword) {
         curv = curv + zgapamount(p, curv);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfhlistout() {
+pub unsafe fn pdfhlistout() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -33289,8 +32624,7 @@ pub unsafe extern "C" fn pdfhlistout() {
     }
     curs -= 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfvlistout() {
+pub unsafe fn pdfvlistout() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut leftedge: scaled = 0;
@@ -33826,8 +33160,7 @@ pub unsafe extern "C" fn pdfvlistout() {
     synctextsilv(thisbox);
     curs -= 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn fixpdfoutput() {
+pub unsafe fn fixpdfoutput() {
     let mut eqtb: *mut memoryword = zeqtb;
     if fixedpdfoutputset == 0 {
         fixedpdfoutput = (*eqtb.offset(29342 as ::core::ffi::c_int as isize)).u.CINT;
@@ -33839,8 +33172,7 @@ pub unsafe extern "C" fn fixpdfoutput() {
         fixpdfdraftmode();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn fixpdfdraftmode() {
+pub unsafe fn fixpdfdraftmode() {
     let mut eqtb: *mut memoryword = zeqtb;
     if fixedpdfdraftmodeset == 0 {
         fixedpdfdraftmode = (*eqtb.offset(29368 as ::core::ffi::c_int as isize)).u.CINT;
@@ -33855,8 +33187,7 @@ pub unsafe extern "C" fn fixpdfdraftmode() {
         fixedpdfobjcompresslevel = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsubstrofstr(mut s: strnumber, mut t: strnumber) -> boolean {
+pub unsafe fn zsubstrofstr(mut s: strnumber, mut t: strnumber) -> boolean {
     let mut Result: boolean = 0;
     let mut j: poolpointer = 0;
     let mut k: poolpointer = 0;
@@ -33897,8 +33228,7 @@ pub unsafe extern "C" fn zsubstrofstr(mut s: strnumber, mut t: strnumber) -> boo
     Result = false_0 as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdfshipout(mut p: halfword, mut shippingpage: boolean) {
+pub unsafe fn zpdfshipout(mut p: halfword, mut shippingpage: boolean) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut i: integer = 0;
@@ -35167,8 +34497,7 @@ pub unsafe extern "C" fn zpdfshipout(mut p: halfword, mut shippingpage: boolean)
         println();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zshipout(mut p: halfword) {
+pub unsafe fn zshipout(mut p: halfword) {
     let mut eqtb: *mut memoryword = zeqtb;
     fixpdfoutput();
     if (*eqtb.offset(29342 as ::core::ffi::c_int as isize)).u.CINT > 0 as ::core::ffi::c_int {
@@ -35177,8 +34506,7 @@ pub unsafe extern "C" fn zshipout(mut p: halfword) {
         zdvishipout(p);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zstrlessstr(mut s1: strnumber, mut s2: strnumber) -> boolean {
+pub unsafe fn zstrlessstr(mut s1: strnumber, mut s2: strnumber) -> boolean {
     let mut Result: boolean = 0;
     let mut j1: poolpointer = 0;
     let mut j2: poolpointer = 0;
@@ -35318,8 +34646,7 @@ pub unsafe extern "C" fn zstrlessstr(mut s1: strnumber, mut s2: strnumber) -> bo
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsortdestnames(mut l_0: integer, mut r: integer) {
+pub unsafe fn zsortdestnames(mut l_0: integer, mut r: integer) {
     let mut i: integer = 0;
     let mut j: integer = 0;
     let mut s: strnumber = 0;
@@ -35358,8 +34685,7 @@ pub unsafe extern "C" fn zsortdestnames(mut l_0: integer, mut r: integer) {
         zsortdestnames(i, r);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdffixdest(mut k: integer) {
+pub unsafe fn zpdffixdest(mut k: integer) {
     if (*objtab.offset(k as isize)).int4 as ::core::ffi::c_long
         != -(268435455 as ::core::ffi::c_long)
     {
@@ -35405,8 +34731,7 @@ pub unsafe extern "C" fn zpdffixdest(mut k: integer) {
     pdfptr += 1;
     pdfendobj();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdffixstructdest(mut k: integer) {
+pub unsafe fn zpdffixstructdest(mut k: integer) {
     if (*objtab.offset(k as isize)).int4 as ::core::ffi::c_long
         != -(268435455 as ::core::ffi::c_long)
     {
@@ -35430,8 +34755,7 @@ pub unsafe extern "C" fn zpdffixstructdest(mut k: integer) {
     println();
     println();
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfprintinfo() {
+pub unsafe fn pdfprintinfo() {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut s: strnumber = 0;
     let mut creatorgiven: boolean = 0;
@@ -35546,8 +34870,7 @@ pub unsafe extern "C" fn pdfprintinfo() {
     }
     pdfenddict();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscanspec(mut c_0: groupcode, mut threecodes: boolean) {
+pub unsafe fn zscanspec(mut c_0: groupcode, mut threecodes: boolean) {
     let mut current_block: u64;
     let mut s: integer = 0;
     let mut speccode: ::core::ffi::c_uchar = 0;
@@ -35593,8 +34916,7 @@ pub unsafe extern "C" fn zscanspec(mut c_0: groupcode, mut threecodes: boolean) 
     znewsavelevel(c_0);
     scanleftbrace();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcheckexpandpars(mut f_0: internalfontnumber) -> boolean {
+pub unsafe fn zcheckexpandpars(mut f_0: internalfontnumber) -> boolean {
     let mut Result: boolean = 0;
     let mut k: internalfontnumber = 0;
     Result = false_0 as boolean;
@@ -35628,8 +34950,7 @@ pub unsafe extern "C" fn zcheckexpandpars(mut f_0: internalfontnumber) -> boolea
     Result = true_0 as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcharstretch(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
+pub unsafe fn zcharstretch(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
     let mut Result: scaled = 0;
     let mut k: internalfontnumber = 0;
     let mut dw: scaled = 0;
@@ -35678,8 +34999,7 @@ pub unsafe extern "C" fn zcharstretch(mut f_0: internalfontnumber, mut c_0: eigh
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcharshrink(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
+pub unsafe fn zcharshrink(mut f_0: internalfontnumber, mut c_0: eightbits) -> scaled {
     let mut Result: scaled = 0;
     let mut k: internalfontnumber = 0;
     let mut dw: scaled = 0;
@@ -35729,8 +35049,7 @@ pub unsafe extern "C" fn zcharshrink(mut f_0: internalfontnumber, mut c_0: eight
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zgetkern(
+pub unsafe fn zgetkern(
     mut f_0: internalfontnumber,
     mut lc: eightbits,
     mut rc: eightbits,
@@ -35813,8 +35132,7 @@ pub unsafe extern "C" fn zgetkern(
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zkernstretch(mut p: halfword) -> scaled {
+pub unsafe fn zkernstretch(mut p: halfword) -> scaled {
     let mut Result: scaled = 0;
     let mut mem: *mut memoryword = zmem;
     let mut l_0: halfword = 0;
@@ -35877,8 +35195,7 @@ pub unsafe extern "C" fn zkernstretch(mut p: halfword) -> scaled {
     );
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zkernshrink(mut p: halfword) -> scaled {
+pub unsafe fn zkernshrink(mut p: halfword) -> scaled {
     let mut Result: scaled = 0;
     let mut mem: *mut memoryword = zmem;
     let mut l_0: halfword = 0;
@@ -35941,8 +35258,7 @@ pub unsafe extern "C" fn zkernshrink(mut p: halfword) -> scaled {
     );
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdosubstfont(mut p: halfword, mut exratio: integer) {
+pub unsafe fn zdosubstfont(mut p: halfword, mut exratio: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut f_0: internalfontnumber = 0;
     let mut k: internalfontnumber = 0;
@@ -36037,8 +35353,7 @@ pub unsafe extern "C" fn zdosubstfont(mut p: halfword, mut exratio: integer) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcharpw(mut p: halfword, mut side: smallnumber) -> scaled {
+pub unsafe fn zcharpw(mut p: halfword, mut side: smallnumber) -> scaled {
     let mut Result: scaled = 0;
     let mut mem: *mut memoryword = zmem;
     let mut f_0: internalfontnumber = 0;
@@ -36095,12 +35410,7 @@ pub unsafe extern "C" fn zcharpw(mut p: halfword, mut side: smallnumber) -> scal
     );
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewmarginkern(
-    mut w: scaled,
-    mut p: halfword,
-    mut side: smallnumber,
-) -> halfword {
+pub unsafe fn znewmarginkern(mut w: scaled, mut p: halfword, mut side: smallnumber) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut k: halfword = 0;
@@ -36169,8 +35479,7 @@ pub unsafe extern "C" fn znewmarginkern(
     Result = k;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumber) -> halfword {
+pub unsafe fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumber) -> halfword {
     let mut current_block: u64;
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
@@ -36237,10 +35546,20 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                     match m as ::core::ffi::c_int {
                         2 => {
                             f_0 = (*mem.offset(p as isize)).hh.u.B0 as internalfontnumber;
-                            fontstretch = fontstretch
-                                + zcharstretch(f_0, (*mem.offset(p as isize)).hh.u.B1 as eightbits);
-                            fontshrink = fontshrink
-                                + zcharshrink(f_0, (*mem.offset(p as isize)).hh.u.B1 as eightbits);
+                            fontstretch = crate::checked_width::tex(
+                                (fontstretch) as i64
+                                    + (zcharstretch(
+                                        f_0,
+                                        (*mem.offset(p as isize)).hh.u.B1 as eightbits,
+                                    )) as i64,
+                            );
+                            fontshrink = crate::checked_width::tex(
+                                (fontshrink) as i64
+                                    + (zcharshrink(
+                                        f_0,
+                                        (*mem.offset(p as isize)).hh.u.B1 as eightbits,
+                                    )) as i64,
+                            );
                         }
                         3 => {
                             zdosubstfont(p, fontexpandratio);
@@ -36260,13 +35579,16 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                 .v
                 .QQQQ;
                 hd = i.u.B1 as eightbits;
-                x = (x as integer
-                    + (*fontinfo.offset(
-                        (*widthbase.offset(f_0 as isize) as ::core::ffi::c_int
-                            + i.u.B0 as ::core::ffi::c_int) as isize,
-                    ))
-                    .u
-                    .CINT) as scaled;
+                x = crate::checked_width::tex(
+                    ((x as integer) as i64
+                        + ((*fontinfo.offset(
+                            (*widthbase.offset(f_0 as isize) as ::core::ffi::c_int
+                                + i.u.B0 as ::core::ffi::c_int)
+                                as isize,
+                        ))
+                        .u
+                        .CINT) as i64),
+                );
                 s = (*fontinfo.offset(
                     (*heightbase.offset(f_0 as isize) as ::core::ffi::c_int
                         + hd as ::core::ffi::c_int / 16 as ::core::ffi::c_int)
@@ -36295,11 +35617,14 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
             }
             match (*mem.offset(p as isize)).hh.u.B0 as ::core::ffi::c_int {
                 0 | 1 | 2 | 13 => {
-                    x = (x as integer
-                        + (*mem
-                            .offset((p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT) as scaled;
+                    x = crate::checked_width::tex(
+                        ((x as integer) as i64
+                            + ((*mem.offset(
+                                (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     if (*mem.offset(p as isize)).hh.u.B0 as ::core::ffi::c_int
                         >= 2 as ::core::ffi::c_int
                     {
@@ -36310,29 +35635,37 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                         .u
                         .CINT as scaled;
                     }
-                    if (*mem.offset((p as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT as scaled
-                        - s
-                        > h
+                    if crate::checked_width::tex(
+                        ((*mem.offset((p as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
+                            .u
+                            .CINT as scaled) as i64
+                            - (s) as i64,
+                    ) > h
                     {
-                        h = (*mem
-                            .offset((p as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT as scaled
-                            - s;
+                        h = crate::checked_width::tex(
+                            ((*mem.offset(
+                                (p as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT as scaled) as i64
+                                - (s) as i64,
+                        );
                     }
-                    if (*mem.offset((p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT as scaled
-                        + s
-                        > d
+                    if crate::checked_width::tex(
+                        ((*mem.offset((p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
+                            .u
+                            .CINT as scaled) as i64
+                            + (s) as i64,
+                    ) > d
                     {
-                        d = (*mem
-                            .offset((p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT as scaled
-                            + s;
+                        d = crate::checked_width::tex(
+                            ((*mem.offset(
+                                (p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT as scaled) as i64
+                                + (s) as i64,
+                        );
                     }
                     current_block_180 = 16754622181974910496;
                     break;
@@ -36406,40 +35739,50 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                         || (*mem.offset(p as isize)).hh.u.B1 as ::core::ffi::c_int
                             == 14 as ::core::ffi::c_int
                     {
-                        x = (x as integer
-                            + (*mem.offset(
-                                (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
-                            ))
-                            .u
-                            .CINT) as scaled;
+                        x = crate::checked_width::tex(
+                            ((x as integer) as i64
+                                + ((*mem.offset(
+                                    (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
+                                ))
+                                .u
+                                .CINT) as i64),
+                        );
                         s = 0 as ::core::ffi::c_int as scaled;
-                        if (*mem
-                            .offset((p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT as scaled
-                            - s
-                            > h
-                        {
-                            h = (*mem.offset(
+                        if crate::checked_width::tex(
+                            ((*mem.offset(
                                 (p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT as scaled
-                                - s;
-                        }
-                        if (*mem
-                            .offset((p as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT as scaled
-                            + s
-                            > d
+                            .CINT as scaled) as i64
+                                - (s) as i64,
+                        ) > h
                         {
-                            d = (*mem.offset(
+                            h = crate::checked_width::tex(
+                                ((*mem.offset(
+                                    (p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
+                                ))
+                                .u
+                                .CINT as scaled) as i64
+                                    - (s) as i64,
+                            );
+                        }
+                        if crate::checked_width::tex(
+                            ((*mem.offset(
                                 (p as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT as scaled
-                                + s;
+                            .CINT as scaled) as i64
+                                + (s) as i64,
+                        ) > d
+                        {
+                            d = crate::checked_width::tex(
+                                ((*mem.offset(
+                                    (p as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
+                                ))
+                                .u
+                                .CINT as scaled) as i64
+                                    + (s) as i64,
+                            );
                         }
                     }
                     current_block_180 = 16754622181974910496;
@@ -36451,26 +35794,32 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                     .hh
                     .v
                     .LH;
-                    x = (x as integer
-                        + (*mem.offset(
-                            (g_0 as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
-                        ))
-                        .u
-                        .CINT) as scaled;
+                    x = crate::checked_width::tex(
+                        ((x as integer) as i64
+                            + ((*mem.offset(
+                                (g_0 as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     o = (*mem.offset(g_0 as isize)).hh.u.B0 as glueord;
-                    totalstretch[o as usize] = (totalstretch[o as usize]
-                        + (*mem.offset(
-                            (g_0 as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
-                        ))
-                        .u
-                        .CINT) as scaled;
+                    totalstretch[o as usize] = crate::checked_width::tex(
+                        ((totalstretch[o as usize]) as i64
+                            + ((*mem.offset(
+                                (g_0 as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     o = (*mem.offset(g_0 as isize)).hh.u.B1 as glueord;
-                    totalshrink[o as usize] = (totalshrink[o as usize]
-                        + (*mem.offset(
-                            (g_0 as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
-                        ))
-                        .u
-                        .CINT) as scaled;
+                    totalshrink[o as usize] = crate::checked_width::tex(
+                        ((totalshrink[o as usize]) as i64
+                            + ((*mem.offset(
+                                (g_0 as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     if (*mem.offset(p as isize)).hh.u.B1 as ::core::ffi::c_int
                         >= 100 as ::core::ffi::c_int
                     {
@@ -36542,22 +35891,25 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                             .u
                             .B0 as ::core::ffi::c_int
                         {
-                            fontstretch = fontstretch
-                                - (*mem.offset(
-                                    (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT as scaled
-                                - zcharpw(
-                                    (*mem.offset(
-                                        (p as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                            fontstretch = crate::checked_width::tex(
+                                (fontstretch) as i64
+                                    - ((*mem.offset(
+                                        (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
                                             as isize,
                                     ))
-                                    .hh
-                                    .v
-                                    .LH,
-                                    (*mem.offset(p as isize)).hh.u.B1 as smallnumber,
-                                );
+                                    .u
+                                    .CINT as scaled) as i64
+                                    - (zcharpw(
+                                        (*mem.offset(
+                                            (p as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .hh
+                                        .v
+                                        .LH,
+                                        (*mem.offset(p as isize)).hh.u.B1 as smallnumber,
+                                    )) as i64,
+                            );
                         }
                         (*mem.offset(
                             (*mem.offset(
@@ -36592,22 +35944,25 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                             .u
                             .B0 as ::core::ffi::c_int
                         {
-                            fontshrink = fontshrink
-                                - (*mem.offset(
-                                    (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT as scaled
-                                - zcharpw(
-                                    (*mem.offset(
-                                        (p as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                            fontshrink = crate::checked_width::tex(
+                                (fontshrink) as i64
+                                    - ((*mem.offset(
+                                        (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
                                             as isize,
                                     ))
-                                    .hh
-                                    .v
-                                    .LH,
-                                    (*mem.offset(p as isize)).hh.u.B1 as smallnumber,
-                                );
+                                    .u
+                                    .CINT as scaled) as i64
+                                    - (zcharpw(
+                                        (*mem.offset(
+                                            (p as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .hh
+                                        .v
+                                        .LH,
+                                        (*mem.offset(p as isize)).hh.u.B1 as smallnumber,
+                                    )) as i64,
+                            );
                         }
                         (*mem.offset(
                             (*mem.offset(
@@ -36634,21 +35989,26 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                             (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
                         ))
                         .u
-                        .CINT = -zcharpw(
-                            (*mem.offset(
-                                (p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
-                            ))
-                            .hh
-                            .v
-                            .LH,
-                            (*mem.offset(p as isize)).hh.u.B1 as smallnumber,
+                        .CINT = crate::checked_width::tex(
+                            -((zcharpw(
+                                (*mem.offset(
+                                    (p as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
+                                ))
+                                .hh
+                                .v
+                                .LH,
+                                (*mem.offset(p as isize)).hh.u.B1 as smallnumber,
+                            )) as i64),
                         );
                     }
-                    x = (x as integer
-                        + (*mem
-                            .offset((p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT) as scaled;
+                    x = crate::checked_width::tex(
+                        ((x as integer) as i64
+                            + ((*mem.offset(
+                                (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     current_block_180 = 16754622181974910496;
                     break;
                 }
@@ -36657,8 +36017,12 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                         == 0 as ::core::ffi::c_int
                     {
                         if m as ::core::ffi::c_int == 2 as ::core::ffi::c_int {
-                            fontstretch = fontstretch + zkernstretch(p);
-                            fontshrink = fontshrink + zkernshrink(p);
+                            fontstretch = crate::checked_width::tex(
+                                (fontstretch) as i64 + (zkernstretch(p)) as i64,
+                            );
+                            fontshrink = crate::checked_width::tex(
+                                (fontshrink) as i64 + (zkernshrink(p)) as i64,
+                            );
                         } else if m as ::core::ffi::c_int == 3 as ::core::ffi::c_int {
                             if fontexpandratio > 0 as ::core::ffi::c_int {
                                 k = zkernstretch(p);
@@ -36725,20 +36089,26 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                             }
                         }
                     }
-                    x = (x as integer
-                        + (*mem
-                            .offset((p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT) as scaled;
+                    x = crate::checked_width::tex(
+                        ((x as integer) as i64
+                            + ((*mem.offset(
+                                (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     current_block_180 = 16754622181974910496;
                     break;
                 }
                 9 => {
-                    x = (x as integer
-                        + (*mem
-                            .offset((p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT) as scaled;
+                    x = crate::checked_width::tex(
+                        ((x as integer) as i64
+                            + ((*mem.offset(
+                                (p as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     if (*eqtb.offset(29389 as ::core::ffi::c_int as isize)).u.CINT
                         > 0 as ::core::ffi::c_int
                     {
@@ -36826,12 +36196,12 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
         .u
         .CINT = d as integer;
     if m as ::core::ffi::c_int == 1 as ::core::ffi::c_int {
-        w = x + w;
+        w = crate::checked_width::tex((x) as i64 + (w) as i64);
     }
     (*mem.offset((r as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
         .u
         .CINT = w as integer;
-    x = w - x;
+    x = crate::checked_width::tex((w) as i64 - (x) as i64);
     if x == 0 as ::core::ffi::c_int {
         (*mem.offset((r as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize))
             .hh
@@ -36937,10 +36307,10 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                 .u
                 .B0 = 2 as ::core::ffi::c_short;
             if totalshrink[o as usize] != 0 as ::core::ffi::c_int {
-                (*mem.offset((r as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize)).gr = (-x
-                    as ::core::ffi::c_double
-                    / totalshrink[o as usize] as ::core::ffi::c_double)
-                    as glueratio;
+                (*mem.offset((r as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize)).gr =
+                    (crate::checked_width::tex(-((x) as i64)) as ::core::ffi::c_double
+                        / totalshrink[o as usize] as ::core::ffi::c_double)
+                        as glueratio;
             } else {
                 (*mem.offset((r as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize))
                     .hh
@@ -36949,7 +36319,7 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                 (*mem.offset((r as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize)).gr =
                     0.0f64 as glueratio;
             }
-            if totalshrink[o as usize] < -x
+            if totalshrink[o as usize] < crate::checked_width::tex(-((x) as i64))
                 && o as ::core::ffi::c_int == 0 as ::core::ffi::c_int
                 && (*mem.offset((r as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize))
                     .hh
@@ -36960,15 +36330,17 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                 lastbadness = 1000000 as ::core::ffi::c_long as integer;
                 (*mem.offset((r as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize)).gr =
                     1.0f64 as glueratio;
-                if -x - totalshrink[0 as ::core::ffi::c_int as usize]
-                    > (*eqtb.offset(29911 as ::core::ffi::c_int as isize)).u.CINT
+                if crate::checked_width::tex(
+                    -((x) as i64) - (totalshrink[0 as ::core::ffi::c_int as usize]) as i64,
+                ) > (*eqtb.offset(29911 as ::core::ffi::c_int as isize)).u.CINT
                     || (*eqtb.offset(29303 as ::core::ffi::c_int as isize)).u.CINT
                         < 100 as ::core::ffi::c_int
                 {
                     if (*eqtb.offset(29919 as ::core::ffi::c_int as isize)).u.CINT
                         > 0 as ::core::ffi::c_int
-                        && -x - totalshrink[0 as ::core::ffi::c_int as usize]
-                            > (*eqtb.offset(29911 as ::core::ffi::c_int as isize)).u.CINT
+                        && crate::checked_width::tex(
+                            -((x) as i64) - (totalshrink[0 as ::core::ffi::c_int as usize]) as i64,
+                        ) > (*eqtb.offset(29911 as ::core::ffi::c_int as isize)).u.CINT
                     {
                         while (*mem.offset(q as isize)).hh.v.RH as ::core::ffi::c_long
                             != -(268435455 as ::core::ffi::c_long)
@@ -36985,7 +36357,9 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                     }
                     println();
                     zprintnl(1274 as ::core::ffi::c_int);
-                    zprintscaled(-x - totalshrink[0 as ::core::ffi::c_int as usize]);
+                    zprintscaled(crate::checked_width::tex(
+                        -((x) as i64) - (totalshrink[0 as ::core::ffi::c_int as usize]) as i64,
+                    ));
                     zprint(1275 as ::core::ffi::c_int);
                     current_block = 9477284514237409589;
                 } else {
@@ -36998,8 +36372,10 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
                     .RH as ::core::ffi::c_long
                     != -(268435455 as ::core::ffi::c_long)
                 {
-                    lastbadness =
-                        zbadness(-x, totalshrink[0 as ::core::ffi::c_int as usize]) as integer;
+                    lastbadness = zbadness(
+                        crate::checked_width::tex(-((x) as i64)),
+                        totalshrink[0 as ::core::ffi::c_int as usize],
+                    ) as integer;
                     if lastbadness > (*eqtb.offset(29303 as ::core::ffi::c_int as isize)).u.CINT {
                         println();
                         zprintnl(1276 as ::core::ffi::c_int);
@@ -37134,8 +36510,7 @@ pub unsafe extern "C" fn zhpack(mut p: halfword, mut w: scaled, mut m: smallnumb
     Result = r;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvpackage(
+pub unsafe fn zvpackage(
     mut p: halfword,
     mut h: scaled,
     mut m: smallnumber,
@@ -37511,8 +36886,7 @@ pub unsafe extern "C" fn zvpackage(
     Result = r;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zappendtovlist(mut b: halfword) {
+pub unsafe fn zappendtovlist(mut b: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut d: scaled = 0;
@@ -37546,8 +36920,7 @@ pub unsafe extern "C" fn zappendtovlist(mut b: halfword) {
     .u
     .CINT;
 }
-#[no_mangle]
-pub unsafe extern "C" fn newnoad() -> halfword {
+pub unsafe fn newnoad() -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -37560,8 +36933,7 @@ pub unsafe extern "C" fn newnoad() -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewstyle(mut s: smallnumber) -> halfword {
+pub unsafe fn znewstyle(mut s: smallnumber) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -37577,8 +36949,7 @@ pub unsafe extern "C" fn znewstyle(mut s: smallnumber) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn newchoice() -> halfword {
+pub unsafe fn newchoice() -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -37604,13 +36975,11 @@ pub unsafe extern "C" fn newchoice() -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn showinfo() {
+pub unsafe fn showinfo() {
     let mut mem: *mut memoryword = zmem;
     zshownodelist((*mem.offset(tempptr as isize)).hh.v.LH);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfractionrule(mut t: scaled) -> halfword {
+pub unsafe fn zfractionrule(mut t: scaled) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -37624,8 +36993,7 @@ pub unsafe extern "C" fn zfractionrule(mut t: scaled) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zoverbar(mut b: halfword, mut k: scaled, mut t: scaled) -> halfword {
+pub unsafe fn zoverbar(mut b: halfword, mut k: scaled, mut t: scaled) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -37644,8 +37012,7 @@ pub unsafe extern "C" fn zoverbar(mut b: halfword, mut k: scaled, mut t: scaled)
     );
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcharbox(mut f_0: internalfontnumber, mut c_0: quarterword) -> halfword {
+pub unsafe fn zcharbox(mut f_0: internalfontnumber, mut c_0: quarterword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut q: fourquarters = fourquarters {
@@ -37707,12 +37074,7 @@ pub unsafe extern "C" fn zcharbox(mut f_0: internalfontnumber, mut c_0: quarterw
     Result = b;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zstackintobox(
-    mut b: halfword,
-    mut f_0: internalfontnumber,
-    mut c_0: quarterword,
-) {
+pub unsafe fn zstackintobox(mut b: halfword, mut f_0: internalfontnumber, mut c_0: quarterword) {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     p = zcharbox(f_0, c_0);
@@ -37731,11 +37093,7 @@ pub unsafe extern "C" fn zstackintobox(
         .u
         .CINT;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zheightplusdepth(
-    mut f_0: internalfontnumber,
-    mut c_0: quarterword,
-) -> scaled {
+pub unsafe fn zheightplusdepth(mut f_0: internalfontnumber, mut c_0: quarterword) -> scaled {
     let mut Result: scaled = 0;
     let mut q: fourquarters = fourquarters {
         u: C2RustUnnamed_1 {
@@ -37767,12 +37125,7 @@ pub unsafe extern "C" fn zheightplusdepth(
         .CINT) as scaled;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvardelimiter(
-    mut d: halfword,
-    mut s: smallnumber,
-    mut v: scaled,
-) -> halfword {
+pub unsafe fn zvardelimiter(mut d: halfword, mut s: smallnumber, mut v: scaled) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -38026,8 +37379,7 @@ pub unsafe extern "C" fn zvardelimiter(
     Result = b;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zrebox(mut b: halfword, mut w: scaled) -> halfword {
+pub unsafe fn zrebox(mut b: halfword, mut w: scaled) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -38107,8 +37459,7 @@ pub unsafe extern "C" fn zrebox(mut b: halfword, mut w: scaled) -> halfword {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmathglue(mut g_0: halfword, mut m: scaled) -> halfword {
+pub unsafe fn zmathglue(mut g_0: halfword, mut m: scaled) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -38190,8 +37541,7 @@ pub unsafe extern "C" fn zmathglue(mut g_0: halfword, mut m: scaled) -> halfword
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmathkern(mut p: halfword, mut m: scaled) {
+pub unsafe fn zmathkern(mut p: halfword, mut m: scaled) {
     let mut mem: *mut memoryword = zmem;
     let mut n: integer = 0;
     let mut f_0: scaled = 0;
@@ -38221,8 +37571,7 @@ pub unsafe extern "C" fn zmathkern(mut p: halfword, mut m: scaled) {
         (*mem.offset(p as isize)).hh.u.B1 = 1 as ::core::ffi::c_short;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn flushmath() {
+pub unsafe fn flushmath() {
     let mut mem: *mut memoryword = zmem;
     zflushnodelist((*mem.offset(curlist.headfield as isize)).hh.v.RH);
     zflushnodelist(curlist.auxfield.u.CINT);
@@ -38231,8 +37580,7 @@ pub unsafe extern "C" fn flushmath() {
     curlist.tailfield = curlist.headfield;
     curlist.auxfield.u.CINT = -(268435455 as ::core::ffi::c_long) as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcleanbox(mut p: halfword, mut s: smallnumber) -> halfword {
+pub unsafe fn zcleanbox(mut p: halfword, mut s: smallnumber) -> halfword {
     let mut current_block: u64;
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
@@ -38346,8 +37694,7 @@ pub unsafe extern "C" fn zcleanbox(mut p: halfword, mut s: smallnumber) -> halfw
     Result = x;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfetch(mut a: halfword) {
+pub unsafe fn zfetch(mut a: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     curc = (*mem.offset(a as isize)).hh.u.B1 as quarterword;
@@ -38401,8 +37748,7 @@ pub unsafe extern "C" fn zfetch(mut a: halfword) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakeover(mut q: halfword) {
+pub unsafe fn zmakeover(mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     (*mem.offset((q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
@@ -38447,8 +37793,7 @@ pub unsafe extern "C" fn zmakeover(mut q: halfword) {
         .v
         .RH = 2 as ::core::ffi::c_int as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakeunder(mut q: halfword) {
+pub unsafe fn zmakeunder(mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -38533,8 +37878,7 @@ pub unsafe extern "C" fn zmakeunder(mut q: halfword) {
         .v
         .RH = 2 as ::core::ffi::c_int as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakevcenter(mut q: halfword) {
+pub unsafe fn zmakevcenter(mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut v: halfword = 0;
@@ -38574,8 +37918,7 @@ pub unsafe extern "C" fn zmakevcenter(mut q: halfword) {
             .u
             .CINT;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakeradical(mut q: halfword) {
+pub unsafe fn zmakeradical(mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut x: halfword = 0;
@@ -38730,8 +38073,7 @@ pub unsafe extern "C" fn zmakeradical(mut q: halfword) {
         .v
         .RH = 2 as ::core::ffi::c_int as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakemathaccent(mut q: halfword) {
+pub unsafe fn zmakemathaccent(mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut x: halfword = 0;
@@ -38957,8 +38299,7 @@ pub unsafe extern "C" fn zmakemathaccent(mut q: halfword) {
             .RH = 2 as ::core::ffi::c_int as halfword;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakefraction(mut q: halfword) {
+pub unsafe fn zmakefraction(mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -39356,8 +38697,7 @@ pub unsafe extern "C" fn zmakefraction(mut q: halfword) {
         1 as ::core::ffi::c_int as smallnumber,
     ) as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakeop(mut q: halfword) -> scaled {
+pub unsafe fn zmakeop(mut q: halfword) -> scaled {
     let mut Result: scaled = 0;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -39765,8 +39105,7 @@ pub unsafe extern "C" fn zmakeop(mut q: halfword) -> scaled {
     Result = delta_0;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakeord(mut q: halfword) {
+pub unsafe fn zmakeord(mut q: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut a: integer = 0;
     let mut p: halfword = 0;
@@ -39967,8 +39306,7 @@ pub unsafe extern "C" fn zmakeord(mut q: halfword) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakescripts(mut q: halfword, mut delta_0: scaled) {
+pub unsafe fn zmakescripts(mut q: halfword, mut delta_0: scaled) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -40427,8 +39765,7 @@ pub unsafe extern "C" fn zmakescripts(mut q: halfword, mut delta_0: scaled) {
         (*mem.offset(p as isize)).hh.v.RH = x;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zmakeleftright(
+pub unsafe fn zmakeleftright(
     mut q: halfword,
     mut style: smallnumber,
     mut maxd: scaled,
@@ -40500,8 +39837,7 @@ pub unsafe extern "C" fn zmakeleftright(
         as smallnumber;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn mlisttohlist() {
+pub unsafe fn mlisttohlist() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -41275,8 +40611,7 @@ pub unsafe extern "C" fn mlisttohlist() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn pushalignment() {
+pub unsafe fn pushalignment() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     p = zgetnode(6 as ::core::ffi::c_int);
@@ -41319,8 +40654,7 @@ pub unsafe extern "C" fn pushalignment() {
     curhead = getavail();
     curprehead = getavail();
 }
-#[no_mangle]
-pub unsafe extern "C" fn popalignment() {
+pub unsafe fn popalignment() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     (*mem.offset(curhead as isize)).hh.v.RH = avail;
@@ -41367,8 +40701,7 @@ pub unsafe extern "C" fn popalignment() {
     alignptr = (*mem.offset(p as isize)).hh.v.RH;
     zfreenode(p, 6 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn getpreambletoken() {
+pub unsafe fn getpreambletoken() {
     let mut eqtb: *mut memoryword = zeqtb;
     loop {
         gettoken();
@@ -41406,8 +40739,7 @@ pub unsafe extern "C" fn getpreambletoken() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn initalign() {
+pub unsafe fn initalign() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut savecsptr: halfword = 0;
@@ -41576,8 +40908,7 @@ pub unsafe extern "C" fn initalign() {
     }
     alignpeek();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zinitspan(mut p: halfword) {
+pub unsafe fn zinitspan(mut p: halfword) {
     let mut eqtb: *mut memoryword = zeqtb;
     pushnest();
     if curlist.modefield as ::core::ffi::c_int == -(105 as ::core::ffi::c_int) {
@@ -41588,8 +40919,7 @@ pub unsafe extern "C" fn zinitspan(mut p: halfword) {
     }
     curspan = p;
 }
-#[no_mangle]
-pub unsafe extern "C" fn initrow() {
+pub unsafe fn initrow() {
     let mut mem: *mut memoryword = zmem;
     pushnest();
     curlist.modefield = (-(106 as ::core::ffi::c_int) - curlist.modefield as ::core::ffi::c_int)
@@ -41627,8 +40957,7 @@ pub unsafe extern "C" fn initrow() {
     curpretail = curprehead;
     zinitspan(curalign);
 }
-#[no_mangle]
-pub unsafe extern "C" fn initcol() {
+pub unsafe fn initcol() {
     let mut mem: *mut memoryword = zmem;
     (*mem.offset((curalign as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize))
         .hh
@@ -41646,8 +40975,7 @@ pub unsafe extern "C" fn initcol() {
         );
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn fincol() -> boolean {
+pub unsafe fn fincol() -> boolean {
     let mut Result: boolean = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -41920,8 +41248,7 @@ pub unsafe extern "C" fn fincol() -> boolean {
     Result = false_0 as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn finrow() {
+pub unsafe fn finrow() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -41969,8 +41296,7 @@ pub unsafe extern "C" fn finrow() {
     }
     alignpeek();
 }
-#[no_mangle]
-pub unsafe extern "C" fn finalign() {
+pub unsafe fn finalign() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -42898,8 +42224,7 @@ pub unsafe extern "C" fn finalign() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn alignpeek() {
+pub unsafe fn alignpeek() {
     loop {
         alignstate = 1000000 as ::core::ffi::c_long as integer;
         loop {
@@ -42930,8 +42255,7 @@ pub unsafe extern "C" fn alignpeek() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfiniteshrink(mut p: halfword) -> halfword {
+pub unsafe fn zfiniteshrink(mut p: halfword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -42965,8 +42289,7 @@ pub unsafe extern "C" fn zfiniteshrink(mut p: halfword) -> halfword {
     Result = q;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpushnode(mut p: halfword) {
+pub unsafe fn zpushnode(mut p: halfword) {
     if hliststacklevel as ::core::ffi::c_int > 512 as ::core::ffi::c_int {
         zpdferror(1346 as ::core::ffi::c_int, 1347 as ::core::ffi::c_int);
     }
@@ -42974,8 +42297,7 @@ pub unsafe extern "C" fn zpushnode(mut p: halfword) {
     hliststacklevel =
         (hliststacklevel as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as ::core::ffi::c_short;
 }
-#[no_mangle]
-pub unsafe extern "C" fn popnode() -> halfword {
+pub unsafe fn popnode() -> halfword {
     let mut Result: halfword = 0;
     hliststacklevel =
         (hliststacklevel as ::core::ffi::c_int - 1 as ::core::ffi::c_int) as ::core::ffi::c_short;
@@ -42985,8 +42307,7 @@ pub unsafe extern "C" fn popnode() -> halfword {
     Result = hliststack[hliststacklevel as usize];
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfindprotcharleft(mut l_0: halfword, mut d: boolean) -> halfword {
+pub unsafe fn zfindprotcharleft(mut l_0: halfword, mut d: boolean) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut t: halfword = 0;
@@ -43149,8 +42470,7 @@ pub unsafe extern "C" fn zfindprotcharleft(mut l_0: halfword, mut d: boolean) ->
     Result = l_0;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfindprotcharright(mut l_0: halfword, mut r: halfword) -> halfword {
+pub unsafe fn zfindprotcharright(mut l_0: halfword, mut r: halfword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut t: halfword = 0;
@@ -43283,8 +42603,7 @@ pub unsafe extern "C" fn zfindprotcharright(mut l_0: halfword, mut r: halfword) 
     Result = r;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn ztotalpw(mut q: halfword, mut p: halfword) -> scaled {
+pub unsafe fn ztotalpw(mut q: halfword, mut p: halfword) -> scaled {
     let mut current_block: u64;
     let mut Result: scaled = 0;
     let mut mem: *mut memoryword = zmem;
@@ -43371,8 +42690,7 @@ pub unsafe extern "C" fn ztotalpw(mut q: halfword, mut p: halfword) -> scaled {
         + zcharpw(r, 1 as ::core::ffi::c_int as smallnumber);
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) {
+pub unsafe fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -43445,65 +42763,77 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                 if (*mem.offset(r as isize)).hh.u.B0 as ::core::ffi::c_int
                     == 2 as ::core::ffi::c_int
                 {
-                    curactivewidth[1 as ::core::ffi::c_int as usize] = (curactivewidth
-                        [1 as ::core::ffi::c_int as usize]
-                        + (*mem
-                            .offset((r as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT)
-                        as scaled;
-                    curactivewidth[2 as ::core::ffi::c_int as usize] = (curactivewidth
-                        [2 as ::core::ffi::c_int as usize]
-                        + (*mem
-                            .offset((r as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT)
-                        as scaled;
-                    curactivewidth[3 as ::core::ffi::c_int as usize] = (curactivewidth
-                        [3 as ::core::ffi::c_int as usize]
-                        + (*mem
-                            .offset((r as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT)
-                        as scaled;
-                    curactivewidth[4 as ::core::ffi::c_int as usize] = (curactivewidth
-                        [4 as ::core::ffi::c_int as usize]
-                        + (*mem
-                            .offset((r as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT)
-                        as scaled;
-                    curactivewidth[5 as ::core::ffi::c_int as usize] = (curactivewidth
-                        [5 as ::core::ffi::c_int as usize]
-                        + (*mem
-                            .offset((r as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT)
-                        as scaled;
-                    curactivewidth[6 as ::core::ffi::c_int as usize] = (curactivewidth
-                        [6 as ::core::ffi::c_int as usize]
-                        + (*mem
-                            .offset((r as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT)
-                        as scaled;
+                    curactivewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((curactivewidth[1 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
+                                (r as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
+                    curactivewidth[2 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((curactivewidth[2 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
+                                (r as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
+                    curactivewidth[3 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((curactivewidth[3 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
+                                (r as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
+                    curactivewidth[4 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((curactivewidth[4 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
+                                (r as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
+                    curactivewidth[5 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((curactivewidth[5 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
+                                (r as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
+                    curactivewidth[6 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((curactivewidth[6 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
+                                (r as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                         > 1 as ::core::ffi::c_int
                     {
                         curactivewidth[7 as ::core::ffi::c_int as usize] =
-                            (curactivewidth[7 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 7 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT) as scaled;
+                            crate::checked_width::tex(
+                                ((curactivewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                    + ((*mem.offset(
+                                        (r as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT) as i64),
+                            );
                         curactivewidth[8 as ::core::ffi::c_int as usize] =
-                            (curactivewidth[8 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 8 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT) as scaled;
+                            crate::checked_width::tex(
+                                ((curactivewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                    + ((*mem.offset(
+                                        (r as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT) as i64),
+                            );
                     }
                     prevprevr = prevr;
                     prevr = r;
@@ -43562,8 +42892,7 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                 f_0 = (*mem.offset(v as isize)).hh.u.B0
                                                     as internalfontnumber;
                                                 breakwidth[1 as ::core::ffi::c_int as usize] =
-                                                    (breakwidth[1 as ::core::ffi::c_int as usize]
-                                                        - (*fontinfo.offset(
+                                                    crate::checked_width::tex(((breakwidth[1 as ::core::ffi::c_int as usize]) as i64 - ((*fontinfo.offset(
                                                             (*widthbase.offset(f_0 as isize)
                                                                 as ::core::ffi::c_int
                                                                 + (*fontinfo.offset(
@@ -43588,8 +42917,7 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                 as isize,
                                                         ))
                                                         .u
-                                                        .CINT)
-                                                        as scaled;
+                                                        .CINT) as i64));
                                                 if (*eqtb
                                                     .offset(29360 as ::core::ffi::c_int as isize))
                                                 .u
@@ -43599,21 +42927,35 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                 {
                                                     prevcharp = v;
                                                     breakwidth[7 as ::core::ffi::c_int as usize] =
-                                                        breakwidth
-                                                            [7 as ::core::ffi::c_int as usize]
-                                                            - zcharstretch(
-                                                                f_0,
-                                                                (*mem.offset(v as isize)).hh.u.B1
-                                                                    as eightbits,
-                                                            );
+                                                        crate::checked_width::tex(
+                                                            (breakwidth
+                                                                [7 as ::core::ffi::c_int as usize])
+                                                                as i64
+                                                                - (zcharstretch(
+                                                                    f_0,
+                                                                    (*mem.offset(v as isize))
+                                                                        .hh
+                                                                        .u
+                                                                        .B1
+                                                                        as eightbits,
+                                                                ))
+                                                                    as i64,
+                                                        );
                                                     breakwidth[8 as ::core::ffi::c_int as usize] =
-                                                        breakwidth
-                                                            [8 as ::core::ffi::c_int as usize]
-                                                            - zcharshrink(
-                                                                f_0,
-                                                                (*mem.offset(v as isize)).hh.u.B1
-                                                                    as eightbits,
-                                                            );
+                                                        crate::checked_width::tex(
+                                                            (breakwidth
+                                                                [8 as ::core::ffi::c_int as usize])
+                                                                as i64
+                                                                - (zcharshrink(
+                                                                    f_0,
+                                                                    (*mem.offset(v as isize))
+                                                                        .hh
+                                                                        .u
+                                                                        .B1
+                                                                        as eightbits,
+                                                                ))
+                                                                    as i64,
+                                                        );
                                                 }
                                             } else {
                                                 match (*mem.offset(v as isize)).hh.u.B0
@@ -43629,9 +42971,8 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                         .u
                                                         .B0
                                                             as internalfontnumber;
-                                                        breakwidth[1 as ::core::ffi::c_int as usize] = (breakwidth[1
-                                                            as ::core::ffi::c_int as usize]
-                                                            - (*fontinfo
+                                                        breakwidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(((breakwidth[1
+                                                            as ::core::ffi::c_int as usize]) as i64 - ((*fontinfo
                                                                 .offset(
                                                                     (*widthbase.offset(f_0 as isize) as ::core::ffi::c_int
                                                                         + (*fontinfo
@@ -43655,7 +42996,7 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                             .B0 as ::core::ffi::c_int) as isize,
                                                                 ))
                                                                 .u
-                                                                .CINT) as scaled;
+                                                                .CINT) as i64));
                                                         if (*eqtb.offset(
                                                             29360 as ::core::ffi::c_int as isize,
                                                         ))
@@ -43665,9 +43006,8 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                             && zcheckexpandpars(f_0) != 0
                                                         {
                                                             prevcharp = v;
-                                                            breakwidth[7 as ::core::ffi::c_int as usize] = breakwidth[7
-                                                                as ::core::ffi::c_int as usize]
-                                                                - zcharstretch(
+                                                            breakwidth[7 as ::core::ffi::c_int as usize] = crate::checked_width::tex((breakwidth[7
+                                                                as ::core::ffi::c_int as usize]) as i64 - (zcharstretch(
                                                                     f_0,
                                                                     (*mem
                                                                         .offset(
@@ -43676,10 +43016,9 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                         .hh
                                                                         .u
                                                                         .B1 as eightbits,
-                                                                );
-                                                            breakwidth[8 as ::core::ffi::c_int as usize] = breakwidth[8
-                                                                as ::core::ffi::c_int as usize]
-                                                                - zcharshrink(
+                                                                )) as i64);
+                                                            breakwidth[8 as ::core::ffi::c_int as usize] = crate::checked_width::tex((breakwidth[8
+                                                                as ::core::ffi::c_int as usize]) as i64 - (zcharshrink(
                                                                     f_0,
                                                                     (*mem
                                                                         .offset(
@@ -43688,22 +43027,20 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                         .hh
                                                                         .u
                                                                         .B1 as eightbits,
-                                                                );
+                                                                )) as i64);
                                                         }
                                                     }
                                                     0 | 1 | 2 | 11 => {
                                                         breakwidth
                                                             [1 as ::core::ffi::c_int as usize] =
-                                                            (breakwidth
-                                                                [1 as ::core::ffi::c_int as usize]
-                                                                - (*mem.offset(
+                                                            crate::checked_width::tex(((breakwidth
+                                                                [1 as ::core::ffi::c_int as usize]) as i64 - ((*mem.offset(
                                                                     (v as ::core::ffi::c_int
                                                                         + 1 as ::core::ffi::c_int)
                                                                         as isize,
                                                                 ))
                                                                 .u
-                                                                .CINT)
-                                                                as scaled;
+                                                                .CINT) as i64));
                                                         if (*mem.offset(v as isize)).hh.u.B0
                                                             as ::core::ffi::c_int
                                                             == 11 as ::core::ffi::c_int
@@ -43719,13 +43056,23 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                 == 0 as ::core::ffi::c_int
                                                         {
                                                             breakwidth[7 as ::core::ffi::c_int
-                                                                as usize] = breakwidth
-                                                                [7 as ::core::ffi::c_int as usize]
-                                                                - zkernstretch(v);
+                                                                as usize] =
+                                                                crate::checked_width::tex(
+                                                                    (breakwidth[7
+                                                                        as ::core::ffi::c_int
+                                                                        as usize])
+                                                                        as i64
+                                                                        - (zkernstretch(v)) as i64,
+                                                                );
                                                             breakwidth[8 as ::core::ffi::c_int
-                                                                as usize] = breakwidth
-                                                                [8 as ::core::ffi::c_int as usize]
-                                                                - zkernshrink(v);
+                                                                as usize] =
+                                                                crate::checked_width::tex(
+                                                                    (breakwidth[8
+                                                                        as ::core::ffi::c_int
+                                                                        as usize])
+                                                                        as i64
+                                                                        - (zkernshrink(v)) as i64,
+                                                                );
                                                         }
                                                     }
                                                     _ => {
@@ -43741,8 +43088,7 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                 f_0 = (*mem.offset(s as isize)).hh.u.B0
                                                     as internalfontnumber;
                                                 breakwidth[1 as ::core::ffi::c_int as usize] =
-                                                    (breakwidth[1 as ::core::ffi::c_int as usize]
-                                                        + (*fontinfo.offset(
+                                                    crate::checked_width::tex(((breakwidth[1 as ::core::ffi::c_int as usize]) as i64 + ((*fontinfo.offset(
                                                             (*widthbase.offset(f_0 as isize)
                                                                 as ::core::ffi::c_int
                                                                 + (*fontinfo.offset(
@@ -43767,8 +43113,7 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                 as isize,
                                                         ))
                                                         .u
-                                                        .CINT)
-                                                        as scaled;
+                                                        .CINT) as i64));
                                                 if (*eqtb
                                                     .offset(29360 as ::core::ffi::c_int as isize))
                                                 .u
@@ -43778,21 +43123,35 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                 {
                                                     prevcharp = s;
                                                     breakwidth[7 as ::core::ffi::c_int as usize] =
-                                                        breakwidth
-                                                            [7 as ::core::ffi::c_int as usize]
-                                                            + zcharstretch(
-                                                                f_0,
-                                                                (*mem.offset(s as isize)).hh.u.B1
-                                                                    as eightbits,
-                                                            );
+                                                        crate::checked_width::tex(
+                                                            (breakwidth
+                                                                [7 as ::core::ffi::c_int as usize])
+                                                                as i64
+                                                                + (zcharstretch(
+                                                                    f_0,
+                                                                    (*mem.offset(s as isize))
+                                                                        .hh
+                                                                        .u
+                                                                        .B1
+                                                                        as eightbits,
+                                                                ))
+                                                                    as i64,
+                                                        );
                                                     breakwidth[8 as ::core::ffi::c_int as usize] =
-                                                        breakwidth
-                                                            [8 as ::core::ffi::c_int as usize]
-                                                            + zcharshrink(
-                                                                f_0,
-                                                                (*mem.offset(s as isize)).hh.u.B1
-                                                                    as eightbits,
-                                                            );
+                                                        crate::checked_width::tex(
+                                                            (breakwidth
+                                                                [8 as ::core::ffi::c_int as usize])
+                                                                as i64
+                                                                + (zcharshrink(
+                                                                    f_0,
+                                                                    (*mem.offset(s as isize))
+                                                                        .hh
+                                                                        .u
+                                                                        .B1
+                                                                        as eightbits,
+                                                                ))
+                                                                    as i64,
+                                                        );
                                                 }
                                             } else {
                                                 match (*mem.offset(s as isize)).hh.u.B0
@@ -43808,9 +43167,8 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                         .u
                                                         .B0
                                                             as internalfontnumber;
-                                                        breakwidth[1 as ::core::ffi::c_int as usize] = (breakwidth[1
-                                                            as ::core::ffi::c_int as usize]
-                                                            + (*fontinfo
+                                                        breakwidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(((breakwidth[1
+                                                            as ::core::ffi::c_int as usize]) as i64 + ((*fontinfo
                                                                 .offset(
                                                                     (*widthbase.offset(f_0 as isize) as ::core::ffi::c_int
                                                                         + (*fontinfo
@@ -43834,7 +43192,7 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                             .B0 as ::core::ffi::c_int) as isize,
                                                                 ))
                                                                 .u
-                                                                .CINT) as scaled;
+                                                                .CINT) as i64));
                                                         if (*eqtb.offset(
                                                             29360 as ::core::ffi::c_int as isize,
                                                         ))
@@ -43844,9 +43202,8 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                             && zcheckexpandpars(f_0) != 0
                                                         {
                                                             prevcharp = s;
-                                                            breakwidth[7 as ::core::ffi::c_int as usize] = breakwidth[7
-                                                                as ::core::ffi::c_int as usize]
-                                                                + zcharstretch(
+                                                            breakwidth[7 as ::core::ffi::c_int as usize] = crate::checked_width::tex((breakwidth[7
+                                                                as ::core::ffi::c_int as usize]) as i64 + (zcharstretch(
                                                                     f_0,
                                                                     (*mem
                                                                         .offset(
@@ -43855,10 +43212,9 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                         .hh
                                                                         .u
                                                                         .B1 as eightbits,
-                                                                );
-                                                            breakwidth[8 as ::core::ffi::c_int as usize] = breakwidth[8
-                                                                as ::core::ffi::c_int as usize]
-                                                                + zcharshrink(
+                                                                )) as i64);
+                                                            breakwidth[8 as ::core::ffi::c_int as usize] = crate::checked_width::tex((breakwidth[8
+                                                                as ::core::ffi::c_int as usize]) as i64 + (zcharshrink(
                                                                     f_0,
                                                                     (*mem
                                                                         .offset(
@@ -43867,22 +43223,20 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                         .hh
                                                                         .u
                                                                         .B1 as eightbits,
-                                                                );
+                                                                )) as i64);
                                                         }
                                                     }
                                                     0 | 1 | 2 | 11 => {
                                                         breakwidth
                                                             [1 as ::core::ffi::c_int as usize] =
-                                                            (breakwidth
-                                                                [1 as ::core::ffi::c_int as usize]
-                                                                + (*mem.offset(
+                                                            crate::checked_width::tex(((breakwidth
+                                                                [1 as ::core::ffi::c_int as usize]) as i64 + ((*mem.offset(
                                                                     (s as ::core::ffi::c_int
                                                                         + 1 as ::core::ffi::c_int)
                                                                         as isize,
                                                                 ))
                                                                 .u
-                                                                .CINT)
-                                                                as scaled;
+                                                                .CINT) as i64));
                                                         if (*mem.offset(s as isize)).hh.u.B0
                                                             as ::core::ffi::c_int
                                                             == 11 as ::core::ffi::c_int
@@ -43898,13 +43252,23 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                                 == 0 as ::core::ffi::c_int
                                                         {
                                                             breakwidth[7 as ::core::ffi::c_int
-                                                                as usize] = breakwidth
-                                                                [7 as ::core::ffi::c_int as usize]
-                                                                + zkernstretch(s);
+                                                                as usize] =
+                                                                crate::checked_width::tex(
+                                                                    (breakwidth[7
+                                                                        as ::core::ffi::c_int
+                                                                        as usize])
+                                                                        as i64
+                                                                        + (zkernstretch(s)) as i64,
+                                                                );
                                                             breakwidth[8 as ::core::ffi::c_int
-                                                                as usize] = breakwidth
-                                                                [8 as ::core::ffi::c_int as usize]
-                                                                + zkernshrink(s);
+                                                                as usize] =
+                                                                crate::checked_width::tex(
+                                                                    (breakwidth[8
+                                                                        as ::core::ffi::c_int
+                                                                        as usize])
+                                                                        as i64
+                                                                        + (zkernshrink(s)) as i64,
+                                                                );
                                                         }
                                                     }
                                                     _ => {
@@ -43914,20 +43278,34 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                             }
                                             s = (*mem.offset(s as isize)).hh.v.RH;
                                         }
-                                        breakwidth[1 as ::core::ffi::c_int as usize] = breakwidth
-                                            [1 as ::core::ffi::c_int as usize]
-                                            + discwidth[1 as ::core::ffi::c_int as usize];
+                                        breakwidth[1 as ::core::ffi::c_int as usize] =
+                                            crate::checked_width::tex(
+                                                (breakwidth[1 as ::core::ffi::c_int as usize])
+                                                    as i64
+                                                    + (discwidth[1 as ::core::ffi::c_int as usize])
+                                                        as i64,
+                                            );
                                         if (*eqtb.offset(29360 as ::core::ffi::c_int as isize))
                                             .u
                                             .CINT
                                             > 1 as ::core::ffi::c_int
                                         {
                                             breakwidth[7 as ::core::ffi::c_int as usize] =
-                                                breakwidth[7 as ::core::ffi::c_int as usize]
-                                                    + discwidth[7 as ::core::ffi::c_int as usize];
+                                                crate::checked_width::tex(
+                                                    (breakwidth[7 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        + (discwidth
+                                                            [7 as ::core::ffi::c_int as usize])
+                                                            as i64,
+                                                );
                                             breakwidth[8 as ::core::ffi::c_int as usize] =
-                                                breakwidth[8 as ::core::ffi::c_int as usize]
-                                                    + discwidth[8 as ::core::ffi::c_int as usize];
+                                                crate::checked_width::tex(
+                                                    (breakwidth[8 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        + (discwidth
+                                                            [8 as ::core::ffi::c_int as usize])
+                                                            as i64,
+                                                );
                                         }
                                         if (*mem.offset(
                                             (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
@@ -43959,53 +43337,65 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                             .v
                                             .LH;
                                             breakwidth[1 as ::core::ffi::c_int as usize] =
-                                                (breakwidth[1 as ::core::ffi::c_int as usize]
-                                                    - (*mem.offset(
-                                                        (v as ::core::ffi::c_int
-                                                            + 1 as ::core::ffi::c_int)
-                                                            as isize,
-                                                    ))
-                                                    .u
-                                                    .CINT)
-                                                    as scaled;
+                                                crate::checked_width::tex(
+                                                    ((breakwidth[1 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        - ((*mem.offset(
+                                                            (v as ::core::ffi::c_int
+                                                                + 1 as ::core::ffi::c_int)
+                                                                as isize,
+                                                        ))
+                                                        .u
+                                                        .CINT)
+                                                            as i64),
+                                                );
                                             breakwidth[(2 as ::core::ffi::c_int
                                                 + (*mem.offset(v as isize)).hh.u.B0
                                                     as ::core::ffi::c_int)
-                                                as usize] = (breakwidth[(2 as ::core::ffi::c_int
-                                                + (*mem.offset(v as isize)).hh.u.B0
-                                                    as ::core::ffi::c_int)
-                                                as usize]
-                                                - (*mem.offset(
-                                                    (v as ::core::ffi::c_int
-                                                        + 2 as ::core::ffi::c_int)
-                                                        as isize,
-                                                ))
-                                                .u
-                                                .CINT)
-                                                as scaled;
-                                            breakwidth[6 as ::core::ffi::c_int as usize] =
-                                                (breakwidth[6 as ::core::ffi::c_int as usize]
-                                                    - (*mem.offset(
+                                                as usize] = crate::checked_width::tex(
+                                                ((breakwidth[(2 as ::core::ffi::c_int
+                                                    + (*mem.offset(v as isize)).hh.u.B0
+                                                        as ::core::ffi::c_int)
+                                                    as usize])
+                                                    as i64
+                                                    - ((*mem.offset(
                                                         (v as ::core::ffi::c_int
-                                                            + 3 as ::core::ffi::c_int)
+                                                            + 2 as ::core::ffi::c_int)
                                                             as isize,
                                                     ))
                                                     .u
                                                     .CINT)
-                                                    as scaled;
+                                                        as i64),
+                                            );
+                                            breakwidth[6 as ::core::ffi::c_int as usize] =
+                                                crate::checked_width::tex(
+                                                    ((breakwidth[6 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        - ((*mem.offset(
+                                                            (v as ::core::ffi::c_int
+                                                                + 3 as ::core::ffi::c_int)
+                                                                as isize,
+                                                        ))
+                                                        .u
+                                                        .CINT)
+                                                            as i64),
+                                                );
                                         }
                                         12 => {}
                                         9 => {
                                             breakwidth[1 as ::core::ffi::c_int as usize] =
-                                                (breakwidth[1 as ::core::ffi::c_int as usize]
-                                                    - (*mem.offset(
-                                                        (s as ::core::ffi::c_int
-                                                            + 1 as ::core::ffi::c_int)
-                                                            as isize,
-                                                    ))
-                                                    .u
-                                                    .CINT)
-                                                    as scaled;
+                                                crate::checked_width::tex(
+                                                    ((breakwidth[1 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        - ((*mem.offset(
+                                                            (s as ::core::ffi::c_int
+                                                                + 1 as ::core::ffi::c_int)
+                                                                as isize,
+                                                        ))
+                                                        .u
+                                                        .CINT)
+                                                            as i64),
+                                                );
                                         }
                                         11 => {
                                             if (*mem.offset(s as isize)).hh.u.B1
@@ -44015,15 +43405,18 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                 break;
                                             }
                                             breakwidth[1 as ::core::ffi::c_int as usize] =
-                                                (breakwidth[1 as ::core::ffi::c_int as usize]
-                                                    - (*mem.offset(
-                                                        (s as ::core::ffi::c_int
-                                                            + 1 as ::core::ffi::c_int)
-                                                            as isize,
-                                                    ))
-                                                    .u
-                                                    .CINT)
-                                                    as scaled;
+                                                crate::checked_width::tex(
+                                                    ((breakwidth[1 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        - ((*mem.offset(
+                                                            (s as ::core::ffi::c_int
+                                                                + 1 as ::core::ffi::c_int)
+                                                                as isize,
+                                                        ))
+                                                        .u
+                                                        .CINT)
+                                                            as i64),
+                                                );
                                         }
                                         _ => {
                                             break;
@@ -44040,85 +43433,97 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                         as isize,
                                 ))
                                 .u
-                                .CINT = ((*mem.offset(
-                                    (prevr as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
-                                        as isize,
-                                ))
-                                .u
-                                .CINT as scaled
-                                    - curactivewidth[1 as ::core::ffi::c_int as usize]
-                                    + breakwidth[1 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    (((*mem.offset(
+                                        (prevr as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT as scaled) as i64
+                                        - (curactivewidth[1 as ::core::ffi::c_int as usize])
+                                            as i64
+                                        + (breakwidth[1 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (prevr as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
                                         as isize,
                                 ))
                                 .u
-                                .CINT = ((*mem.offset(
-                                    (prevr as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
-                                        as isize,
-                                ))
-                                .u
-                                .CINT as scaled
-                                    - curactivewidth[2 as ::core::ffi::c_int as usize]
-                                    + breakwidth[2 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    (((*mem.offset(
+                                        (prevr as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT as scaled) as i64
+                                        - (curactivewidth[2 as ::core::ffi::c_int as usize])
+                                            as i64
+                                        + (breakwidth[2 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (prevr as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
                                         as isize,
                                 ))
                                 .u
-                                .CINT = ((*mem.offset(
-                                    (prevr as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
-                                        as isize,
-                                ))
-                                .u
-                                .CINT as scaled
-                                    - curactivewidth[3 as ::core::ffi::c_int as usize]
-                                    + breakwidth[3 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    (((*mem.offset(
+                                        (prevr as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT as scaled) as i64
+                                        - (curactivewidth[3 as ::core::ffi::c_int as usize])
+                                            as i64
+                                        + (breakwidth[3 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (prevr as ::core::ffi::c_int + 4 as ::core::ffi::c_int)
                                         as isize,
                                 ))
                                 .u
-                                .CINT = ((*mem.offset(
-                                    (prevr as ::core::ffi::c_int + 4 as ::core::ffi::c_int)
-                                        as isize,
-                                ))
-                                .u
-                                .CINT as scaled
-                                    - curactivewidth[4 as ::core::ffi::c_int as usize]
-                                    + breakwidth[4 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    (((*mem.offset(
+                                        (prevr as ::core::ffi::c_int + 4 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT as scaled) as i64
+                                        - (curactivewidth[4 as ::core::ffi::c_int as usize])
+                                            as i64
+                                        + (breakwidth[4 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (prevr as ::core::ffi::c_int + 5 as ::core::ffi::c_int)
                                         as isize,
                                 ))
                                 .u
-                                .CINT = ((*mem.offset(
-                                    (prevr as ::core::ffi::c_int + 5 as ::core::ffi::c_int)
-                                        as isize,
-                                ))
-                                .u
-                                .CINT as scaled
-                                    - curactivewidth[5 as ::core::ffi::c_int as usize]
-                                    + breakwidth[5 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    (((*mem.offset(
+                                        (prevr as ::core::ffi::c_int + 5 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT as scaled) as i64
+                                        - (curactivewidth[5 as ::core::ffi::c_int as usize])
+                                            as i64
+                                        + (breakwidth[5 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (prevr as ::core::ffi::c_int + 6 as ::core::ffi::c_int)
                                         as isize,
                                 ))
                                 .u
-                                .CINT = ((*mem.offset(
-                                    (prevr as ::core::ffi::c_int + 6 as ::core::ffi::c_int)
-                                        as isize,
-                                ))
-                                .u
-                                .CINT as scaled
-                                    - curactivewidth[6 as ::core::ffi::c_int as usize]
-                                    + breakwidth[6 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    (((*mem.offset(
+                                        (prevr as ::core::ffi::c_int + 6 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT as scaled) as i64
+                                        - (curactivewidth[6 as ::core::ffi::c_int as usize])
+                                            as i64
+                                        + (breakwidth[6 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                     > 1 as ::core::ffi::c_int
                                 {
@@ -44127,29 +43532,37 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                             as isize,
                                     ))
                                     .u
-                                    .CINT = ((*mem.offset(
-                                        (prevr as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
-                                            as isize,
-                                    ))
-                                    .u
-                                    .CINT as scaled
-                                        - curactivewidth[7 as ::core::ffi::c_int as usize]
-                                        + breakwidth[7 as ::core::ffi::c_int as usize])
-                                        as integer;
+                                    .CINT = crate::checked_width::tex(
+                                        (((*mem.offset(
+                                            (prevr as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT as scaled)
+                                            as i64
+                                            - (curactivewidth[7 as ::core::ffi::c_int as usize])
+                                                as i64
+                                            + (breakwidth[7 as ::core::ffi::c_int as usize])
+                                                as i64),
+                                    );
                                     (*mem.offset(
                                         (prevr as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
                                             as isize,
                                     ))
                                     .u
-                                    .CINT = ((*mem.offset(
-                                        (prevr as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
-                                            as isize,
-                                    ))
-                                    .u
-                                    .CINT as scaled
-                                        - curactivewidth[8 as ::core::ffi::c_int as usize]
-                                        + breakwidth[8 as ::core::ffi::c_int as usize])
-                                        as integer;
+                                    .CINT = crate::checked_width::tex(
+                                        (((*mem.offset(
+                                            (prevr as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT as scaled)
+                                            as i64
+                                            - (curactivewidth[8 as ::core::ffi::c_int as usize])
+                                                as i64
+                                            + (breakwidth[8 as ::core::ffi::c_int as usize])
+                                                as i64),
+                                    );
                                 }
                             } else if prevr
                                 == memtop as ::core::ffi::c_int - 7 as ::core::ffi::c_int
@@ -44183,44 +43596,56 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                     (q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (breakwidth[1 as ::core::ffi::c_int as usize]
-                                    - curactivewidth[1 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((breakwidth[1 as ::core::ffi::c_int as usize]) as i64
+                                        - (curactivewidth[1 as ::core::ffi::c_int as usize])
+                                            as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (breakwidth[2 as ::core::ffi::c_int as usize]
-                                    - curactivewidth[2 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((breakwidth[2 as ::core::ffi::c_int as usize]) as i64
+                                        - (curactivewidth[2 as ::core::ffi::c_int as usize])
+                                            as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (breakwidth[3 as ::core::ffi::c_int as usize]
-                                    - curactivewidth[3 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((breakwidth[3 as ::core::ffi::c_int as usize]) as i64
+                                        - (curactivewidth[3 as ::core::ffi::c_int as usize])
+                                            as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (breakwidth[4 as ::core::ffi::c_int as usize]
-                                    - curactivewidth[4 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((breakwidth[4 as ::core::ffi::c_int as usize]) as i64
+                                        - (curactivewidth[4 as ::core::ffi::c_int as usize])
+                                            as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (breakwidth[5 as ::core::ffi::c_int as usize]
-                                    - curactivewidth[5 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((breakwidth[5 as ::core::ffi::c_int as usize]) as i64
+                                        - (curactivewidth[5 as ::core::ffi::c_int as usize])
+                                            as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (breakwidth[6 as ::core::ffi::c_int as usize]
-                                    - curactivewidth[6 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((breakwidth[6 as ::core::ffi::c_int as usize]) as i64
+                                        - (curactivewidth[6 as ::core::ffi::c_int as usize])
+                                            as i64),
+                                );
                                 if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                     > 1 as ::core::ffi::c_int
                                 {
@@ -44229,17 +43654,21 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                             as isize,
                                     ))
                                     .u
-                                    .CINT = (breakwidth[7 as ::core::ffi::c_int as usize]
-                                        - curactivewidth[7 as ::core::ffi::c_int as usize])
-                                        as integer;
+                                    .CINT = crate::checked_width::tex(
+                                        ((breakwidth[7 as ::core::ffi::c_int as usize]) as i64
+                                            - (curactivewidth[7 as ::core::ffi::c_int as usize])
+                                                as i64),
+                                    );
                                     (*mem.offset(
                                         (q as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
                                             as isize,
                                     ))
                                     .u
-                                    .CINT = (breakwidth[8 as ::core::ffi::c_int as usize]
-                                        - curactivewidth[8 as ::core::ffi::c_int as usize])
-                                        as integer;
+                                    .CINT = crate::checked_width::tex(
+                                        ((breakwidth[8 as ::core::ffi::c_int as usize]) as i64
+                                            - (curactivewidth[8 as ::core::ffi::c_int as usize])
+                                                as i64),
+                                    );
                                 }
                                 (*mem.offset(prevr as isize)).hh.v.RH = q;
                                 prevprevr = prevr;
@@ -44460,44 +43889,50 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                     (q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (curactivewidth[1 as ::core::ffi::c_int as usize]
-                                    - breakwidth[1 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((curactivewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                        - (breakwidth[1 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (curactivewidth[2 as ::core::ffi::c_int as usize]
-                                    - breakwidth[2 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((curactivewidth[2 as ::core::ffi::c_int as usize]) as i64
+                                        - (breakwidth[2 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (curactivewidth[3 as ::core::ffi::c_int as usize]
-                                    - breakwidth[3 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((curactivewidth[3 as ::core::ffi::c_int as usize]) as i64
+                                        - (breakwidth[3 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (curactivewidth[4 as ::core::ffi::c_int as usize]
-                                    - breakwidth[4 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((curactivewidth[4 as ::core::ffi::c_int as usize]) as i64
+                                        - (breakwidth[4 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (curactivewidth[5 as ::core::ffi::c_int as usize]
-                                    - breakwidth[5 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((curactivewidth[5 as ::core::ffi::c_int as usize]) as i64
+                                        - (breakwidth[5 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 (*mem.offset(
                                     (q as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT = (curactivewidth[6 as ::core::ffi::c_int as usize]
-                                    - breakwidth[6 as ::core::ffi::c_int as usize])
-                                    as integer;
+                                .CINT = crate::checked_width::tex(
+                                    ((curactivewidth[6 as ::core::ffi::c_int as usize]) as i64
+                                        - (breakwidth[6 as ::core::ffi::c_int as usize]) as i64),
+                                );
                                 if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                     > 1 as ::core::ffi::c_int
                                 {
@@ -44506,17 +43941,21 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                             as isize,
                                     ))
                                     .u
-                                    .CINT = (curactivewidth[7 as ::core::ffi::c_int as usize]
-                                        - breakwidth[7 as ::core::ffi::c_int as usize])
-                                        as integer;
+                                    .CINT = crate::checked_width::tex(
+                                        ((curactivewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                            - (breakwidth[7 as ::core::ffi::c_int as usize])
+                                                as i64),
+                                    );
                                     (*mem.offset(
                                         (q as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
                                             as isize,
                                     ))
                                     .u
-                                    .CINT = (curactivewidth[8 as ::core::ffi::c_int as usize]
-                                        - breakwidth[8 as ::core::ffi::c_int as usize])
-                                        as integer;
+                                    .CINT = crate::checked_width::tex(
+                                        ((curactivewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                            - (breakwidth[8 as ::core::ffi::c_int as usize])
+                                                as i64),
+                                    );
                                 }
                                 (*mem.offset(prevr as isize)).hh.v.RH = q;
                                 prevprevr = prevr;
@@ -44550,11 +43989,16 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                         }
                     }
                     artificialdemerits = false_0 as boolean;
-                    shortfall = linewidth - curactivewidth[1 as ::core::ffi::c_int as usize];
+                    shortfall = crate::checked_width::tex(
+                        (linewidth) as i64
+                            - (curactivewidth[1 as ::core::ffi::c_int as usize]) as i64,
+                    );
                     if (*eqtb.offset(29361 as ::core::ffi::c_int as isize)).u.CINT
                         > 1 as ::core::ffi::c_int
                     {
-                        shortfall = shortfall + ztotalpw(r, curp);
+                        shortfall = crate::checked_width::tex(
+                            (shortfall) as i64 + (ztotalpw(r, curp)) as i64,
+                        );
                     }
                     if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                         > 1 as ::core::ffi::c_int
@@ -44585,9 +44029,13 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                 if (*mem.offset(cp as isize)).hh.u.B0 as ::core::ffi::c_int
                                     != (*mem.offset(lp as isize)).hh.u.B0 as ::core::ffi::c_int
                                 {
-                                    marginkernstretch = marginkernstretch
-                                        + zcharpw(lp, 0 as ::core::ffi::c_int as smallnumber)
-                                        - zcharpw(cp, 0 as ::core::ffi::c_int as smallnumber);
+                                    marginkernstretch = crate::checked_width::tex(
+                                        (marginkernstretch) as i64
+                                            + (zcharpw(lp, 0 as ::core::ffi::c_int as smallnumber))
+                                                as i64
+                                            - (zcharpw(cp, 0 as ::core::ffi::c_int as smallnumber))
+                                                as i64,
+                                    );
                                 }
                                 (*mem.offset(cp as isize)).hh.u.B0 =
                                     (*mem.offset(lp as isize)).hh.u.B0;
@@ -44595,9 +44043,13 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                 if (*mem.offset(cp as isize)).hh.u.B0 as ::core::ffi::c_int
                                     != (*mem.offset(lp as isize)).hh.u.B0 as ::core::ffi::c_int
                                 {
-                                    marginkernshrink = marginkernshrink
-                                        + zcharpw(cp, 0 as ::core::ffi::c_int as smallnumber)
-                                        - zcharpw(lp, 0 as ::core::ffi::c_int as smallnumber);
+                                    marginkernshrink = crate::checked_width::tex(
+                                        (marginkernshrink) as i64
+                                            + (zcharpw(cp, 0 as ::core::ffi::c_int as smallnumber))
+                                                as i64
+                                            - (zcharpw(lp, 0 as ::core::ffi::c_int as smallnumber))
+                                                as i64,
+                                    );
                                 }
                             }
                             if rp as ::core::ffi::c_long != -(268435455 as ::core::ffi::c_long) {
@@ -44609,9 +44061,13 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                 if (*mem.offset(cp as isize)).hh.u.B0 as ::core::ffi::c_int
                                     != (*mem.offset(rp as isize)).hh.u.B0 as ::core::ffi::c_int
                                 {
-                                    marginkernstretch = marginkernstretch
-                                        + zcharpw(rp, 0 as ::core::ffi::c_int as smallnumber)
-                                        - zcharpw(cp, 0 as ::core::ffi::c_int as smallnumber);
+                                    marginkernstretch = crate::checked_width::tex(
+                                        (marginkernstretch) as i64
+                                            + (zcharpw(rp, 0 as ::core::ffi::c_int as smallnumber))
+                                                as i64
+                                            - (zcharpw(cp, 0 as ::core::ffi::c_int as smallnumber))
+                                                as i64,
+                                    );
                                 }
                                 (*mem.offset(cp as isize)).hh.u.B0 =
                                     (*mem.offset(rp as isize)).hh.u.B0;
@@ -44619,9 +44075,13 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                 if (*mem.offset(cp as isize)).hh.u.B0 as ::core::ffi::c_int
                                     != (*mem.offset(rp as isize)).hh.u.B0 as ::core::ffi::c_int
                                 {
-                                    marginkernshrink = marginkernshrink
-                                        + zcharpw(cp, 0 as ::core::ffi::c_int as smallnumber)
-                                        - zcharpw(rp, 0 as ::core::ffi::c_int as smallnumber);
+                                    marginkernshrink = crate::checked_width::tex(
+                                        (marginkernshrink) as i64
+                                            + (zcharpw(cp, 0 as ::core::ffi::c_int as smallnumber))
+                                                as i64
+                                            - (zcharpw(rp, 0 as ::core::ffi::c_int as smallnumber))
+                                                as i64,
+                                    );
                                 }
                             }
                             (*mem.offset(cp as isize)).hh.v.RH = avail;
@@ -44629,39 +44089,57 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                             dynused -= 1;
                         }
                         if shortfall > 0 as ::core::ffi::c_int
-                            && curactivewidth[7 as ::core::ffi::c_int as usize] + marginkernstretch
-                                > 0 as ::core::ffi::c_int
+                            && crate::checked_width::tex(
+                                (curactivewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                    + (marginkernstretch) as i64,
+                            ) > 0 as ::core::ffi::c_int
                         {
-                            if curactivewidth[7 as ::core::ffi::c_int as usize] + marginkernstretch
-                                > shortfall
+                            if crate::checked_width::tex(
+                                (curactivewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                    + (marginkernstretch) as i64,
+                            ) > shortfall
                             {
-                                shortfall = ((curactivewidth[7 as ::core::ffi::c_int as usize]
-                                    + marginkernstretch as ::core::ffi::c_int)
-                                    / (maxstretchratio as ::core::ffi::c_int
-                                        / curfontstep as ::core::ffi::c_int)
-                                    / 2 as ::core::ffi::c_int)
-                                    as scaled;
+                                shortfall = crate::checked_width::tex(
+                                    (((curactivewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                        + (marginkernstretch as ::core::ffi::c_int) as i64)
+                                        / ((maxstretchratio as ::core::ffi::c_int
+                                            / curfontstep as ::core::ffi::c_int)
+                                            as i64)
+                                        / (2 as ::core::ffi::c_int) as i64),
+                                );
                             } else {
-                                shortfall = shortfall
-                                    - (curactivewidth[7 as ::core::ffi::c_int as usize]
-                                        + marginkernstretch);
+                                shortfall = crate::checked_width::tex(
+                                    (shortfall) as i64
+                                        - ((curactivewidth[7 as ::core::ffi::c_int as usize])
+                                            as i64
+                                            + (marginkernstretch) as i64),
+                                );
                             }
                         } else if shortfall < 0 as ::core::ffi::c_int
-                            && curactivewidth[8 as ::core::ffi::c_int as usize] + marginkernshrink
-                                > 0 as ::core::ffi::c_int
+                            && crate::checked_width::tex(
+                                (curactivewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                    + (marginkernshrink) as i64,
+                            ) > 0 as ::core::ffi::c_int
                         {
-                            if curactivewidth[8 as ::core::ffi::c_int as usize] + marginkernshrink
-                                > -shortfall
+                            if crate::checked_width::tex(
+                                (curactivewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                    + (marginkernshrink) as i64,
+                            ) > crate::checked_width::tex(-((shortfall) as i64))
                             {
-                                shortfall = (-((curactivewidth[8 as ::core::ffi::c_int as usize]
-                                    + marginkernshrink as integer)
-                                    / (maxshrinkratio / curfontstep))
-                                    / 2 as ::core::ffi::c_int)
-                                    as scaled;
+                                shortfall = crate::checked_width::tex(
+                                    (-(((curactivewidth[8 as ::core::ffi::c_int as usize])
+                                        as i64
+                                        + (marginkernshrink as integer) as i64)
+                                        / ((maxshrinkratio / curfontstep) as i64))
+                                        / (2 as ::core::ffi::c_int) as i64),
+                                );
                             } else {
-                                shortfall = shortfall
-                                    + (curactivewidth[8 as ::core::ffi::c_int as usize]
-                                        + marginkernshrink);
+                                shortfall = crate::checked_width::tex(
+                                    (shortfall) as i64
+                                        + ((curactivewidth[8 as ::core::ffi::c_int as usize])
+                                            as i64
+                                            + (marginkernshrink) as i64),
+                                );
                             }
                         }
                     }
@@ -44767,8 +44245,10 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                     g_0 =
                                                         1073741823 as ::core::ffi::c_long as scaled;
                                                 } else {
-                                                    g_0 = -(1073741823 as ::core::ffi::c_long)
-                                                        as scaled;
+                                                    g_0 = crate::checked_width::tex(
+                                                        -((1073741823 as ::core::ffi::c_long)
+                                                            as i64),
+                                                    );
                                                 }
                                             }
                                             if g_0 > 0 as ::core::ffi::c_int {
@@ -44815,16 +44295,18 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                                     }
                                                 }
                                             } else if g_0 < 0 as ::core::ffi::c_int {
-                                                if -g_0
+                                                if crate::checked_width::tex(-((g_0) as i64))
                                                     > curactivewidth
                                                         [6 as ::core::ffi::c_int as usize]
                                                 {
-                                                    g_0 = -curactivewidth
-                                                        [6 as ::core::ffi::c_int as usize]
-                                                        as scaled;
+                                                    g_0 = crate::checked_width::tex(
+                                                        -((curactivewidth
+                                                            [6 as ::core::ffi::c_int as usize])
+                                                            as i64),
+                                                    );
                                                 }
                                                 b = zbadness(
-                                                    -g_0,
+                                                    crate::checked_width::tex(-((g_0) as i64)),
                                                     curactivewidth
                                                         [6 as ::core::ffi::c_int as usize],
                                                 );
@@ -44897,11 +44379,13 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                             current_block = 11123731432167558619;
                         }
                     } else {
-                        if -shortfall > curactivewidth[6 as ::core::ffi::c_int as usize] {
+                        if crate::checked_width::tex(-((shortfall) as i64))
+                            > curactivewidth[6 as ::core::ffi::c_int as usize]
+                        {
                             b = 10001 as ::core::ffi::c_int as halfword;
                         } else {
                             b = zbadness(
-                                -shortfall,
+                                crate::checked_width::tex(-((shortfall) as i64)),
                                 curactivewidth[6 as ::core::ffi::c_int as usize],
                             );
                         }
@@ -45146,73 +44630,91 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                         if (*mem.offset(r as isize)).hh.u.B0 as ::core::ffi::c_int
                             == 2 as ::core::ffi::c_int
                         {
-                            activewidth[1 as ::core::ffi::c_int as usize] = (activewidth
-                                [1 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            activewidth[2 as ::core::ffi::c_int as usize] = (activewidth
-                                [2 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            activewidth[3 as ::core::ffi::c_int as usize] = (activewidth
-                                [3 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            activewidth[4 as ::core::ffi::c_int as usize] = (activewidth
-                                [4 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            activewidth[5 as ::core::ffi::c_int as usize] = (activewidth
-                                [5 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            activewidth[6 as ::core::ffi::c_int as usize] = (activewidth
-                                [6 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
+                            activewidth[1 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            activewidth[2 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((activewidth[2 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            activewidth[3 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((activewidth[3 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            activewidth[4 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((activewidth[4 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 4 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            activewidth[5 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((activewidth[5 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 5 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            activewidth[6 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((activewidth[6 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 6 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
                             if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                 > 1 as ::core::ffi::c_int
                             {
                                 activewidth[7 as ::core::ffi::c_int as usize] =
-                                    (activewidth[7 as ::core::ffi::c_int as usize]
-                                        + (*mem.offset(
-                                            (r as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
-                                                as isize,
-                                        ))
-                                        .u
-                                        .CINT) as scaled;
+                                    crate::checked_width::tex(
+                                        ((activewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                            + ((*mem.offset(
+                                                (r as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
+                                                    as isize,
+                                            ))
+                                            .u
+                                            .CINT)
+                                                as i64),
+                                    );
                                 activewidth[8 as ::core::ffi::c_int as usize] =
-                                    (activewidth[8 as ::core::ffi::c_int as usize]
-                                        + (*mem.offset(
-                                            (r as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
-                                                as isize,
-                                        ))
-                                        .u
-                                        .CINT) as scaled;
+                                    crate::checked_width::tex(
+                                        ((activewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                            + ((*mem.offset(
+                                                (r as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
+                                                    as isize,
+                                            ))
+                                            .u
+                                            .CINT)
+                                                as i64),
+                                    );
                             }
                             curactivewidth[1 as ::core::ffi::c_int as usize] =
                                 activewidth[1 as ::core::ffi::c_int as usize];
@@ -45248,72 +44750,92 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                         r = (*mem.offset(prevr as isize)).hh.v.RH;
                         if r == memtop as ::core::ffi::c_int - 7 as ::core::ffi::c_int {
                             curactivewidth[1 as ::core::ffi::c_int as usize] =
-                                (curactivewidth[1 as ::core::ffi::c_int as usize]
-                                    - (*mem.offset(
-                                        (prevr as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
-                                            as isize,
-                                    ))
-                                    .u
-                                    .CINT) as scaled;
+                                crate::checked_width::tex(
+                                    ((curactivewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                        - ((*mem.offset(
+                                            (prevr as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
                             curactivewidth[2 as ::core::ffi::c_int as usize] =
-                                (curactivewidth[2 as ::core::ffi::c_int as usize]
-                                    - (*mem.offset(
-                                        (prevr as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
-                                            as isize,
-                                    ))
-                                    .u
-                                    .CINT) as scaled;
+                                crate::checked_width::tex(
+                                    ((curactivewidth[2 as ::core::ffi::c_int as usize]) as i64
+                                        - ((*mem.offset(
+                                            (prevr as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
                             curactivewidth[3 as ::core::ffi::c_int as usize] =
-                                (curactivewidth[3 as ::core::ffi::c_int as usize]
-                                    - (*mem.offset(
-                                        (prevr as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
-                                            as isize,
-                                    ))
-                                    .u
-                                    .CINT) as scaled;
+                                crate::checked_width::tex(
+                                    ((curactivewidth[3 as ::core::ffi::c_int as usize]) as i64
+                                        - ((*mem.offset(
+                                            (prevr as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
                             curactivewidth[4 as ::core::ffi::c_int as usize] =
-                                (curactivewidth[4 as ::core::ffi::c_int as usize]
-                                    - (*mem.offset(
-                                        (prevr as ::core::ffi::c_int + 4 as ::core::ffi::c_int)
-                                            as isize,
-                                    ))
-                                    .u
-                                    .CINT) as scaled;
+                                crate::checked_width::tex(
+                                    ((curactivewidth[4 as ::core::ffi::c_int as usize]) as i64
+                                        - ((*mem.offset(
+                                            (prevr as ::core::ffi::c_int + 4 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
                             curactivewidth[5 as ::core::ffi::c_int as usize] =
-                                (curactivewidth[5 as ::core::ffi::c_int as usize]
-                                    - (*mem.offset(
-                                        (prevr as ::core::ffi::c_int + 5 as ::core::ffi::c_int)
-                                            as isize,
-                                    ))
-                                    .u
-                                    .CINT) as scaled;
+                                crate::checked_width::tex(
+                                    ((curactivewidth[5 as ::core::ffi::c_int as usize]) as i64
+                                        - ((*mem.offset(
+                                            (prevr as ::core::ffi::c_int + 5 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
                             curactivewidth[6 as ::core::ffi::c_int as usize] =
-                                (curactivewidth[6 as ::core::ffi::c_int as usize]
-                                    - (*mem.offset(
-                                        (prevr as ::core::ffi::c_int + 6 as ::core::ffi::c_int)
-                                            as isize,
-                                    ))
-                                    .u
-                                    .CINT) as scaled;
+                                crate::checked_width::tex(
+                                    ((curactivewidth[6 as ::core::ffi::c_int as usize]) as i64
+                                        - ((*mem.offset(
+                                            (prevr as ::core::ffi::c_int + 6 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
                             if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                 > 1 as ::core::ffi::c_int
                             {
                                 curactivewidth[7 as ::core::ffi::c_int as usize] =
-                                    (curactivewidth[7 as ::core::ffi::c_int as usize]
-                                        - (*mem.offset(
-                                            (prevr as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
-                                                as isize,
-                                        ))
-                                        .u
-                                        .CINT) as scaled;
+                                    crate::checked_width::tex(
+                                        ((curactivewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                            - ((*mem.offset(
+                                                (prevr as ::core::ffi::c_int
+                                                    + 7 as ::core::ffi::c_int)
+                                                    as isize,
+                                            ))
+                                            .u
+                                            .CINT)
+                                                as i64),
+                                    );
                                 curactivewidth[8 as ::core::ffi::c_int as usize] =
-                                    (curactivewidth[8 as ::core::ffi::c_int as usize]
-                                        - (*mem.offset(
-                                            (prevr as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
-                                                as isize,
-                                        ))
-                                        .u
-                                        .CINT) as scaled;
+                                    crate::checked_width::tex(
+                                        ((curactivewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                            - ((*mem.offset(
+                                                (prevr as ::core::ffi::c_int
+                                                    + 8 as ::core::ffi::c_int)
+                                                    as isize,
+                                            ))
+                                            .u
+                                            .CINT)
+                                                as i64),
+                                    );
                             }
                             (*mem.offset(prevprevr as isize)).hh.v.RH =
                                 (memtop as ::core::ffi::c_int - 7 as ::core::ffi::c_int)
@@ -45323,158 +44845,200 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                         } else if (*mem.offset(r as isize)).hh.u.B0 as ::core::ffi::c_int
                             == 2 as ::core::ffi::c_int
                         {
-                            curactivewidth[1 as ::core::ffi::c_int as usize] = (curactivewidth
-                                [1 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            curactivewidth[2 as ::core::ffi::c_int as usize] = (curactivewidth
-                                [2 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            curactivewidth[3 as ::core::ffi::c_int as usize] = (curactivewidth
-                                [3 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            curactivewidth[4 as ::core::ffi::c_int as usize] = (curactivewidth
-                                [4 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            curactivewidth[5 as ::core::ffi::c_int as usize] = (curactivewidth
-                                [5 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
-                            curactivewidth[6 as ::core::ffi::c_int as usize] = (curactivewidth
-                                [6 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize,
-                                ))
-                                .u
-                                .CINT)
-                                as scaled;
+                            curactivewidth[1 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((curactivewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            curactivewidth[2 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((curactivewidth[2 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            curactivewidth[3 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((curactivewidth[3 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            curactivewidth[4 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((curactivewidth[4 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 4 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            curactivewidth[5 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((curactivewidth[5 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 5 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
+                            curactivewidth[6 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    ((curactivewidth[6 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 6 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
                             if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                 > 1 as ::core::ffi::c_int
                             {
                                 curactivewidth[7 as ::core::ffi::c_int as usize] =
-                                    (curactivewidth[7 as ::core::ffi::c_int as usize]
-                                        + (*mem.offset(
-                                            (r as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
-                                                as isize,
-                                        ))
-                                        .u
-                                        .CINT) as scaled;
+                                    crate::checked_width::tex(
+                                        ((curactivewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                            + ((*mem.offset(
+                                                (r as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
+                                                    as isize,
+                                            ))
+                                            .u
+                                            .CINT)
+                                                as i64),
+                                    );
                                 curactivewidth[8 as ::core::ffi::c_int as usize] =
-                                    (curactivewidth[8 as ::core::ffi::c_int as usize]
-                                        + (*mem.offset(
-                                            (r as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
-                                                as isize,
-                                        ))
-                                        .u
-                                        .CINT) as scaled;
+                                    crate::checked_width::tex(
+                                        ((curactivewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                            + ((*mem.offset(
+                                                (r as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
+                                                    as isize,
+                                            ))
+                                            .u
+                                            .CINT)
+                                                as i64),
+                                    );
                             }
                             (*mem.offset(
                                 (prevr as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT = (*mem.offset(
-                                (prevr as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
-                            ))
-                            .u
-                            .CINT
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
+                            .CINT = crate::checked_width::tex(
+                                ((*mem.offset(
+                                    (prevr as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                        as isize,
                                 ))
                                 .u
-                                .CINT;
+                                .CINT) as i64
+                                    + ((*mem.offset(
+                                        (r as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT) as i64,
+                            );
                             (*mem.offset(
                                 (prevr as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT = (*mem.offset(
-                                (prevr as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
-                            ))
-                            .u
-                            .CINT
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
+                            .CINT = crate::checked_width::tex(
+                                ((*mem.offset(
+                                    (prevr as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                                        as isize,
                                 ))
                                 .u
-                                .CINT;
+                                .CINT) as i64
+                                    + ((*mem.offset(
+                                        (r as ::core::ffi::c_int + 2 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT) as i64,
+                            );
                             (*mem.offset(
                                 (prevr as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT = (*mem.offset(
-                                (prevr as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
-                            ))
-                            .u
-                            .CINT
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
+                            .CINT = crate::checked_width::tex(
+                                ((*mem.offset(
+                                    (prevr as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
+                                        as isize,
                                 ))
                                 .u
-                                .CINT;
+                                .CINT) as i64
+                                    + ((*mem.offset(
+                                        (r as ::core::ffi::c_int + 3 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT) as i64,
+                            );
                             (*mem.offset(
                                 (prevr as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT = (*mem.offset(
-                                (prevr as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize,
-                            ))
-                            .u
-                            .CINT
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize,
+                            .CINT = crate::checked_width::tex(
+                                ((*mem.offset(
+                                    (prevr as ::core::ffi::c_int + 4 as ::core::ffi::c_int)
+                                        as isize,
                                 ))
                                 .u
-                                .CINT;
+                                .CINT) as i64
+                                    + ((*mem.offset(
+                                        (r as ::core::ffi::c_int + 4 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT) as i64,
+                            );
                             (*mem.offset(
                                 (prevr as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT = (*mem.offset(
-                                (prevr as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize,
-                            ))
-                            .u
-                            .CINT
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 5 as ::core::ffi::c_int) as isize,
+                            .CINT = crate::checked_width::tex(
+                                ((*mem.offset(
+                                    (prevr as ::core::ffi::c_int + 5 as ::core::ffi::c_int)
+                                        as isize,
                                 ))
                                 .u
-                                .CINT;
+                                .CINT) as i64
+                                    + ((*mem.offset(
+                                        (r as ::core::ffi::c_int + 5 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT) as i64,
+                            );
                             (*mem.offset(
                                 (prevr as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT = (*mem.offset(
-                                (prevr as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize,
-                            ))
-                            .u
-                            .CINT
-                                + (*mem.offset(
-                                    (r as ::core::ffi::c_int + 6 as ::core::ffi::c_int) as isize,
+                            .CINT = crate::checked_width::tex(
+                                ((*mem.offset(
+                                    (prevr as ::core::ffi::c_int + 6 as ::core::ffi::c_int)
+                                        as isize,
                                 ))
                                 .u
-                                .CINT;
+                                .CINT) as i64
+                                    + ((*mem.offset(
+                                        (r as ::core::ffi::c_int + 6 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .u
+                                    .CINT) as i64,
+                            );
                             if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                 > 1 as ::core::ffi::c_int
                             {
@@ -45483,35 +45047,39 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
                                         as isize,
                                 ))
                                 .u
-                                .CINT = (*mem.offset(
-                                    (prevr as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
-                                        as isize,
-                                ))
-                                .u
-                                .CINT
-                                    + (*mem.offset(
-                                        (r as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
+                                .CINT = crate::checked_width::tex(
+                                    ((*mem.offset(
+                                        (prevr as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
                                             as isize,
                                     ))
                                     .u
-                                    .CINT;
+                                    .CINT) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 7 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64,
+                                );
                                 (*mem.offset(
                                     (prevr as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
                                         as isize,
                                 ))
                                 .u
-                                .CINT = (*mem.offset(
-                                    (prevr as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
-                                        as isize,
-                                ))
-                                .u
-                                .CINT
-                                    + (*mem.offset(
-                                        (r as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
+                                .CINT = crate::checked_width::tex(
+                                    ((*mem.offset(
+                                        (prevr as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
                                             as isize,
                                     ))
                                     .u
-                                    .CINT;
+                                    .CINT) as i64
+                                        + ((*mem.offset(
+                                            (r as ::core::ffi::c_int + 8 as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64,
+                                );
                             }
                             (*mem.offset(prevr as isize)).hh.v.RH =
                                 (*mem.offset(r as isize)).hh.v.RH;
@@ -45536,8 +45104,7 @@ pub unsafe extern "C" fn ztrybreak(mut pi: integer, mut breaktype: smallnumber) 
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpostlinebreak(mut d: boolean) {
+pub unsafe fn zpostlinebreak(mut d: boolean) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut q: halfword = 0;
@@ -46170,8 +45737,7 @@ pub unsafe extern "C" fn zpostlinebreak(mut d: boolean) {
     curlist.pgfield = (bestline as ::core::ffi::c_int - 1 as ::core::ffi::c_int) as integer;
     curlist.eTeXauxfield = LRptr_0;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zreconstitute(
+pub unsafe fn zreconstitute(
     mut j: smallnumber,
     mut n: smallnumber,
     mut bchar_0: halfword,
@@ -46572,8 +46138,7 @@ pub unsafe extern "C" fn zreconstitute(
     Result = j;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn hyphenate() {
+pub unsafe fn hyphenate() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut i: ::core::ffi::c_uchar = 0;
@@ -47109,12 +46674,7 @@ pub unsafe extern "C" fn hyphenate() {
     (*mem.offset(s as isize)).hh.v.RH = q;
     zflushlist(initlist);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zeTeXenabled(
-    mut b: boolean,
-    mut j: quarterword,
-    mut k: halfword,
-) -> boolean {
+pub unsafe fn zeTeXenabled(mut b: boolean, mut j: quarterword, mut k: halfword) -> boolean {
     let mut Result: boolean = 0;
     if b == 0 {
         interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
@@ -47132,8 +46692,7 @@ pub unsafe extern "C" fn zeTeXenabled(
     Result = b;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn showsavegroups() {
+pub unsafe fn showsavegroups() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut p: integer = 0;
@@ -47428,8 +46987,7 @@ pub unsafe extern "C" fn showsavegroups() {
     curlevel = l_0;
     curgroup = c_0;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zprunepagetop(mut p: halfword, mut s: boolean) -> halfword {
+pub unsafe fn zprunepagetop(mut p: halfword, mut s: boolean) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut prevp_0: halfword = 0;
@@ -47528,8 +47086,7 @@ pub unsafe extern "C" fn zprunepagetop(mut p: halfword, mut s: boolean) -> halfw
         .RH;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvertbreak(mut p: halfword, mut h: scaled, mut d: scaled) -> halfword {
+pub unsafe fn zvertbreak(mut p: halfword, mut h: scaled, mut d: scaled) -> halfword {
     let mut current_block: u64;
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
@@ -48229,8 +47786,7 @@ pub unsafe extern "C" fn zvertbreak(mut p: halfword, mut h: scaled, mut d: scale
     Result = bestplace_0;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zvsplit(mut n: halfword, mut h: scaled) -> halfword {
+pub unsafe fn zvsplit(mut n: halfword, mut h: scaled) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -48482,8 +48038,7 @@ pub unsafe extern "C" fn zvsplit(mut n: halfword, mut h: scaled) -> halfword {
     );
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn printtotals() {
+pub unsafe fn printtotals() {
     zprintscaled(pagesofar[1 as ::core::ffi::c_int as usize]);
     if pagesofar[2 as ::core::ffi::c_int as usize] != 0 as ::core::ffi::c_int {
         zprint(317 as ::core::ffi::c_int);
@@ -48510,8 +48065,7 @@ pub unsafe extern "C" fn printtotals() {
         zprintscaled(pagesofar[6 as ::core::ffi::c_int as usize]);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfreezepagespecs(mut s: smallnumber) {
+pub unsafe fn zfreezepagespecs(mut s: smallnumber) {
     let mut eqtb: *mut memoryword = zeqtb;
     pagecontents = s as ::core::ffi::c_uchar;
     pagesofar[0 as ::core::ffi::c_int as usize] =
@@ -48534,8 +48088,7 @@ pub unsafe extern "C" fn zfreezepagespecs(mut s: smallnumber) {
         zenddiagnostic(0 as ::core::ffi::c_int);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zboxerror(mut n: eightbits) {
+pub unsafe fn zboxerror(mut n: eightbits) {
     let mut eqtb: *mut memoryword = zeqtb;
     error();
     begindiagnostic();
@@ -48558,8 +48111,7 @@ pub unsafe extern "C" fn zboxerror(mut n: eightbits) {
         .v
         .RH = -(268435455 as ::core::ffi::c_long) as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zensurevbox(mut n: eightbits) {
+pub unsafe fn zensurevbox(mut n: eightbits) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -48584,8 +48136,7 @@ pub unsafe extern "C" fn zensurevbox(mut n: eightbits) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfireup(mut c_0: halfword) {
+pub unsafe fn zfireup(mut c_0: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -49203,8 +48754,7 @@ pub unsafe extern "C" fn zfireup(mut c_0: halfword) {
     (*eqtb.offset(27688 as ::core::ffi::c_int as isize)).hh.v.RH =
         -(268435455 as ::core::ffi::c_long) as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn buildpage() {
+pub unsafe fn buildpage() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -50049,8 +49599,7 @@ pub unsafe extern "C" fn buildpage() {
             (memtop as ::core::ffi::c_int - 1 as ::core::ffi::c_int) as halfword;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn appspace() {
+pub unsafe fn appspace() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut q: halfword = 0;
@@ -50131,8 +49680,7 @@ pub unsafe extern "C" fn appspace() {
     (*mem.offset(curlist.tailfield as isize)).hh.v.RH = q;
     curlist.tailfield = q;
 }
-#[no_mangle]
-pub unsafe extern "C" fn insertdollarsign() {
+pub unsafe fn insertdollarsign() {
     backinput();
     curtok = 804 as ::core::ffi::c_int as halfword;
     interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
@@ -50147,8 +49695,7 @@ pub unsafe extern "C" fn insertdollarsign() {
     helpline[0 as ::core::ffi::c_int as usize] = 1446 as ::core::ffi::c_int as strnumber;
     inserror();
 }
-#[no_mangle]
-pub unsafe extern "C" fn youcant() {
+pub unsafe fn youcant() {
     interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
     if filelineerrorstylep != 0 {
         printfileline();
@@ -50159,8 +49706,7 @@ pub unsafe extern "C" fn youcant() {
     zprintcmdchr(curcmd, curchr);
     zprintinmode(curlist.modefield as integer);
 }
-#[no_mangle]
-pub unsafe extern "C" fn reportillegalcase() {
+pub unsafe fn reportillegalcase() {
     youcant();
     helpptr = 4 as ::core::ffi::c_uchar;
     helpline[3 as ::core::ffi::c_int as usize] = 1447 as ::core::ffi::c_int as strnumber;
@@ -50169,8 +49715,7 @@ pub unsafe extern "C" fn reportillegalcase() {
     helpline[0 as ::core::ffi::c_int as usize] = 1450 as ::core::ffi::c_int as strnumber;
     error();
 }
-#[no_mangle]
-pub unsafe extern "C" fn privileged() -> boolean {
+pub unsafe fn privileged() -> boolean {
     let mut Result: boolean = 0;
     if curlist.modefield as ::core::ffi::c_int > 0 as ::core::ffi::c_int {
         Result = true_0 as boolean;
@@ -50180,8 +49725,7 @@ pub unsafe extern "C" fn privileged() -> boolean {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn itsallover() -> boolean {
+pub unsafe fn itsallover() -> boolean {
     let mut Result: boolean = 0;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -50215,8 +49759,7 @@ pub unsafe extern "C" fn itsallover() -> boolean {
     Result = false_0 as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn appendglue() {
+pub unsafe fn appendglue() {
     let mut mem: *mut memoryword = zmem;
     let mut s: smallnumber = 0;
     s = curchr as smallnumber;
@@ -50252,8 +49795,7 @@ pub unsafe extern "C" fn appendglue() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn appendkern() {
+pub unsafe fn appendkern() {
     let mut mem: *mut memoryword = zmem;
     let mut s: quarterword = 0;
     s = curchr as quarterword;
@@ -50267,8 +49809,7 @@ pub unsafe extern "C" fn appendkern() {
     curlist.tailfield = (*mem.offset(curlist.tailfield as isize)).hh.v.RH;
     (*mem.offset(curlist.tailfield as isize)).hh.u.B1 = s as ::core::ffi::c_short;
 }
-#[no_mangle]
-pub unsafe extern "C" fn offsave() {
+pub unsafe fn offsave() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     if curgroup as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
@@ -50335,8 +49876,7 @@ pub unsafe extern "C" fn offsave() {
         error();
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn extrarightbrace() {
+pub unsafe fn extrarightbrace() {
     interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
     if filelineerrorstylep != 0 {
         printfileline();
@@ -50365,8 +49905,7 @@ pub unsafe extern "C" fn extrarightbrace() {
     error();
     alignstate += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn normalparagraph() {
+pub unsafe fn normalparagraph() {
     let mut eqtb: *mut memoryword = zeqtb;
     if (*eqtb.offset(29296 as ::core::ffi::c_int as isize)).u.CINT != 0 as ::core::ffi::c_int {
         zeqworddefine(29296 as ::core::ffi::c_int, 0 as ::core::ffi::c_int);
@@ -50396,8 +49935,7 @@ pub unsafe extern "C" fn normalparagraph() {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zboxend(mut boxcontext: integer) {
+pub unsafe fn zboxend(mut boxcontext: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut a: smallnumber = 0;
@@ -50556,8 +50094,7 @@ pub unsafe extern "C" fn zboxend(mut boxcontext: integer) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zbeginbox(mut boxcontext: integer) {
+pub unsafe fn zbeginbox(mut boxcontext: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -50854,8 +50391,7 @@ pub unsafe extern "C" fn zbeginbox(mut boxcontext: integer) {
     }
     zboxend(boxcontext);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscanbox(mut boxcontext: integer) {
+pub unsafe fn zscanbox(mut boxcontext: integer) {
     loop {
         getxtoken();
         if curcmd as ::core::ffi::c_int != 10 as ::core::ffi::c_int
@@ -50887,8 +50423,7 @@ pub unsafe extern "C" fn zscanbox(mut boxcontext: integer) {
         backerror();
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpackage(mut c_0: smallnumber) {
+pub unsafe fn zpackage(mut c_0: smallnumber) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut h: scaled = 0;
@@ -50955,8 +50490,7 @@ pub unsafe extern "C" fn zpackage(mut c_0: smallnumber) {
             .CINT,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn znormmin(mut h: integer) -> smallnumber {
+pub unsafe fn znormmin(mut h: integer) -> smallnumber {
     let mut Result: smallnumber = 0;
     if h <= 0 as ::core::ffi::c_int {
         Result = 1 as smallnumber;
@@ -50967,8 +50501,7 @@ pub unsafe extern "C" fn znormmin(mut h: integer) -> smallnumber {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewgraf(mut indented: boolean) {
+pub unsafe fn znewgraf(mut indented: boolean) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     curlist.pgfield = 0 as ::core::ffi::c_int as integer;
@@ -51024,8 +50557,7 @@ pub unsafe extern "C" fn znewgraf(mut indented: boolean) {
         buildpage();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn indentinhmode() {
+pub unsafe fn indentinhmode() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -51059,8 +50591,7 @@ pub unsafe extern "C" fn indentinhmode() {
         curlist.tailfield = (*mem.offset(curlist.tailfield as isize)).hh.v.RH;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn headforvmode() {
+pub unsafe fn headforvmode() {
     if (curlist.modefield as ::core::ffi::c_int) < 0 as ::core::ffi::c_int {
         if curcmd as ::core::ffi::c_int != 36 as ::core::ffi::c_int {
             offsave();
@@ -51086,8 +50617,7 @@ pub unsafe extern "C" fn headforvmode() {
         curinput.indexfield = 4 as quarterword;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn endgraf() {
+pub unsafe fn endgraf() {
     if curlist.modefield as ::core::ffi::c_int == 105 as ::core::ffi::c_int {
         if curlist.headfield == curlist.tailfield {
             popnest();
@@ -51102,8 +50632,7 @@ pub unsafe extern "C" fn endgraf() {
         errorcount = 0 as schar;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn begininsertoradjust() {
+pub unsafe fn begininsertoradjust() {
     let mut eqtb: *mut memoryword = zeqtb;
     if curcmd as ::core::ffi::c_int == 38 as ::core::ffi::c_int {
         curval = 255 as ::core::ffi::c_int as integer;
@@ -51147,8 +50676,7 @@ pub unsafe extern "C" fn begininsertoradjust() {
     curlist.modefield = -(1 as ::core::ffi::c_int) as ::core::ffi::c_short;
     curlist.auxfield.u.CINT = (*eqtb.offset(29935 as ::core::ffi::c_int as isize)).u.CINT;
 }
-#[no_mangle]
-pub unsafe extern "C" fn makemark() {
+pub unsafe fn makemark() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut c_0: halfword = 0;
@@ -51173,8 +50701,7 @@ pub unsafe extern "C" fn makemark() {
     (*mem.offset(curlist.tailfield as isize)).hh.v.RH = p;
     curlist.tailfield = p;
 }
-#[no_mangle]
-pub unsafe extern "C" fn appendpenalty() {
+pub unsafe fn appendpenalty() {
     let mut mem: *mut memoryword = zmem;
     scanint();
     prevtail = curlist.tailfield;
@@ -51184,8 +50711,7 @@ pub unsafe extern "C" fn appendpenalty() {
         buildpage();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn deletelast() {
+pub unsafe fn deletelast() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut q: halfword = 0;
@@ -51292,8 +50818,7 @@ pub unsafe extern "C" fn deletelast() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn unpackage() {
+pub unsafe fn unpackage() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -51428,8 +50953,7 @@ pub unsafe extern "C" fn unpackage() {
         curlist.tailfield = (*mem.offset(curlist.tailfield as isize)).hh.v.RH;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn appenditaliccorrection() {
+pub unsafe fn appenditaliccorrection() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut f_0: internalfontnumber = 0;
@@ -51469,8 +50993,7 @@ pub unsafe extern "C" fn appenditaliccorrection() {
         (*mem.offset(curlist.tailfield as isize)).hh.u.B1 = 1 as ::core::ffi::c_short;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn appenddiscretionary() {
+pub unsafe fn appenddiscretionary() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut c_0: integer = 0;
@@ -51547,8 +51070,7 @@ pub unsafe extern "C" fn appenddiscretionary() {
         curlist.auxfield.hh.v.LH = 1000 as ::core::ffi::c_int as halfword;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn builddiscretionary() {
+pub unsafe fn builddiscretionary() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     let mut q: halfword = 0;
@@ -51678,8 +51200,7 @@ pub unsafe extern "C" fn builddiscretionary() {
     curlist.modefield = -(105 as ::core::ffi::c_int) as ::core::ffi::c_short;
     curlist.auxfield.hh.v.LH = 1000 as ::core::ffi::c_int as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn makeaccent() {
+pub unsafe fn makeaccent() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut s: real = 0.;
@@ -51796,8 +51317,7 @@ pub unsafe extern "C" fn makeaccent() {
         curlist.auxfield.hh.v.LH = 1000 as ::core::ffi::c_int as halfword;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn alignerror() {
+pub unsafe fn alignerror() {
     if (if alignstate >= 0 as ::core::ffi::c_int {
         alignstate
     } else {
@@ -51859,8 +51379,7 @@ pub unsafe extern "C" fn alignerror() {
         inserror();
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn noalignerror() {
+pub unsafe fn noalignerror() {
     interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
     if filelineerrorstylep != 0 {
         printfileline();
@@ -51874,8 +51393,7 @@ pub unsafe extern "C" fn noalignerror() {
     helpline[0 as ::core::ffi::c_int as usize] = 1551 as ::core::ffi::c_int as strnumber;
     error();
 }
-#[no_mangle]
-pub unsafe extern "C" fn omiterror() {
+pub unsafe fn omiterror() {
     interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
     if filelineerrorstylep != 0 {
         printfileline();
@@ -51889,8 +51407,7 @@ pub unsafe extern "C" fn omiterror() {
     helpline[0 as ::core::ffi::c_int as usize] = 1551 as ::core::ffi::c_int as strnumber;
     error();
 }
-#[no_mangle]
-pub unsafe extern "C" fn doendv() {
+pub unsafe fn doendv() {
     baseptr = inputptr;
     *inputstack.offset(baseptr as isize) = curinput;
     while (*inputstack.offset(baseptr as isize)).indexfield as ::core::ffi::c_int
@@ -51920,8 +51437,7 @@ pub unsafe extern "C" fn doendv() {
         offsave();
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn cserror() {
+pub unsafe fn cserror() {
     if curchr == 10 as ::core::ffi::c_int {
         interaction as ::core::ffi::c_int == 3 as ::core::ffi::c_int;
         if filelineerrorstylep != 0 {
@@ -51947,15 +51463,13 @@ pub unsafe extern "C" fn cserror() {
     }
     error();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpushmath(mut c_0: groupcode) {
+pub unsafe fn zpushmath(mut c_0: groupcode) {
     pushnest();
     curlist.modefield = -(209 as ::core::ffi::c_int) as ::core::ffi::c_short;
     curlist.auxfield.u.CINT = -(268435455 as ::core::ffi::c_long) as integer;
     znewsavelevel(c_0);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zjustcopy(mut p: halfword, mut h: halfword, mut t: halfword) {
+pub unsafe fn zjustcopy(mut p: halfword, mut h: halfword, mut t: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut r: halfword = 0;
     let mut words: ::core::ffi::c_uchar = 0;
@@ -54924,8 +54438,7 @@ pub unsafe extern "C" fn zjustcopy(mut p: halfword, mut h: halfword, mut t: half
     }
     (*mem.offset(h as isize)).hh.v.RH = t;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zjustreverse(mut p: halfword) {
+pub unsafe fn zjustreverse(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut l_0: halfword = 0;
     let mut t: halfword = 0;
@@ -55048,8 +54561,7 @@ pub unsafe extern "C" fn zjustreverse(mut p: halfword) {
         .v
         .RH = l_0;
 }
-#[no_mangle]
-pub unsafe extern "C" fn initmath() {
+pub unsafe fn initmath() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -55588,8 +55100,7 @@ pub unsafe extern "C" fn initmath() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn starteqno() {
+pub unsafe fn starteqno() {
     let mut eqtb: *mut memoryword = zeqtb;
     (*savestack.offset((saveptr as ::core::ffi::c_int + 0 as ::core::ffi::c_int) as isize))
         .u
@@ -55609,8 +55120,7 @@ pub unsafe extern "C" fn starteqno() {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscanmath(mut p: halfword) {
+pub unsafe fn zscanmath(mut p: halfword) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut c_0: integer = 0;
@@ -55690,8 +55200,7 @@ pub unsafe extern "C" fn zscanmath(mut p: halfword) {
             as ::core::ffi::c_short;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zsetmathchar(mut c_0: integer) {
+pub unsafe fn zsetmathchar(mut c_0: integer) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -55738,8 +55247,7 @@ pub unsafe extern "C" fn zsetmathchar(mut c_0: integer) {
         curlist.tailfield = p;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn mathlimitswitch() {
+pub unsafe fn mathlimitswitch() {
     let mut mem: *mut memoryword = zmem;
     if curlist.headfield != curlist.tailfield {
         if (*mem.offset(curlist.tailfield as isize)).hh.u.B0 as ::core::ffi::c_int
@@ -55760,8 +55268,7 @@ pub unsafe extern "C" fn mathlimitswitch() {
     helpline[0 as ::core::ffi::c_int as usize] = 1560 as ::core::ffi::c_int as strnumber;
     error();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscandelimiter(mut p: halfword, mut r: boolean) {
+pub unsafe fn zscandelimiter(mut p: halfword, mut r: boolean) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     if r != 0 {
@@ -55817,8 +55324,7 @@ pub unsafe extern "C" fn zscandelimiter(mut p: halfword, mut r: boolean) {
     (*mem.offset(p as isize)).v.QQQQ.u.B3 =
         (curval as ::core::ffi::c_int % 256 as ::core::ffi::c_int) as quarterword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn mathradical() {
+pub unsafe fn mathradical() {
     let mut mem: *mut memoryword = zmem;
     prevtail = curlist.tailfield;
     (*mem.offset(curlist.tailfield as isize)).hh.v.RH = zgetnode(5 as ::core::ffi::c_int);
@@ -55837,8 +55343,7 @@ pub unsafe extern "C" fn mathradical() {
     );
     zscanmath(curlist.tailfield as ::core::ffi::c_int + 1 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn mathac() {
+pub unsafe fn mathac() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     if curcmd as ::core::ffi::c_int == 45 as ::core::ffi::c_int {
@@ -55898,8 +55403,7 @@ pub unsafe extern "C" fn mathac() {
     }
     zscanmath(curlist.tailfield as ::core::ffi::c_int + 1 as ::core::ffi::c_int);
 }
-#[no_mangle]
-pub unsafe extern "C" fn appendchoices() {
+pub unsafe fn appendchoices() {
     let mut mem: *mut memoryword = zmem;
     prevtail = curlist.tailfield;
     (*mem.offset(curlist.tailfield as isize)).hh.v.RH = newchoice();
@@ -55911,8 +55415,7 @@ pub unsafe extern "C" fn appendchoices() {
     zpushmath(13 as ::core::ffi::c_int as groupcode);
     scanleftbrace();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zfinmlist(mut p: halfword) -> halfword {
+pub unsafe fn zfinmlist(mut p: halfword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
@@ -55962,8 +55465,7 @@ pub unsafe extern "C" fn zfinmlist(mut p: halfword) -> halfword {
     Result = q;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn buildchoices() {
+pub unsafe fn buildchoices() {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     unsave();
@@ -56016,8 +55518,7 @@ pub unsafe extern "C" fn buildchoices() {
     zpushmath(13 as ::core::ffi::c_int as groupcode);
     scanleftbrace();
 }
-#[no_mangle]
-pub unsafe extern "C" fn subsup() {
+pub unsafe fn subsup() {
     let mut mem: *mut memoryword = zmem;
     let mut t: smallnumber = 0;
     let mut p: halfword = 0;
@@ -56075,8 +55576,7 @@ pub unsafe extern "C" fn subsup() {
     }
     zscanmath(p);
 }
-#[no_mangle]
-pub unsafe extern "C" fn mathfraction() {
+pub unsafe fn mathfraction() {
     let mut mem: *mut memoryword = zmem;
     let mut c_0: smallnumber = 0;
     c_0 = curchr as smallnumber;
@@ -56187,8 +55687,7 @@ pub unsafe extern "C" fn mathfraction() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn mathleftright() {
+pub unsafe fn mathleftright() {
     let mut mem: *mut memoryword = zmem;
     let mut t: smallnumber = 0;
     let mut p: halfword = 0;
@@ -56266,8 +55765,7 @@ pub unsafe extern "C" fn mathleftright() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zappdisplay(mut j: halfword, mut b: halfword, mut d: scaled) {
+pub unsafe fn zappdisplay(mut j: halfword, mut b: halfword, mut d: scaled) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut z: scaled = 0;
@@ -56468,8 +55966,7 @@ pub unsafe extern "C" fn zappdisplay(mut j: halfword, mut b: halfword, mut d: sc
     }
     zappendtovlist(b);
 }
-#[no_mangle]
-pub unsafe extern "C" fn aftermath() {
+pub unsafe fn aftermath() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut l_0: boolean = 0;
@@ -56853,8 +56350,7 @@ pub unsafe extern "C" fn aftermath() {
         resumeafterdisplay();
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn resumeafterdisplay() {
+pub unsafe fn resumeafterdisplay() {
     let mut eqtb: *mut memoryword = zeqtb;
     if curgroup as ::core::ffi::c_int != 15 as ::core::ffi::c_int {
         zconfusion(1599 as ::core::ffi::c_int);
@@ -56889,8 +56385,7 @@ pub unsafe extern "C" fn resumeafterdisplay() {
         buildpage();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn getrtoken() {
+pub unsafe fn getrtoken() {
     loop {
         loop {
             gettoken();
@@ -56924,8 +56419,7 @@ pub unsafe extern "C" fn getrtoken() {
         inserror();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn trapzeroglue() {
+pub unsafe fn trapzeroglue() {
     let mut mem: *mut memoryword = zmem;
     if (*mem.offset((curval as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
         .u
@@ -56946,8 +56440,7 @@ pub unsafe extern "C" fn trapzeroglue() {
         curval = membot;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zdoregistercommand(mut a: smallnumber) {
+pub unsafe fn zdoregistercommand(mut a: smallnumber) {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -57282,8 +56775,7 @@ pub unsafe extern "C" fn zdoregistercommand(mut a: smallnumber) {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn alteraux() {
+pub unsafe fn alteraux() {
     let mut c_0: halfword = 0;
     if curchr
         != (if curlist.modefield as integer >= 0 as ::core::ffi::c_int {
@@ -57323,8 +56815,7 @@ pub unsafe extern "C" fn alteraux() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn alterprevgraf() {
+pub unsafe fn alterprevgraf() {
     let mut p: integer = 0;
     *nest.offset(nestptr as isize) = curlist;
     p = nestptr;
@@ -57355,8 +56846,7 @@ pub unsafe extern "C" fn alterprevgraf() {
         curlist = *nest.offset(nestptr as isize);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn alterpagesofar() {
+pub unsafe fn alterpagesofar() {
     let mut c_0: ::core::ffi::c_uchar = 0;
     c_0 = curchr as ::core::ffi::c_uchar;
     scanoptionalequals();
@@ -57367,8 +56857,7 @@ pub unsafe extern "C" fn alterpagesofar() {
     );
     pagesofar[c_0 as usize] = curval as scaled;
 }
-#[no_mangle]
-pub unsafe extern "C" fn alterinteger() {
+pub unsafe fn alterinteger() {
     let mut c_0: smallnumber = 0;
     c_0 = curchr as smallnumber;
     scanoptionalequals();
@@ -57396,8 +56885,7 @@ pub unsafe extern "C" fn alterinteger() {
         insertpenalties = curval;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn alterboxdimen() {
+pub unsafe fn alterboxdimen() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut c_0: smallnumber = 0;
@@ -57433,8 +56921,7 @@ pub unsafe extern "C" fn alterboxdimen() {
             .CINT = curval;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewfont(mut a: smallnumber) {
+pub unsafe fn znewfont(mut a: smallnumber) {
     let mut current_block: u64;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut u: halfword = 0;
@@ -57591,8 +57078,7 @@ pub unsafe extern "C" fn znewfont(mut a: smallnumber) {
         .v
         .RH = t as halfword;
 }
-#[no_mangle]
-pub unsafe extern "C" fn newinteraction() {
+pub unsafe fn newinteraction() {
     println();
     interaction = curchr as ::core::ffi::c_uchar;
     if interaction as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
@@ -57610,8 +57096,7 @@ pub unsafe extern "C" fn newinteraction() {
             (selector as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as ::core::ffi::c_uchar;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn doassignments() {
+pub unsafe fn doassignments() {
     loop {
         loop {
             getxtoken();
@@ -57629,8 +57114,7 @@ pub unsafe extern "C" fn doassignments() {
         setboxallowed = true_0 as boolean;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn openorclosein() {
+pub unsafe fn openorclosein() {
     let mut c_0: ::core::ffi::c_uchar = 0;
     let mut n: ::core::ffi::c_uchar = 0;
     c_0 = curchr as ::core::ffi::c_uchar;
@@ -57658,8 +57142,7 @@ pub unsafe extern "C" fn openorclosein() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn issuemessage() {
+pub unsafe fn issuemessage() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut oldsetting_0: ::core::ffi::c_uchar = 0;
@@ -57730,8 +57213,7 @@ pub unsafe extern "C" fn issuemessage() {
     strptr -= 1;
     poolptr = *strstart.offset(strptr as isize) as integer;
 }
-#[no_mangle]
-pub unsafe extern "C" fn shiftcase() {
+pub unsafe fn shiftcase() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut b: halfword = 0;
@@ -57769,8 +57251,7 @@ pub unsafe extern "C" fn shiftcase() {
     avail = defref;
     dynused -= 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn showwhatever() {
+pub unsafe fn showwhatever() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -58009,8 +57490,7 @@ pub unsafe extern "C" fn showwhatever() {
         error();
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewwhatsit(mut s: smallnumber, mut w: smallnumber) {
+pub unsafe fn znewwhatsit(mut s: smallnumber, mut w: smallnumber) {
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
     p = zgetnode(w as integer);
@@ -58019,8 +57499,7 @@ pub unsafe extern "C" fn znewwhatsit(mut s: smallnumber, mut w: smallnumber) {
     (*mem.offset(curlist.tailfield as isize)).hh.v.RH = p;
     curlist.tailfield = p;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewwritewhatsit(mut w: smallnumber) {
+pub unsafe fn znewwritewhatsit(mut w: smallnumber) {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     znewwhatsit(curchr as smallnumber, w);
@@ -58069,8 +57548,7 @@ pub unsafe extern "C" fn znewwritewhatsit(mut w: smallnumber) {
             + 64 as ::core::ffi::c_int) as ::core::ffi::c_short;
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn zcheckpdfoutput(mut s: strnumber, mut iserror: boolean) {
+pub unsafe fn zcheckpdfoutput(mut s: strnumber, mut iserror: boolean) {
     let mut eqtb: *mut memoryword = zeqtb;
     if (*eqtb.offset(29342 as ::core::ffi::c_int as isize)).u.CINT <= 0 as ::core::ffi::c_int {
         if iserror != 0 {
@@ -58085,16 +57563,13 @@ pub unsafe extern "C" fn zcheckpdfoutput(mut s: strnumber, mut iserror: boolean)
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanpdfexttoks() {
+pub unsafe fn scanpdfexttoks() {
     zscantoks(0 as ::core::ffi::c_int, 1 as ::core::ffi::c_int) != 0 as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanpdfextlatetoks() {
+pub unsafe fn scanpdfextlatetoks() {
     zscantoks(0 as ::core::ffi::c_int, 0 as ::core::ffi::c_int) != 0 as ::core::ffi::c_int;
 }
-#[no_mangle]
-pub unsafe extern "C" fn comparestrings() {
+pub unsafe fn comparestrings() {
     let mut current_block: u64;
     let mut s1: strnumber = 0;
     let mut s2: strnumber = 0;
@@ -58153,8 +57628,7 @@ pub unsafe extern "C" fn comparestrings() {
     zflushstr(s1);
     curvallevel = 0 as ::core::ffi::c_uchar;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zscaleimage(mut n: integer) {
+pub unsafe fn zscaleimage(mut n: integer) {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut x: integer = 0;
     let mut y: integer = 0;
@@ -58400,8 +57874,7 @@ pub unsafe extern "C" fn zscaleimage(mut n: integer) {
         ) = 0 as ::core::ffi::c_int as integer;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanpdfboxspec() -> integer {
+pub unsafe fn scanpdfboxspec() -> integer {
     let mut Result: integer = 0;
     Result = 0 as ::core::ffi::c_int as integer;
     if zscankeyword(1826 as ::core::ffi::c_int) != 0 {
@@ -58417,8 +57890,7 @@ pub unsafe extern "C" fn scanpdfboxspec() -> integer {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanaltrule() {
+pub unsafe fn scanaltrule() {
     let mut mem: *mut memoryword = zmem;
     if altrule as ::core::ffi::c_long == -(268435455 as ::core::ffi::c_long) {
         altrule = newrule();
@@ -58466,8 +57938,7 @@ pub unsafe extern "C" fn scanaltrule() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanimage() {
+pub unsafe fn scanimage() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut k: integer = 0;
@@ -58603,8 +58074,7 @@ pub unsafe extern "C" fn scanimage() {
             as isize,
     ));
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanaction() -> halfword {
+pub unsafe fn scanaction() -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: integer = 0;
@@ -58768,8 +58238,7 @@ pub unsafe extern "C" fn scanaction() -> halfword {
     }
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewannotwhatsit(mut w: smallnumber, mut s: smallnumber) {
+pub unsafe fn znewannotwhatsit(mut w: smallnumber, mut s: smallnumber) {
     let mut mem: *mut memoryword = zmem;
     znewwhatsit(w, s);
     scanaltrule();
@@ -58827,8 +58296,7 @@ pub unsafe extern "C" fn znewannotwhatsit(mut w: smallnumber, mut s: smallnumber
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn zoutlinelistcount(mut p: halfword) -> integer {
+pub unsafe fn zoutlinelistcount(mut p: halfword) -> integer {
     let mut Result: integer = 0;
     let mut k: integer = 0;
     k = 1 as ::core::ffi::c_int as integer;
@@ -58846,8 +58314,7 @@ pub unsafe extern "C" fn zoutlinelistcount(mut p: halfword) -> integer {
     Result = k;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanthreadid() {
+pub unsafe fn scanthreadid() {
     let mut mem: *mut memoryword = zmem;
     if zscankeyword(1208 as ::core::ffi::c_int) != 0 {
         scanint();
@@ -58887,8 +58354,7 @@ pub unsafe extern "C" fn scanthreadid() {
         zpdferror(1792 as ::core::ffi::c_int, 1847 as ::core::ffi::c_int);
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn znewsnapnode(mut s: smallnumber) -> halfword {
+pub unsafe fn znewsnapnode(mut s: smallnumber) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -58914,8 +58380,7 @@ pub unsafe extern "C" fn znewsnapnode(mut s: smallnumber) -> halfword {
     Result = p;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zconcattokens(mut q: halfword, mut r: halfword) -> halfword {
+pub unsafe fn zconcattokens(mut q: halfword, mut r: halfword) -> halfword {
     let mut Result: halfword = 0;
     let mut mem: *mut memoryword = zmem;
     let mut p: halfword = 0;
@@ -58936,8 +58401,7 @@ pub unsafe extern "C" fn zconcattokens(mut q: halfword, mut r: halfword) -> half
     Result = q;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn pdfincludechars() {
+pub unsafe fn pdfincludechars() {
     let mut s: strnumber = 0;
     let mut k: poolpointer = 0;
     let mut f_0: internalfontnumber = 0;
@@ -58967,8 +58431,7 @@ pub unsafe extern "C" fn pdfincludechars() {
     }
     zflushstr(s);
 }
-#[no_mangle]
-pub unsafe extern "C" fn glyphtounicode() {
+pub unsafe fn glyphtounicode() {
     let mut s1: strnumber = 0;
     let mut s2: strnumber = 0;
     scanpdfexttoks();
@@ -58981,8 +58444,7 @@ pub unsafe extern "C" fn glyphtounicode() {
     zflushstr(s2);
     zflushstr(s1);
 }
-#[no_mangle]
-pub unsafe extern "C" fn zthreadtitle(mut thread: integer) {
+pub unsafe fn zthreadtitle(mut thread: integer) {
     zpdfprint(1901 as ::core::ffi::c_int);
     if (*objtab.offset(thread as isize)).int0 < 0 as ::core::ffi::c_int {
         zpdfprint(-(*objtab.offset(thread as isize)).int0);
@@ -59000,8 +58462,7 @@ pub unsafe extern "C" fn zthreadtitle(mut thread: integer) {
     *pdfbuf.offset(pdfptr as isize) = 10 as eightbits;
     pdfptr += 1;
 }
-#[no_mangle]
-pub unsafe extern "C" fn zpdffixthread(mut thread: integer) {
+pub unsafe fn zpdffixthread(mut thread: integer) {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut a: halfword = 0;
     zpdfwarning(
@@ -59082,8 +58543,7 @@ pub unsafe extern "C" fn zpdffixthread(mut thread: integer) {
     zpdfindirectln(70 as ::core::ffi::c_int, a);
     pdfenddict();
 }
-#[no_mangle]
-pub unsafe extern "C" fn zoutthread(mut thread: integer) {
+pub unsafe fn zoutthread(mut thread: integer) {
     let mut a: halfword = 0;
     let mut b: halfword = 0;
     let mut lastattr: integer = 0;
@@ -59190,8 +58650,7 @@ pub unsafe extern "C" fn zoutthread(mut thread: integer) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn doextension() {
+pub unsafe fn doextension() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut i: integer = 0;
@@ -60820,8 +60279,7 @@ pub unsafe extern "C" fn doextension() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn fixlanguage() {
+pub unsafe fn fixlanguage() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut l_0: ASCIIcode = 0;
@@ -60862,8 +60320,7 @@ pub unsafe extern "C" fn fixlanguage() {
             as ::core::ffi::c_short;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn insertsrcspecial() {
+pub unsafe fn insertsrcspecial() {
     let mut mem: *mut memoryword = zmem;
     let mut toklist: halfword = 0;
     let mut p: halfword = 0;
@@ -60900,8 +60357,7 @@ pub unsafe extern "C" fn insertsrcspecial() {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn appendsrcspecial() {
+pub unsafe fn appendsrcspecial() {
     let mut mem: *mut memoryword = zmem;
     let mut q: halfword = 0;
     if *sourcefilenamestack.offset(inopen as isize) > 0 as ::core::ffi::c_int
@@ -60943,8 +60399,7 @@ pub unsafe extern "C" fn appendsrcspecial() {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn handlerightbrace() {
+pub unsafe fn handlerightbrace() {
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
     let mut p: halfword = 0;
@@ -61408,8 +60863,7 @@ pub unsafe extern "C" fn handlerightbrace() {
         }
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn maincontrol() {
+pub unsafe fn maincontrol() {
     let mut current_block: u64;
     let mut mem: *mut memoryword = zmem;
     let mut eqtb: *mut memoryword = zeqtb;
@@ -62774,13 +62228,11 @@ pub unsafe extern "C" fn maincontrol() {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn giveerrhelp() {
+pub unsafe fn giveerrhelp() {
     let mut eqtb: *mut memoryword = zeqtb;
     ztokenshow((*eqtb.offset(27167 as ::core::ffi::c_int as isize)).hh.v.RH);
 }
-#[no_mangle]
-pub unsafe extern "C" fn openfmtfile() -> boolean {
+pub unsafe fn openfmtfile() -> boolean {
     let mut current_block: u64;
     let mut Result: boolean = 0;
     let mut j: integer = 0;
@@ -62888,8 +62340,7 @@ pub unsafe extern "C" fn openfmtfile() -> boolean {
     Result = true_0 as boolean;
     return Result;
 }
-#[no_mangle]
-pub unsafe extern "C" fn closefilesandterminate() {
+pub unsafe fn closefilesandterminate() {
     let mut eqtb: *mut memoryword = zeqtb;
     let mut a: integer = 0;
     let mut b: integer = 0;
@@ -64678,8 +64129,7 @@ pub unsafe extern "C" fn closefilesandterminate() {
         calledit(strpool, editnamestart, editnamelength, editline);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn scanfilenamebraced() {
+pub unsafe fn scanfilenamebraced() {
     let mut mem: *mut memoryword = zmem;
     let mut savescannerstatus: smallnumber = 0;
     let mut savedefref: halfword = 0;
@@ -64727,8 +64177,7 @@ pub unsafe extern "C" fn scanfilenamebraced() {
     }
     stopatspace = savestopatspace;
 }
-#[no_mangle]
-pub unsafe extern "C" fn getnullstr() -> strnumber {
+pub unsafe fn getnullstr() -> strnumber {
     let mut Result: strnumber = 0;
     Result = 345 as ::core::ffi::c_int as strnumber;
     return Result;

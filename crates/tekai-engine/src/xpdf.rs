@@ -521,19 +521,15 @@ fn pdf_version(doc: &LoDocument) -> c_float {
     doc.version.parse::<f32>().unwrap_or(1.4) as c_float
 }
 
-#[no_mangle]
-pub extern "C" fn xpdf_global_params_init() {}
+pub fn xpdf_global_params_init() {}
 
-#[no_mangle]
-pub extern "C" fn xpdf_global_params_free() {}
+pub fn xpdf_global_params_free() {}
 
-#[no_mangle]
-pub extern "C" fn xpdf_object_new() -> *mut Object {
+pub fn xpdf_object_new() -> *mut Object {
     Box::into_raw(Box::new(Object::new(LoObject::Null, ptr::null_mut())))
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_delete(obj: *mut Object) {
+pub unsafe fn xpdf_object_delete(obj: *mut Object) {
     if !obj.is_null() {
         unsafe {
             drop(Box::from_raw(obj));
@@ -541,15 +537,13 @@ pub unsafe extern "C" fn xpdf_object_delete(obj: *mut Object) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_free_contents(obj: *mut Object) {
+pub unsafe fn xpdf_object_free_contents(obj: *mut Object) {
     if let Some(obj) = unsafe { object_mut(obj) } {
         obj.reset(LoObject::Null, obj.doc);
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_type_name(obj: *mut Object) -> *const c_char {
+pub unsafe fn xpdf_object_type_name(obj: *mut Object) -> *const c_char {
     let Some(obj) = (unsafe { object_mut(obj) }) else {
         return PDF_STRING_NULL.as_ptr().cast();
     };
@@ -567,76 +561,63 @@ pub unsafe extern "C" fn xpdf_object_type_name(obj: *mut Object) -> *const c_cha
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_bool(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_bool(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_some_and(|obj| matches!(obj.value, LoObject::Boolean(_))) as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_int(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_int(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_some_and(|obj| matches!(obj.value, LoObject::Integer(_))) as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_real(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_real(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_some_and(|obj| matches!(obj.value, LoObject::Real(_))) as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_num(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_num(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }
         .is_some_and(|obj| matches!(obj.value, LoObject::Integer(_) | LoObject::Real(_)))
         as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_string(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_string(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_some_and(|obj| matches!(obj.value, LoObject::String(_, _)))
         as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_name(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_name(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_some_and(|obj| matches!(obj.value, LoObject::Name(_))) as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_null(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_null(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_none_or(|obj| matches!(obj.value, LoObject::Null)) as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_array(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_array(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_some_and(|obj| matches!(obj.value, LoObject::Array(_))) as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_dict(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_dict(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_some_and(|obj| matches!(obj.value, LoObject::Dictionary(_)))
         as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_stream(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_stream(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_some_and(|obj| matches!(obj.value, LoObject::Stream(_))) as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_is_ref(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_is_ref(obj: *mut Object) -> c_int {
     unsafe { object_mut(obj) }.is_some_and(|obj| matches!(obj.value, LoObject::Reference(_)))
         as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_get_bool(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_get_bool(obj: *mut Object) -> c_int {
     match unsafe { object_mut(obj) }.map(|obj| &obj.value) {
         Some(LoObject::Boolean(value)) => *value as c_int,
         _ => 0,
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_get_int(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_get_int(obj: *mut Object) -> c_int {
     match unsafe { object_mut(obj) }.map(|obj| &obj.value) {
         Some(LoObject::Integer(value)) => *value as c_int,
         Some(LoObject::Real(value)) => *value as c_int,
@@ -644,8 +625,7 @@ pub unsafe extern "C" fn xpdf_object_get_int(obj: *mut Object) -> c_int {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_get_real(obj: *mut Object) -> c_double {
+pub unsafe fn xpdf_object_get_real(obj: *mut Object) -> c_double {
     match unsafe { object_mut(obj) }.map(|obj| &obj.value) {
         Some(LoObject::Real(value)) => *value as c_double,
         Some(LoObject::Integer(value)) => *value as c_double,
@@ -653,13 +633,11 @@ pub unsafe extern "C" fn xpdf_object_get_real(obj: *mut Object) -> c_double {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_get_num(obj: *mut Object) -> c_double {
+pub unsafe fn xpdf_object_get_num(obj: *mut Object) -> c_double {
     unsafe { xpdf_object_get_real(obj) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_get_string(obj: *mut Object) -> *mut GString {
+pub unsafe fn xpdf_object_get_string(obj: *mut Object) -> *mut GString {
     let Some(obj) = (unsafe { object_mut(obj) }) else {
         return ptr::null_mut();
     };
@@ -673,8 +651,7 @@ pub unsafe extern "C" fn xpdf_object_get_string(obj: *mut Object) -> *mut GStrin
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_get_name(obj: *mut Object) -> *mut c_char {
+pub unsafe fn xpdf_object_get_name(obj: *mut Object) -> *mut c_char {
     let Some(obj) = (unsafe { object_mut(obj) }) else {
         return ptr::null_mut();
     };
@@ -685,30 +662,26 @@ pub unsafe extern "C" fn xpdf_object_get_name(obj: *mut Object) -> *mut c_char {
     obj.name_cache.as_ptr() as *mut c_char
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_get_dict(obj: *mut Object) -> *mut Dict {
+pub unsafe fn xpdf_object_get_dict(obj: *mut Object) -> *mut Dict {
     unsafe { object_mut(obj) }
         .and_then(Object::dict)
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_get_stream(obj: *mut Object) -> *mut Stream {
+pub unsafe fn xpdf_object_get_stream(obj: *mut Object) -> *mut Stream {
     unsafe { object_mut(obj) }
         .and_then(Object::stream)
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_get_ref(obj: *mut Object) -> Ref {
+pub unsafe fn xpdf_object_get_ref(obj: *mut Object) -> Ref {
     match unsafe { object_mut(obj) }.map(|obj| &obj.value) {
         Some(LoObject::Reference(id)) => ref_from_id(*id),
         _ => Ref { num: 0, gen: 0 },
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_fetch(
+pub unsafe fn xpdf_object_fetch(
     obj: *mut Object,
     xref: *mut XRef,
     out: *mut Object,
@@ -728,16 +701,14 @@ pub unsafe extern "C" fn xpdf_object_fetch(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_array_get_length(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_array_get_length(obj: *mut Object) -> c_int {
     match unsafe { object_mut(obj) }.map(|obj| &obj.value) {
         Some(LoObject::Array(array)) => array.len() as c_int,
         _ => 0,
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_array_get(
+pub unsafe fn xpdf_object_array_get(
     obj: *mut Object,
     index: c_int,
     out: *mut Object,
@@ -753,8 +724,7 @@ pub unsafe extern "C" fn xpdf_object_array_get(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_array_get_nf(
+pub unsafe fn xpdf_object_array_get_nf(
     obj: *mut Object,
     index: c_int,
     out: *mut Object,
@@ -770,22 +740,19 @@ pub unsafe extern "C" fn xpdf_object_array_get_nf(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_dict_get_length(obj: *mut Object) -> c_int {
+pub unsafe fn xpdf_object_dict_get_length(obj: *mut Object) -> c_int {
     let Some(dict_ptr) = (unsafe { xpdf_object_get_dict(obj).as_mut() }) else {
         return 0;
     };
     dict_ptr.dict.len() as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_dict_get_key(obj: *mut Object, index: c_int) -> *mut c_char {
+pub unsafe fn xpdf_object_dict_get_key(obj: *mut Object, index: c_int) -> *mut c_char {
     let dict_ptr = unsafe { xpdf_object_get_dict(obj) };
     unsafe { xpdf_dict_get_key(dict_ptr, index) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_dict_get_val(
+pub unsafe fn xpdf_object_dict_get_val(
     obj: *mut Object,
     index: c_int,
     out: *mut Object,
@@ -794,8 +761,7 @@ pub unsafe extern "C" fn xpdf_object_dict_get_val(
     unsafe { xpdf_dict_get_val(dict_ptr, index, out) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_dict_get_val_nf(
+pub unsafe fn xpdf_object_dict_get_val_nf(
     obj: *mut Object,
     index: c_int,
     out: *mut Object,
@@ -804,8 +770,7 @@ pub unsafe extern "C" fn xpdf_object_dict_get_val_nf(
     unsafe { xpdf_dict_get_val_nf(dict_ptr, index, out) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_dict_lookup(
+pub unsafe fn xpdf_object_dict_lookup(
     obj: *mut Object,
     key: *const c_char,
     out: *mut Object,
@@ -814,8 +779,7 @@ pub unsafe extern "C" fn xpdf_object_dict_lookup(
     unsafe { xpdf_dict_lookup(dict_ptr, key, out) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_dict_lookup_nf(
+pub unsafe fn xpdf_object_dict_lookup_nf(
     obj: *mut Object,
     key: *const c_char,
     out: *mut Object,
@@ -824,23 +788,16 @@ pub unsafe extern "C" fn xpdf_object_dict_lookup_nf(
     unsafe { xpdf_dict_lookup_nf(dict_ptr, key, out) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_stream_get_dict(obj: *mut Object) -> *mut Dict {
+pub unsafe fn xpdf_object_stream_get_dict(obj: *mut Object) -> *mut Dict {
     let stream = unsafe { xpdf_object_get_stream(obj) };
     unsafe { xpdf_stream_get_dict(stream) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_stream_get_undecoded_stream(obj: *mut Object) -> *mut Stream {
+pub unsafe fn xpdf_object_stream_get_undecoded_stream(obj: *mut Object) -> *mut Stream {
     unsafe { xpdf_object_get_stream(obj) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_object_init_dict_from_dict(
-    obj: *mut Object,
-    _xref: *mut XRef,
-    dict: *mut Dict,
-) {
+pub unsafe fn xpdf_object_init_dict_from_dict(obj: *mut Object, _xref: *mut XRef, dict: *mut Dict) {
     let Some(dict) = (unsafe { dict_mut(dict) }) else {
         return;
     };
@@ -849,15 +806,13 @@ pub unsafe extern "C" fn xpdf_object_init_dict_from_dict(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_dict_get_length(dict: *mut Dict) -> c_int {
+pub unsafe fn xpdf_dict_get_length(dict: *mut Dict) -> c_int {
     unsafe { dict_mut(dict) }
         .map(|dict| dict.dict.len() as c_int)
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_dict_get_key(dict: *mut Dict, index: c_int) -> *mut c_char {
+pub unsafe fn xpdf_dict_get_key(dict: *mut Dict, index: c_int) -> *mut c_char {
     if index < 0 {
         return ptr::null_mut();
     }
@@ -870,12 +825,7 @@ pub unsafe extern "C" fn xpdf_dict_get_key(dict: *mut Dict, index: c_int) -> *mu
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_dict_get_val(
-    dict: *mut Dict,
-    index: c_int,
-    out: *mut Object,
-) -> *mut Object {
+pub unsafe fn xpdf_dict_get_val(dict: *mut Dict, index: c_int, out: *mut Object) -> *mut Object {
     let (value, doc) = unsafe { dict_mut(dict) }
         .map(|dict| (dict_get(dict, index, true), dict.doc))
         .unwrap_or((LoObject::Null, ptr::null_mut()));
@@ -887,12 +837,7 @@ pub unsafe extern "C" fn xpdf_dict_get_val(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_dict_get_val_nf(
-    dict: *mut Dict,
-    index: c_int,
-    out: *mut Object,
-) -> *mut Object {
+pub unsafe fn xpdf_dict_get_val_nf(dict: *mut Dict, index: c_int, out: *mut Object) -> *mut Object {
     let (value, doc) = unsafe { dict_mut(dict) }
         .map(|dict| (dict_get(dict, index, false), dict.doc))
         .unwrap_or((LoObject::Null, ptr::null_mut()));
@@ -904,8 +849,7 @@ pub unsafe extern "C" fn xpdf_dict_get_val_nf(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_dict_lookup(
+pub unsafe fn xpdf_dict_lookup(
     dict: *mut Dict,
     key: *const c_char,
     out: *mut Object,
@@ -926,8 +870,7 @@ pub unsafe extern "C" fn xpdf_dict_lookup(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_dict_lookup_nf(
+pub unsafe fn xpdf_dict_lookup_nf(
     dict: *mut Dict,
     key: *const c_char,
     out: *mut Object,
@@ -943,22 +886,19 @@ pub unsafe extern "C" fn xpdf_dict_lookup_nf(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_gstring_cstr(s: *mut GString) -> *const c_char {
+pub unsafe fn xpdf_gstring_cstr(s: *mut GString) -> *const c_char {
     unsafe { s.as_ref() }
         .map(|s| s.c_bytes.as_ptr())
         .unwrap_or(ptr::null())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_gstring_len(s: *mut GString) -> c_int {
+pub unsafe fn xpdf_gstring_len(s: *mut GString) -> c_int {
     unsafe { s.as_ref() }
         .map(|s| s.bytes.len() as c_int)
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_gstring_char(s: *mut GString, index: c_int) -> c_int {
+pub unsafe fn xpdf_gstring_char(s: *mut GString, index: c_int) -> c_int {
     if index < 0 {
         return 0;
     }
@@ -968,15 +908,13 @@ pub unsafe extern "C" fn xpdf_gstring_char(s: *mut GString, index: c_int) -> c_i
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_stream_reset(stream: *mut Stream) {
+pub unsafe fn xpdf_stream_reset(stream: *mut Stream) {
     if let Some(stream) = unsafe { stream_mut(stream) } {
         stream.pos = 0;
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_stream_get_char(stream: *mut Stream) -> c_int {
+pub unsafe fn xpdf_stream_get_char(stream: *mut Stream) -> c_int {
     let Some(stream) = (unsafe { stream_mut(stream) }) else {
         return libc::EOF;
     };
@@ -987,11 +925,7 @@ pub unsafe extern "C" fn xpdf_stream_get_char(stream: *mut Stream) -> c_int {
     byte as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_stream_get_remaining_data(
-    stream: *mut Stream,
-    len: *mut size_t,
-) -> *const u8 {
+pub unsafe fn xpdf_stream_get_remaining_data(stream: *mut Stream, len: *mut size_t) -> *const u8 {
     let Some(stream) = (unsafe { stream_mut(stream) }) else {
         if !len.is_null() {
             unsafe {
@@ -1015,20 +949,17 @@ pub unsafe extern "C" fn xpdf_stream_get_remaining_data(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_stream_get_dict(stream: *mut Stream) -> *mut Dict {
+pub unsafe fn xpdf_stream_get_dict(stream: *mut Stream) -> *mut Dict {
     unsafe { stream_mut(stream) }
         .map(Stream::dict)
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_stream_get_undecoded_stream(stream: *mut Stream) -> *mut Stream {
+pub unsafe fn xpdf_stream_get_undecoded_stream(stream: *mut Stream) -> *mut Stream {
     stream
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_doc_new(file_name: *const c_char) -> *mut PDFDoc {
+pub unsafe fn xpdf_doc_new(file_name: *const c_char) -> *mut PDFDoc {
     if file_name.is_null() {
         return Box::into_raw(Box::new(PDFDoc {
             doc: None,
@@ -1075,8 +1006,7 @@ pub unsafe extern "C" fn xpdf_doc_new(file_name: *const c_char) -> *mut PDFDoc {
     pdf_doc
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_doc_delete(doc: *mut PDFDoc) {
+pub unsafe fn xpdf_doc_delete(doc: *mut PDFDoc) {
     if doc.is_null() {
         return;
     }
@@ -1093,57 +1023,46 @@ pub unsafe extern "C" fn xpdf_doc_delete(doc: *mut PDFDoc) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_doc_is_ok(doc: *mut PDFDoc) -> c_int {
+pub unsafe fn xpdf_doc_is_ok(doc: *mut PDFDoc) -> c_int {
     unsafe { doc_ref(doc) }.is_some_and(|doc| doc.ok) as c_int
 }
 
-#[no_mangle]
 /// The returned diagnostic has static storage and survives document deletion.
-pub unsafe extern "C" fn xpdf_doc_error_message(doc: *mut PDFDoc) -> *const c_char {
+pub unsafe fn xpdf_doc_error_message(doc: *mut PDFDoc) -> *const c_char {
     match unsafe { doc_ref(doc) }.and_then(|doc| doc.page_error) {
         Some(PageBuildError::CyclicInheritance) => c"xpdf: cyclic PDF page Parent chain".as_ptr(),
         None => c"xpdf: reading PDF image failed".as_ptr(),
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_doc_ok_to_print(doc: *mut PDFDoc) -> c_int {
+pub unsafe fn xpdf_doc_ok_to_print(doc: *mut PDFDoc) -> c_int {
     unsafe { xpdf_doc_is_ok(doc) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_doc_pdf_version(doc: *mut PDFDoc) -> c_float {
+pub unsafe fn xpdf_doc_pdf_version(doc: *mut PDFDoc) -> c_float {
     unsafe { doc_ref(doc) }
         .and_then(|doc| doc.doc.as_ref())
         .map(pdf_version)
         .unwrap_or(1.4)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_doc_catalog(doc: *mut PDFDoc) -> *mut Catalog {
+pub unsafe fn xpdf_doc_catalog(doc: *mut PDFDoc) -> *mut Catalog {
     unsafe { doc_ref(doc) }
         .map(|doc| doc.catalog)
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_doc_xref(doc: *mut PDFDoc) -> *mut XRef {
+pub unsafe fn xpdf_doc_xref(doc: *mut PDFDoc) -> *mut XRef {
     unsafe { doc_ref(doc) }
         .map(|doc| doc.xref)
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_doc_find_dest(
-    _doc: *mut PDFDoc,
-    _name: *const c_char,
-) -> *mut LinkDest {
+pub unsafe fn xpdf_doc_find_dest(_doc: *mut PDFDoc, _name: *const c_char) -> *mut LinkDest {
     ptr::null_mut()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_doc_get_info_nf(doc: *mut PDFDoc, out: *mut Object) {
+pub unsafe fn xpdf_doc_get_info_nf(doc: *mut PDFDoc, out: *mut Object) {
     let value = unsafe { doc_ref(doc) }
         .and_then(|doc| doc.doc.as_ref())
         .and_then(|doc| doc.trailer.get(b"Info").ok().cloned())
@@ -1153,8 +1072,7 @@ pub unsafe extern "C" fn xpdf_doc_get_info_nf(doc: *mut PDFDoc, out: *mut Object
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_link_dest_delete(dest: *mut LinkDest) {
+pub unsafe fn xpdf_link_dest_delete(dest: *mut LinkDest) {
     if !dest.is_null() {
         unsafe {
             drop(Box::from_raw(dest));
@@ -1162,20 +1080,17 @@ pub unsafe extern "C" fn xpdf_link_dest_delete(dest: *mut LinkDest) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_link_dest_is_ok(dest: *mut LinkDest) -> c_int {
+pub unsafe fn xpdf_link_dest_is_ok(dest: *mut LinkDest) -> c_int {
     unsafe { dest.as_ref() }.is_some_and(|dest| dest.ok) as c_int
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_link_dest_page_ref(dest: *mut LinkDest) -> Ref {
+pub unsafe fn xpdf_link_dest_page_ref(dest: *mut LinkDest) -> Ref {
     unsafe { dest.as_ref() }
         .map(|dest| dest.page_ref)
         .unwrap_or(Ref { num: 0, gen: 0 })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_catalog_num_pages(catalog: *mut Catalog) -> c_int {
+pub unsafe fn xpdf_catalog_num_pages(catalog: *mut Catalog) -> c_int {
     let Some(catalog) = (unsafe { catalog.as_ref() }) else {
         return 0;
     };
@@ -1184,11 +1099,7 @@ pub unsafe extern "C" fn xpdf_catalog_num_pages(catalog: *mut Catalog) -> c_int 
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_catalog_get_page(
-    catalog: *mut Catalog,
-    page_num: c_int,
-) -> *mut Page {
+pub unsafe fn xpdf_catalog_get_page(catalog: *mut Catalog, page_num: c_int) -> *mut Page {
     if page_num <= 0 {
         return ptr::null_mut();
     }
@@ -1201,20 +1112,14 @@ pub unsafe extern "C" fn xpdf_catalog_get_page(
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_catalog_get_page_ref(catalog: *mut Catalog, page_num: c_int) -> Ref {
+pub unsafe fn xpdf_catalog_get_page_ref(catalog: *mut Catalog, page_num: c_int) -> Ref {
     let page = unsafe { xpdf_catalog_get_page(catalog, page_num) };
     unsafe { page.as_ref() }
         .map(|page| ref_from_id(page.id))
         .unwrap_or(Ref { num: 0, gen: 0 })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_catalog_find_page(
-    catalog: *mut Catalog,
-    num: c_int,
-    gen: c_int,
-) -> c_int {
+pub unsafe fn xpdf_catalog_find_page(catalog: *mut Catalog, num: c_int, gen: c_int) -> c_int {
     let Some(catalog) = (unsafe { catalog.as_ref() }) else {
         return 0;
     };
@@ -1229,13 +1134,7 @@ pub unsafe extern "C" fn xpdf_catalog_find_page(
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_xref_fetch(
-    xref: *mut XRef,
-    num: c_int,
-    gen: c_int,
-    out: *mut Object,
-) {
+pub unsafe fn xpdf_xref_fetch(xref: *mut XRef, num: c_int, gen: c_int, out: *mut Object) {
     let doc = unsafe { xref.as_ref() }
         .map(|xref| xref.doc)
         .unwrap_or(ptr::null_mut());
@@ -1247,8 +1146,7 @@ pub unsafe extern "C" fn xpdf_xref_fetch(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_page_media_box(page: *mut Page) -> Rect {
+pub unsafe fn xpdf_page_media_box(page: *mut Page) -> Rect {
     unsafe { page.as_ref() }
         .map(|page| page.media_box)
         .unwrap_or(Rect {
@@ -1259,43 +1157,37 @@ pub unsafe extern "C" fn xpdf_page_media_box(page: *mut Page) -> Rect {
         })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_page_crop_box(page: *mut Page) -> Rect {
+pub unsafe fn xpdf_page_crop_box(page: *mut Page) -> Rect {
     unsafe { page.as_ref() }
         .map(|page| page.crop_box)
         .unwrap_or_else(|| unsafe { xpdf_page_media_box(page) })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_page_bleed_box(page: *mut Page) -> Rect {
+pub unsafe fn xpdf_page_bleed_box(page: *mut Page) -> Rect {
     unsafe { page.as_ref() }
         .map(|page| page.bleed_box)
         .unwrap_or_else(|| unsafe { xpdf_page_crop_box(page) })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_page_trim_box(page: *mut Page) -> Rect {
+pub unsafe fn xpdf_page_trim_box(page: *mut Page) -> Rect {
     unsafe { page.as_ref() }
         .map(|page| page.trim_box)
         .unwrap_or_else(|| unsafe { xpdf_page_crop_box(page) })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_page_art_box(page: *mut Page) -> Rect {
+pub unsafe fn xpdf_page_art_box(page: *mut Page) -> Rect {
     unsafe { page.as_ref() }
         .map(|page| page.art_box)
         .unwrap_or_else(|| unsafe { xpdf_page_crop_box(page) })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_page_rotate(page: *mut Page) -> c_int {
+pub unsafe fn xpdf_page_rotate(page: *mut Page) -> c_int {
     unsafe { page.as_ref() }
         .map(|page| page.rotate)
         .unwrap_or(0)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_page_group(page: *mut Page) -> *mut Dict {
+pub unsafe fn xpdf_page_group(page: *mut Page) -> *mut Dict {
     let Some(page) = (unsafe { page.as_mut() }) else {
         return ptr::null_mut();
     };
@@ -1317,8 +1209,7 @@ pub unsafe extern "C" fn xpdf_page_group(page: *mut Page) -> *mut Dict {
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_page_resource_dict(page: *mut Page) -> *mut Dict {
+pub unsafe fn xpdf_page_resource_dict(page: *mut Page) -> *mut Dict {
     let Some(page) = (unsafe { page.as_mut() }) else {
         return ptr::null_mut();
     };
@@ -1340,8 +1231,7 @@ pub unsafe extern "C" fn xpdf_page_resource_dict(page: *mut Page) -> *mut Dict {
         .unwrap_or(ptr::null_mut())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_page_get_contents(page: *mut Page, out: *mut Object) {
+pub unsafe fn xpdf_page_get_contents(page: *mut Page, out: *mut Object) {
     let Some(page) = (unsafe { page.as_ref() }) else {
         return;
     };
@@ -1355,8 +1245,7 @@ pub unsafe extern "C" fn xpdf_page_get_contents(page: *mut Page, out: *mut Objec
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_gfx_font_make(
+pub unsafe fn xpdf_gfx_font_make(
     _xref: *mut XRef,
     _tag: *const c_char,
     _id: Ref,
@@ -1365,19 +1254,13 @@ pub unsafe extern "C" fn xpdf_gfx_font_make(
     ptr::null_mut()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_gfx_font_delete(_font: *mut GfxFont) {}
+pub unsafe fn xpdf_gfx_font_delete(_font: *mut GfxFont) {}
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_gfx_font_is_cid(_font: *mut GfxFont) -> c_int {
+pub unsafe fn xpdf_gfx_font_is_cid(_font: *mut GfxFont) -> c_int {
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn xpdf_gfx_8bit_font_char_name(
-    _font: *mut GfxFont,
-    _code: c_int,
-) -> *mut c_char {
+pub unsafe fn xpdf_gfx_8bit_font_char_name(_font: *mut GfxFont, _code: c_int) -> *mut c_char {
     ptr::null_mut()
 }
 

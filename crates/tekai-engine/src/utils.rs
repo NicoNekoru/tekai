@@ -1,12 +1,35 @@
 //! Typed printf helpers for generated pdfTeX Rust.
 
+pub use crate::generated::backend::avlstuff::comp_string_entry;
+pub use crate::generated::backend::epdf::epdf_free;
+pub use crate::generated::backend::mapfile::fm_free;
+pub use crate::generated::backend::subfont::sfd_free;
+pub use crate::generated::backend::tounicode::glyph_unicode_free;
+pub use crate::generated::backend::vfpacket::vf_free;
+pub use crate::generated::backend::writeenc::enc_free;
+pub use crate::generated::backend::writeimg::img_free;
+pub use crate::generated::backend::writet1::t1_free;
+pub use crate::generated::backend::writettf::ttf_free;
+pub use crate::generated::pdftex0::{
+    getnullstr, makestring, pdfflush, println, zflushstr, zpdfosgetosbuf, zprint, ztokenstostring,
+};
+pub use crate::generated::pdftexextra::{initstarttime, makecstring};
+
+pub use crate::generated::backend::avl::{
+    avl_comparison_func as AvlComparisonFunc, avl_create, avl_find, avl_node as AvlNode, avl_probe,
+    avl_t_first, avl_t_init, avl_t_next, avl_table as AvlTable, avl_traverser as AvlTraverser,
+    libavl_allocator as LibAvlAllocator,
+};
+
+use crate::regex_session::{self, MatchState};
 use crate::stdio::exit;
 use crate::stdio::Stream as FILE;
 use crate::support::xfclose;
-use libc::{c_char, c_int, c_longlong, c_uchar, c_uint, c_ulong, c_void};
+use libc::{c_char, c_int, c_longlong, c_uchar, c_uint, c_void};
 use std::ffi::{CStr, CString};
 use std::{mem, ptr, slice};
 
+use crate::generated::backend::writezip::zip_free;
 use crate::md5::{md5_append, md5_finish, md5_init, Md5State};
 
 const MAX_PSTRING_LEN: usize = 1024;
@@ -28,7 +51,6 @@ type Boolean = c_int;
 type InternalFontNumber = c_int;
 type SizeT = usize;
 type Address = *mut c_void;
-type AvlComparisonFunc = unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int;
 
 #[path = "printf.rs"]
 mod printf;
@@ -36,11 +58,6 @@ pub use printf::PrintfArg;
 
 extern "C" {
     static kpse_def_inst: KpathseaInstancePrefix;
-
-    fn abort() -> !;
-    fn println();
-    fn zflushstr(_: c_int);
-    fn zprint(_: c_int);
 
     static mut pdfbuf: *mut c_uchar;
     static mut pdfbufsize: Integer;
@@ -51,8 +68,6 @@ extern "C" {
     static mut pdffile: *mut FILE;
     static mut outputfilename: StrNumber;
     static mut fixedpdfdraftmode: Integer;
-    fn pdfflush();
-    fn zpdfosgetosbuf(_: Integer);
 
     static mut poolsize: Integer;
     static mut poolptr: PoolPointer;
@@ -69,145 +84,13 @@ extern "C" {
     static versionstring: *const c_char;
     static kpathsea_version_string: *const c_char;
 
-    fn makecstring(_: StrNumber) -> *mut c_char;
-    fn makestring() -> StrNumber;
-    fn getnullstr() -> StrNumber;
-    fn ztokenstostring(_: Integer) -> StrNumber;
-    fn initstarttime();
-
-    fn fm_free();
-    fn t1_free();
-    fn enc_free();
-    fn img_free();
-    fn vf_free();
-    fn epdf_free();
-    fn ttf_free();
-    fn sfd_free();
-    fn glyph_unicode_free();
-    fn zip_free();
-
-    fn avl_create(
-        _: Option<AvlComparisonFunc>,
-        _: *mut c_void,
-        _: *mut LibAvlAllocator,
-    ) -> *mut AvlTable;
-    fn avl_probe(_: *mut AvlTable, _: *mut c_void) -> *mut *mut c_void;
-    fn avl_find(_: *const AvlTable, _: *const c_void) -> *mut c_void;
-    fn avl_t_init(_: *mut AvlTraverser, _: *mut AvlTable);
-    fn avl_t_first(_: *mut AvlTraverser, _: *mut AvlTable) -> *mut c_void;
-    fn avl_t_next(_: *mut AvlTraverser) -> *mut c_void;
     static mut avl_xallocator: LibAvlAllocator;
-    fn comp_string_entry(_: *const c_void, _: *const c_void, _: *mut c_void) -> c_int;
 
-    fn png_get_libpng_ver(_: *mut c_void) -> *const c_char;
-    fn zlibVersion() -> *const c_char;
-    fn crc32(_: c_ulong, _: *const c_uchar, _: c_uint) -> c_ulong;
 }
-
-type RecorderFn = Option<unsafe extern "C" fn(*const c_char)>;
-
-#[repr(C)]
-struct HashTable {
-    buckets: *mut *mut c_void,
-    size: c_uint,
-}
-
-#[repr(C)]
-struct StrList {
-    length: c_uint,
-    list: *mut *mut c_char,
-}
-
-#[repr(C)]
-struct KpathseaInstancePrefix {
-    record_input: RecorderFn,
-    record_output: RecorderFn,
-    cnf_hash: HashTable,
-    doing_cnf_init: c_int,
-    db: HashTable,
-    alias_db: HashTable,
-    db_dir_list: StrList,
-    debug: c_uint,
-    link_table: HashTable,
-    the_cache: *mut c_void,
-    cache_length: c_uint,
-    map: HashTable,
-    map_path: *const c_char,
-    debug_hash_lookup_int: c_int,
-    elt: *mut c_char,
-    elt_alloc: c_uint,
-    path: *const c_char,
-    followup_search: c_int,
-    log_file: *mut FILE,
-    log_opened: c_int,
-    invocation_name: *mut c_char,
-}
-
-#[repr(C)]
-pub struct LibAvlAllocator {
-    pub libavl_malloc: Option<unsafe extern "C" fn(*mut LibAvlAllocator, SizeT) -> *mut c_void>,
-    pub libavl_free: Option<unsafe extern "C" fn(*mut LibAvlAllocator, *mut c_void)>,
-}
-
-#[repr(C)]
-pub struct AvlTable {
-    pub avl_root: *mut AvlNode,
-    pub avl_compare: Option<AvlComparisonFunc>,
-    pub avl_param: *mut c_void,
-    pub avl_alloc: *mut LibAvlAllocator,
-    pub avl_count: SizeT,
-    pub avl_generation: c_ulong,
-}
-
-#[repr(C)]
-pub struct AvlNode {
-    pub avl_link: [*mut AvlNode; 2],
-    pub avl_data: *mut c_void,
-    pub avl_balance: i8,
-}
-
-#[repr(C)]
-pub struct AvlTraverser {
-    pub avl_table: *mut AvlTable,
-    pub avl_node: *mut AvlNode,
-    pub avl_stack: [*mut AvlNode; 32],
-    pub avl_height: SizeT,
-    pub avl_generation: c_ulong,
-}
-
-#[repr(C)]
-pub struct IntParm {
-    pub val: Integer,
-    pub set: Boolean,
-}
-
-#[repr(C)]
-pub struct FeEntry {
-    _private: [u8; 0],
-}
-
-#[repr(C)]
-pub struct FmEntry {
-    _private: [u8; 0],
-}
-
-#[repr(C)]
-pub struct FdEntry {
-    pub fd_objnum: Integer,
-    pub fontname: *mut c_char,
-    pub subset_tag: *mut c_char,
-    pub ff_found: Boolean,
-    pub ff_objnum: Integer,
-    pub fn_objnum: Integer,
-    pub all_glyphs: Boolean,
-    pub write_ttf_glyph_names: Boolean,
-    pub font_dim: [IntParm; 11],
-    pub fe: *mut FeEntry,
-    pub builtin_glyph_names: *mut *mut c_char,
-    pub fm: *mut FmEntry,
-    pub tx_tree: *mut AvlTable,
-    pub gl_tree: *mut AvlTable,
-}
+pub use crate::backend_types::{
+    fd_entry as FdEntry, fe_entry as FeEntry, fm_entry as FmEntry, intparm as IntParm,
+};
+use crate::kpathsea_types::kpathsea_instance as KpathseaInstancePrefix;
 
 #[no_mangle]
 pub static mut cur_file_name: *mut c_char = ptr::null_mut();
@@ -275,10 +158,6 @@ static mut LAST_LLY: Scaled = 0;
 static mut LAST_URX: Scaled = 0;
 static mut LAST_URY: Scaled = 0;
 static mut SUBSET_TAG_TREE: *mut AvlTable = ptr::null_mut();
-static mut SUB_MATCH_COUNT: c_int = 10;
-static mut PMATCH: Vec<libc::regmatch_t> = Vec::new();
-static mut MATCH_STRING: Option<Vec<u8>> = None;
-static mut LAST_MATCH_SUCCEEDED: Boolean = FALSE;
 
 unsafe fn kpse_invocation_name() -> *const c_char {
     unsafe {
@@ -341,7 +220,7 @@ unsafe fn malloced_c_string(bytes: &[u8]) -> *mut c_char {
 }
 
 unsafe fn c_str_len(ptr: *const c_char) -> usize {
-    unsafe { libc::strlen(ptr) as usize }
+    unsafe { crate::byte_string::strlen(ptr) }
 }
 
 fn check_pool_room(extra: usize) -> bool {
@@ -418,8 +297,7 @@ pub unsafe fn pdf_write_bytes_untracked(src: *const u8, len: usize) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn pdf_puts(s: *const c_char) {
+pub unsafe fn pdf_puts(s: *const c_char) {
     if s.is_null() {
         return;
     }
@@ -434,8 +312,7 @@ pub unsafe extern "C" fn pdf_puts(s: *const c_char) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn pdf_newline() {
+pub unsafe fn pdf_newline() {
     unsafe {
         if pdflastbyte != b'\n' {
             pdf_puts(c"\n".as_ptr());
@@ -443,8 +320,7 @@ pub unsafe extern "C" fn pdf_newline() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn maketexstring(s: *const c_char) -> StrNumber {
+pub unsafe fn maketexstring(s: *const c_char) -> StrNumber {
     unsafe {
         if s.is_null() || *s == 0 {
             return getnullstr();
@@ -569,17 +445,16 @@ pub unsafe fn pdftex_fail_args(fmt: *const c_char, args: &[PrintfArg]) -> ! {
         safe_print(c" ==> Fatal error occurred, no output PDF file produced!".as_ptr());
         println();
         if kpathsea_debug_enabled() {
-            safe_print(c"kpathsea_debug enabled, calling abort()...".as_ptr());
+            safe_print(c"kpathsea_debug enabled, reporting internal failure...".as_ptr());
             println();
-            abort();
+            crate::termination::abort();
         } else {
             exit(EXIT_FAILURE);
         }
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn removepdffile() {
+pub unsafe fn removepdffile() {
     unsafe {
         if !kpathsea_debug_enabled() && outputfilename != 0 && fixedpdfdraftmode == 0 {
             let name = makecstring(outputfilename);
@@ -589,8 +464,7 @@ pub unsafe extern "C" fn removepdffile() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn garbagewarning() {
+pub unsafe fn garbagewarning() {
     unsafe {
         pdftex_warn_args(
             c"dangling objects discarded, no output file produced.".as_ptr(),
@@ -620,9 +494,11 @@ pub(crate) unsafe fn xfflush(stream: *mut FILE) -> c_int {
             let err = std::io::Error::last_os_error()
                 .raw_os_error()
                 .unwrap_or(libc::EIO);
+            let message = CString::new(crate::stdio::error_text(err))
+                .unwrap_or_else(|_| c"I/O error".to_owned());
             pdftex_fail_args(
                 c"fflush() failed (%s)".as_ptr(),
-                &[PrintfArg::from(libc::strerror(err))],
+                &[PrintfArg::from(message.as_ptr())],
             );
         }
     }
@@ -633,8 +509,7 @@ pub(crate) unsafe fn xgetc(stream: *mut FILE) -> c_int {
     unsafe { crate::stdio::fgetc(stream) }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn writestreamlength(length: LongInteger, offset: LongInteger) {
+pub unsafe fn writestreamlength(length: LongInteger, offset: LongInteger) {
     unsafe {
         if JOBNAME_CSTR.is_null() {
             JOBNAME_CSTR = c_strdup(makecstring(jobname));
@@ -655,8 +530,7 @@ pub unsafe extern "C" fn writestreamlength(length: LongInteger, offset: LongInte
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn convertStringToPDFString(input: *const c_char, len: c_int) -> *mut c_char {
+pub unsafe fn convertStringToPDFString(input: *const c_char, len: c_int) -> *mut c_char {
     unsafe {
         let out = &raw mut PSTRING_BUF as *mut c_char;
         let mut j = 0usize;
@@ -697,8 +571,7 @@ pub unsafe extern "C" fn convertStringToPDFString(input: *const c_char, len: c_i
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn escapestring(input: PoolPointer) {
+pub unsafe fn escapestring(input: PoolPointer) {
     unsafe {
         let out = poolptr;
         let mut pos = input;
@@ -726,8 +599,7 @@ pub unsafe extern "C" fn escapestring(input: PoolPointer) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn escapename(input: PoolPointer) {
+pub unsafe fn escapename(input: PoolPointer) {
     unsafe {
         let out = poolptr;
         let mut pos = input;
@@ -760,8 +632,7 @@ pub unsafe extern "C" fn escapename(input: PoolPointer) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn escapehex(input: PoolPointer) {
+pub unsafe fn escapehex(input: PoolPointer) {
     unsafe {
         let out = poolptr;
         let mut pos = input;
@@ -779,8 +650,7 @@ pub unsafe extern "C" fn escapehex(input: PoolPointer) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn unescapehex(input: PoolPointer) {
+pub unsafe fn unescapehex(input: PoolPointer) {
     unsafe {
         let out = poolptr;
         let mut pos = input;
@@ -822,8 +692,7 @@ fn hex_string(bytes: &[u8]) -> String {
     out
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn printID(filename: StrNumber) {
+pub unsafe fn printID(filename: StrNumber) {
     unsafe {
         let mut state = mem::MaybeUninit::<Md5State>::zeroed();
         let state_ptr = state.as_mut_ptr();
@@ -847,8 +716,7 @@ pub unsafe extern "C" fn printID(filename: StrNumber) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn printIDalt(toks: Integer) {
+pub unsafe fn printIDalt(toks: Integer) {
     unsafe {
         let tex_string = ztokenstostring(toks);
         let s = makecstring(tex_string);
@@ -870,8 +738,7 @@ pub unsafe extern "C" fn printIDalt(toks: Integer) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn printcreationdate() {
+pub unsafe fn printcreationdate() {
     unsafe {
         initstarttime();
         pdf_printf_args(
@@ -881,8 +748,7 @@ pub unsafe extern "C" fn printcreationdate() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn printmoddate() {
+pub unsafe fn printmoddate() {
     unsafe {
         initstarttime();
         pdf_printf_args(
@@ -892,8 +758,7 @@ pub unsafe extern "C" fn printmoddate() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn setjobid(year: c_int, month: c_int, day: c_int, time: c_int) {
+pub unsafe fn setjobid(year: c_int, month: c_int, day: c_int, time: c_int) {
     unsafe {
         if !JOB_ID_STRING.is_null() {
             return;
@@ -917,8 +782,7 @@ pub unsafe extern "C" fn setjobid(year: c_int, month: c_int, day: c_int, time: c
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn makepdftexbanner() {
+pub unsafe fn makepdftexbanner() {
     static mut PDFTEX_BANNER_INIT: Boolean = FALSE;
     unsafe {
         if PDFTEX_BANNER_INIT != 0 {
@@ -936,38 +800,34 @@ pub unsafe extern "C" fn makepdftexbanner() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn getresnameprefix() -> StrNumber {
-    static NAME_BYTES: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+fn resource_name_prefix(id: &[u8]) -> [u8; 6] {
+    const NAME_BYTES: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let mut crc = crc32fast::hash(id);
+    let mut prefix = [0u8; 6];
+    for byte in &mut prefix {
+        *byte = NAME_BYTES[(crc % 62) as usize];
+        crc /= 62;
+    }
+    prefix
+}
+
+pub unsafe fn getresnameprefix() -> StrNumber {
     unsafe {
-        let id = c_string_bytes(JOB_ID_STRING);
-        let mut crc = crc32(0, ptr::null(), 0);
-        crc = crc32(crc, id.as_ptr(), id.len() as c_uint);
-        let mut prefix = [0u8; 6];
-        let base = NAME_BYTES.len() as c_ulong;
-        for byte in &mut prefix {
-            *byte = NAME_BYTES[(crc % base) as usize];
-            crc /= base;
-        }
+        let prefix = resource_name_prefix(c_string_bytes(JOB_ID_STRING));
         let c = CString::new(prefix.as_slice()).expect("prefix has no nul");
         maketexstring(c.as_ptr())
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn initversionstring(versions: *mut *mut c_char) {
+pub unsafe fn initversionstring(versions: *mut *mut c_char) {
     unsafe {
-        let text = format!(
-            "Compiled with libpng 1.6.58; using libpng {}\nCompiled with zlib 1.3.2; using zlib {}\nCompiled with xpdf version 4.06\n",
-            String::from_utf8_lossy(c_string_bytes(png_get_libpng_ver(ptr::null_mut()))),
-            String::from_utf8_lossy(c_string_bytes(zlibVersion())),
+        *versions = malloced_c_string(
+            b"PNG decoder: Rust png\nCompression backend: Rust zlib-rs\nPDF reader: Rust lopdf\n",
         );
-        *versions = malloced_c_string(text.as_bytes());
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn extxnoverd(x: Scaled, n: Scaled, d: Scaled) -> Scaled {
+pub unsafe fn extxnoverd(x: Scaled, n: Scaled, d: Scaled) -> Scaled {
     let mut r = (x as f64 * n as f64) / d as f64;
     if r > f64::EPSILON {
         r += 0.5;
@@ -982,117 +842,181 @@ pub unsafe extern "C" fn extxnoverd(x: Scaled, n: Scaled, d: Scaled) -> Scaled {
     r as Scaled
 }
 
-fn regex_match_slots(requested: usize, pattern: &[u8]) -> usize {
-    // Every ERE capture requires an opening parenthesis byte. Counting escaped
-    // and bracketed parentheses too is a safe upper bound without a second
-    // syntax parser. Nonexistent requested captures need no stored slot.
-    requested.min(pattern.iter().filter(|&&byte| byte == b'(').count() + 1)
+fn regex_pool_room(extra: usize) -> Option<usize> {
+    unsafe {
+        let start = usize::try_from(poolptr).ok()?;
+        let size = usize::try_from(poolsize).ok()?;
+        (!strpool.is_null() && start.checked_add(extra)? < size).then_some(start)
+    }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn matchstrings(s: StrNumber, t: StrNumber, subcount: c_int, icase: Boolean) {
+fn warn_regex_stderr(error: &impl std::fmt::Display) {
+    use std::io::Write;
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "pdfTeX warning: \\pdfmatch: {error}"
+    );
+}
+
+unsafe fn append_regex_result(prefix: &[u8], bytes: &[u8]) -> bool {
+    let start = prefix
+        .len()
+        .checked_add(bytes.len())
+        .and_then(regex_pool_room);
+    let Some(start) = start else {
+        // The normal warning path allocates strings in this very pool.
+        // Report exhaustion without recursively trying to allocate a warning.
+        warn_regex_stderr(&"string pool overflow");
+        unsafe { poolptr = poolsize.max(0) };
+        return false;
+    };
     unsafe {
-        if !check_pool_room(10) {
+        ptr::copy_nonoverlapping(prefix.as_ptr(), strpool.add(start), prefix.len());
+        ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            strpool.add(start + prefix.len()),
+            bytes.len(),
+        );
+        poolptr = (start + prefix.len() + bytes.len()) as PoolPointer;
+    }
+    true
+}
+
+fn warn_regex(error: &impl std::fmt::Display) {
+    use std::fmt::Write;
+    struct Diagnostic {
+        bytes: [u8; 256],
+        len: usize,
+    }
+    impl Write for Diagnostic {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            let end = self.len.checked_add(text.len()).ok_or(std::fmt::Error)?;
+            if end >= self.bytes.len() {
+                return Err(std::fmt::Error);
+            }
+            for byte in text.bytes() {
+                self.bytes[self.len] = if byte == 0 { b'?' } else { byte };
+                self.len += 1;
+            }
+            Ok(())
+        }
+    }
+    let mut diagnostic = Diagnostic {
+        bytes: [0; 256],
+        len: 0,
+    };
+    if write!(&mut diagnostic, "{error}").is_err() {
+        diagnostic = Diagnostic {
+            bytes: [0; 256],
+            len: 0,
+        };
+        let _ = diagnostic.write_str("regular expression diagnostic exceeds its size limit");
+    }
+    unsafe {
+        // Each warning fragment is printed then flushed from the TeX pool.
+        // Check the largest fragment before using the traditional printer.
+        let invocation = CStr::from_ptr(kpse_invocation_name()).to_bytes().len();
+        let file = if cur_file_name.is_null() {
+            0
+        } else {
+            CStr::from_ptr(cur_file_name).to_bytes().len()
+        };
+        let required = invocation
+            .saturating_add(16)
+            .max(file.saturating_add(8))
+            .max(diagnostic.len + 11);
+        if regex_pool_room(required).is_none() {
+            warn_regex_stderr(error);
             return;
         }
+        pdftex_warn_args(
+            c"\\pdfmatch: %s".as_ptr(),
+            &[PrintfArg::from(diagnostic.bytes.as_ptr())],
+        );
+    }
+}
+
+fn regex_offset_prefix(start: usize, output: &mut [u8; 24]) -> &[u8] {
+    let mut at = output.len() - 2;
+    output[at..].copy_from_slice(b"->");
+    let mut value = start;
+    loop {
+        at -= 1;
+        output[at] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    &output[at..]
+}
+
+/// # Safety
+/// The generated TeX string numbers and pool storage must be valid. An active
+/// invocation owns regex state, and makecstring provides terminated backing.
+pub unsafe fn matchstrings(s: StrNumber, t: StrNumber, subcount: c_int, icase: Boolean) {
+    let outcome = regex_session::with_state(|state| unsafe {
+        state.clear();
         let pattern = makecstring(s);
-        let mut preg = mem::MaybeUninit::<libc::regex_t>::zeroed().assume_init();
-        let mut cflags = libc::REG_EXTENDED;
-        if icase != 0 {
-            cflags |= libc::REG_ICASE;
+        if pattern.is_null() {
+            return Err(crate::posix_regex::RegexError::Invalid(
+                "missing regular expression",
+            ));
         }
-        let ret = libc::regcomp(&mut preg, pattern, cflags);
-        if ret != 0 {
-            let size = libc::regerror(ret, &preg, ptr::null_mut(), 0);
-            let mut buf = vec![0 as c_char; size];
-            libc::regerror(ret, &preg, buf.as_mut_ptr(), size);
-            pdftex_warn_args(
-                c"%s%s".as_ptr(),
-                &[
-                    PrintfArg::from(c"\\pdfmatch: ".as_ptr()),
-                    PrintfArg::from(buf.as_ptr()),
-                ],
-            );
-            *strpool.add(poolptr as usize) = b'-';
-            poolptr += 1;
-            *strpool.add(poolptr as usize) = b'1';
-            poolptr += 1;
-        } else {
-            SUB_MATCH_COUNT = if subcount < 0 { 10 } else { subcount };
-            let slots = regex_match_slots(SUB_MATCH_COUNT as usize, c_string_bytes(pattern));
-            let text = makecstring(t);
-            PMATCH.clear();
-            if slots > 0 {
-                PMATCH.resize(slots, libc::regmatch_t { rm_so: 0, rm_eo: 0 });
-            }
-            let exec_ret = libc::regexec(
-                &preg,
-                text,
-                slots,
-                if PMATCH.is_empty() {
-                    ptr::null_mut()
-                } else {
-                    PMATCH.as_mut_ptr()
-                },
-                0,
-            );
-            MATCH_STRING = Some(c_string_bytes(text).to_vec());
-            LAST_MATCH_SUCCEEDED = (exec_ret == 0) as Boolean;
-            *strpool.add(poolptr as usize) = if exec_ret == 0 { b'1' } else { b'0' };
-            poolptr += 1;
+        // makecstring reuses its buffer. Compile the pattern before rendering
+        // text, and never retain either borrowed C-string slice in MatchState.
+        let regex = state.prepare(CStr::from_ptr(pattern).to_bytes(), subcount, icase != 0)?;
+        let text = makecstring(t);
+        if text.is_null() {
+            return Err(crate::posix_regex::RegexError::Invalid(
+                "missing regex input",
+            ));
         }
-        libc::regfree(&mut preg);
+        state.execute(&regex, CStr::from_ptr(text).to_bytes())
+    });
+    let result: &[u8] = match outcome {
+        Ok(Ok(true)) => b"1",
+        Ok(Ok(false)) => b"0",
+        Ok(Err(error)) => {
+            warn_regex(&error);
+            b"-1"
+        }
+        Err(error) => {
+            warn_regex(&error);
+            b"-1"
+        }
+    };
+    if !unsafe { append_regex_result(result, b"") } {
+        let _ = regex_session::with_state(MatchState::clear);
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn getmatch(i: c_int) {
-    unsafe {
-        let found = i >= 0
-            && i < SUB_MATCH_COUNT
-            && MATCH_STRING.is_some()
-            && LAST_MATCH_SUCCEEDED != 0
-            && (i as usize) < PMATCH.len()
-            && PMATCH[i as usize].rm_so >= 0
-            && PMATCH[i as usize].rm_eo >= PMATCH[i as usize].rm_so;
-        if found {
-            let m = PMATCH[i as usize];
-            let start = m.rm_so as usize;
-            let end = m.rm_eo as usize;
-            let text = MATCH_STRING.as_ref().expect("checked above");
-            let prefix = format!("{}->", start);
-            if !check_pool_room(prefix.len() + end.saturating_sub(start)) {
-                return;
-            }
-            ptr::copy_nonoverlapping(prefix.as_ptr(), strpool.add(poolptr as usize), prefix.len());
-            poolptr += prefix.len() as PoolPointer;
-            if end <= text.len() && start <= end {
-                ptr::copy_nonoverlapping(
-                    text[start..end].as_ptr(),
-                    strpool.add(poolptr as usize),
-                    end - start,
-                );
-                poolptr += (end - start) as PoolPointer;
-            }
+/// # Safety
+/// The generated TeX pool must be valid and the invocation scope must be active.
+pub unsafe fn getmatch(i: c_int) {
+    let outcome = regex_session::with_state(|state| {
+        let appended = if let Some((start, bytes)) = state.capture(i) {
+            let mut buffer = [0u8; 24];
+            let prefix = regex_offset_prefix(start, &mut buffer);
+            unsafe { append_regex_result(prefix, bytes) }
         } else {
-            if !check_pool_room(4) {
-                return;
-            }
-            for &byte in b"-1->" {
-                *strpool.add(poolptr as usize) = byte;
-                poolptr += 1;
-            }
+            unsafe { append_regex_result(b"-1->", b"") }
+        };
+        if !appended {
+            state.clear();
         }
+    });
+    if let Err(error) = outcome {
+        warn_regex(&error);
+        unsafe { append_regex_result(b"-1->", b"") };
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn fb_offset() -> Integer {
+pub unsafe fn fb_offset() -> Integer {
     unsafe { fb_ptr.offset_from(fb_array) as Integer }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn fb_seek(offset: Integer) {
+pub unsafe fn fb_seek(offset: Integer) {
     unsafe {
         fb_ptr = fb_array.add(offset as usize);
     }
@@ -1111,8 +1035,7 @@ unsafe fn ensure_fb_room(n: usize) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn fb_putchar(b: c_uchar) {
+pub unsafe fn fb_putchar(b: c_uchar) {
     unsafe {
         ensure_fb_room(1);
         *fb_ptr = b as c_char;
@@ -1120,8 +1043,7 @@ pub unsafe extern "C" fn fb_putchar(b: c_uchar) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn fb_flush() {
+pub unsafe fn fb_flush() {
     unsafe {
         let mut p = fb_array;
         while p < fb_ptr {
@@ -1191,8 +1113,7 @@ unsafe fn grow_array<T>(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn allocvffnts() {
+pub unsafe fn allocvffnts() {
     unsafe {
         if VF_E_FNTS_ARRAY.is_null() {
             VF_E_FNTS_ARRAY = vfefnts;
@@ -1227,8 +1148,7 @@ pub unsafe extern "C" fn allocvffnts() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn libpdffinish() {
+pub unsafe fn libpdffinish() {
     unsafe {
         crate::allocation::free(fb_array as *mut c_void);
         fb_array = ptr::null_mut();
@@ -1248,8 +1168,7 @@ pub unsafe extern "C" fn libpdffinish() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn make_subset_tag(fd: *mut FdEntry) {
+pub unsafe fn make_subset_tag(fd: *mut FdEntry) {
     const SUBSET_TAG_LENGTH: usize = 6;
     unsafe {
         if SUBSET_TAG_TREE.is_null() {
@@ -1365,17 +1284,11 @@ unsafe fn tex_string_bytes(s: StrNumber) -> Option<Vec<u8>> {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn colorstackused() -> c_int {
+pub unsafe fn colorstackused() -> c_int {
     unsafe { init_colorstacks().len() as c_int }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn newcolorstack(
-    s: Integer,
-    literal_mode: Integer,
-    page_start: Boolean,
-) -> c_int {
+pub unsafe fn newcolorstack(s: Integer, literal_mode: Integer, page_start: Boolean) -> c_int {
     unsafe {
         let stacks = init_colorstacks();
         if stacks.len() == MAX_COLORSTACKS {
@@ -1396,8 +1309,7 @@ pub unsafe extern "C" fn newcolorstack(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn colorstackset(colstack_no: c_int, s: Integer) -> Integer {
+pub unsafe fn colorstackset(colstack_no: c_int, s: Integer) -> Integer {
     unsafe {
         let stacks = init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
@@ -1410,8 +1322,7 @@ pub unsafe extern "C" fn colorstackset(colstack_no: c_int, s: Integer) -> Intege
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn colorstackcurrent(colstack_no: c_int) -> Integer {
+pub unsafe fn colorstackcurrent(colstack_no: c_int) -> Integer {
     unsafe {
         let stacks = init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
@@ -1424,8 +1335,7 @@ pub unsafe extern "C" fn colorstackcurrent(colstack_no: c_int) -> Integer {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn colorstackpush(colstack_no: c_int, s: Integer) -> Integer {
+pub unsafe fn colorstackpush(colstack_no: c_int, s: Integer) -> Integer {
     unsafe {
         let stacks = init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
@@ -1440,8 +1350,7 @@ pub unsafe extern "C" fn colorstackpush(colstack_no: c_int, s: Integer) -> Integ
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn colorstackpop(colstack_no: c_int) -> Integer {
+pub unsafe fn colorstackpop(colstack_no: c_int) -> Integer {
     unsafe {
         let stacks = init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
@@ -1482,8 +1391,7 @@ unsafe fn colorstackpagestart() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn colorstackskippagestart(colstack_no: c_int) -> Integer {
+pub unsafe fn colorstackskippagestart(colstack_no: c_int) -> Integer {
     unsafe {
         let stack = &init_colorstacks()[colstack_no as usize];
         if stack.page_start == 0 {
@@ -1499,13 +1407,11 @@ pub unsafe extern "C" fn colorstackskippagestart(colstack_no: c_int) -> Integer 
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn matrixused() -> Boolean {
+pub unsafe fn matrixused() -> Boolean {
     unsafe { (!MATRIX_STACK.is_empty()) as Boolean }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn checkpdfsave(cur_h: c_int, cur_v: c_int) {
+pub unsafe fn checkpdfsave(cur_h: c_int, cur_v: c_int) {
     unsafe {
         POS_STACK.push(PosEntry {
             pos_h: cur_h,
@@ -1519,8 +1425,7 @@ pub unsafe extern "C" fn checkpdfsave(cur_h: c_int, cur_v: c_int) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn checkpdfrestore(cur_h: c_int, cur_v: c_int) {
+pub unsafe fn checkpdfrestore(cur_h: c_int, cur_v: c_int) {
     unsafe {
         let Some(pos) = POS_STACK.pop() else {
             pdftex_warn_args(
@@ -1546,8 +1451,7 @@ pub unsafe extern "C" fn checkpdfrestore(cur_h: c_int, cur_v: c_int) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn pdfshipoutbegin(shipping_page: Boolean) {
+pub unsafe fn pdfshipoutbegin(shipping_page: Boolean) {
     unsafe {
         POS_STACK.clear();
         PAGE_MODE = shipping_page;
@@ -1557,8 +1461,7 @@ pub unsafe extern "C" fn pdfshipoutbegin(shipping_page: Boolean) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn pdfshipoutend(shipping_page: Boolean) {
+pub unsafe fn pdfshipoutend(shipping_page: Boolean) {
     unsafe {
         if !POS_STACK.is_empty() {
             pdftex_fail_args(
@@ -1576,8 +1479,7 @@ pub unsafe extern "C" fn pdfshipoutend(shipping_page: Boolean) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn pdfsetmatrix(input: PoolPointer, cur_h: Scaled, cur_v: Scaled) -> Integer {
+pub unsafe fn pdfsetmatrix(input: PoolPointer, cur_h: Scaled, cur_v: Scaled) -> Integer {
     unsafe {
         if PAGE_MODE == 0 {
             return 1;
@@ -1648,8 +1550,7 @@ unsafe fn do_matrixtransform(x: Scaled, y: Scaled) -> (Scaled, Scaled) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn matrixtransformrect(llx: Scaled, lly: Scaled, urx: Scaled, ury: Scaled) {
+pub unsafe fn matrixtransformrect(llx: Scaled, lly: Scaled, urx: Scaled, ury: Scaled) {
     unsafe {
         if PAGE_MODE != 0 && !MATRIX_STACK.is_empty() {
             LAST_LLX = llx;
@@ -1673,8 +1574,7 @@ pub unsafe extern "C" fn matrixtransformrect(llx: Scaled, lly: Scaled, urx: Scal
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn matrixtransformpoint(x: Scaled, y: Scaled) {
+pub unsafe fn matrixtransformpoint(x: Scaled, y: Scaled) {
     unsafe {
         if PAGE_MODE != 0 && !MATRIX_STACK.is_empty() {
             let (x, y) = do_matrixtransform(x, y);
@@ -1687,35 +1587,29 @@ pub unsafe extern "C" fn matrixtransformpoint(x: Scaled, y: Scaled) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn matrixrecalculate(urx: Scaled) {
+pub unsafe fn matrixrecalculate(urx: Scaled) {
     unsafe {
         matrixtransformrect(LAST_LLX, LAST_LLY, urx, LAST_URY);
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn getllx() -> Scaled {
+pub unsafe fn getllx() -> Scaled {
     unsafe { RET_LLX }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn getlly() -> Scaled {
+pub unsafe fn getlly() -> Scaled {
     unsafe { RET_LLY }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn geturx() -> Scaled {
+pub unsafe fn geturx() -> Scaled {
     unsafe { RET_URX }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn getury() -> Scaled {
+pub unsafe fn getury() -> Scaled {
     unsafe { RET_URY }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn stripzeros(a: *mut c_char) -> *mut c_char {
+pub unsafe fn stripzeros(a: *mut c_char) -> *mut c_char {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum State {
         Nonum,
@@ -1803,11 +1697,38 @@ pub unsafe extern "C" fn stripzeros(a: *mut c_char) -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_printf, grow_array, growth_capacity, regex_match_slots, snprintf_args, sprintf_args,
-        PrintfArg,
+        format_printf, grow_array, growth_capacity, regex_offset_prefix, resource_name_prefix,
+        snprintf_args, sprintf_args, PrintfArg,
     };
     use proptest::prelude::*;
     use std::ptr;
+
+    #[test]
+    fn resource_prefix_preserves_zero_crc_and_legacy_digit_order() {
+        assert_eq!(resource_name_prefix(b""), *b"000000");
+        // The classic IEEE CRC-32 test vector has checksum 0xcbf43926.
+        let alphabet = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        let checksum = 0xcbf4_3926u32;
+        let expected = std::array::from_fn(|position| {
+            alphabet[((checksum / 62u32.pow(position as u32)) % 62) as usize]
+        });
+        assert_eq!(resource_name_prefix(b"123456789"), expected);
+    }
+
+    proptest! {
+        #[test]
+        fn resource_prefix_matches_prior_rust_zlib_adapter(
+            id in proptest::collection::vec(any::<u8>(), 0..16_384),
+        ) {
+            let prior = unsafe { crate::zlib::crc32(0, id.as_ptr(), id.len() as u32) } as u32;
+            prop_assert_eq!(crc32fast::hash(&id), prior);
+            let alphabet = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+            let expected: [u8; 6] = std::array::from_fn(|position| {
+                alphabet[((u64::from(prior) / 62u64.pow(position as u32)) % 62) as usize]
+            });
+            prop_assert_eq!(resource_name_prefix(&id), expected);
+        }
+    }
 
     #[test]
     fn growth_rejects_capacity_overflow_before_allocating() {
@@ -1820,24 +1741,24 @@ mod tests {
     }
 
     #[test]
-    fn capture_slots_follow_pattern_bytes_instead_of_unbounded_request() {
-        assert_eq!(regex_match_slots(i32::MAX as usize, b"(a)"), 2);
-        assert_eq!(regex_match_slots(0, b"(a)"), 0);
-        assert_eq!(regex_match_slots(1, b"((a))"), 1);
-        assert_eq!(regex_match_slots(10, b"literal"), 1);
-        assert_eq!(regex_match_slots(10, br"\([()]"), 3);
+    fn regex_offsets_use_bounded_decimal_prefixes() {
+        let mut output = [0; 24];
+        assert_eq!(regex_offset_prefix(0, &mut output), b"0->");
+        assert_eq!(regex_offset_prefix(123, &mut output), b"123->");
+        assert_eq!(
+            regex_offset_prefix(usize::MAX, &mut output),
+            format!("{}->", usize::MAX).as_bytes()
+        );
     }
 
     proptest! {
         #[test]
-        fn capture_slot_storage_is_bounded_by_requested_and_pattern_size(
-            requested in any::<usize>(),
-            pattern in prop::collection::vec(any::<u8>(), 0..4096),
+        fn regex_offset_prefix_matches_decimal_format(
+            offset in any::<usize>(),
         ) {
-            let slots = regex_match_slots(requested, &pattern);
-            prop_assert!(slots <= requested);
-            prop_assert!(slots <= pattern.len() + 1);
-            prop_assert_eq!(slots, requested.min(1 + pattern.iter().filter(|&&byte| byte == b'(').count()));
+            let mut output = [0; 24];
+            let expected = format!("{offset}->");
+            prop_assert_eq!(regex_offset_prefix(offset, &mut output), expected.as_bytes());
         }
 
         #[test]

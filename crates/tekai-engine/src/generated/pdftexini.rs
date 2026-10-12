@@ -1,3 +1,33 @@
+pub use crate::generated::backend::mapfile::pdfinitmapfile;
+pub use crate::generated::backend::tounicode::{dumptounicode, undumptounicode};
+pub use crate::generated::backend::writeimg::{dumpimagemeta, undumpimagemeta};
+pub use crate::generated::pdftex0::{
+    alteraux, alterboxdimen, alterinteger, alterpagesofar, alterprevgraf, backerror, backinput,
+    begindiagnostic, closefilesandterminate, endfilereading, endtokenlist, error, fixdateandtime,
+    getavail, getrtoken, gettoken, getxtoken, hyphenate, initterminal, jumpout, maincontrol,
+    makestring, mubyteupdate, newinteraction, normalizeselector, openfmtfile, openlogfile, popnest,
+    printfileline, println, pseudoclose, scancharnum, scanfifteenbitint, scanfontident,
+    scanfourbitint, scanint, scanleftbrace, scanoptionalequals, scanregisternum, showcurcmdchr,
+    showsavegroups, slowmakestring, startinput, trapzeroglue, zcharshrink, zcharstretch,
+    zcheckexpandpars, zconfusion, zdeleteglueref, zdeletetokenref, zdisposemunode,
+    zdisposemutableout, zdoregistercommand, zeffectivechar, zenddiagnostic, zeqdefine,
+    zeqworddefine, zfindfontdimen, zfindsaelement, zfiniteshrink, zflushlist, zflushnodelist,
+    zfreenode, zgeqdefine, zgeqworddefine, zgetnode, zgsadef, zidlookup, zinitrandoms, zkernshrink,
+    zkernstretch, zmakefontcopy, znewfont, znewletterspacedfont, znewparamglue, znewpenalty,
+    znewspec, zoverflow, zpackjobname, zpostlinebreak, zprimlookup, zprint, zprintchar,
+    zprintcmdchr, zprintcsnames, zprintesc, zprintfilename, zprintint, zprintnl, zprintscaled,
+    zpromptfilename, zreadtoks, zsadef, zscanbox, zscandimen, zscanglue, zscankeyword, zscantoks,
+    zsetefcode, zsetknaccode, zsetknbccode, zsetknbscode, zsetlpcode, zsetnoligatures, zsetrpcode,
+    zsetshbscode, zsetstbscode, zsettagcode, zslowprint, ztrybreak, zzwmakenamestring,
+};
+pub use crate::generated::pdftex_pool::loadpoolstrings;
+pub use crate::generated::pdftexextra::{get_seconds_and_micros, initstarttime, readtcxfile};
+pub use crate::openclose::setupboundvariable;
+pub use crate::synctex::synctexinitcommand;
+pub use crate::utils::makepdftexbanner;
+
+use crate::byte_string::{strcmp, strcpy, strlen};
+
 pub use crate::core_types::{
     AsciiCode as ASCIIcode, Boolean as boolean, CharUsedArray as charusedarray,
     DestinationNameEntry as destnameentry, EightBits as eightbits, FmEntryPtr as fmentryptr,
@@ -90,140 +120,8 @@ use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
 
 extern "C" {
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strcpy(
-        __dst: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     static mut kpse_def: kpathsea;
-    fn setupboundvariable(_: *mut integer, _: const_string, _: integer);
     static mut versionstring: *const ::core::ffi::c_char;
-    fn loadpoolstrings(_: integer) -> ::core::ffi::c_int;
-    fn initstarttime();
-    fn readtcxfile();
-    fn get_seconds_and_micros(_: *mut integer, _: *mut integer);
-    fn synctexinitcommand();
-    fn println();
-    fn zprintchar(s: ASCIIcode);
-    fn zprint(s: integer);
-    fn zslowprint(s: integer);
-    fn zprintnl(s: strnumber);
-    fn zprintesc(s: strnumber);
-    fn zprintint(n: longinteger);
-    fn zprintfilename(n: integer, a: integer, e: integer);
-    fn zprintcsnames(hstart: integer, hfinish: integer);
-    fn printfileline();
-    fn jumpout() -> !;
-    fn error();
-    fn zoverflow(s: strnumber, n: integer) -> !;
-    fn zconfusion(s: strnumber) -> !;
-    fn initterminal() -> boolean;
-    fn makestring() -> strnumber;
-    fn slowmakestring() -> strnumber;
-    fn normalizeselector();
-    fn zprintscaled(s: scaled);
-    fn zinitrandoms(seed: integer);
-    fn getavail() -> halfword;
-    fn zflushlist(p: halfword);
-    fn zgetnode(s: integer) -> halfword;
-    fn zfreenode(p: halfword, s: halfword);
-    fn znewspec(p: halfword) -> halfword;
-    fn znewparamglue(n: smallnumber) -> halfword;
-    fn znewpenalty(m: integer) -> halfword;
-    fn zdeletetokenref(p: halfword);
-    fn zdeleteglueref(p: halfword);
-    fn zflushnodelist(p: halfword);
-    fn popnest();
-    fn fixdateandtime();
-    fn begindiagnostic();
-    fn zenddiagnostic(blankline: boolean);
-    fn zprintcmdchr(cmd: quarterword, chrcode: halfword);
-    fn zidlookup(j: integer, l: integer) -> halfword;
-    fn zprimlookup(s: strnumber) -> halfword;
-    fn pseudoclose();
-    fn zsadef(p: halfword, e: halfword);
-    fn zgsadef(p: halfword, e: halfword);
-    fn zeqdefine(p: halfword, t: quarterword, e: halfword);
-    fn zeqworddefine(p: halfword, w: integer);
-    fn zgeqdefine(p: halfword, t: quarterword, e: halfword);
-    fn zgeqworddefine(p: halfword, w: integer);
-    fn showcurcmdchr();
-    fn endtokenlist();
-    fn backinput();
-    fn backerror();
-    fn endfilereading();
-    fn mubyteupdate();
-    fn zdisposemunode(p: halfword);
-    fn zdisposemutableout(cs: halfword);
-    fn gettoken();
-    fn zfindsaelement(t: smallnumber, n: halfword, w: boolean);
-    fn getxtoken();
-    fn scanleftbrace();
-    fn scanoptionalequals();
-    fn zscankeyword(s: strnumber) -> boolean;
-    fn scancharnum();
-    fn scanfourbitint();
-    fn scanfifteenbitint();
-    fn scanregisternum();
-    fn zeffectivechar(errp: boolean, f: internalfontnumber, c: quarterword) -> integer;
-    fn scanfontident();
-    fn zfindfontdimen(writing: boolean);
-    fn scanint();
-    fn zscandimen(mu: boolean, inf: boolean, shortcut: boolean);
-    fn zscanglue(level: smallnumber);
-    fn zscantoks(macrodef: boolean, xpand: boolean) -> halfword;
-    fn zreadtoks(n: integer, r: halfword, j: halfword);
-    fn zzwmakenamestring(f: *mut wordfile) -> strnumber;
-    fn zpackjobname(s: strnumber);
-    fn zpromptfilename(s: strnumber, e: strnumber);
-    fn openlogfile();
-    fn startinput();
-    fn zsettagcode(f: internalfontnumber, c: eightbits, i: integer);
-    fn zsetnoligatures(f: internalfontnumber);
-    fn zsetlpcode(f: internalfontnumber, c: eightbits, i: integer);
-    fn zsetrpcode(f: internalfontnumber, c: eightbits, i: integer);
-    fn zsetefcode(f: internalfontnumber, c: eightbits, i: integer);
-    fn zsetknbscode(f: internalfontnumber, c: eightbits, i: integer);
-    fn zsetstbscode(f: internalfontnumber, c: eightbits, i: integer);
-    fn zsetshbscode(f: internalfontnumber, c: eightbits, i: integer);
-    fn zsetknbccode(f: internalfontnumber, c: eightbits, i: integer);
-    fn zsetknaccode(f: internalfontnumber, c: eightbits, i: integer);
-    fn znewletterspacedfont(a: smallnumber);
-    fn zmakefontcopy(a: smallnumber);
-    fn zcheckexpandpars(f: internalfontnumber) -> boolean;
-    fn zcharstretch(f: internalfontnumber, c: eightbits) -> scaled;
-    fn zcharshrink(f: internalfontnumber, c: eightbits) -> scaled;
-    fn zkernstretch(p: halfword) -> scaled;
-    fn zkernshrink(p: halfword) -> scaled;
-    fn zfiniteshrink(p: halfword) -> halfword;
-    fn ztrybreak(pi: integer, breaktype: smallnumber);
-    fn zpostlinebreak(d: boolean);
-    fn hyphenate();
-    fn showsavegroups();
-    fn zscanbox(boxcontext: integer);
-    fn getrtoken();
-    fn trapzeroglue();
-    fn zdoregistercommand(a: smallnumber);
-    fn alteraux();
-    fn alterprevgraf();
-    fn alterpagesofar();
-    fn alterinteger();
-    fn alterboxdimen();
-    fn znewfont(a: smallnumber);
-    fn newinteraction();
-    fn maincontrol();
-    fn openfmtfile() -> boolean;
-    fn closefilesandterminate();
-    fn pdfinitmapfile(map_name: const_string);
-    fn dumptounicode();
-    fn undumptounicode();
-    fn makepdftexbanner();
-    fn dumpimagemeta();
-    fn undumpimagemeta(_: integer, _: integer, _: integer);
 }
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -236,49 +134,17 @@ pub type off_t = __darwin_off_t;
 pub type string = *mut ::core::ffi::c_char;
 pub type const_string = *const ::core::ffi::c_char;
 pub type address = *mut ::core::ffi::c_void;
-pub type p_record_input = Option<unsafe extern "C" fn(const_string) -> ()>;
-pub type p_record_output = Option<unsafe extern "C" fn(const_string) -> ()>;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct str_llist_elt {
-    pub str_0: string,
-    pub moved: boolean,
-    pub next: *mut str_llist_elt,
-}
-pub type str_llist_type = *mut str_llist_elt;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct cache_entry {
-    pub key: const_string,
-    pub value: *mut str_llist_type,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct expansion_type {
-    pub var: const_string,
-    pub expanding: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct hash_element_struct {
-    pub key: const_string,
-    pub value: const_string,
-    pub next: *mut hash_element_struct,
-}
-pub type hash_element_type = hash_element_struct;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct hash_table_type {
-    pub buckets: *mut *mut hash_element_type,
-    pub size: ::core::ffi::c_uint,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct str_list_type {
-    pub length: ::core::ffi::c_uint,
-    pub list: *mut string,
-}
-pub type kpse_src_type = ::core::ffi::c_uint;
+pub use crate::kpathsea_types::cache_entry;
+pub use crate::kpathsea_types::expansion_type;
+pub use crate::kpathsea_types::hash_element_struct;
+pub use crate::kpathsea_types::hash_element_type;
+pub use crate::kpathsea_types::hash_table_type;
+pub use crate::kpathsea_types::kpse_src_type;
+pub use crate::kpathsea_types::p_record_input;
+pub use crate::kpathsea_types::p_record_output;
+pub use crate::kpathsea_types::str_list_type;
+pub use crate::kpathsea_types::str_llist_elt;
+pub use crate::kpathsea_types::str_llist_type;
 pub const kpse_src_cmdline: kpse_src_type = 6;
 pub const kpse_src_x: kpse_src_type = 5;
 pub const kpse_src_env: kpse_src_type = 4;
@@ -286,66 +152,9 @@ pub const kpse_src_client_cnf: kpse_src_type = 3;
 pub const kpse_src_texmf_cnf: kpse_src_type = 2;
 pub const kpse_src_compile: kpse_src_type = 1;
 pub const kpse_src_implicit: kpse_src_type = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct kpse_format_info_type {
-    pub type_0: const_string,
-    pub path: string,
-    pub raw_path: const_string,
-    pub path_source: const_string,
-    pub override_path: const_string,
-    pub client_path: const_string,
-    pub cnf_path: const_string,
-    pub default_path: const_string,
-    pub suffix: *mut const_string,
-    pub alt_suffix: *mut const_string,
-    pub suffix_search_only: boolean,
-    pub program: const_string,
-    pub argc: ::core::ffi::c_int,
-    pub argv: *mut const_string,
-    pub program_enabled_p: boolean,
-    pub program_enable_level: kpse_src_type,
-    pub binmode: boolean,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct kpathsea_instance {
-    pub record_input: p_record_input,
-    pub record_output: p_record_output,
-    pub cnf_hash: hash_table_type,
-    pub doing_cnf_init: boolean,
-    pub db: hash_table_type,
-    pub alias_db: hash_table_type,
-    pub db_dir_list: str_list_type,
-    pub debug: ::core::ffi::c_uint,
-    pub link_table: hash_table_type,
-    pub the_cache: *mut cache_entry,
-    pub cache_length: ::core::ffi::c_uint,
-    pub map: hash_table_type,
-    pub map_path: const_string,
-    pub debug_hash_lookup_int: boolean,
-    pub elt: string,
-    pub elt_alloc: ::core::ffi::c_uint,
-    pub path: const_string,
-    pub followup_search: boolean,
-    pub log_file: *mut FILE,
-    pub log_opened: boolean,
-    pub invocation_name: string,
-    pub invocation_short_name: string,
-    pub program_name: string,
-    pub ll_verbose: ::core::ffi::c_int,
-    pub fallback_font: const_string,
-    pub fallback_resolutions_string: const_string,
-    pub fallback_resolutions: *mut ::core::ffi::c_uint,
-    pub format_info: [kpse_format_info_type; 59],
-    pub make_tex_discard_errors: boolean,
-    pub missfont: *mut FILE,
-    pub expansions: *mut expansion_type,
-    pub expansion_len: ::core::ffi::c_uint,
-    pub saved_env: *mut *mut ::core::ffi::c_char,
-    pub saved_count: ::core::ffi::c_int,
-}
-pub type kpathsea = *mut kpathsea_instance;
+pub use crate::kpathsea_types::kpathsea;
+pub use crate::kpathsea_types::kpathsea_instance;
+pub use crate::kpathsea_types::kpse_format_info_type;
 pub type gzFile = *mut gzFile_s;
 pub use crate::stdio::Stream as gzFile_s;
 pub type alphafile = text;
@@ -2499,13 +2308,14 @@ pub unsafe fn zlinebreak(mut d: boolean) {
     }
     q = (*eqtb.offset(26635 as ::core::ffi::c_int as isize)).hh.v.RH;
     r = (*eqtb.offset(26636 as ::core::ffi::c_int as isize)).hh.v.RH;
-    background[1 as ::core::ffi::c_int as usize] = ((*mem
-        .offset((q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
-    .u
-    .CINT
-        + (*mem.offset((r as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
+    background[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+        (((*mem.offset((q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
             .u
-            .CINT) as scaled;
+            .CINT) as i64
+            + ((*mem.offset((r as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
+                .u
+                .CINT) as i64),
+    );
     background[2 as ::core::ffi::c_int as usize] = 0 as ::core::ffi::c_int as scaled;
     background[3 as ::core::ffi::c_int as usize] = 0 as ::core::ffi::c_int as scaled;
     background[4 as ::core::ffi::c_int as usize] = 0 as ::core::ffi::c_int as scaled;
@@ -2515,19 +2325,22 @@ pub unsafe fn zlinebreak(mut d: boolean) {
         .u
         .CINT as scaled;
     background[(2 as ::core::ffi::c_int + (*mem.offset(r as isize)).hh.u.B0 as ::core::ffi::c_int)
-        as usize] = (background[(2 as ::core::ffi::c_int
-        + (*mem.offset(r as isize)).hh.u.B0 as ::core::ffi::c_int)
-        as usize]
-        + (*mem.offset((r as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
+        as usize] = crate::checked_width::tex(
+        ((background[(2 as ::core::ffi::c_int
+            + (*mem.offset(r as isize)).hh.u.B0 as ::core::ffi::c_int)
+            as usize]) as i64
+            + ((*mem.offset((r as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
+                .u
+                .CINT) as i64),
+    );
+    background[6 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+        (((*mem.offset((q as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
             .u
-            .CINT) as scaled;
-    background[6 as ::core::ffi::c_int as usize] = ((*mem
-        .offset((q as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
-    .u
-    .CINT
-        + (*mem.offset((r as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
-            .u
-            .CINT) as scaled;
+            .CINT) as i64
+            + ((*mem.offset((r as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
+                .u
+                .CINT) as i64),
+    );
     if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT > 1 as ::core::ffi::c_int {
         background[7 as ::core::ffi::c_int as usize] = 0 as ::core::ffi::c_int as scaled;
         background[8 as ::core::ffi::c_int as usize] = 0 as ::core::ffi::c_int as scaled;
@@ -2592,14 +2405,16 @@ pub unsafe fn zlinebreak(mut d: boolean) {
             }) as halfword;
             if (*eqtb.offset(29318 as ::core::ffi::c_int as isize)).u.CINT < 0 as ::core::ffi::c_int
             {
-                firstwidth = ((*eqtb.offset(29906 as ::core::ffi::c_int as isize)).u.CINT
-                    - (if (*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
-                        >= 0 as ::core::ffi::c_int
-                    {
-                        (*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
-                    } else {
-                        -(*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
-                    })) as scaled;
+                firstwidth = crate::checked_width::tex(
+                    (((*eqtb.offset(29906 as ::core::ffi::c_int as isize)).u.CINT) as i64
+                        - (if (*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
+                            >= 0 as ::core::ffi::c_int
+                        {
+                            ((*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT) as i64
+                        } else {
+                            -(((*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT) as i64)
+                        })),
+                );
                 if (*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
                     >= 0 as ::core::ffi::c_int
                 {
@@ -2613,14 +2428,16 @@ pub unsafe fn zlinebreak(mut d: boolean) {
             } else {
                 firstwidth = (*eqtb.offset(29906 as ::core::ffi::c_int as isize)).u.CINT as scaled;
                 firstindent = 0 as ::core::ffi::c_int as scaled;
-                secondwidth = ((*eqtb.offset(29906 as ::core::ffi::c_int as isize)).u.CINT
-                    - (if (*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
-                        >= 0 as ::core::ffi::c_int
-                    {
-                        (*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
-                    } else {
-                        -(*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
-                    })) as scaled;
+                secondwidth = crate::checked_width::tex(
+                    (((*eqtb.offset(29906 as ::core::ffi::c_int as isize)).u.CINT) as i64
+                        - (if (*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
+                            >= 0 as ::core::ffi::c_int
+                        {
+                            ((*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT) as i64
+                        } else {
+                            -(((*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT) as i64)
+                        })),
+                );
                 if (*eqtb.offset(29920 as ::core::ffi::c_int as isize)).u.CINT
                     >= 0 as ::core::ffi::c_int
                 {
@@ -2772,37 +2589,46 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                 prevp = curp;
                 loop {
                     f = (*mem.offset(curp as isize)).hh.u.B0 as internalfontnumber;
-                    activewidth[1 as ::core::ffi::c_int as usize] = (activewidth
-                        [1 as ::core::ffi::c_int as usize]
-                        + (*fontinfo.offset(
-                            (*widthbase.offset(f as isize) as ::core::ffi::c_int
-                                + (*fontinfo.offset(
-                                    (*charbase.offset(f as isize)
-                                        + zeffectivechar(
-                                            1 as ::core::ffi::c_int,
-                                            f,
-                                            (*mem.offset(curp as isize)).hh.u.B1 as quarterword,
-                                        )) as isize,
-                                ))
-                                .v
-                                .QQQQ
-                                .u
-                                .B0 as ::core::ffi::c_int) as isize,
-                        ))
-                        .u
-                        .CINT)
-                        as scaled;
+                    activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                            + ((*fontinfo.offset(
+                                (*widthbase.offset(f as isize) as ::core::ffi::c_int
+                                    + (*fontinfo.offset(
+                                        (*charbase.offset(f as isize)
+                                            + zeffectivechar(
+                                                1 as ::core::ffi::c_int,
+                                                f,
+                                                (*mem.offset(curp as isize)).hh.u.B1 as quarterword,
+                                            )) as isize,
+                                    ))
+                                    .v
+                                    .QQQQ
+                                    .u
+                                    .B0 as ::core::ffi::c_int)
+                                    as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                         > 1 as ::core::ffi::c_int
                         && zcheckexpandpars(f) != 0
                     {
                         prevcharp = curp;
-                        activewidth[7 as ::core::ffi::c_int as usize] = activewidth
-                            [7 as ::core::ffi::c_int as usize]
-                            + zcharstretch(f, (*mem.offset(curp as isize)).hh.u.B1 as eightbits);
-                        activewidth[8 as ::core::ffi::c_int as usize] = activewidth
-                            [8 as ::core::ffi::c_int as usize]
-                            + zcharshrink(f, (*mem.offset(curp as isize)).hh.u.B1 as eightbits);
+                        activewidth[7 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                            (activewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                + (zcharstretch(
+                                    f,
+                                    (*mem.offset(curp as isize)).hh.u.B1 as eightbits,
+                                )) as i64,
+                        );
+                        activewidth[8 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                            (activewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                + (zcharshrink(
+                                    f,
+                                    (*mem.offset(curp as isize)).hh.u.B1 as eightbits,
+                                )) as i64,
+                        );
                     }
                     curp = (*mem.offset(curp as isize)).hh.v.RH;
                     if !(curp >= himemmin) {
@@ -2812,13 +2638,14 @@ pub unsafe fn zlinebreak(mut d: boolean) {
             }
             match (*mem.offset(curp as isize)).hh.u.B0 as ::core::ffi::c_int {
                 0 | 1 | 2 => {
-                    activewidth[1 as ::core::ffi::c_int as usize] =
-                        (activewidth[1 as ::core::ffi::c_int as usize]
-                            + (*mem.offset(
+                    activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
                                 (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT) as scaled;
+                            .CINT) as i64),
+                    );
                 }
                 8 => {
                     if (*mem.offset(curp as isize)).hh.u.B1 as ::core::ffi::c_int
@@ -2848,13 +2675,14 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                         || (*mem.offset(curp as isize)).hh.u.B1 as ::core::ffi::c_int
                             == 14 as ::core::ffi::c_int
                     {
-                        activewidth[1 as ::core::ffi::c_int as usize] =
-                            (activewidth[1 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
+                        activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                            ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                + ((*mem.offset(
                                     (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT) as scaled;
+                                .CINT) as i64),
+                        );
                     }
                 }
                 10 => {
@@ -2926,29 +2754,34 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                     .hh
                     .v
                     .LH;
-                    activewidth[1 as ::core::ffi::c_int as usize] = (activewidth
-                        [1 as ::core::ffi::c_int as usize]
-                        + (*mem
-                            .offset((q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT)
-                        as scaled;
+                    activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
+                                (q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     activewidth[(2 as ::core::ffi::c_int
                         + (*mem.offset(q as isize)).hh.u.B0 as ::core::ffi::c_int)
-                        as usize] = (activewidth[(2 as ::core::ffi::c_int
-                        + (*mem.offset(q as isize)).hh.u.B0 as ::core::ffi::c_int)
-                        as usize]
-                        + (*mem
-                            .offset((q as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT) as scaled;
-                    activewidth[6 as ::core::ffi::c_int as usize] = (activewidth
-                        [6 as ::core::ffi::c_int as usize]
-                        + (*mem
-                            .offset((q as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
-                        .u
-                        .CINT)
-                        as scaled;
+                        as usize] = crate::checked_width::tex(
+                        ((activewidth[(2 as ::core::ffi::c_int
+                            + (*mem.offset(q as isize)).hh.u.B0 as ::core::ffi::c_int)
+                            as usize]) as i64
+                            + ((*mem.offset(
+                                (q as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
+                    activewidth[6 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((activewidth[6 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
+                                (q as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     if secondpass != 0 && autobreaking != 0 {
                         prevs = curp;
                         s = (*mem.offset(prevs as isize)).hh.v.RH;
@@ -3399,30 +3232,38 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                                 );
                             }
                         }
-                        activewidth[1 as ::core::ffi::c_int as usize] =
-                            (activewidth[1 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
+                        activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                            ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                + ((*mem.offset(
                                     (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT) as scaled;
+                                .CINT) as i64),
+                        );
                     } else {
-                        activewidth[1 as ::core::ffi::c_int as usize] =
-                            (activewidth[1 as ::core::ffi::c_int as usize]
-                                + (*mem.offset(
+                        activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                            ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                + ((*mem.offset(
                                     (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
                                 ))
                                 .u
-                                .CINT) as scaled;
+                                .CINT) as i64),
+                        );
                         if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                             > 1 as ::core::ffi::c_int
                             && (*mem.offset(curp as isize)).hh.u.B1 as ::core::ffi::c_int
                                 == 0 as ::core::ffi::c_int
                         {
                             activewidth[7 as ::core::ffi::c_int as usize] =
-                                activewidth[7 as ::core::ffi::c_int as usize] + zkernstretch(curp);
+                                crate::checked_width::tex(
+                                    (activewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                        + (zkernstretch(curp)) as i64,
+                                );
                             activewidth[8 as ::core::ffi::c_int as usize] =
-                                activewidth[8 as ::core::ffi::c_int as usize] + zkernshrink(curp);
+                                crate::checked_width::tex(
+                                    (activewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                        + (zkernshrink(curp)) as i64,
+                                );
                         }
                     }
                 }
@@ -3432,61 +3273,66 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                     .hh
                     .u
                     .B0 as internalfontnumber;
-                    activewidth[1 as ::core::ffi::c_int as usize] = (activewidth
-                        [1 as ::core::ffi::c_int as usize]
-                        + (*fontinfo.offset(
-                            (*widthbase.offset(f as isize) as ::core::ffi::c_int
-                                + (*fontinfo.offset(
-                                    (*charbase.offset(f as isize)
-                                        + zeffectivechar(
-                                            1 as ::core::ffi::c_int,
-                                            f,
-                                            (*mem.offset(
-                                                (curp as ::core::ffi::c_int
-                                                    + 1 as ::core::ffi::c_int)
-                                                    as isize,
-                                            ))
-                                            .hh
-                                            .u
-                                            .B1
-                                                as quarterword,
-                                        )) as isize,
-                                ))
-                                .v
-                                .QQQQ
-                                .u
-                                .B0 as ::core::ffi::c_int) as isize,
-                        ))
-                        .u
-                        .CINT)
-                        as scaled;
+                    activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                            + ((*fontinfo.offset(
+                                (*widthbase.offset(f as isize) as ::core::ffi::c_int
+                                    + (*fontinfo.offset(
+                                        (*charbase.offset(f as isize)
+                                            + zeffectivechar(
+                                                1 as ::core::ffi::c_int,
+                                                f,
+                                                (*mem.offset(
+                                                    (curp as ::core::ffi::c_int
+                                                        + 1 as ::core::ffi::c_int)
+                                                        as isize,
+                                                ))
+                                                .hh
+                                                .u
+                                                .B1
+                                                    as quarterword,
+                                            )) as isize,
+                                    ))
+                                    .v
+                                    .QQQQ
+                                    .u
+                                    .B0 as ::core::ffi::c_int)
+                                    as isize,
+                            ))
+                            .u
+                            .CINT) as i64),
+                    );
                     if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                         > 1 as ::core::ffi::c_int
                         && zcheckexpandpars(f) != 0
                     {
                         prevcharp = curp;
-                        activewidth[7 as ::core::ffi::c_int as usize] = activewidth
-                            [7 as ::core::ffi::c_int as usize]
-                            + zcharstretch(
-                                f,
-                                (*mem.offset(
-                                    (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
-                                ))
-                                .hh
-                                .u
-                                .B1 as eightbits,
-                            );
-                        activewidth[8 as ::core::ffi::c_int as usize] = activewidth
-                            [8 as ::core::ffi::c_int as usize]
-                            + zcharshrink(
-                                f,
-                                (*mem.offset(
-                                    (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
-                                ))
-                                .hh
-                                .u
-                                .B1 as eightbits,
-                            );
+                        activewidth[7 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                            (activewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                + (zcharstretch(
+                                    f,
+                                    (*mem.offset(
+                                        (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .hh
+                                    .u
+                                    .B1 as eightbits,
+                                )) as i64,
+                        );
+                        activewidth[8 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                            (activewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                + (zcharshrink(
+                                    f,
+                                    (*mem.offset(
+                                        (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                            as isize,
+                                    ))
+                                    .hh
+                                    .u
+                                    .B1 as eightbits,
+                                )) as i64,
+                        );
                     }
                 }
                 7 => {
@@ -3514,44 +3360,54 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                             if s >= himemmin {
                                 f = (*mem.offset(s as isize)).hh.u.B0 as internalfontnumber;
                                 discwidth[1 as ::core::ffi::c_int as usize] =
-                                    (discwidth[1 as ::core::ffi::c_int as usize]
-                                        + (*fontinfo.offset(
-                                            (*widthbase.offset(f as isize) as ::core::ffi::c_int
-                                                + (*fontinfo.offset(
-                                                    (*charbase.offset(f as isize)
-                                                        + zeffectivechar(
-                                                            1 as ::core::ffi::c_int,
-                                                            f,
-                                                            (*mem.offset(s as isize)).hh.u.B1
-                                                                as quarterword,
-                                                        ))
-                                                        as isize,
-                                                ))
-                                                .v
-                                                .QQQQ
-                                                .u
-                                                .B0
-                                                    as ::core::ffi::c_int)
-                                                as isize,
-                                        ))
-                                        .u
-                                        .CINT) as scaled;
+                                    crate::checked_width::tex(
+                                        ((discwidth[1 as ::core::ffi::c_int as usize]) as i64
+                                            + ((*fontinfo.offset(
+                                                (*widthbase.offset(f as isize)
+                                                    as ::core::ffi::c_int
+                                                    + (*fontinfo.offset(
+                                                        (*charbase.offset(f as isize)
+                                                            + zeffectivechar(
+                                                                1 as ::core::ffi::c_int,
+                                                                f,
+                                                                (*mem.offset(s as isize)).hh.u.B1
+                                                                    as quarterword,
+                                                            ))
+                                                            as isize,
+                                                    ))
+                                                    .v
+                                                    .QQQQ
+                                                    .u
+                                                    .B0
+                                                        as ::core::ffi::c_int)
+                                                    as isize,
+                                            ))
+                                            .u
+                                            .CINT)
+                                                as i64),
+                                    );
                                 if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                     > 1 as ::core::ffi::c_int
                                     && zcheckexpandpars(f) != 0
                                 {
                                     prevcharp = s;
-                                    discwidth[7 as ::core::ffi::c_int as usize] = discwidth
-                                        [7 as ::core::ffi::c_int as usize]
-                                        + zcharstretch(
-                                            f,
-                                            (*mem.offset(s as isize)).hh.u.B1 as eightbits,
+                                    discwidth[7 as ::core::ffi::c_int as usize] =
+                                        crate::checked_width::tex(
+                                            (discwidth[7 as ::core::ffi::c_int as usize]) as i64
+                                                + (zcharstretch(
+                                                    f,
+                                                    (*mem.offset(s as isize)).hh.u.B1 as eightbits,
+                                                ))
+                                                    as i64,
                                         );
-                                    discwidth[8 as ::core::ffi::c_int as usize] = discwidth
-                                        [8 as ::core::ffi::c_int as usize]
-                                        + zcharshrink(
-                                            f,
-                                            (*mem.offset(s as isize)).hh.u.B1 as eightbits,
+                                    discwidth[8 as ::core::ffi::c_int as usize] =
+                                        crate::checked_width::tex(
+                                            (discwidth[8 as ::core::ffi::c_int as usize]) as i64
+                                                + (zcharshrink(
+                                                    f,
+                                                    (*mem.offset(s as isize)).hh.u.B1 as eightbits,
+                                                ))
+                                                    as i64,
                                         );
                                 }
                             } else {
@@ -3565,9 +3421,8 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                                         .u
                                         .B0
                                             as internalfontnumber;
-                                        discwidth[1 as ::core::ffi::c_int as usize] = (discwidth
-                                            [1 as ::core::ffi::c_int as usize]
-                                            + (*fontinfo.offset(
+                                        discwidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(((discwidth
+                                            [1 as ::core::ffi::c_int as usize]) as i64 + ((*fontinfo.offset(
                                                 (*widthbase.offset(f as isize)
                                                     as ::core::ffi::c_int
                                                     + (*fontinfo.offset(
@@ -3595,8 +3450,7 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                                                     as isize,
                                             ))
                                             .u
-                                            .CINT)
-                                            as scaled;
+                                            .CINT) as i64));
                                         if (*eqtb.offset(29360 as ::core::ffi::c_int as isize))
                                             .u
                                             .CINT
@@ -3604,46 +3458,58 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                                             && zcheckexpandpars(f) != 0
                                         {
                                             prevcharp = s;
-                                            discwidth[7 as ::core::ffi::c_int as usize] = discwidth
-                                                [7 as ::core::ffi::c_int as usize]
-                                                + zcharstretch(
-                                                    f,
-                                                    (*mem.offset(
-                                                        (s as ::core::ffi::c_int
-                                                            + 1 as ::core::ffi::c_int)
-                                                            as isize,
-                                                    ))
-                                                    .hh
-                                                    .u
-                                                    .B1
-                                                        as eightbits,
+                                            discwidth[7 as ::core::ffi::c_int as usize] =
+                                                crate::checked_width::tex(
+                                                    (discwidth[7 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        + (zcharstretch(
+                                                            f,
+                                                            (*mem.offset(
+                                                                (s as ::core::ffi::c_int
+                                                                    + 1 as ::core::ffi::c_int)
+                                                                    as isize,
+                                                            ))
+                                                            .hh
+                                                            .u
+                                                            .B1
+                                                                as eightbits,
+                                                        ))
+                                                            as i64,
                                                 );
-                                            discwidth[8 as ::core::ffi::c_int as usize] = discwidth
-                                                [8 as ::core::ffi::c_int as usize]
-                                                + zcharshrink(
-                                                    f,
-                                                    (*mem.offset(
-                                                        (s as ::core::ffi::c_int
-                                                            + 1 as ::core::ffi::c_int)
-                                                            as isize,
-                                                    ))
-                                                    .hh
-                                                    .u
-                                                    .B1
-                                                        as eightbits,
+                                            discwidth[8 as ::core::ffi::c_int as usize] =
+                                                crate::checked_width::tex(
+                                                    (discwidth[8 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        + (zcharshrink(
+                                                            f,
+                                                            (*mem.offset(
+                                                                (s as ::core::ffi::c_int
+                                                                    + 1 as ::core::ffi::c_int)
+                                                                    as isize,
+                                                            ))
+                                                            .hh
+                                                            .u
+                                                            .B1
+                                                                as eightbits,
+                                                        ))
+                                                            as i64,
                                                 );
                                         }
                                     }
                                     0 | 1 | 2 | 11 => {
-                                        discwidth[1 as ::core::ffi::c_int as usize] = (discwidth
-                                            [1 as ::core::ffi::c_int as usize]
-                                            + (*mem.offset(
-                                                (s as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
-                                                    as isize,
-                                            ))
-                                            .u
-                                            .CINT)
-                                            as scaled;
+                                        discwidth[1 as ::core::ffi::c_int as usize] =
+                                            crate::checked_width::tex(
+                                                ((discwidth[1 as ::core::ffi::c_int as usize])
+                                                    as i64
+                                                    + ((*mem.offset(
+                                                        (s as ::core::ffi::c_int
+                                                            + 1 as ::core::ffi::c_int)
+                                                            as isize,
+                                                    ))
+                                                    .u
+                                                    .CINT)
+                                                        as i64),
+                                            );
                                         if (*mem.offset(s as isize)).hh.u.B0 as ::core::ffi::c_int
                                             == 11 as ::core::ffi::c_int
                                             && (*eqtb.offset(29360 as ::core::ffi::c_int as isize))
@@ -3654,12 +3520,18 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                                                 as ::core::ffi::c_int
                                                 == 0 as ::core::ffi::c_int
                                         {
-                                            discwidth[7 as ::core::ffi::c_int as usize] = discwidth
-                                                [7 as ::core::ffi::c_int as usize]
-                                                + zkernstretch(s);
-                                            discwidth[8 as ::core::ffi::c_int as usize] = discwidth
-                                                [8 as ::core::ffi::c_int as usize]
-                                                + zkernshrink(s);
+                                            discwidth[7 as ::core::ffi::c_int as usize] =
+                                                crate::checked_width::tex(
+                                                    (discwidth[7 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        + (zkernstretch(s)) as i64,
+                                                );
+                                            discwidth[8 as ::core::ffi::c_int as usize] =
+                                                crate::checked_width::tex(
+                                                    (discwidth[8 as ::core::ffi::c_int as usize])
+                                                        as i64
+                                                        + (zkernshrink(s)) as i64,
+                                                );
                                         }
                                     }
                                     _ => {
@@ -3672,35 +3544,45 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                                 break;
                             }
                         }
-                        activewidth[1 as ::core::ffi::c_int as usize] = activewidth
-                            [1 as ::core::ffi::c_int as usize]
-                            + discwidth[1 as ::core::ffi::c_int as usize];
+                        activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                            (activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                + (discwidth[1 as ::core::ffi::c_int as usize]) as i64,
+                        );
                         if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                             > 1 as ::core::ffi::c_int
                         {
-                            activewidth[7 as ::core::ffi::c_int as usize] = activewidth
-                                [7 as ::core::ffi::c_int as usize]
-                                + discwidth[7 as ::core::ffi::c_int as usize];
-                            activewidth[8 as ::core::ffi::c_int as usize] = activewidth
-                                [8 as ::core::ffi::c_int as usize]
-                                + discwidth[8 as ::core::ffi::c_int as usize];
+                            activewidth[7 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    (activewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                        + (discwidth[7 as ::core::ffi::c_int as usize]) as i64,
+                                );
+                            activewidth[8 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    (activewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                        + (discwidth[8 as ::core::ffi::c_int as usize]) as i64,
+                                );
                         }
                         ztrybreak(
                             (*eqtb.offset(29280 as ::core::ffi::c_int as isize)).u.CINT,
                             1 as ::core::ffi::c_int as smallnumber,
                         );
-                        activewidth[1 as ::core::ffi::c_int as usize] = activewidth
-                            [1 as ::core::ffi::c_int as usize]
-                            - discwidth[1 as ::core::ffi::c_int as usize];
+                        activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                            (activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                - (discwidth[1 as ::core::ffi::c_int as usize]) as i64,
+                        );
                         if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                             > 1 as ::core::ffi::c_int
                         {
-                            activewidth[7 as ::core::ffi::c_int as usize] = activewidth
-                                [7 as ::core::ffi::c_int as usize]
-                                - discwidth[7 as ::core::ffi::c_int as usize];
-                            activewidth[8 as ::core::ffi::c_int as usize] = activewidth
-                                [8 as ::core::ffi::c_int as usize]
-                                - discwidth[8 as ::core::ffi::c_int as usize];
+                            activewidth[7 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    (activewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                        - (discwidth[7 as ::core::ffi::c_int as usize]) as i64,
+                                );
+                            activewidth[8 as ::core::ffi::c_int as usize] =
+                                crate::checked_width::tex(
+                                    (activewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                        - (discwidth[8 as ::core::ffi::c_int as usize]) as i64,
+                                );
                         }
                     }
                     r = (*mem.offset(curp as isize)).hh.u.B1 as halfword;
@@ -3709,44 +3591,50 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                         if s >= himemmin {
                             f = (*mem.offset(s as isize)).hh.u.B0 as internalfontnumber;
                             activewidth[1 as ::core::ffi::c_int as usize] =
-                                (activewidth[1 as ::core::ffi::c_int as usize]
-                                    + (*fontinfo.offset(
-                                        (*widthbase.offset(f as isize) as ::core::ffi::c_int
-                                            + (*fontinfo.offset(
-                                                (*charbase.offset(f as isize)
-                                                    + zeffectivechar(
-                                                        1 as ::core::ffi::c_int,
-                                                        f,
-                                                        (*mem.offset(s as isize)).hh.u.B1
-                                                            as quarterword,
-                                                    ))
-                                                    as isize,
-                                            ))
-                                            .v
-                                            .QQQQ
-                                            .u
-                                            .B0
-                                                as ::core::ffi::c_int)
-                                            as isize,
-                                    ))
-                                    .u
-                                    .CINT) as scaled;
+                                crate::checked_width::tex(
+                                    ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                                        + ((*fontinfo.offset(
+                                            (*widthbase.offset(f as isize) as ::core::ffi::c_int
+                                                + (*fontinfo.offset(
+                                                    (*charbase.offset(f as isize)
+                                                        + zeffectivechar(
+                                                            1 as ::core::ffi::c_int,
+                                                            f,
+                                                            (*mem.offset(s as isize)).hh.u.B1
+                                                                as quarterword,
+                                                        ))
+                                                        as isize,
+                                                ))
+                                                .v
+                                                .QQQQ
+                                                .u
+                                                .B0
+                                                    as ::core::ffi::c_int)
+                                                as isize,
+                                        ))
+                                        .u
+                                        .CINT) as i64),
+                                );
                             if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                 > 1 as ::core::ffi::c_int
                                 && zcheckexpandpars(f) != 0
                             {
                                 prevcharp = s;
-                                activewidth[7 as ::core::ffi::c_int as usize] = activewidth
-                                    [7 as ::core::ffi::c_int as usize]
-                                    + zcharstretch(
-                                        f,
-                                        (*mem.offset(s as isize)).hh.u.B1 as eightbits,
+                                activewidth[7 as ::core::ffi::c_int as usize] =
+                                    crate::checked_width::tex(
+                                        (activewidth[7 as ::core::ffi::c_int as usize]) as i64
+                                            + (zcharstretch(
+                                                f,
+                                                (*mem.offset(s as isize)).hh.u.B1 as eightbits,
+                                            )) as i64,
                                     );
-                                activewidth[8 as ::core::ffi::c_int as usize] = activewidth
-                                    [8 as ::core::ffi::c_int as usize]
-                                    + zcharshrink(
-                                        f,
-                                        (*mem.offset(s as isize)).hh.u.B1 as eightbits,
+                                activewidth[8 as ::core::ffi::c_int as usize] =
+                                    crate::checked_width::tex(
+                                        (activewidth[8 as ::core::ffi::c_int as usize]) as i64
+                                            + (zcharshrink(
+                                                f,
+                                                (*mem.offset(s as isize)).hh.u.B1 as eightbits,
+                                            )) as i64,
                                     );
                             }
                         } else {
@@ -3760,9 +3648,8 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                                     .u
                                     .B0
                                         as internalfontnumber;
-                                    activewidth[1 as ::core::ffi::c_int as usize] = (activewidth
-                                        [1 as ::core::ffi::c_int as usize]
-                                        + (*fontinfo.offset(
+                                    activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(((activewidth
+                                        [1 as ::core::ffi::c_int as usize]) as i64 + ((*fontinfo.offset(
                                             (*widthbase.offset(f as isize) as ::core::ffi::c_int
                                                 + (*fontinfo.offset(
                                                     (*charbase.offset(f as isize)
@@ -3789,53 +3676,64 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                                                 as isize,
                                         ))
                                         .u
-                                        .CINT)
-                                        as scaled;
+                                        .CINT) as i64));
                                     if (*eqtb.offset(29360 as ::core::ffi::c_int as isize)).u.CINT
                                         > 1 as ::core::ffi::c_int
                                         && zcheckexpandpars(f) != 0
                                     {
                                         prevcharp = s;
-                                        activewidth[7 as ::core::ffi::c_int as usize] = activewidth
-                                            [7 as ::core::ffi::c_int as usize]
-                                            + zcharstretch(
-                                                f,
-                                                (*mem.offset(
-                                                    (s as ::core::ffi::c_int
-                                                        + 1 as ::core::ffi::c_int)
-                                                        as isize,
-                                                ))
-                                                .hh
-                                                .u
-                                                .B1
-                                                    as eightbits,
+                                        activewidth[7 as ::core::ffi::c_int as usize] =
+                                            crate::checked_width::tex(
+                                                (activewidth[7 as ::core::ffi::c_int as usize])
+                                                    as i64
+                                                    + (zcharstretch(
+                                                        f,
+                                                        (*mem.offset(
+                                                            (s as ::core::ffi::c_int
+                                                                + 1 as ::core::ffi::c_int)
+                                                                as isize,
+                                                        ))
+                                                        .hh
+                                                        .u
+                                                        .B1
+                                                            as eightbits,
+                                                    ))
+                                                        as i64,
                                             );
-                                        activewidth[8 as ::core::ffi::c_int as usize] = activewidth
-                                            [8 as ::core::ffi::c_int as usize]
-                                            + zcharshrink(
-                                                f,
-                                                (*mem.offset(
-                                                    (s as ::core::ffi::c_int
-                                                        + 1 as ::core::ffi::c_int)
-                                                        as isize,
-                                                ))
-                                                .hh
-                                                .u
-                                                .B1
-                                                    as eightbits,
+                                        activewidth[8 as ::core::ffi::c_int as usize] =
+                                            crate::checked_width::tex(
+                                                (activewidth[8 as ::core::ffi::c_int as usize])
+                                                    as i64
+                                                    + (zcharshrink(
+                                                        f,
+                                                        (*mem.offset(
+                                                            (s as ::core::ffi::c_int
+                                                                + 1 as ::core::ffi::c_int)
+                                                                as isize,
+                                                        ))
+                                                        .hh
+                                                        .u
+                                                        .B1
+                                                            as eightbits,
+                                                    ))
+                                                        as i64,
                                             );
                                     }
                                 }
                                 0 | 1 | 2 | 11 => {
-                                    activewidth[1 as ::core::ffi::c_int as usize] = (activewidth
-                                        [1 as ::core::ffi::c_int as usize]
-                                        + (*mem.offset(
-                                            (s as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
-                                                as isize,
-                                        ))
-                                        .u
-                                        .CINT)
-                                        as scaled;
+                                    activewidth[1 as ::core::ffi::c_int as usize] =
+                                        crate::checked_width::tex(
+                                            ((activewidth[1 as ::core::ffi::c_int as usize])
+                                                as i64
+                                                + ((*mem.offset(
+                                                    (s as ::core::ffi::c_int
+                                                        + 1 as ::core::ffi::c_int)
+                                                        as isize,
+                                                ))
+                                                .u
+                                                .CINT)
+                                                    as i64),
+                                        );
                                     if (*mem.offset(s as isize)).hh.u.B0 as ::core::ffi::c_int
                                         == 11 as ::core::ffi::c_int
                                         && (*eqtb.offset(29360 as ::core::ffi::c_int as isize))
@@ -3845,12 +3743,18 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                                         && (*mem.offset(s as isize)).hh.u.B1 as ::core::ffi::c_int
                                             == 0 as ::core::ffi::c_int
                                     {
-                                        activewidth[7 as ::core::ffi::c_int as usize] = activewidth
-                                            [7 as ::core::ffi::c_int as usize]
-                                            + zkernstretch(s);
-                                        activewidth[8 as ::core::ffi::c_int as usize] = activewidth
-                                            [8 as ::core::ffi::c_int as usize]
-                                            + zkernshrink(s);
+                                        activewidth[7 as ::core::ffi::c_int as usize] =
+                                            crate::checked_width::tex(
+                                                (activewidth[7 as ::core::ffi::c_int as usize])
+                                                    as i64
+                                                    + (zkernstretch(s)) as i64,
+                                            );
+                                        activewidth[8 as ::core::ffi::c_int as usize] =
+                                            crate::checked_width::tex(
+                                                (activewidth[8 as ::core::ffi::c_int as usize])
+                                                    as i64
+                                                    + (zkernshrink(s)) as i64,
+                                            );
                                     }
                                 }
                                 _ => {
@@ -3886,13 +3790,14 @@ pub unsafe fn zlinebreak(mut d: boolean) {
                             );
                         }
                     }
-                    activewidth[1 as ::core::ffi::c_int as usize] =
-                        (activewidth[1 as ::core::ffi::c_int as usize]
-                            + (*mem.offset(
+                    activewidth[1 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                        ((activewidth[1 as ::core::ffi::c_int as usize]) as i64
+                            + ((*mem.offset(
                                 (curp as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize,
                             ))
                             .u
-                            .CINT) as scaled;
+                            .CINT) as i64),
+                    );
                 }
                 12 => {
                     ztrybreak(
@@ -4058,10 +3963,10 @@ pub unsafe fn zlinebreak(mut d: boolean) {
             {
                 zprintnl(1362 as ::core::ffi::c_int);
             }
-            background[2 as ::core::ffi::c_int as usize] = (background
-                [2 as ::core::ffi::c_int as usize]
-                + (*eqtb.offset(29923 as ::core::ffi::c_int as isize)).u.CINT)
-                as scaled;
+            background[2 as ::core::ffi::c_int as usize] = crate::checked_width::tex(
+                ((background[2 as ::core::ffi::c_int as usize]) as i64
+                    + ((*eqtb.offset(29923 as ::core::ffi::c_int as isize)).u.CINT) as i64),
+            );
             finalpass = true_0 as boolean;
         }
     }
@@ -4095,15 +4000,21 @@ pub unsafe fn zlinebreak(mut d: boolean) {
             );
             (*mem.offset((q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
                 .u
-                .CINT = (*mem.offset((q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
-                .u
-                .CINT
-                + (*mem.offset((bestbet as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize))
+                .CINT = crate::checked_width::tex(
+                ((*mem.offset((q as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize))
                     .u
-                    .CINT
-                - (*mem.offset((bestbet as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize))
+                    .CINT) as i64
+                    + ((*mem.offset(
+                        (bestbet as ::core::ffi::c_int + 3 as ::core::ffi::c_int) as isize,
+                    ))
                     .u
-                    .CINT;
+                    .CINT) as i64
+                    - ((*mem.offset(
+                        (bestbet as ::core::ffi::c_int + 4 as ::core::ffi::c_int) as isize,
+                    ))
+                    .u
+                    .CINT) as i64,
+            );
             (*mem.offset((q as ::core::ffi::c_int + 2 as ::core::ffi::c_int) as isize))
                 .u
                 .CINT = 0 as ::core::ffi::c_int as integer;

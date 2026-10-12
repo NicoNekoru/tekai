@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The result of the engine's normal completion path.
 ///
-/// Fatal engine paths still terminate the process and do not return this value.
+/// Fatal diagnostic exits return Errors. Help/version exits return Clean.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EngineCompletion {
     Clean,
@@ -37,13 +37,25 @@ impl EngineCompletion {
     }
 }
 
-/// A failure before the engine's initialization or reset routines run.
+/// A failure while preparing the invocation or tearing down its streams.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InvocationError {
     MissingProgramName,
-    TooManyArguments { count: usize },
-    ArgumentContainsNul { index: usize, position: usize },
+    TooManyArguments {
+        count: usize,
+    },
+    ArgumentContainsNul {
+        index: usize,
+        position: usize,
+    },
     AlreadyInvoked,
+    ResourceSetup {
+        resource: &'static str,
+        message: String,
+    },
+    StreamTeardown {
+        message: String,
+    },
 }
 
 impl fmt::Display for InvocationError {
@@ -65,6 +77,12 @@ impl fmt::Display for InvocationError {
                 )
             }
             Self::AlreadyInvoked => formatter.write_str("engine already entered in this process"),
+            Self::ResourceSetup { resource, message } => {
+                write!(formatter, "engine {resource} setup failed: {message}")
+            }
+            Self::StreamTeardown { message } => {
+                write!(formatter, "engine stream teardown failed: {message}")
+            }
         }
     }
 }
