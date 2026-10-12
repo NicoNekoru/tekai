@@ -2,6 +2,8 @@
 
 import ctypes
 import errno
+from functools import wraps
+import json
 import os
 from pathlib import Path
 import signal
@@ -234,12 +236,79 @@ class DarwinClassificationTests(unittest.TestCase):
             self.assertIn('reserved-leader exit proof=False', str(error.exception))
 
 
+def native_failure_diagnostics(method):
+    @wraps(method)
+    def report(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except AssertionError as error:
+            raise self.failureException(f'{error}\n{self.failure_diagnostics()}') from error
+        except Exception:
+            self.print_failure_diagnostics()
+            raise
+    return report
+
+
 @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'waitid'), 'POSIX waitid required')
 class NativeOwnershipTests(unittest.TestCase):
+    DIAGNOSTIC_BYTES = 32 * 1024
+    LOG_TAIL_BYTES = 8 * 1024
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='test-owned-process-')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.owner_logs = []
+        self.fixture_stages = []
+
+    def record_stage(self, name, **fields):
+        self.fixture_stages.append({'actor': 'test', 'stage': name,
+                                    'monotonic_ns': time.monotonic_ns(), **fields})
+
+    def stage_code(self, actor):
+        # Fixed fixture metadata only. One write per marker also works before
+        # SIGSTOP and after TERM without relying on Python's buffered stdout.
+        return ('import json,os,time\n'
+                'def stage(name,**fields):\n'
+                f' record={{"actor":{actor!r},"stage":name,"monotonic_ns":time.monotonic_ns(),'
+                '"pid":os.getpid(),"ppid":os.getppid(),"pgrp":os.getpgrp(),"sid":os.getsid(0),**fields}\n'
+                ' os.write(2,(json.dumps(record,sort_keys=True)+"\\n").encode())\n')
+
+    def failure_diagnostics(self):
+        parts = ['native ownership fixture diagnostics',
+                 json.dumps(self.fixture_stages, sort_keys=True)]
+        for index, (process, log) in enumerate(self.owner_logs):
+            # Cached state only. Diagnostics must neither reap nor signal.
+            observation = process._observation
+            parts.append(f'owner {index} pid={process.pid} lost={process._lost} '
+                         f'reaped={process._reaped} native_returncode={process._process.returncode} '
+                         f'observed_code={None if observation is None else observation.code} '
+                         f'observed_completion={None if observation is None else observation.completion}')
+            try:
+                size = os.fstat(log.fileno()).st_size
+                # seek/read would change the inherited open-file offset while
+                # a surviving fixture child may still be writing its evidence.
+                tail = os.pread(log.fileno(), min(size, self.LOG_TAIL_BYTES),
+                                max(0, size - self.LOG_TAIL_BYTES))
+                parts.append(f'captured stdout/stderr tail, total_bytes={size}\n'
+                             + tail.decode('utf-8', errors='replace'))
+            except (OSError, ValueError) as error:
+                parts.append(f'captured stdout/stderr unavailable, '
+                             f'type={type(error).__name__} errno={getattr(error, "errno", None)}')
+        return '\n'.join(parts).encode('utf-8')[-self.DIAGNOSTIC_BYTES:].decode('utf-8', errors='ignore')
+
+    def print_failure_diagnostics(self):
+        try:
+            sys.stderr.write(self.failure_diagnostics() + '\n')
+        except (OSError, ValueError):
+            pass  # A closed reporting stream must not replace the original error.
+
+    def finish_with_diagnostics(self, process):
+        try:
+            return process.finish()
+        except Exception:
+            self.print_failure_diagnostics()
+            raise
 
     def launch(self, code, **kwargs):
         return self.launch_command([sys.executable, '-c', code], **kwargs)
@@ -251,9 +320,50 @@ class NativeOwnershipTests(unittest.TestCase):
         child = subprocess.Popen(command, start_new_session=True,
                                  stdout=log, stderr=log, **kwargs)
         process.attach(child)
-        self.addCleanup(process.finish)
+        self.owner_logs.append((process, log))
+        self.record_stage('owner_attached', pid=process.pid)
+        self.addCleanup(self.finish_with_diagnostics, process)
         return process
 
+    @native_failure_diagnostics
+    def test_failure_diagnostics_is_bounded_and_preserves_capture_offset(self):
+        process = self.launch('import os\nos.write(2,b"discarded-prefix"+b"x"*40000+b"retained-tail")\n')
+        self.assertEqual(process.wait_for_exit(2).code, 0)
+        log = self.owner_logs[0][1]
+        offset = os.lseek(log.fileno(), 0, os.SEEK_CUR)
+        diagnostics = self.failure_diagnostics()
+        self.assertLessEqual(len(diagnostics.encode('utf-8')), self.DIAGNOSTIC_BYTES)
+        self.assertIn('retained-tail', diagnostics)
+        self.assertNotIn('discarded-prefix', diagnostics)
+        self.assertEqual(os.lseek(log.fileno(), 0, os.SEEK_CUR), offset)
+
+        @native_failure_diagnostics
+        def assertion_probe(fixture):
+            fixture.assertTrue(False, 'deliberate diagnostic probe')
+
+        with self.assertRaises(self.failureException) as error:
+            assertion_probe(self)
+        self.assertIn('deliberate diagnostic probe', str(error.exception))
+        self.assertIn('retained-tail', str(error.exception))
+
+        closed_stream = tempfile.TemporaryFile(mode='w+t')
+        closed_stream.close()
+        original = RuntimeError('deliberate reporting error')
+
+        @native_failure_diagnostics
+        def exception_probe(fixture):
+            raise original
+
+        with patch.object(sys, 'stderr', closed_stream):
+            with self.assertRaises(RuntimeError) as error:
+                exception_probe(self)
+            self.assertIs(error.exception, original)
+            with patch.object(process, 'finish', side_effect=original):
+                with self.assertRaises(RuntimeError) as error:
+                    self.finish_with_diagnostics(process)
+                self.assertIs(error.exception, original)
+
+    @native_failure_diagnostics
     def test_real_completed_leader_is_unreaped_until_finish(self):
         process = self.launch('raise SystemExit(7)')
         observation = process.wait_for_exit(2)
@@ -266,6 +376,7 @@ class NativeOwnershipTests(unittest.TestCase):
         with self.assertRaises(ChildProcessError):
             os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
 
+    @native_failure_diagnostics
     def test_real_external_reap_loses_authority_without_a_signal(self):
         owner = owned.OwnedProcess()
         child = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True,
@@ -278,6 +389,7 @@ class NativeOwnershipTests(unittest.TestCase):
             kill.assert_not_called()
 
     @unittest.skipUnless(sys.platform == 'darwin' and Path('/bin/ps').is_file(), 'Darwin ps regression')
+    @native_failure_diagnostics
     def test_privileged_ps_exit_one_keeps_reserved_status_through_cleanup(self):
         process = self.launch_command(['/bin/ps', '-p', '2147483647', '-o', 'pid='])
         self.assertEqual(process.wait_for_exit(2).code, 1)
@@ -288,6 +400,7 @@ class NativeOwnershipTests(unittest.TestCase):
         with self.assertRaises(ChildProcessError):
             os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
 
+    @native_failure_diagnostics
     def test_real_blocking_observer_publishes_before_reap(self):
         process = self.launch('import time; time.sleep(10)')
         completed = threading.Event()
@@ -306,6 +419,7 @@ class NativeOwnershipTests(unittest.TestCase):
         self.assertEqual(observations[0].code, -signal.SIGTERM)
         self.assertIsNotNone(process._process.returncode)
 
+    @native_failure_diagnostics
     def test_completed_parent_residual_child_does_not_delay_exit_observation(self):
         heartbeat = self.root / 'heartbeat'
         process = self.launch('import os,time\nfrom pathlib import Path\n'
@@ -325,20 +439,28 @@ class NativeOwnershipTests(unittest.TestCase):
         time.sleep(.05)
         self.assertEqual(heartbeat.read_bytes(), after)
 
+    @native_failure_diagnostics
     def test_term_grace_allows_private_inner_group_cleanup(self):
         # The inner child has an independent six-second self-deadline as a
         # bounded supervisory backstop if the fixture's outer cleanup fails.
         heartbeat, ready, cleaned = [self.root / name for name in ('heartbeat', 'ready', 'cleaned')]
-        inner = ('import time\nfrom pathlib import Path\n'
+        inner = (self.stage_code('inner') + 'from pathlib import Path\n'
                  f'path=Path({str(heartbeat)!r})\nend=time.monotonic()+6\n'
-                 'while time.monotonic()<end:\n path.write_text(str(time.monotonic())); time.sleep(.01)\n')
-        code = ('import os,signal,subprocess,sys,time\nfrom pathlib import Path\n'
+                 'stage("started")\n'
+                 'while time.monotonic()<end:\n path.write_text(str(time.monotonic())); time.sleep(.01)\n'
+                 'stage("self_deadline_reached")\n')
+        code = (self.stage_code('cli') + 'import signal,subprocess,sys\nfrom pathlib import Path\n'
                 f'child=subprocess.Popen([sys.executable,"-c",{inner!r}],start_new_session=True)\n'
+                'stage("inner_spawned",inner_pid=child.pid)\n'
                 'def stop(number,frame):\n'
-                ' time.sleep(.3)\n os.killpg(child.pid,signal.SIGKILL)\n child.wait()\n'
-                f' Path({str(cleaned)!r}).touch()\n raise SystemExit(0)\n'
+                ' stage("term_handler_entered",signal=number)\n'
+                ' time.sleep(.3)\n stage("term_delay_completed")\n'
+                ' os.killpg(child.pid,signal.SIGKILL)\n stage("inner_group_kill_sent")\n'
+                ' inner_status=child.wait()\n stage("inner_waited",status=inner_status)\n'
+                f' Path({str(cleaned)!r}).touch()\n stage("cleaned_marker_written")\n raise SystemExit(0)\n'
                 'signal.signal(signal.SIGTERM,stop)\n'
                 f'Path({str(ready)!r}).touch()\n'
+                'stage("handler_ready")\n'
                 'time.sleep(10)\n')
         process = self.launch(code)
         deadline = time.monotonic() + 2
@@ -346,13 +468,16 @@ class NativeOwnershipTests(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline)
             time.sleep(.005)
         started = time.monotonic()
+        self.record_stage('finish_started')
         self.assertEqual(process.finish(), 0)
+        self.record_stage('finish_returned')
         self.assertLess(time.monotonic() - started, 3)
         self.assertTrue(cleaned.exists())
         after = heartbeat.read_bytes()
         time.sleep(.05)
         self.assertEqual(heartbeat.read_bytes(), after)
 
+    @native_failure_diagnostics
     def test_live_group_ignoring_term_is_killed_after_bounded_grace(self):
         ready = self.root / 'ready'
         process = self.launch('import signal,time\nfrom pathlib import Path\n'
@@ -368,44 +493,62 @@ class NativeOwnershipTests(unittest.TestCase):
         self.assertGreaterEqual(elapsed, owned.TERM_GRACE_SECONDS)
         self.assertLess(elapsed, 3)
 
+    @native_failure_diagnostics
     def test_exited_timer_leader_allows_cli_descendant_private_group_cleanup(self):
         self.assert_timer_cli_cleanup(stopped=False)
 
+    @native_failure_diagnostics
     def test_stopped_cli_descendant_resumes_to_clean_its_private_group(self):
         self.assert_timer_cli_cleanup(stopped=True)
 
     def assert_timer_cli_cleanup(self, stopped):
         ready, cleaned = self.root / 'ready', self.root / 'cleaned'
         read_lease, write_lease = os.pipe()
-        inner = f'import select\nselect.select([{read_lease}],[],[],6)\n'
-        cli = ('import os,signal,subprocess,sys,time\nfrom pathlib import Path\n'
+        inner = (self.stage_code('inner') + 'import select\n'
+                 f'stage("lease_wait_started")\nselect.select([{read_lease}],[],[],6)\n'
+                 'stage("lease_wait_returned")\n')
+        cli = (self.stage_code('cli') + 'import signal,subprocess,sys\nfrom pathlib import Path\n'
                f'child=subprocess.Popen([sys.executable,"-c",{inner!r}],start_new_session=True,pass_fds=({read_lease},))\n'
+               'stage("inner_spawned",inner_pid=child.pid)\n'
                'def stop(number,frame):\n'
-               ' time.sleep(.3)\n os.killpg(child.pid,signal.SIGKILL)\n child.wait()\n'
-               f' Path({str(cleaned)!r}).touch()\n raise SystemExit(0)\n'
+               ' stage("term_handler_entered",signal=number)\n'
+               ' time.sleep(.3)\n stage("term_delay_completed")\n'
+               ' os.killpg(child.pid,signal.SIGKILL)\n stage("inner_group_kill_sent")\n'
+               ' inner_status=child.wait()\n stage("inner_waited",status=inner_status)\n'
+               f' Path({str(cleaned)!r}).touch()\n stage("cleaned_marker_written")\n raise SystemExit(0)\n'
                'signal.signal(signal.SIGTERM,stop)\n'
                f'Path({str(ready)!r}).touch()\n'
-               + ('os.kill(os.getpid(),signal.SIGSTOP)\n' if stopped else '') +
+               'stage("handler_ready")\n'
+               + ('stage("self_stop_requested")\nos.kill(os.getpid(),signal.SIGSTOP)\nstage("resumed")\n' if stopped else '') +
                'time.sleep(10)\n')
-        timer = ('import subprocess,sys,time\nfrom pathlib import Path\n'
-                 f'child=subprocess.Popen([sys.executable,"-c",{cli!r}],pass_fds=({read_lease},))\n')
+        timer = (self.stage_code('timer') + 'import subprocess,sys\nfrom pathlib import Path\n'
+                 f'child=subprocess.Popen([sys.executable,"-c",{cli!r}],pass_fds=({read_lease},))\n'
+                 'stage("cli_spawned",cli_pid=child.pid)\n')
         if stopped:
             timer += ('import os\nwhile True:\n'
                       ' pid,status=os.waitpid(child.pid,os.WUNTRACED|os.WNOHANG)\n'
-                      ' if pid and os.WIFSTOPPED(status):\n  break\n'
+                      ' if pid and os.WIFSTOPPED(status):\n'
+                      '  stage("cli_stop_observed",wait_status=status,stop_signal=os.WSTOPSIG(status))\n  break\n'
                       ' time.sleep(.005)\n')
         else:
             timer += f'while not Path({str(ready)!r}).exists():\n time.sleep(.005)\n'
+        timer += 'stage("timer_exiting")\n'
         try:
             process = self.launch(timer, pass_fds=(read_lease,))
+            self.record_stage('timer_exit_observation_started', stopped=stopped)
             self.assertEqual(process.wait_for_exit(2).code, 0)
+            self.record_stage('timer_exit_observed', code=process.returncode,
+                              completion=process.completion)
             self.assertFalse(cleaned.exists())
+            self.record_stage('finish_started')
             self.assertEqual(process.finish(), 0)
+            self.record_stage('finish_returned')
             self.assertTrue(cleaned.exists())
         finally:
             # Release the independent worker lease even if the assertion fails.
             os.close(write_lease)
             os.close(read_lease)
+            self.record_stage('fixture_leases_closed')
 
 
 if __name__ == '__main__':
