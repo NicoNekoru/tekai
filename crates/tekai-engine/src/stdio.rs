@@ -823,6 +823,37 @@ impl Stream {
                 continue;
             }
             if self.input_at == self.input_end {
+                // Raw bulk reads need no staging copy after buffered input and
+                // pushback are drained. Keep decoder, pipe and console reads
+                // on their existing refill route, including footer validation
+                // and terminal-stop handling. Unbuffered reads still use one
+                // byte and small reads still retain configured read-ahead.
+                let raw_file = match self.backing {
+                    Backing::File(_) => true,
+                    #[cfg(test)]
+                    Backing::TestReader(_) => true,
+                    _ => false,
+                };
+                if raw_file
+                    && self.buffering != Buffering::None
+                    && output.len() - copied >= self.buffer_size
+                {
+                    match self.read_backing(&mut output[copied..]) {
+                        Ok(0) => {
+                            self.eof = true;
+                            break;
+                        }
+                        Ok(count) => {
+                            copied += count;
+                            self.position = self.position.saturating_add(count as u64);
+                            continue;
+                        }
+                        Err(error) => {
+                            self.record_error(error);
+                            break;
+                        }
+                    }
+                }
                 let size = if self.buffering == Buffering::None {
                     1
                 } else {
@@ -2442,6 +2473,77 @@ mod tests {
         }
     }
 
+    #[test]
+    fn bulk_file_reads_preserve_native_seek_flush_and_update_transitions() {
+        let rust = temporary();
+        let native = native_temporary();
+        let payload: Vec<u8> = (0..BUFFER_SIZE * 5 + 57)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        unsafe {
+            assert_eq!(
+                fwrite(payload.as_ptr().cast(), 1, payload.len(), rust.0),
+                payload.len()
+            );
+            assert_eq!(
+                libc::fwrite(payload.as_ptr().cast(), 1, payload.len(), native.0),
+                payload.len()
+            );
+            rewind(rust.0);
+            libc::rewind(native.0);
+            for (size, count) in [(1, BUFFER_SIZE * 2 + 3), (3, BUFFER_SIZE / 3 + 19)] {
+                let mut actual = vec![255; size * count];
+                let mut expected = actual.clone();
+                assert_eq!(
+                    fread(actual.as_mut_ptr().cast(), size, count, rust.0),
+                    libc::fread(expected.as_mut_ptr().cast(), size, count, native.0)
+                );
+                assert_eq!(actual, expected);
+                assert_eq!(ftello(rust.0), libc::ftello(native.0));
+                let byte = fgetc(rust.0);
+                assert_eq!(byte, libc::fgetc(native.0));
+                assert_eq!(ungetc(byte, rust.0), libc::ungetc(byte, native.0));
+            }
+            // Same-byte pushback avoids Darwin's separate backup-buffer flush
+            // behavior. Mismatching pushback uses the owned policy above.
+            assert_eq!(fgetc(rust.0), libc::fgetc(native.0));
+            assert_eq!(fflush(rust.0), libc::fflush(native.0));
+            assert_eq!(ftello(rust.0), libc::ftello(native.0));
+            assert_eq!(
+                libc::lseek(fileno(rust.0), 0, libc::SEEK_CUR),
+                libc::lseek(libc::fileno(native.0), 0, libc::SEEK_CUR)
+            );
+            assert_eq!(fwrite(b"xyz".as_ptr().cast(), 1, 3, rust.0), 3);
+            assert_eq!(libc::fwrite(b"xyz".as_ptr().cast(), 1, 3, native.0), 3);
+            assert_eq!(fflush(rust.0), libc::fflush(native.0));
+            assert_eq!(
+                fseeko(rust.0, -4, libc::SEEK_CUR),
+                libc::fseeko(native.0, -4, libc::SEEK_CUR)
+            );
+            let mut actual = vec![255; BUFFER_SIZE * 3 + 7];
+            let mut expected = actual.clone();
+            assert_eq!(
+                fread(actual.as_mut_ptr().cast(), 7, actual.len() / 7, rust.0),
+                libc::fread(
+                    expected.as_mut_ptr().cast(),
+                    7,
+                    expected.len() / 7,
+                    native.0
+                )
+            );
+            assert_eq!(actual, expected);
+            assert_eq!(ftello(rust.0), libc::ftello(native.0));
+            assert_eq!(feof(rust.0), (libc::feof(native.0) != 0) as i32);
+            assert_eq!(ferror(rust.0), (libc::ferror(native.0) != 0) as i32);
+            assert_eq!(
+                fseeko(rust.0, 0, libc::SEEK_SET),
+                libc::fseeko(native.0, 0, libc::SEEK_SET)
+            );
+            assert_eq!(feof(rust.0), 0);
+            assert_eq!(fgetc(rust.0), libc::fgetc(native.0));
+        }
+    }
+
     #[derive(Default)]
     struct WriterState {
         bytes: Vec<u8>,
@@ -2490,6 +2592,310 @@ mod tests {
         );
         stream.buffer_size = size;
         stream
+    }
+
+    struct ReaderState {
+        bytes: io::Cursor<Vec<u8>>,
+        requests: Vec<(usize, usize)>,
+        delivered: usize,
+        chunk: usize,
+        interruptions: usize,
+        failure_at: Option<usize>,
+    }
+    impl ReaderState {
+        fn new(bytes: Vec<u8>) -> Self {
+            Self {
+                bytes: io::Cursor::new(bytes),
+                requests: Vec::new(),
+                delivered: 0,
+                chunk: usize::MAX,
+                interruptions: 0,
+                failure_at: None,
+            }
+        }
+    }
+    struct MeasuredReader(Rc<RefCell<ReaderState>>);
+    impl Read for MeasuredReader {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            let mut state = self.0.borrow_mut();
+            state
+                .requests
+                .push((output.as_ptr() as usize, output.len()));
+            if state.interruptions > 0 {
+                state.interruptions -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let position = state.bytes.position() as usize;
+            if state.failure_at.is_some_and(|limit| position >= limit) {
+                return Err(io_error(libc::EIO));
+            }
+            let available = state
+                .failure_at
+                .map_or(output.len(), |limit| limit - position);
+            let count = output.len().min(available).min(state.chunk);
+            let count = state.bytes.read(&mut output[..count])?;
+            state.delivered += count;
+            Ok(count)
+        }
+    }
+    fn measured_reader(state: Rc<RefCell<ReaderState>>, size: usize, mode: Buffering) -> Stream {
+        let mut stream = Stream::new(
+            Backing::TestReader(Box::new(MeasuredReader(state))),
+            true,
+            false,
+            false,
+            mode,
+        );
+        stream.buffer_size = size;
+        stream
+    }
+
+    #[test]
+    fn bulk_raw_reads_use_one_caller_buffer_read_without_staging_or_read_ahead() {
+        for size in [1, 2, 7, BUFFER_SIZE, MAX_BUFFER_SIZE] {
+            for mode in [Buffering::Full, Buffering::Line] {
+                let payload: Vec<u8> = (0..size * 3 + 17)
+                    .map(|index| (index % 251) as u8)
+                    .collect();
+                let state = Rc::new(RefCell::new(ReaderState::new(payload.clone())));
+                let mut stream = measured_reader(state.clone(), size, mode);
+                let mut output = vec![0; payload.len()];
+                assert_eq!(stream.read_bytes(&mut output), payload.len());
+                assert_eq!(output, payload);
+                let state_read = state.borrow();
+                assert_eq!(
+                    state_read.requests,
+                    [(output.as_ptr() as usize, output.len())]
+                );
+                assert_eq!(state_read.delivered, output.len());
+                drop(state_read);
+                assert_eq!(stream.input.capacity(), 0);
+                assert_eq!(stream.input_at, stream.input_end);
+                assert_eq!(stream.position, output.len() as u64);
+                assert!(!stream.eof);
+                assert!(!stream.error);
+                // Exact-length completion does not probe for EOF. Repeated
+                // byte reads then perform only one buffered EOF probe.
+                for _ in 0..20 {
+                    assert_eq!(unsafe { fgetc(&mut stream) }, EOF);
+                }
+                assert_eq!(state.borrow().requests.len(), 2);
+                assert_eq!(state.borrow().requests[1].1, size);
+                assert!(stream.eof);
+                assert!(!stream.error);
+            }
+        }
+    }
+
+    #[test]
+    fn bulk_read_thresholds_preserve_small_custom_and_unbuffered_reads() {
+        for size in 1..=8 {
+            for mode in [Buffering::Full, Buffering::Line, Buffering::None] {
+                for requested in 0..=size * 2 + 3 {
+                    let payload: Vec<u8> = (0..size * 4 + 8).map(|i| i as u8).collect();
+                    let state = Rc::new(RefCell::new(ReaderState::new(payload.clone())));
+                    let mut stream = measured_reader(state.clone(), size, mode);
+                    let mut output = vec![255; requested];
+                    assert_eq!(stream.read_bytes(&mut output), requested);
+                    assert_eq!(output, payload[..requested]);
+                    assert_eq!(stream.position, requested as u64);
+                    assert!(!stream.eof);
+                    assert!(!stream.error);
+                    let state = state.borrow();
+                    if requested == 0 {
+                        assert!(state.requests.is_empty());
+                        assert_eq!(stream.input.capacity(), 0);
+                    } else if mode == Buffering::None {
+                        assert_eq!(state.requests.len(), requested);
+                        assert!(state.requests.iter().all(|(_, count)| *count == 1));
+                        assert_eq!(state.delivered, requested);
+                        assert_eq!(stream.input.len(), 1);
+                    } else if requested >= size {
+                        assert_eq!(state.requests, [(output.as_ptr() as usize, requested)]);
+                        assert_eq!(state.delivered, requested);
+                        assert_eq!(stream.input.capacity(), 0);
+                    } else {
+                        assert_eq!(state.requests, [(stream.input.as_ptr() as usize, size)]);
+                        assert_eq!(state.delivered, size);
+                        assert_eq!(stream.input_end - stream.input_at, size - requested);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bulk_reads_drain_pushback_and_buffered_input_before_direct_output() {
+        let payload: Vec<u8> = (0..BUFFER_SIZE * 4 + 17)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let state = Rc::new(RefCell::new(ReaderState::new(payload.clone())));
+        let mut stream = measured_reader(state.clone(), BUFFER_SIZE, Buffering::Full);
+        let mut first = [0; 2];
+        assert_eq!(stream.read_bytes(&mut first), 2);
+        assert_eq!(first, payload[..2]);
+        assert_eq!(
+            unsafe { ungetc(i32::from(b'X'), &mut stream) },
+            i32::from(b'X')
+        );
+        let mut output = vec![0; BUFFER_SIZE * 2 + 5];
+        assert_eq!(stream.read_bytes(&mut output), output.len());
+        assert_eq!(output[0], b'X');
+        assert_eq!(&output[1..], &payload[2..output.len() + 1]);
+        let buffered_prefix = BUFFER_SIZE - 1;
+        assert_eq!(
+            state.borrow().requests,
+            [
+                (stream.input.as_ptr() as usize, BUFFER_SIZE),
+                (
+                    output.as_ptr() as usize + buffered_prefix,
+                    output.len() - buffered_prefix,
+                ),
+            ]
+        );
+        assert_eq!(stream.position, output.len() as u64 + 1);
+        assert_eq!(stream.input_at, stream.input_end);
+        assert!(stream.pushback.is_empty());
+        assert!(!stream.eof);
+        assert!(!stream.error);
+        assert_eq!(
+            unsafe { fgetc(&mut stream) },
+            i32::from(payload[output.len() + 1])
+        );
+    }
+
+    #[test]
+    fn bulk_short_reads_retry_interruptions_and_preserve_error_prefixes_and_elements() {
+        let payload: Vec<u8> = (0..32).collect();
+        for buffered_prefix in [false, true] {
+            let state = Rc::new(RefCell::new(ReaderState::new(payload.clone())));
+            state.borrow_mut().failure_at = Some(13);
+            let mut stream = measured_reader(state.clone(), 8, Buffering::Full);
+            if buffered_prefix {
+                assert_eq!(unsafe { fgetc(&mut stream) }, 0);
+                assert_eq!(
+                    unsafe { ungetc(i32::from(b'X'), &mut stream) },
+                    i32::from(b'X')
+                );
+            }
+            state.borrow_mut().chunk = 5;
+            state.borrow_mut().interruptions = 2;
+            let mut output = [255; 32];
+            assert_eq!(
+                unsafe { fread(output.as_mut_ptr().cast(), 4, 8, &mut stream) },
+                3
+            );
+            let mut expected = payload[..13].to_vec();
+            if buffered_prefix {
+                expected[0] = b'X';
+            }
+            assert_eq!(&output[..13], expected);
+            assert_eq!(&output[13..], &[255; 19]);
+            assert_eq!(stream.position, 13);
+            assert!(stream.error);
+            assert!(!stream.eof);
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EIO));
+            let prefix = if buffered_prefix { 8 } else { 0 };
+            let first_request = if buffered_prefix { 1 } else { 0 };
+            assert_eq!(
+                &state.borrow().requests[first_request..first_request + 3],
+                &[(output.as_ptr() as usize + prefix, output.len() - prefix); 3]
+            );
+            let calls = state.borrow().requests.len();
+            assert_eq!(stream.read_bytes(&mut output), 0);
+            assert_eq!(state.borrow().requests.len(), calls + 1);
+            assert_eq!(stream.position, 13);
+            state.borrow_mut().failure_at = None;
+            assert_eq!(stream.read_bytes(&mut output[..19]), 19);
+            assert_eq!(&output[..19], &payload[13..]);
+            assert_eq!(stream.position, 32);
+            assert!(stream.error); // Successful retry retains the error flag.
+            unsafe { clearerr(&mut stream) };
+            assert!(!stream.error);
+            assert_eq!(stream.read_bytes(&mut output[..1]), 0);
+            assert!(stream.eof);
+            assert!(!stream.error);
+        }
+    }
+
+    #[test]
+    fn bulk_reads_keep_admission_and_pending_output_errors_before_input() {
+        let state = Rc::new(RefCell::new(ReaderState::new(vec![42; BUFFER_SIZE * 2])));
+        let mut unreadable = measured_reader(state.clone(), BUFFER_SIZE, Buffering::Full);
+        unreadable.readable = false;
+        let mut output = vec![255; BUFFER_SIZE * 2];
+        assert_eq!(unreadable.read_bytes(&mut []), 0);
+        assert!(!unreadable.error);
+        assert_eq!(unreadable.read_bytes(&mut output), 0);
+        assert!(unreadable.error);
+        assert!(state.borrow().requests.is_empty());
+        assert_eq!(output, vec![255; BUFFER_SIZE * 2]);
+
+        let writes = Rc::new(RefCell::new(WriterState {
+            chunk: usize::MAX,
+            flush_error: true,
+            ..Default::default()
+        }));
+        let mut pending = measured_writer(writes.clone(), BUFFER_SIZE);
+        pending.readable = true;
+        pending.output.extend_from_slice(b"pending");
+        assert_eq!(pending.read_bytes(&mut []), 0);
+        assert_eq!(writes.borrow().calls, 0);
+        assert_eq!(pending.read_bytes(&mut output), 0);
+        assert_eq!(writes.borrow().bytes, b"pending");
+        assert_eq!(writes.borrow().flushes, 1);
+        assert!(pending.error);
+        assert_eq!(pending.position, 0);
+        assert_eq!(pending.input.capacity(), 0);
+        assert_eq!(output, vec![255; BUFFER_SIZE * 2]);
+    }
+
+    #[test]
+    fn bulk_eof_and_pushback_never_replay_exhausted_input() {
+        let payload: Vec<u8> = (0..17).collect();
+        let state = Rc::new(RefCell::new(ReaderState::new(payload.clone())));
+        let mut stream = measured_reader(state.clone(), 8, Buffering::Full);
+        assert_eq!(unsafe { fgetc(&mut stream) }, 0);
+        let mut output = [255; 32];
+        assert_eq!(stream.read_bytes(&mut output), 16);
+        assert_eq!(&output[..16], &payload[1..]);
+        assert_eq!(&output[16..], &[255; 16]);
+        assert_eq!(stream.position, 17);
+        assert!(stream.eof);
+        assert!(!stream.error);
+        let calls = state.borrow().requests.len();
+        assert_eq!(stream.read_bytes(&mut output), 0);
+        assert_eq!(stream.read_bytes(&mut []), 0);
+        assert_eq!(state.borrow().requests.len(), calls);
+        assert_eq!(
+            unsafe { ungetc(i32::from(b'X'), &mut stream) },
+            i32::from(b'X')
+        );
+        assert!(!stream.eof);
+        assert_eq!(stream.position, 16);
+        assert_eq!(stream.read_bytes(&mut output[..8]), 1);
+        assert_eq!(output[0], b'X');
+        assert_eq!(stream.position, 17);
+        assert!(stream.eof);
+        assert!(!stream.error);
+        assert_eq!(state.borrow().requests.len(), calls + 1);
+    }
+
+    #[test]
+    fn bulk_reads_preserve_saturating_position_and_checked_tell() {
+        let state = Rc::new(RefCell::new(ReaderState::new(vec![42; 16])));
+        let mut stream = measured_reader(state, 8, Buffering::Full);
+        stream.position = u64::MAX - 3;
+        let mut output = [0; 16];
+        assert_eq!(stream.read_bytes(&mut output), 16);
+        assert_eq!(output, [42; 16]);
+        assert_eq!(stream.position, u64::MAX);
+        assert_eq!(unsafe { ftello(&mut stream) }, -1);
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::EOVERFLOW)
+        );
+        assert!(!stream.error);
     }
 
     #[test]
@@ -2936,6 +3342,90 @@ mod tests {
     }
 
     #[test]
+    fn bulk_gzip_reads_keep_the_existing_buffered_footer_validation_boundary() {
+        let input: Vec<u8> = (0..BUFFER_SIZE * 4 + 31)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&input).unwrap();
+        let compressed = encoder.finish().unwrap();
+        for corrupt in [false, true] {
+            let mut bytes = compressed.clone();
+            if corrupt {
+                let crc = bytes.len() - 8;
+                bytes[crc] ^= 1;
+            }
+            let rust = temporary();
+            let oracle_file = temporary();
+            unsafe {
+                assert_eq!(
+                    fwrite(bytes.as_ptr().cast(), 1, bytes.len(), rust.0),
+                    bytes.len()
+                );
+                assert_eq!(
+                    fwrite(bytes.as_ptr().cast(), 1, bytes.len(), oracle_file.0),
+                    bytes.len()
+                );
+                rewind(rust.0);
+                rewind(oracle_file.0);
+                let oracle_fd = libc::dup(fileno(oracle_file.0));
+                assert!(oracle_fd >= 0);
+                let oracle = crate::zlib::gzdopen(oracle_fd, c"rb".as_ptr());
+                assert!(!oracle.is_null());
+                assert_eq!(gzip_open(rust.0, c"rb".as_ptr()), rust.0);
+                let mut actual = vec![0; BUFFER_SIZE * 3 + 13];
+                let mut expected = actual.clone();
+                for call in 0..3 {
+                    let actual_count =
+                        gzread(rust.0, actual.as_mut_ptr().cast(), actual.len() as u32);
+                    let expected_count = crate::zlib::gzread(
+                        oracle,
+                        expected.as_mut_ptr().cast(),
+                        expected.len() as u32,
+                    );
+                    // The native adapter decompresses farther ahead and finds
+                    // the corrupt footer in its first call. The Rust decoder's
+                    // existing refill route reports it on the following call.
+                    // Neither decoder can report successful completion after
+                    // encountering that footer. Raw-file bypass excludes both.
+                    let rust_counts = if corrupt {
+                        [(BUFFER_SIZE * 3 + 13) as i32, -1, -1]
+                    } else {
+                        [(BUFFER_SIZE * 3 + 13) as i32, (BUFFER_SIZE + 18) as i32, 0]
+                    };
+                    let oracle_counts = if corrupt { [-1, -1, -1] } else { rust_counts };
+                    assert_eq!(
+                        actual_count, rust_counts[call],
+                        "corrupt={corrupt} call={call}"
+                    );
+                    assert_eq!(
+                        expected_count, oracle_counts[call],
+                        "corrupt={corrupt} call={call}"
+                    );
+                    if actual_count > 0 {
+                        let start = call * (BUFFER_SIZE * 3 + 13);
+                        assert_eq!(
+                            &actual[..actual_count as usize],
+                            &input[start..start + actual_count as usize]
+                        );
+                        if expected_count > 0 {
+                            assert_eq!(
+                                &actual[..actual_count as usize],
+                                &expected[..expected_count as usize]
+                            );
+                        }
+                    }
+                    assert_eq!((*rust.0).input.len(), BUFFER_SIZE);
+                    assert!(matches!((*rust.0).backing, Backing::GzipRead(_)));
+                }
+                assert_eq!(ferror(rust.0), i32::from(corrupt));
+                assert_eq!(gzclose(rust.0), crate::zlib::gzclose(oracle));
+                std::mem::forget(rust);
+            }
+        }
+    }
+
+    #[test]
     fn transparent_gzip_reader_preserves_descriptor_and_file_metadata() {
         let handle = temporary();
         unsafe {
@@ -2961,6 +3451,41 @@ mod tests {
     }
 
     #[test]
+    fn transparent_bulk_gzip_reads_use_the_raw_file_bypass() {
+        let handle = temporary();
+        let payload: Vec<u8> = (0..BUFFER_SIZE * 3 + 17)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        unsafe {
+            assert_eq!(
+                fwrite(payload.as_ptr().cast(), 1, payload.len(), handle.0),
+                payload.len()
+            );
+            rewind(handle.0);
+            let descriptor = fileno(handle.0);
+            assert_eq!(gzip_open(handle.0, c"rb".as_ptr()), handle.0);
+            assert_eq!(fileno(handle.0), descriptor);
+            assert!(matches!((*handle.0).backing, Backing::File(_)));
+            let mut output = vec![0; payload.len()];
+            assert_eq!(
+                gzread(handle.0, output.as_mut_ptr().cast(), output.len() as u32),
+                output.len() as i32
+            );
+            assert_eq!(output, payload);
+            assert_eq!((*handle.0).input.capacity(), 0);
+            assert_eq!(ftello(handle.0), payload.len() as i64);
+            assert_eq!(feof(handle.0), 0);
+            assert_eq!(
+                gzread(handle.0, output.as_mut_ptr().cast(), output.len() as u32),
+                0
+            );
+            assert_eq!(feof(handle.0), 1);
+            assert_eq!(ferror(handle.0), 0);
+            assert_eq!((*handle.0).input.capacity(), 0);
+        }
+    }
+
+    #[test]
     fn read_pipe_close_reports_wait_status() {
         let stream = unsafe { popen(c"printf 'pipe bytes'; exit 7".as_ptr(), c"r".as_ptr()) };
         assert!(!stream.is_null());
@@ -2974,6 +3499,45 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn bulk_and_buffered_reads_preserve_payloads_positions_and_prefix_failures(
+            input in prop::collection::vec(any::<u8>(), 0..4097),
+            requested in 0usize..8193,
+            size in 1usize..257,
+            chunk in 1usize..257,
+            interruptions in 0usize..4,
+            failure_at in prop::option::of(0usize..4097),
+            mode in 0usize..3,
+        ) {
+            let state = Rc::new(RefCell::new(ReaderState::new(input.clone())));
+            state.borrow_mut().chunk = chunk;
+            state.borrow_mut().interruptions = interruptions;
+            state.borrow_mut().failure_at = failure_at;
+            let mode = match mode {
+                0 => Buffering::Full,
+                1 => Buffering::Line,
+                _ => Buffering::None,
+            };
+            let mut stream = measured_reader(state.clone(), size, mode);
+            let available = input.len().min(failure_at.unwrap_or(usize::MAX));
+            let consumed = requested.min(available);
+            let mut output = vec![255; requested];
+            prop_assert_eq!(stream.read_bytes(&mut output), consumed);
+            prop_assert_eq!(&output[..consumed], &input[..consumed]);
+            prop_assert!(output[consumed..].iter().all(|byte| *byte == 255));
+            prop_assert_eq!(stream.position, consumed as u64);
+            let failed = requested > available && failure_at.is_some_and(|limit| limit <= input.len());
+            prop_assert_eq!(stream.error, failed);
+            prop_assert_eq!(stream.eof, requested > available && !failed);
+            prop_assert!(stream.input.len() <= size);
+            prop_assert!(stream.input.capacity() <= size.max(8));
+            if requested == 0 {
+                prop_assert!(state.borrow().requests.is_empty());
+            } else if mode == Buffering::None {
+                prop_assert!(state.borrow().requests.iter().all(|(_, count)| *count == 1));
+            }
+        }
+
         #[test]
         fn partial_writer_counts_never_include_pending_bytes_from_an_earlier_call(
             old in prop::collection::vec(any::<u8>(), 0..8),
@@ -3002,8 +3566,8 @@ mod tests {
 
         #[test]
         fn buffered_reads_seeks_and_pushback_match_payloads(
-            input in prop::collection::vec(any::<u8>(), 0..16385),
-            operations in prop::collection::vec((0usize..20000, 1usize..65, 0usize..65, any::<bool>()), 1..32),
+            input in prop::collection::vec(any::<u8>(), 0..32785),
+            operations in prop::collection::vec((0usize..40000, 1usize..257, 0usize..129, any::<bool>()), 1..32),
         ) {
             let handle = temporary();
             prop_assert_eq!(unsafe { fwrite(input.as_ptr().cast(), 1, input.len(), handle.0) }, input.len());

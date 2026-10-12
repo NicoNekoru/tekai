@@ -40,6 +40,9 @@ versioning.
   overlapping roots and replace exponential wildcard matching with dynamic
   programming. Preserve lookup priority, databases and newly generated files.
   Bound lookup indexes, decoded PNG pixels, preview snapshots and watch queues.
+- Read large raw-file requests directly into their destination after draining
+  buffered input and pushback. Retain decoder validation, pipe job control and
+  configured read-ahead for small requests.
 - Store dependency state as compact JSON. Validate complete source bytes,
   compilation generations and lookup identities before atomic publication.
   Old TOML states rebuild once. Comments or textual end markers no longer hide
