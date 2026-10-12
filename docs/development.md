@@ -45,6 +45,11 @@ rustup run 1.89.0 cargo check -p tekai-engine --all-targets \
 python3 -B -m unittest discover -s tools -p 'test_*.py'
 ```
 
+Use Python 3.13 for the macOS diagnostic and performance harnesses. Owned
+process-group cleanup requires `os.waitid` with `WNOWAIT`, which some system
+interpreters lack. The macOS jobs pin 3.13 and check those capabilities before
+launching commands. Linux runner tests retain the 3.10/3.13 matrix.
+
 Focused commands are useful during iteration:
 
 ```sh
@@ -106,6 +111,23 @@ worker group whose external supervisor must clean descendants before reaping
 that worker. Ordinary explicit `pclose` and `system` completion preserves
 intentional background shell side effects. Abandoned calls clean owned groups.
 The library never transfers the host's terminal foreground group implicitly.
+
+Private commands with a controlling terminal have an owned child-status
+observer. An observed SIGTTIN or SIGTTOU stop terminates the owned group, wakes
+blocked pipe I/O and reports a specific error. Bytes already transferred remain
+counted. The failure is not silently converted to EOF. `pclose` and `system`
+return failure as well. This also covers commands reopening `/dev/tty` after
+standard descriptors were redirected. The observer joins before the child is
+reaped, so it cannot signal a recycled PID or group afterward. Commands that do
+not stop for terminal access retain ordinary completion semantics.
+
+`PipeProcessPolicy::CallerManagedProcess` is an explicit embedding alternative.
+It inherits the host process group and its existing terminal job control,
+including whether that group is foreground or background. The invocation owns
+and reaps only the direct shell child. The host accepts responsibility for
+descendant cleanup and cancellation. This differs from `SupervisedProcess`'s
+isolated external-worker contract. No policy silently starts a detached session,
+substitutes null stdin for library commands or transfers the host terminal.
 
 The CLI owns its signal registrations outside the engine. Direct engine CLI
 invocation leases the foreground terminal to its worker only when the CLI

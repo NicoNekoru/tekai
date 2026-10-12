@@ -75,7 +75,7 @@ jobs:
           export CARGO_TARGET_DIR="$(mktemp -d "${{ runner.temp }}/tekai-msrv-target.XXXXXX")"
           cargo check --workspace --all-targets --locked
           # The engine binary is excluded unless its required feature is enabled.
-          cargo check -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked
+          cargo check -p tekai-engine --all-targets --no-default-features --features standalone-binary --locked
 
   verify-light:
     name: Rust and TeX lookup (${{ matrix.os }})
@@ -96,6 +96,15 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: Install Python with native owned-child wait support
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Require waitid and unreaped-child observation
+        run: |
+          python3 -B -c 'import os, sys; required = ("waitid", "WNOWAIT", "WEXITED", "WNOHANG", "P_PID"); missing = [name for name in required if not hasattr(os, name)]; print(sys.version); sys.exit("Missing owned-child OS support: " + ", ".join(missing) if missing else 0)'
 
       - name: Isolate build caches and record the property-test seed
         env:
@@ -160,7 +169,7 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo clippy -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked -- -D warnings
+          cargo clippy -p tekai-engine --all-targets --no-default-features --features standalone-binary --locked -- -D warnings
           cargo build -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked --timings 2>&1 | tee "$CI_REPORT_DIR/standalone-build.log"
           cargo test --workspace --locked --timings --lib --bins -- --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/debug-unit-tests.log"
           cargo test --workspace --locked --timings --doc -- --test-threads=1 2>&1 | tee "$CI_REPORT_DIR/doc-tests.log"
@@ -179,19 +188,48 @@ jobs:
           for package in sorted(metadata["packages"], key=lambda package: package["name"]):
               if package["id"] not in members:
                   continue
-              targets = sorted(
-                  target["name"] for target in package["targets"]
+              targets = sorted((
+                  target for target in package["targets"]
                   if "test" in target["kind"] and target["test"]
                   and not (package["name"] == "tekai" and target["name"] in excluded)
+              ), key=lambda target: target["name"])
+              required_standalone = package["name"] == "tekai-engine" and any(
+                  target["name"] == "standalone_cli" for target in targets
               )
+              if package["name"] == "tekai-engine" and not required_standalone:
+                  raise SystemExit("Required standalone CLI target was not discovered")
               if not targets:
                   continue
-              command = ["cargo", "test", "--locked", "--timings", "-p", package["name"]]
+              # Required-feature targets must execute rather than being omitted
+              # by default discovery. Union per package, with one feature flag.
+              features = sorted({
+                  feature for target in targets
+                  for feature in target.get("required-features", [])
+              })
+              command = ["cargo", "test", "--color", "never", "--locked", "--timings", "-p", package["name"]]
+              if features:
+                  command.extend(["--features", ",".join(features)])
               for target in targets:
-                  command.extend(["--test", target])
+                  command.extend(["--test", target["name"]])
               command.extend(["--", "--test-threads=1"])
               print("Running", " ".join(command), flush=True)
-              subprocess.run(command, check=True)
+              active_standalone = False
+              standalone_completed = False
+              with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as process:
+                  for line in process.stdout:
+                      print(line, end="", flush=True)
+                      if "Running tests/standalone_cli.rs (" in line:
+                          active_standalone = True
+                      if active_standalone and line.startswith("test result:"):
+                          if not line.startswith("test result: ok. 2 passed; 0 failed; 0 ignored;"):
+                              raise SystemExit("Required standalone CLI tests did not both execute successfully")
+                          standalone_completed = True
+                          active_standalone = False
+                  result = process.wait()
+              if result:
+                  raise subprocess.CalledProcessError(result, command)
+              if required_standalone and not standalone_completed:
+                  raise SystemExit("Required standalone CLI test summary was not observed")
           PY
 
       - name: Upload test logs and reproducible property configuration

@@ -7,7 +7,7 @@
 #![warn(clippy::all)]
 
 use flate2::{read::MultiGzDecoder, write::GzEncoder, Compression};
-use rustix::process::{Pid, Signal};
+use rustix::process::{waitid, Pid, Signal, WaitId, WaitIdOptions};
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::ffi::{c_char, c_int, c_long, c_void, CStr, OsStr};
 use std::fs::{File, Metadata, OpenOptions};
@@ -21,6 +21,8 @@ use std::pin::Pin;
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::ptr::{self, NonNull};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::{self, JoinHandle};
 
 const EOF: c_int = -1;
 const BUFFER_SIZE: usize = 8192;
@@ -37,6 +39,10 @@ pub enum PipeProcessPolicy {
     /// these children independently or ignore SIGCHLD.
     #[default]
     InvocationOwned,
+    /// Inherit the host process group and its existing terminal job control.
+    /// This invocation owns and reaps only each direct shell child. The host
+    /// accepts responsibility for descendants and cancellation of those jobs.
+    CallerManagedProcess,
     /// Inherit the engine worker's process group. An external supervisor must
     /// own that isolated worker group and stop its descendants before reaping
     /// the worker, including cancellation and worker faults. Local abandonment
@@ -67,10 +73,236 @@ struct PipeChild {
     child: Child,
     group: Option<Pid>,
     owned: bool,
+    monitor: Option<ChildMonitor>,
+}
+
+#[derive(Clone, Copy)]
+enum InheritedIo {
+    ReadPipe,
+    WritePipe,
+    All,
+}
+
+impl InheritedIo {
+    fn has_controlling_terminal(self) -> io::Result<bool> {
+        // stderr is inherited in both pipe modes. TOSTOP can stop a command
+        // writing it even when neither of its other endpoints is a terminal.
+        for (inherited, fd) in [
+            (
+                matches!(self, Self::ReadPipe | Self::All),
+                rustix::stdio::stdin(),
+            ),
+            (
+                matches!(self, Self::WritePipe | Self::All),
+                rustix::stdio::stdout(),
+            ),
+            (true, rustix::stdio::stderr()),
+        ] {
+            if inherited && controlling_terminal(fd)? {
+                return Ok(true);
+            }
+        }
+        // The session's controlling terminal survives redirected standard
+        // descriptors. A command may reopen it through /dev/tty. This probe
+        // reads metadata only and cannot acquire or transfer terminal control.
+        let terminal = loop {
+            match OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOCTTY)
+                .open("/dev/tty")
+            {
+                Ok(terminal) => break terminal,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if error.raw_os_error() == Some(libc::ENXIO) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+        };
+        controlling_terminal(&terminal)
+    }
+}
+
+fn controlling_terminal(fd: impl rustix::fd::AsFd) -> io::Result<bool> {
+    loop {
+        match rustix::termios::tcgetpgrp(fd.as_fd()) {
+            Ok(_) => return Ok(true),
+            Err(rustix::io::Errno::NOTTY | rustix::io::Errno::BADF) => return Ok(false),
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrivateTerminalStop(i32);
+
+impl std::fmt::Display for PrivateTerminalStop {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let signal = match self.0 {
+            libc::SIGTTIN => "SIGTTIN",
+            libc::SIGTTOU => "SIGTTOU",
+            _ => unreachable!("only terminal-stop signals are admitted"),
+        };
+        write!(formatter, "private engine command stopped by {signal} while inheriting a controlling terminal. Use CallerManagedProcess when the host owns terminal job control.")
+    }
+}
+
+impl std::error::Error for PrivateTerminalStop {}
+
+struct ChildObservation {
+    // The PipeChild's unreaped Child reserves this PID until after observer
+    // join. Only this mutex-protected authority may signal its owned group.
+    authority: Option<Pid>,
+    terminal_stop: Option<PrivateTerminalStop>,
+    error: Option<i32>,
+    reported: bool,
+}
+
+struct ChildMonitor {
+    state: Arc<Mutex<ChildObservation>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+fn observation_lock(state: &Mutex<ChildObservation>) -> MutexGuard<'_, ChildObservation> {
+    state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn stop_observed_child(observation: &mut ChildObservation) {
+    if let Some(child) = observation.authority {
+        if let Err(error) = crate::process_group::signal_owned_group(child, Signal::KILL) {
+            observation
+                .error
+                .get_or_insert(error.raw_os_error().unwrap_or(libc::EIO));
+        }
+        // This is the exact unreaped direct child, not a listed descendant.
+        // It may have changed its own group while its original group vanished.
+        loop {
+            match rustix::process::kill_process(child, Signal::KILL) {
+                Ok(()) | Err(rustix::io::Errno::SRCH) => break,
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(error) => {
+                    observation.error.get_or_insert(error.raw_os_error());
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn observe_child(group: Pid, state: Arc<Mutex<ChildObservation>>) {
+    let mut options = WaitIdOptions::EXITED | WaitIdOptions::STOPPED | WaitIdOptions::NOWAIT;
+    loop {
+        match waitid(WaitId::Pid(group), options) {
+            Ok(Some(status)) if status.stopped() => {
+                if let Some(signal @ (libc::SIGTTIN | libc::SIGTTOU)) = status.stopping_signal() {
+                    let mut observation = observation_lock(&state);
+                    observation.terminal_stop = Some(PrivateTerminalStop(signal));
+                    stop_observed_child(&mut observation);
+                    // The group kill wakes blocked pipe reads/writes. Keep the
+                    // reservation until exit is observed and the owner joins.
+                    options = WaitIdOptions::EXITED | WaitIdOptions::NOWAIT;
+                } else {
+                    // Consume only the observed stop, never an exit. Otherwise
+                    // NOWAIT repeats the same event indefinitely and misses a
+                    // terminal stop after the host legitimately resumes it.
+                    loop {
+                        match waitid(
+                            WaitId::Pid(group),
+                            WaitIdOptions::STOPPED | WaitIdOptions::NOHANG,
+                        ) {
+                            Err(rustix::io::Errno::INTR) => continue,
+                            Err(rustix::io::Errno::CHILD) => {
+                                let mut observation = observation_lock(&state);
+                                observation.authority = None;
+                                observation.error = Some(libc::ECHILD);
+                                return;
+                            }
+                            Err(error) => {
+                                let mut observation = observation_lock(&state);
+                                observation.error = Some(error.raw_os_error());
+                                stop_observed_child(&mut observation);
+                                return;
+                            }
+                            Ok(_) => break,
+                        }
+                    }
+                }
+            }
+            Ok(Some(_)) => return,
+            Err(rustix::io::Errno::INTR) => continue,
+            result => {
+                let mut observation = observation_lock(&state);
+                let error = result.err().map_or(libc::EIO, |error| error.raw_os_error());
+                observation.error = Some(error);
+                if error == libc::ECHILD {
+                    // An external reaper ended the reservation. Never signal
+                    // that numerical ID after learning that ownership was lost.
+                    observation.authority = None;
+                } else {
+                    stop_observed_child(&mut observation);
+                }
+                return;
+            }
+        }
+    }
+}
+
+impl ChildMonitor {
+    fn start(group: Pid) -> io::Result<Self> {
+        let state = Arc::new(Mutex::new(ChildObservation {
+            authority: Some(group),
+            terminal_stop: None,
+            error: None,
+            reported: false,
+        }));
+        let observer_state = Arc::clone(&state);
+        let thread = thread::Builder::new()
+            .name("tekai-pipe-status".into())
+            .spawn(move || observe_child(group, observer_state))?;
+        Ok(Self {
+            state,
+            thread: Some(thread),
+        })
+    }
+
+    fn join(&mut self) -> io::Result<()> {
+        self.thread.take().map_or(Ok(()), |thread| {
+            thread
+                .join()
+                .map_err(|_| io::Error::other("engine child status observer panicked"))
+        })
+    }
+
+    fn failure(&self) -> Option<io::Error> {
+        let mut observation = observation_lock(&self.state);
+        if let Some(stop) = observation.terminal_stop {
+            if !observation.reported {
+                observation.reported = true;
+                let _ = writeln!(io::stderr().lock(), "tekai engine IO: {stop}");
+            }
+            // A genuine signalling/query error remains an OS error. Reporting
+            // the terminal stop must not turn uncertain cleanup into success
+            // or suppress EPERM from the strict owned-group classifier.
+            Some(
+                observation
+                    .error
+                    .map_or_else(|| io::Error::other(stop), io::Error::from_raw_os_error),
+            )
+        } else {
+            observation.error.map(io::Error::from_raw_os_error)
+        }
+    }
 }
 
 impl PipeChild {
-    fn spawn(command: &mut Command, policy: PipeProcessPolicy) -> io::Result<Self> {
+    fn spawn(
+        command: &mut Command,
+        policy: PipeProcessPolicy,
+        inherited: InheritedIo,
+    ) -> io::Result<Self> {
+        let monitored =
+            policy == PipeProcessPolicy::InvocationOwned && inherited.has_controlling_terminal()?;
         if policy == PipeProcessPolicy::InvocationOwned {
             command.process_group(0);
         }
@@ -79,11 +311,18 @@ impl PipeChild {
         let group = Pid::from_raw(raw)
             .filter(|pid| *pid != Pid::INIT)
             .expect("spawned child has a positive non-init PID");
-        Ok(Self {
+        let mut owner = Self {
             child,
             group: (policy == PipeProcessPolicy::InvocationOwned).then_some(group),
             owned: true,
-        })
+            monitor: None,
+        };
+        // Own the child before fallible thread setup, so a setup error kills
+        // and reaps instead of losing it through Child's non-killing Drop.
+        if monitored {
+            owner.monitor = Some(ChildMonitor::start(group)?);
+        }
+        Ok(owner)
     }
 
     fn wait(mut self, terminate: bool) -> io::Result<ExitStatus> {
@@ -100,12 +339,24 @@ impl PipeChild {
     fn terminate_and_reap(&mut self) -> io::Result<ExitStatus> {
         // The unreaped leader protects its process/group ID from reuse. Stop
         // descendants before releasing that authority, even if it has exited.
-        let group_error = self
-            .group
-            .and_then(|group| crate::process_group::signal_owned_group(group, Signal::KILL).err());
+        let group_error = if let Some(monitor) = &self.monitor {
+            let observation = observation_lock(&monitor.state);
+            observation.authority.and_then(|group| {
+                crate::process_group::signal_owned_group(group, Signal::KILL).err()
+            })
+        } else {
+            self.group.and_then(|group| {
+                crate::process_group::signal_owned_group(group, Signal::KILL).err()
+            })
+        };
         // Also stop the direct child if the command changed its own group.
         // Child::kill accepts a child that has already exited.
-        let child_error = self.child.kill().err();
+        let child_error = if let Some(monitor) = &self.monitor {
+            let observation = observation_lock(&monitor.state);
+            observation.authority.and_then(|_| self.child.kill().err())
+        } else {
+            self.child.kill().err()
+        };
         let status = self.reap();
         // Always attempt the reap, including after a signalling error. A
         // remaining owner retries cleanup from Drop after other wait failures.
@@ -117,6 +368,19 @@ impl PipeChild {
     }
 
     fn reap(&mut self) -> io::Result<ExitStatus> {
+        let mut observer_error = None;
+        if let Some(monitor) = &mut self.monitor {
+            if let Err(error) = monitor.join() {
+                // No observer survives join. Stop a still-owned child before
+                // waiting even when the observer unexpectedly panicked.
+                let observation = observation_lock(&monitor.state);
+                if let Some(group) = observation.authority {
+                    let _ = crate::process_group::signal_owned_group(group, Signal::KILL);
+                    let _ = self.child.kill();
+                }
+                observer_error = Some(error);
+            }
+        }
         let status = loop {
             match self.child.wait() {
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -129,8 +393,18 @@ impl PipeChild {
             })
         {
             self.owned = false;
+            if let Some(monitor) = &self.monitor {
+                observation_lock(&monitor.state).authority = None;
+            }
         }
-        status
+        match observer_error.or_else(|| self.io_error()) {
+            Some(error) => Err(error),
+            None => status,
+        }
+    }
+
+    fn io_error(&self) -> Option<io::Error> {
+        self.monitor.as_ref().and_then(ChildMonitor::failure)
     }
 
     #[cfg(test)]
@@ -394,7 +668,14 @@ impl Stream {
             let result = match &mut self.backing {
                 Backing::File(file) => file.read(buffer),
                 Backing::Stdin(input) => input.read(buffer),
-                Backing::ReadPipe(_, output) => output.read(buffer),
+                Backing::ReadPipe(child, output) => {
+                    let result = output.read(buffer);
+                    if !matches!(result, Ok(count) if count > 0) {
+                        child.io_error().map_or(result, Err)
+                    } else {
+                        result
+                    }
+                }
                 Backing::GzipRead(decoder) => decoder.read(buffer),
                 #[cfg(test)]
                 Backing::TestReader(reader) => reader.read(buffer),
@@ -420,7 +701,14 @@ impl Stream {
                 Backing::File(file) => file.write(buffer),
                 Backing::Stdout(output) => output.write(buffer),
                 Backing::Stderr(error) => error.write(buffer),
-                Backing::WritePipe(_, input) => input.write(buffer),
+                Backing::WritePipe(child, input) => {
+                    let result = input.write(buffer);
+                    if !matches!(result, Ok(count) if count > 0) {
+                        child.io_error().map_or(result, Err)
+                    } else {
+                        result
+                    }
+                }
                 Backing::GzipEncoder(encoder) => encoder.write(buffer),
                 #[cfg(test)]
                 Backing::TestWriter(writer) => writer.write(buffer),
@@ -1192,7 +1480,12 @@ pub(crate) unsafe fn popen(command: *const c_char, mode: *const c_char) -> *mut 
         builder.stdin(Stdio::piped());
     }
     let policy = with_session(|session| session.pipe_policy);
-    match PipeChild::spawn(&mut builder, policy) {
+    let inherited = if kind == b'r' {
+        InheritedIo::ReadPipe
+    } else {
+        InheritedIo::WritePipe
+    };
+    match PipeChild::spawn(&mut builder, policy, inherited) {
         Ok(mut child) => {
             let backing = if kind == b'r' {
                 let output = child.child.stdout.take().unwrap();
@@ -1236,7 +1529,10 @@ pub(crate) unsafe fn system(command: *const c_char) -> c_int {
         set_errno(libc::EINVAL);
         return -1;
     }
-    match builder.status() {
+    let policy = with_session(|session| session.pipe_policy);
+    match PipeChild::spawn(&mut builder, policy, InheritedIo::All)
+        .and_then(|child| child.wait(false))
+    {
         Ok(status) => status.into_raw(),
         Err(error) => {
             set_errno(error.raw_os_error().unwrap_or(libc::EIO));
@@ -1465,6 +1761,9 @@ pub(crate) fn exit(status: c_int) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod terminal_tests {
+        include!("stdio_terminal_tests.rs");
+    }
     use proptest::prelude::*;
     use rustix::process::kill_process_group;
     use std::os::fd::FromRawFd;
@@ -1856,7 +2155,12 @@ mod tests {
             ])
             .env("TEKAI_SUPERVISED_PIPE_FIXTURE", "1")
             .stdout(Stdio::null());
-        let worker = PipeChild::spawn(&mut command, PipeProcessPolicy::InvocationOwned).unwrap();
+        let worker = PipeChild::spawn(
+            &mut command,
+            PipeProcessPolicy::InvocationOwned,
+            InheritedIo::All,
+        )
+        .unwrap();
         let group = worker.group.unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         let completed = loop {

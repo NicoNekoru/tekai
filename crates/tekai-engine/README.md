@@ -49,6 +49,11 @@ Standalone execution uses the same whole-job cleanup policy. Reusable-library
 calls instead own private pipe groups and stop abandoned commands on teardown.
 Explicit `pclose` and `system` preserve POSIX rules for deliberately released
 background commands, which remain the library caller's responsibility.
+Private commands stopped by SIGTTIN or SIGTTOU report a normal I/O error and
+are cleaned up without transferring the host terminal. This also covers
+commands reopening `/dev/tty` after standard descriptors were redirected.
+`PipeProcessPolicy::CallerManagedProcess` explicitly inherits the host's
+terminal job control and makes descendant cleanup the host's responsibility.
 SIGKILL of a supervising parent cannot run cleanup, and kernel-uninterruptible
 processes cannot be given a hard termination deadline.
 

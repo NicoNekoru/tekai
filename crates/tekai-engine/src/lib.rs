@@ -5,16 +5,12 @@
 //! This crate does not produce a C-linkable archive or export a C entrypoint.
 
 #![allow(
-    clashing_extern_declarations,
     dead_code,
-    improper_ctypes,
-    mutable_transmutes,
     non_camel_case_types,
     non_snake_case,
     non_upper_case_globals,
     overflowing_literals,
     path_statements,
-    static_mut_refs,
     unreachable_code,
     unused_assignments,
     unused_must_use,

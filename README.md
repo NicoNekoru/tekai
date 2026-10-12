@@ -154,7 +154,9 @@ nested calls on one thread are rejected. `run_from_args` and `run_with_options`
 remain unsafe APIs for trusted input and formats, not a TeX sandbox. Recovery
 and teardown require `panic=unwind`. See
 [invocation ownership](docs/development.md#invocation-ownership) for the host
-and subprocess contracts.
+and subprocess contracts. Embeddings that own POSIX terminal job control can
+explicitly choose `PipeProcessPolicy::CallerManagedProcess`. The default private
+command policy reports terminal stops as I/O errors instead of waiting forever.
 
 ## Configuration
 
