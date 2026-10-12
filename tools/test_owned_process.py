@@ -12,7 +12,7 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import owned_process as owned
 
@@ -90,6 +90,24 @@ class AuthorityTests(unittest.TestCase):
         with patch.object(owned.os, 'waitid', return_value=value):
             self.assertEqual(self.process.wait_for_exit().code, -signal.SIGTERM)
 
+    def test_signal_proof_uses_fresh_exact_exit_instead_of_cached_status(self):
+        with patch.object(owned.os, 'waitid', side_effect=[status(12345, 7), None]), \
+                patch.object(owned, '_signal_owned_group', return_value=False) as send:
+            self.process.terminate()
+            self.process.terminate()
+        self.assertEqual(send.call_args_list,
+                         [call(12345, signal.SIGTERM, True),
+                          call(12345, signal.SIGTERM, False)])
+
+    def test_wrong_pid_or_nonexit_observation_cannot_grant_signal_proof(self):
+        for value in (status(12346, 7),
+                      SimpleNamespace(si_pid=12345, si_code=os.CLD_STOPPED, si_status=signal.SIGSTOP)):
+            with self.subTest(status=value), patch.object(owned.os, 'waitid', return_value=value), \
+                    patch.object(owned, '_signal_owned_group') as send:
+                with self.assertRaisesRegex(RuntimeError, 'Unexpected waitid'):
+                    self.process.terminate()
+                send.assert_not_called()
+
     def test_signal_check_serializes_known_loss_publication(self):
         entered, release, generated = threading.Event(), threading.Event(), threading.Event()
         failures = []
@@ -151,6 +169,8 @@ class DarwinClassificationTests(unittest.TestCase):
         def info(pid, flavor, include_zombies, pointer, size):
             self.assertEqual((flavor, include_zombies, size), (3, 1, 136))
             record = ctypes.cast(pointer, ctypes.POINTER(owned._DarwinBSDInfo)).contents
+            if records[pid] is None:
+                return 0
             returned_pid, group, state = records[pid]
             record.pbi_pid, record.pbi_pgid, record.pbi_status = returned_pid, group, state
             return size
@@ -166,11 +186,39 @@ class DarwinClassificationTests(unittest.TestCase):
             self.assertTrue(owned._darwin_only_zombies(12345))
         self.assertEqual(library.proc_listpids.call_count, 2)
 
+    def test_fresh_exit_proof_exempts_only_exact_reserved_leader_metadata(self):
+        library = self.library([[12345, 12346], [12346, 12345]],
+                               {12345: None, 12346: (12346, 12345, 5)})
+        with patch.object(owned.ctypes, 'CDLL', return_value=library):
+            self.assertTrue(owned._darwin_only_zombies(12345, leader_exited=True))
+        self.assertEqual(library.proc_pidinfo.call_count, 1)
+        self.assertEqual(library.proc_pidinfo.call_args.args[0], 12346)
+        self.assertEqual(library.proc_listpids.call_count, 2)
+
+    def test_missing_or_unproved_leader_cannot_bypass_metadata(self):
+        for lists, records, proof in (([[12346]], {12346: (12346, 12345, 5)}, True),
+                                      ([[12345]], {12345: None}, False),
+                                      ([[12345]], {12345: (12345, 12345, 2)}, False)):
+            library = self.library(lists, records)
+            with self.subTest(proof=proof, lists=lists), patch.object(owned.ctypes, 'CDLL', return_value=library):
+                self.assertFalse(owned._darwin_only_zombies(12345, leader_exited=proof))
+
+    def test_reserved_leader_proof_does_not_exempt_other_members(self):
+        for record in (None, (12347, 12345, 5), (12346, 12347, 5), (12346, 12345, 2)):
+            library = self.library([[12345, 12346]], {12345: None, 12346: record})
+            with self.subTest(record=record), patch.object(owned.ctypes, 'CDLL', return_value=library):
+                self.assertFalse(owned._darwin_only_zombies(12345, leader_exited=True))
+        library = self.library([[12345, 12346]], {})
+        library.proc_pidinfo.side_effect = lambda *_args: 135
+        with patch.object(owned.ctypes, 'CDLL', return_value=library):
+            self.assertFalse(owned._darwin_only_zombies(12345, leader_exited=True))
+
     def test_malformed_truncated_or_changed_lists_fail_closed(self):
-        for lists in ([0], [-1], [3], [4096], [[12345, 12345]], [[-1]], [[12345], [12345, 12346]]):
-            library = self.library(lists, {12345: (12345, 12345, 5)})
-            with self.subTest(lists=lists), patch.object(owned.ctypes, 'CDLL', return_value=library):
-                self.assertFalse(owned._darwin_only_zombies(12345))
+        for proof in (False, True):
+            for lists in ([0], [-1], [3], [4096], [[12345, 12345]], [[-1]], [[12345], [12345, 12346]]):
+                library = self.library(lists, {12345: (12345, 12345, 5)})
+                with self.subTest(lists=lists, proof=proof), patch.object(owned.ctypes, 'CDLL', return_value=library):
+                    self.assertFalse(owned._darwin_only_zombies(12345, leader_exited=proof))
 
     def test_inexact_or_live_record_does_not_suppress_permission_error(self):
         for record in ((12346, 12345, 5), (12345, 12346, 5), (12345, 12345, 2), (12345, 12345, 0)):
@@ -180,8 +228,10 @@ class DarwinClassificationTests(unittest.TestCase):
         with patch.object(owned.os, 'killpg', side_effect=PermissionError), \
                 patch.object(owned.sys, 'platform', 'darwin'), \
                 patch.object(owned, '_darwin_only_zombies', return_value=False):
-            with self.assertRaises(PermissionError):
+            with self.assertRaises(PermissionError) as error:
                 owned._signal_owned_group(12345, signal.SIGKILL)
+            self.assertIn('owned group 12345 signal', str(error.exception))
+            self.assertIn('reserved-leader exit proof=False', str(error.exception))
 
 
 @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'waitid'), 'POSIX waitid required')
@@ -192,11 +242,15 @@ class NativeOwnershipTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
 
     def launch(self, code, **kwargs):
+        return self.launch_command([sys.executable, '-c', code], **kwargs)
+
+    def launch_command(self, command, **kwargs):
         log = tempfile.TemporaryFile()
         self.addCleanup(log.close)
-        child = subprocess.Popen([sys.executable, '-c', code], start_new_session=True,
+        process = owned.OwnedProcess()
+        child = subprocess.Popen(command, start_new_session=True,
                                  stdout=log, stderr=log, **kwargs)
-        process = owned.OwnedProcess(child)
+        process.attach(child)
         self.addCleanup(process.finish)
         return process
 
@@ -222,6 +276,17 @@ class NativeOwnershipTests(unittest.TestCase):
             with self.assertRaises(owned.OwnershipLost):
                 owner.finish()
             kill.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == 'darwin' and Path('/bin/ps').is_file(), 'Darwin ps regression')
+    def test_privileged_ps_exit_one_keeps_reserved_status_through_cleanup(self):
+        process = self.launch_command(['/bin/ps', '-p', '2147483647', '-o', 'pid='])
+        self.assertEqual(process.wait_for_exit(2).code, 1)
+        self.assertIsNone(process._process.returncode)
+        self.assertTrue(owned._darwin_only_zombies(process.pid, leader_exited=True))
+        self.assertEqual(process.finish(), 1)
+        self.assertEqual(process._process.returncode, 1)
+        with self.assertRaises(ChildProcessError):
+            os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
 
     def test_real_blocking_observer_publishes_before_reap(self):
         process = self.launch('import time; time.sleep(10)')

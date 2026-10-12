@@ -43,7 +43,7 @@ class _DarwinBSDInfo(ctypes.Structure):
                 ('pbi_start_tvusec', ctypes.c_uint64)]
 
 
-def _darwin_only_zombies(group):
+def _darwin_only_zombies(group, leader_exited=False):
     if ctypes.sizeof(_DarwinBSDInfo) != 136 or _DarwinBSDInfo.pbi_pgid.offset != 100:
         return False
     try:
@@ -64,9 +64,15 @@ def _darwin_only_zombies(group):
             return values if all(pid > 0 for pid in values) and len(set(values)) == len(values) else None
 
         first = members()
-        if first is None:
+        if first is None or group not in first:
             return False
         for pid in first:
+            if pid == group and leader_exited:
+                # Fresh WNOWAIT already proves this exact reserved child's
+                # final exit. Darwin denies BSDINFO for the exited setuid
+                # /bin/ps. This exemption never extends to
+                # another PID or replaces the complete group membership proof.
+                continue
             record = _DarwinBSDInfo()
             # PROC_PIDTBSDINFO with arg=1 includes zombies. Require a full record.
             if info(pid, 3, 1, ctypes.byref(record), ctypes.sizeof(record)) != ctypes.sizeof(record):
@@ -78,7 +84,7 @@ def _darwin_only_zombies(group):
         return False
 
 
-def _signal_owned_group(group, number):
+def _signal_owned_group(group, number, leader_exited=False):
     while True:
         try:
             os.killpg(group, number)
@@ -87,10 +93,13 @@ def _signal_owned_group(group, number):
             continue
         except ProcessLookupError:
             return False
-        except PermissionError:
-            if sys.platform == 'darwin' and _darwin_only_zombies(group):
+        except PermissionError as error:
+            if sys.platform == 'darwin' and _darwin_only_zombies(group, leader_exited):
                 return False
-            raise
+            raise PermissionError(error.errno,
+                                  f'owned group {group} signal {number} denied. '
+                                  f'fresh reserved-leader exit proof={leader_exited}. '
+                                  'complete zombie-only membership not established') from error
 
 
 class OwnedProcess:
@@ -199,8 +208,8 @@ class OwnedProcess:
         with self._condition:
             # Serialize known-loss publication with the fresh authority check
             # and signal. Do not hold this lock across a blocking waitid call.
-            self._observe()
-            return _signal_owned_group(self.pid, number)
+            status = self._observe()
+            return _signal_owned_group(self.pid, number, status is not None)
 
     def terminate(self):
         self.signal_group(signal.SIGTERM)
