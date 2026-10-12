@@ -1,4 +1,7 @@
+use crate::byte_string::{strchr, strcmp, strlen, strncmp};
+
 use crate::backend_grammar::glyph_preamble;
+use crate::float_parse::font_scale_line;
 use crate::openclose::open_input;
 use crate::stdio::feof;
 use crate::support::{xfclose, xfopen};
@@ -9,23 +12,6 @@ use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
 
 extern "C" {
-    fn sscanf(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
     fn __assert_rtn(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -1109,9 +1095,6 @@ pub unsafe extern "C" fn writet3(
     mut objnum: ::core::ffi::c_int,
     mut f: internalfontnumber,
 ) {
-    static mut t3_font_scale_str: [::core::ffi::c_char; 14] = unsafe {
-        ::core::mem::transmute::<[u8; 14], [::core::ffi::c_char; 14]>(*b"\\pdffontscale\0")
-    };
     let mut i: ::core::ffi::c_int = 0;
     let mut wptr: integer = 0;
     let mut eptr: integer = 0;
@@ -1170,26 +1153,19 @@ pub unsafe extern "C" fn writet3(
             )],
         );
         t3_getline();
-        if !(strncmp(
-            t3_line_array,
-            &raw mut t3_font_scale_str as *mut ::core::ffi::c_char,
-            strlen(&raw mut t3_font_scale_str as *mut ::core::ffi::c_char),
-        ) == 0 as ::core::ffi::c_int)
-            || sscanf(
-                t3_line_array
-                    .offset(strlen(&raw mut t3_font_scale_str as *mut ::core::ffi::c_char) as isize)
-                    .offset(1 as ::core::ffi::c_int as isize),
-                b"%g\0" as *const u8 as *const ::core::ffi::c_char,
-                &raw mut t3_font_scale,
-            ) < 1 as ::core::ffi::c_int
-            || t3_font_scale <= 0 as ::core::ffi::c_int as ::core::ffi::c_float
-            || t3_font_scale > 1000 as ::core::ffi::c_int as ::core::ffi::c_float
-        {
+        let written = t3_line_ptr.addr().checked_sub(t3_line_array.addr())
+            .filter(|&written| !t3_line_array.is_null() && written < t3_line_limit)
+            .unwrap_or_else(|| {
+                crate::utils::pdftex_fail_args(c"invalid font scale initialized line span".as_ptr(), &[])
+            });
+        let line = std::slice::from_raw_parts(t3_line_array.cast::<u8>(), written);
+        let Ok(scale) = font_scale_line(line) else {
             crate::utils::pdftex_fail_args(
                 b"missing or invalid font scale\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
             );
-        }
+        };
+        t3_font_scale = scale;
         while feof(t3_file) == 0 {
             t3_write_glyph(f);
         }

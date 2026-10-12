@@ -1,7 +1,10 @@
+use crate::byte_string::{memcpy, strcat, strchr, strcmp, strcpy, strlen, strncmp, strncpy, strstr};
+
 use crate::backend_grammar::{
     charstring_count, encoding_assignment, encoding_copy, encoding_interval, predefined_encoding,
 };
 use crate::backend_parse::{checked_span, FieldError};
+use crate::float_parse::{type1_number, FloatError};
 use crate::openclose::open_input;
 use crate::stdio::{feof, ungetc};
 use crate::support::{xfclose, xfopen};
@@ -12,45 +15,6 @@ use crate::openclose::{xmalloc, xrealloc, xstrdup};
 
 extern "C" {
     fn atan(_: ::core::ffi::c_double) -> ::core::ffi::c_double;
-    fn sscanf(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
-    fn memcpy(
-        __dst: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-    fn strcat(
-        __s1: *mut ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strcpy(
-        __dst: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
-    fn strncpy(
-        __dst: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn strstr(
-        __big: *const ::core::ffi::c_char,
-        __little: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn __assert_rtn(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -1171,16 +1135,11 @@ unsafe extern "C" fn t1_scan_num(
     mut p: *mut ::core::ffi::c_char,
     mut r: *mut *mut ::core::ffi::c_char,
 ) -> ::core::ffi::c_float {
-    let mut f: ::core::ffi::c_float = 0.;
-    if *p as ::core::ffi::c_int == ' ' as i32 {
-        p = p.offset(1);
+    let parsed = type1_number(t1_written_suffix(p));
+    if matches!(parsed, Err(FloatError::NonFinite | FloatError::Overflow)) {
+        crate::utils::pdftex_fail_args(c"invalid pfb, floating field out of range".as_ptr(), &[]);
     }
-    if sscanf(
-        p,
-        b"%g\0" as *const u8 as *const ::core::ffi::c_char,
-        &raw mut f,
-    ) != 1 as ::core::ffi::c_int
-    {
+    let Ok(parsed) = parsed else {
         p = strchr(t1_line_array, 0 as ::core::ffi::c_int)
             .offset(-(1 as ::core::ffi::c_int as isize));
         if *p as ::core::ffi::c_int == 10 as ::core::ffi::c_int {
@@ -1190,20 +1149,11 @@ unsafe extern "C" fn t1_scan_num(
             b"a number expected: `%s'\0" as *const u8 as *const ::core::ffi::c_char,
             &[crate::utils::PrintfArg::from(t1_line_array)],
         );
-    }
+    };
     if !r.is_null() {
-        while isdigit(*p as ::core::ffi::c_uchar as ::core::ffi::c_int) != 0
-            || *p as ::core::ffi::c_int == '.' as i32
-            || *p as ::core::ffi::c_int == 'e' as i32
-            || *p as ::core::ffi::c_int == 'E' as i32
-            || *p as ::core::ffi::c_int == '+' as i32
-            || *p as ::core::ffi::c_int == '-' as i32
-        {
-            p = p.offset(1);
-        }
-        *r = p;
+        *r = p.add(parsed.consumed);
     }
-    return f;
+    return parsed.value;
 }
 unsafe extern "C" fn str_suffix(
     mut begin_buf: *const ::core::ffi::c_char,

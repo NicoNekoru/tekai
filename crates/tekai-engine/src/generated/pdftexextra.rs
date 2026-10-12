@@ -1,3 +1,5 @@
+use crate::byte_string::{memcpy, strcat, strchr, strcmp, strcpy, strlen, strncmp, strncpy};
+
 pub use crate::core_types::{
     AsciiCode as ASCIIcode, Boolean as boolean, CharUsedArray as charusedarray,
     DestinationNameEntry as destnameentry, EightBits as eightbits, FmEntryPtr as fmentryptr,
@@ -44,8 +46,6 @@ extern "C" {
         __buf: *const ::core::ffi::c_void,
         __nbyte: size_t,
     ) -> ssize_t;
-    static mut optarg: *mut ::core::ffi::c_char;
-    static mut optind: ::core::ffi::c_int;
     fn signal(
         _: ::core::ffi::c_int,
         _: Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()>,
@@ -53,36 +53,6 @@ extern "C" {
     fn abort() -> !;
     fn getenv(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn system(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn memcpy(
-        __dst: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-    fn strcat(
-        __s1: *mut ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strcpy(
-        __dst: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
-    fn strncpy(
-        __dst: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_char;
     fn strtok(
         __str: *mut ::core::ffi::c_char,
         __sep: *const ::core::ffi::c_char,
@@ -105,13 +75,6 @@ extern "C" {
     fn kpse_set_program_name(argv0: const_string, progname: const_string);
     fn fcntl(_: ::core::ffi::c_int, _: ::core::ffi::c_int, ...) -> ::core::ffi::c_int;
     fn usagehelp(message: *mut const_string, bug_email: const_string);
-    fn getopt_long_only(
-        argc_0: ::core::ffi::c_int,
-        argv_0: *const *mut ::core::ffi::c_char,
-        shortopts: *const ::core::ffi::c_char,
-        longopts: *const option,
-        longind: *mut ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
     fn kpse_set_program_enabled(fmt: kpse_file_format_type, value: boolean, level: kpse_src_type);
     fn kpse_maketex_option(fmtname: const_string, value: boolean);
     fn kpse_find_file(
@@ -389,14 +352,6 @@ pub struct kpathsea_instance {
     pub saved_count: ::core::ffi::c_int,
 }
 pub type kpathsea = *mut kpathsea_instance;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct option {
-    pub name: *const ::core::ffi::c_char,
-    pub has_arg: ::core::ffi::c_int,
-    pub flag: *mut ::core::ffi::c_int,
-    pub val: ::core::ffi::c_int,
-}
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct _RuneEntry {
@@ -2459,6 +2414,9 @@ pub static mut argv: *mut *mut ::core::ffi::c_char =
     ::core::ptr::null::<*mut ::core::ffi::c_char>() as *mut *mut ::core::ffi::c_char;
 #[no_mangle]
 pub static mut argc: ::core::ffi::c_int = 0;
+// Temporary generated caller state. Move this into invocation-owned state with
+// argv; parse_options resets it for each invocation and never touches libc.
+static mut optind: ::core::ffi::c_int = 1;
 static mut user_progname: const_string = ::core::ptr::null::<::core::ffi::c_char>();
 static mut user_cnf_lines: *mut string = ::core::ptr::null::<string>() as *mut string;
 static mut user_cnf_nlines: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
@@ -3064,604 +3022,227 @@ unsafe extern "C" fn get_input_file_name() -> string {
     }
     return input_file_name;
 }
-static mut long_options: [option; 41] = unsafe {
-    [
-        option {
-            name: DUMP_OPTION.as_ptr(),
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"efmt\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"cnf-line\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"help\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"ini\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const iniversion as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"interaction\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"halt-on-error\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const haltonerrorp as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"kpathsea-debug\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"progname\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"recorder\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const recorder_enabled as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"version\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"ipc\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const ipcon as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"ipc-start\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const ipcon as *mut ::core::ffi::c_int,
-            val: 2 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"mltex\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const mltexp as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"enc\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const enctexp as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"etex\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const etexp as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"output-comment\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"draftmode\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"output-format\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"shell-escape\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const shellenabledp as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"no-shell-escape\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const shellenabledp as *mut ::core::ffi::c_int,
-            val: -(1 as ::core::ffi::c_int),
-        },
-        option {
-            name: b"enable-write18\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const shellenabledp as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"disable-write18\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const shellenabledp as *mut ::core::ffi::c_int,
-            val: -(1 as ::core::ffi::c_int),
-        },
-        option {
-            name: b"shell-restricted\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"debug-format\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const debugformatfile as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"src-specials\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 2 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"file-line-error-style\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const filelineerrorstylep as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"no-file-line-error-style\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const filelineerrorstylep as *mut ::core::ffi::c_int,
-            val: -(1 as ::core::ffi::c_int),
-        },
-        option {
-            name: b"file-line-error\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const filelineerrorstylep as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"no-file-line-error\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const filelineerrorstylep as *mut ::core::ffi::c_int,
-            val: -(1 as ::core::ffi::c_int),
-        },
-        option {
-            name: b"jobname\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"output-directory\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"parse-first-line\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const parsefirstlinep as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"no-parse-first-line\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const parsefirstlinep as *mut ::core::ffi::c_int,
-            val: -(1 as ::core::ffi::c_int),
-        },
-        option {
-            name: b"translate-file\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"default-translate-file\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"8bit\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: &raw const eightbitp as *mut ::core::ffi::c_int,
-            val: 1 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"mktex\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"no-mktex\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: b"synctex\0" as *const u8 as *const ::core::ffi::c_char,
-            has_arg: 1 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-        option {
-            name: ::core::ptr::null::<::core::ffi::c_char>(),
-            has_arg: 0 as ::core::ffi::c_int,
-            flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
-            val: 0 as ::core::ffi::c_int,
-        },
-    ]
-};
-unsafe extern "C" fn parse_options(mut argc_0: ::core::ffi::c_int, mut argv_0: *mut string) {
-    let mut g_0: ::core::ffi::c_int = 0;
-    let mut option_index: ::core::ffi::c_int = 0;
+unsafe fn parse_options(argc_0: ::core::ffi::c_int, argv_0: *mut string) {
+    use crate::engine_options::{EngineOption, Parser};
+    use std::os::unix::ffi::OsStrExt;
+
+    // The invocation owner retains the NUL-terminated backing buffers. The
+    // Rust parser borrows their bytes and never reorders or mutates argv.
+    let arguments = (0..argc_0)
+        .map(|index| CStr::from_ptr(*argv_0.add(index as usize)).to_bytes())
+        .collect::<Vec<_>>();
+    let mut parser = Parser::new(&arguments);
+    let process_program = std::env::args_os()
+        .next()
+        .unwrap_or_else(|| "tekai-engine".into());
+    optind = parser.next_index() as ::core::ffi::c_int;
     loop {
-        g_0 = getopt_long_only(
-            argc_0,
-            argv_0,
-            b"+\0" as *const u8 as *const ::core::ffi::c_char,
-            &raw mut long_options as *mut option,
-            &raw mut option_index,
-        );
-        if g_0 == -(1 as ::core::ffi::c_int) {
-            break;
-        }
-        if g_0 == '?' as i32 {
-            continue;
-        }
-        if !(g_0 == 0 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
-            __assert_rtn(
-                b"parse_options\0" as *const u8 as *const ::core::ffi::c_char,
-                b"texmfmp.c\0" as *const u8 as *const ::core::ffi::c_char,
-                1884 as ::core::ffi::c_int,
-                b"g == 0\0" as *const u8 as *const ::core::ffi::c_char,
-            );
-        } else {
+        let result = parser.next_option();
+        optind = parser.next_index() as ::core::ffi::c_int;
+        let parsed = match result {
+            Ok(Some(parsed)) => parsed,
+            Ok(None) => break,
+            Err(error) => {
+                // As before, option errors print a diagnostic and parsing
+                // continues. They do not force the engine's exit status.
+                let _ = std::io::Write::write_all(
+                    &mut std::io::stderr().lock(),
+                    &error.diagnostic(process_program.as_os_str().as_bytes()),
+                );
+                continue;
+            }
         };
-        if !long_options[option_index as usize].name.is_null()
-            && !(b"kpathsea-debug\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"kpathsea-debug\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            kpse_def_inst.debug |=
-                decimal_i32_legacy(CStr::from_ptr(optarg).to_bytes()).value as ::core::ffi::c_uint;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"progname\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"progname\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            user_progname = optarg as const_string;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"cnf-line\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"cnf-line\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            if user_cnf_lines.is_null() {
-                user_cnf_nlines = 1 as ::core::ffi::c_uint;
-                user_cnf_lines =
-                    xmalloc(::core::mem::size_of::<const_string>() as size_t) as *mut string;
-            } else {
-                user_cnf_nlines = user_cnf_nlines.wrapping_add(1);
-                user_cnf_lines = xrealloc(
-                    user_cnf_lines as address,
-                    (user_cnf_nlines as size_t)
-                        .wrapping_mul(::core::mem::size_of::<const_string>() as size_t),
-                ) as *mut string;
+        // Only this generated caller boundary needs a legacy pointer. Every
+        // accepted argument is a suffix of an invocation-owned C string, so
+        // its original NUL terminator and address remain valid after return.
+        let optarg: *mut ::core::ffi::c_char =
+            parsed.argument.map_or(::core::ptr::null_mut(), |argument| {
+                argument.as_ptr().cast_mut().cast()
+            });
+        match parsed.option {
+            EngineOption::Ini => iniversion = true_0,
+            EngineOption::HaltOnError => haltonerrorp = true_0,
+            EngineOption::Recorder => recorder_enabled = true_0,
+            EngineOption::Ipc => ipcon = 1,
+            EngineOption::Mltex => mltexp = true_0,
+            EngineOption::Enc => enctexp = true_0,
+            EngineOption::Etex => etexp = true_0,
+            EngineOption::ShellEscape | EngineOption::EnableWrite18 => shellenabledp = 1,
+            EngineOption::NoShellEscape | EngineOption::DisableWrite18 => shellenabledp = -1,
+            EngineOption::DebugFormat => debugformatfile = true_0,
+            EngineOption::EightBit => eightbitp = true_0,
+            EngineOption::FileLineErrorStyle | EngineOption::FileLineError => {
+                filelineerrorstylep = 1
             }
-            let ref mut fresh28 = *user_cnf_lines
-                .offset(user_cnf_nlines.wrapping_sub(1 as ::core::ffi::c_uint) as isize);
-            *fresh28 = xstrdup(optarg as const_string);
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"jobname\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"jobname\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            c_job_name = normalize_quotes(
-                optarg as const_string,
-                b"jobname\0" as *const u8 as const_string,
-            ) as const_string;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"fmt\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"fmt\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            dump_name = optarg as const_string;
-            dumpoption = true_0 as boolean;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"efmt\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"efmt\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            dump_name = optarg as const_string;
-            dumpoption = true_0 as boolean;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"output-directory\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"output-directory\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            output_directory = optarg as string;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"output-comment\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"output-comment\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            let mut len: ::core::ffi::c_uint = strlen(optarg) as ::core::ffi::c_uint;
-            if len < 256 as ::core::ffi::c_uint {
-                outputcomment = optarg;
-            } else {
-                fputs(
-                    b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                    crate::stdio::stderr(),
-                );
-                crate::stdio::fprintf_args(
-                    crate::stdio::stderr(),
-                    b"Comment truncated to 255 characters from %d. (%s)\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    &[
-                        crate::utils::PrintfArg::from(len),
-                        crate::utils::PrintfArg::from(optarg),
-                    ],
-                );
-                fputs(
-                    b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    crate::stdio::stderr(),
-                );
-                fflush(crate::stdio::stderr());
-                outputcomment = xmalloc(256 as size_t) as *mut ::core::ffi::c_char;
-                strncpy(outputcomment, optarg, 255 as size_t);
-                *outputcomment.offset(255 as ::core::ffi::c_int as isize) =
-                    0 as ::core::ffi::c_char;
+            EngineOption::NoFileLineErrorStyle | EngineOption::NoFileLineError => {
+                filelineerrorstylep = -1
             }
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"ipc-start\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"ipc-start\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            ipc_open_out();
-            if ipc_is_open() == 0 {
-                if system(IPC_SERVER_CMD.as_ptr()) == 0 as ::core::ffi::c_int {
-                    let mut i: ::core::ffi::c_uint = 0;
-                    i = 0 as ::core::ffi::c_uint;
-                    while i < 20 as ::core::ffi::c_uint && ipc_is_open() == 0 {
-                        sleep(2 as ::core::ffi::c_uint);
+            EngineOption::ParseFirstLine => parsefirstlinep = 1,
+            EngineOption::NoParseFirstLine => parsefirstlinep = -1,
+            EngineOption::KpathseaDebug => {
+                kpse_def_inst.debug |=
+                    decimal_i32_legacy(parsed.argument.unwrap()).value as ::core::ffi::c_uint;
+            }
+            EngineOption::Progname => user_progname = optarg as const_string,
+            EngineOption::CnfLine => {
+                if user_cnf_lines.is_null() {
+                    user_cnf_nlines = 1;
+                    user_cnf_lines =
+                        xmalloc(::core::mem::size_of::<const_string>() as size_t) as *mut string;
+                } else {
+                    user_cnf_nlines = user_cnf_nlines.wrapping_add(1);
+                    user_cnf_lines = xrealloc(
+                        user_cnf_lines as address,
+                        (user_cnf_nlines as size_t)
+                            .wrapping_mul(::core::mem::size_of::<const_string>() as size_t),
+                    ) as *mut string;
+                }
+                *user_cnf_lines.offset(user_cnf_nlines.wrapping_sub(1) as isize) =
+                    xstrdup(optarg as const_string);
+            }
+            EngineOption::Jobname => {
+                c_job_name = normalize_quotes(
+                    optarg as const_string,
+                    b"jobname\0" as *const u8 as const_string,
+                ) as const_string;
+            }
+            EngineOption::Fmt | EngineOption::Efmt => {
+                dump_name = optarg as const_string;
+                dumpoption = true_0;
+            }
+            EngineOption::OutputDirectory => output_directory = optarg as string,
+            EngineOption::OutputComment => {
+                let len = parsed.argument.unwrap().len();
+                if len < 256 {
+                    outputcomment = optarg;
+                } else {
+                    fputs(
+                        b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
+                        crate::stdio::stderr(),
+                    );
+                    crate::stdio::fprintf_args(
+                        crate::stdio::stderr(),
+                        b"Comment truncated to 255 characters from %d. (%s)\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                        &[
+                            crate::utils::PrintfArg::from(len as ::core::ffi::c_uint),
+                            crate::utils::PrintfArg::from(optarg),
+                        ],
+                    );
+                    fputs(
+                        b".\n\0" as *const u8 as *const ::core::ffi::c_char,
+                        crate::stdio::stderr(),
+                    );
+                    fflush(crate::stdio::stderr());
+                    outputcomment = xmalloc(256 as size_t) as *mut ::core::ffi::c_char;
+                    strncpy(outputcomment, optarg, 255 as size_t);
+                    *outputcomment.add(255) = 0;
+                }
+            }
+            EngineOption::IpcStart => {
+                ipcon = 2;
+                // OS interaction stays in the caller, outside option parsing.
+                ipc_open_out();
+                if ipc_is_open() == 0 && system(IPC_SERVER_CMD.as_ptr()) == 0 {
+                    let mut i = 0;
+                    while i < 20 && ipc_is_open() == 0 {
+                        sleep(2);
                         ipc_open_out();
-                        i = i.wrapping_add(1);
+                        i += 1;
                     }
                 }
             }
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"shell-restricted\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"shell-restricted\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            shellenabledp = 1 as ::core::ffi::c_int;
-            restrictedshell = 1 as ::core::ffi::c_int;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"src-specials\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"src-specials\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            last_source_name =
-                xstrdup(b"\0" as *const u8 as const_string) as *mut ::core::ffi::c_char;
-            if optarg.is_null() {
-                insertsrcspecialeverypar = true_0 as boolean;
-                insertsrcspecialauto = true_0 as boolean;
-                srcspecialsoption = true_0 as boolean;
-                srcspecialsp = true_0 as boolean;
-            } else {
-                parse_src_specials_option(optarg as const_string);
+            EngineOption::ShellRestricted => {
+                shellenabledp = 1;
+                restrictedshell = 1;
             }
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"output-format\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"output-format\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            pdfoutputoption = 1 as ::core::ffi::c_int as integer;
-            if strcmp(optarg, b"dvi\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-            {
-                pdfoutputvalue = 0 as ::core::ffi::c_int as integer;
-            } else if strcmp(optarg, b"pdf\0" as *const u8 as *const ::core::ffi::c_char)
-                == 0 as ::core::ffi::c_int
-            {
-                pdfoutputvalue = 2 as ::core::ffi::c_int as integer;
-            } else {
-                fputs(
-                    b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                    crate::stdio::stderr(),
-                );
-                crate::stdio::fprintf_args(
-                    crate::stdio::stderr(),
-                    b"Ignoring unknown value `%s' for --output-format\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    &[crate::utils::PrintfArg::from(optarg)],
-                );
-                fputs(
-                    b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    crate::stdio::stderr(),
-                );
-                fflush(crate::stdio::stderr());
-                pdfoutputoption = 0 as ::core::ffi::c_int as integer;
+            EngineOption::SrcSpecials => {
+                last_source_name =
+                    xstrdup(b"\0" as *const u8 as const_string) as *mut ::core::ffi::c_char;
+                if parsed.argument.is_none() {
+                    insertsrcspecialeverypar = true_0;
+                    insertsrcspecialauto = true_0;
+                    srcspecialsoption = true_0;
+                    srcspecialsp = true_0;
+                } else {
+                    parse_src_specials_option(optarg as const_string);
+                }
             }
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"draftmode\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"draftmode\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            pdfdraftmodeoption = 1 as ::core::ffi::c_int as integer;
-            pdfdraftmodevalue = 1 as ::core::ffi::c_int as integer;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"translate-file\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"translate-file\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            translate_filename = optarg as string;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"default-translate-file\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"default-translate-file\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            default_translate_filename = optarg as string;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"mktex\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"mktex\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            kpse_maketex_option(optarg as const_string, true_0);
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"no-mktex\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"no-mktex\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            kpse_maketex_option(optarg as const_string, false_0);
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"interaction\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"interaction\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            if !optarg.is_null()
-                && !(b"batchmode\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-                && strcmp(
-                    optarg,
-                    b"batchmode\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0 as ::core::ffi::c_int
-            {
-                interactionoption = 0 as ::core::ffi::c_uchar;
-            } else if !optarg.is_null()
-                && !(b"nonstopmode\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-                && strcmp(
-                    optarg,
-                    b"nonstopmode\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0 as ::core::ffi::c_int
-            {
-                interactionoption = 1 as ::core::ffi::c_uchar;
-            } else if !optarg.is_null()
-                && !(b"scrollmode\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-                && strcmp(
-                    optarg,
-                    b"scrollmode\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0 as ::core::ffi::c_int
-            {
-                interactionoption = 2 as ::core::ffi::c_uchar;
-            } else if !optarg.is_null()
-                && !(b"errorstopmode\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-                && strcmp(
-                    optarg,
-                    b"errorstopmode\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0 as ::core::ffi::c_int
-            {
-                interactionoption = 3 as ::core::ffi::c_uchar;
-            } else {
-                fputs(
-                    b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
-                    crate::stdio::stderr(),
-                );
-                crate::stdio::fprintf_args(
-                    crate::stdio::stderr(),
-                    b"Ignoring unknown argument `%s' to --interaction\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    &[crate::utils::PrintfArg::from(optarg)],
-                );
-                fputs(
-                    b".\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    crate::stdio::stderr(),
-                );
-                fflush(crate::stdio::stderr());
+            EngineOption::OutputFormat => {
+                pdfoutputoption = 1;
+                match parsed.argument.unwrap() {
+                    b"dvi" => pdfoutputvalue = 0,
+                    b"pdf" => pdfoutputvalue = 2,
+                    _ => {
+                        fputs(
+                            b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
+                            crate::stdio::stderr(),
+                        );
+                        crate::stdio::fprintf_args(
+                            crate::stdio::stderr(),
+                            b"Ignoring unknown value `%s' for --output-format\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[crate::utils::PrintfArg::from(optarg)],
+                        );
+                        fputs(
+                            b".\n\0" as *const u8 as *const ::core::ffi::c_char,
+                            crate::stdio::stderr(),
+                        );
+                        fflush(crate::stdio::stderr());
+                        pdfoutputoption = 0;
+                    }
+                }
             }
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"synctex\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"synctex\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            synctexoption = signed_prefix(CStr::from_ptr(optarg).to_bytes(), IntegerBase::Auto)
-                .value as integer;
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"help\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"help\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            usagehelp(
+            EngineOption::Draftmode => {
+                pdfdraftmodeoption = 1;
+                pdfdraftmodevalue = 1;
+            }
+            EngineOption::TranslateFile => translate_filename = optarg as string,
+            EngineOption::DefaultTranslateFile => default_translate_filename = optarg as string,
+            EngineOption::Mktex => kpse_maketex_option(optarg as const_string, true_0),
+            EngineOption::NoMktex => kpse_maketex_option(optarg as const_string, false_0),
+            EngineOption::Interaction => match parsed.argument.unwrap() {
+                b"batchmode" => interactionoption = 0,
+                b"nonstopmode" => interactionoption = 1,
+                b"scrollmode" => interactionoption = 2,
+                b"errorstopmode" => interactionoption = 3,
+                _ => {
+                    fputs(
+                        b"warning: (kpathsea) \0" as *const u8 as *const ::core::ffi::c_char,
+                        crate::stdio::stderr(),
+                    );
+                    crate::stdio::fprintf_args(
+                        crate::stdio::stderr(),
+                        b"Ignoring unknown argument `%s' to --interaction\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                        &[crate::utils::PrintfArg::from(optarg)],
+                    );
+                    fputs(
+                        b".\n\0" as *const u8 as *const ::core::ffi::c_char,
+                        crate::stdio::stderr(),
+                    );
+                    fflush(crate::stdio::stderr());
+                }
+            },
+            EngineOption::Synctex => {
+                synctexoption =
+                    signed_prefix(parsed.argument.unwrap(), IntegerBase::Auto).value as integer;
+            }
+            EngineOption::Help => usagehelp(
                 &raw mut PDFTEXHELP as *mut const_string,
                 BUG_ADDRESS.as_ptr(),
-            );
-        } else if !long_options[option_index as usize].name.is_null()
-            && !(b"version\0" as *const u8 as *const ::core::ffi::c_char).is_null()
-            && strcmp(
-                long_options[option_index as usize].name,
-                b"version\0" as *const u8 as *const ::core::ffi::c_char,
-            ) == 0 as ::core::ffi::c_int
-        {
-            let mut versions: *mut ::core::ffi::c_char =
-                ::core::ptr::null_mut::<::core::ffi::c_char>();
-            initversionstring(&raw mut versions);
-            printversionandexit(
-                b"This is pdfTeX, Version 3.141592653-2.6-1.40.29\0" as *const u8 as const_string,
-                COPYRIGHT_HOLDER.as_ptr(),
-                ::core::ptr::null::<::core::ffi::c_char>(),
-                versions as const_string,
-            );
+            ),
+            EngineOption::Version => {
+                let mut versions: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
+                initversionstring(&raw mut versions);
+                printversionandexit(
+                    b"This is pdfTeX, Version 3.141592653-2.6-1.40.29\0" as *const u8
+                        as const_string,
+                    COPYRIGHT_HOLDER.as_ptr(),
+                    ::core::ptr::null(),
+                    versions as const_string,
+                );
+            }
         }
     }
     if !output_directory.is_null() {

@@ -1,5 +1,8 @@
+use crate::byte_string::{strcasecmp, strchr, strcmp, strlen, strncmp, strstr};
+
 use crate::backend_grammar::platform_encoding;
 use crate::backend_parse::FieldError;
+use crate::float_parse::{map_operand, scaled_map_operand, FloatError};
 use crate::integer_parse::{decimal_i32_legacy, signed_prefix, IntegerBase};
 use crate::openclose::open_input;
 use crate::stdio::feof;
@@ -11,31 +14,6 @@ use crate::allocation::free;
 use crate::openclose::{xmalloc, xstrdup};
 
 extern "C" {
-    fn sscanf(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
-    fn strstr(
-        __big: *const ::core::ffi::c_char,
-        __little: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strcasecmp(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     fn __assert_rtn(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
@@ -1149,7 +1127,6 @@ unsafe extern "C" fn fm_scan_line() {
     let mut a: ::core::ffi::c_int = 0;
     let mut b: ::core::ffi::c_int = 0;
     let mut c: ::core::ffi::c_int = 0;
-    let mut j: ::core::ffi::c_int = 0;
     let mut u: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     let mut v: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     let mut d: ::core::ffi::c_float = 0.;
@@ -1355,14 +1332,24 @@ unsafe extern "C" fn fm_scan_line() {
                                 if *r as ::core::ffi::c_int == ' ' as i32 {
                                     r = r.offset(1);
                                 }
-                                if sscanf(
-                                    r,
-                                    b"%f %n\0" as *const u8 as *const ::core::ffi::c_char,
-                                    &raw mut d,
-                                    &raw mut j,
-                                ) > 0 as ::core::ffi::c_int
-                                {
-                                    s = r.offset(j as isize);
+                                let end = initialized_line_end
+                                    .get_or_insert_with(|| r.add(CStr::from_ptr(r).to_bytes().len()));
+                                let remaining = end.addr().checked_sub(r.addr()).unwrap_or_else(|| {
+                                    crate::utils::pdftex_fail_args(c"invalid map line cursor".as_ptr(), &[])
+                                });
+                                let field = std::slice::from_raw_parts(r.cast::<u8>(), remaining);
+                                let operand = map_operand(field);
+                                if matches!(operand, Err(FloatError::NonFinite | FloatError::Overflow)) {
+                                    crate::utils::pdftex_warn_args(
+                                        c"invalid entry for `%s': floating field out of range".as_ptr(),
+                                        &[crate::utils::PrintfArg::from((*fm).tfm_name)],
+                                    );
+                                    delete_fm_entry(fm);
+                                    return;
+                                }
+                                if let Ok(operand) = operand {
+                                    d = operand.value;
+                                    s = r.add(operand.consumed);
                                     if *s.offset(-(1 as ::core::ffi::c_int as isize))
                                         as ::core::ffi::c_int
                                         == 'E' as i32
@@ -1378,16 +1365,15 @@ unsafe extern "C" fn fm_scan_line() {
                                         9 as size_t,
                                     ) == 0 as ::core::ffi::c_int
                                     {
-                                        d = (d as ::core::ffi::c_double * 1000.0f64)
-                                            as ::core::ffi::c_float;
-                                        (*fm).slant = (if d > 0 as ::core::ffi::c_int
-                                            as ::core::ffi::c_float
-                                        {
-                                            d as ::core::ffi::c_double + 0.5f64
-                                        } else {
-                                            d as ::core::ffi::c_double - 0.5f64
-                                        })
-                                            as integer;
+                                        let Ok(slant) = scaled_map_operand(d) else {
+                                            crate::utils::pdftex_warn_args(
+                                                c"invalid entry for `%s': SlantFont value out of range".as_ptr(),
+                                                &[crate::utils::PrintfArg::from((*fm).tfm_name)],
+                                            );
+                                            delete_fm_entry(fm);
+                                            return;
+                                        };
+                                        (*fm).slant = slant;
                                         r = s.offset(9 as isize);
                                     } else if strncmp(
                                         s,
@@ -1395,16 +1381,15 @@ unsafe extern "C" fn fm_scan_line() {
                                         10 as size_t,
                                     ) == 0 as ::core::ffi::c_int
                                     {
-                                        d = (d as ::core::ffi::c_double * 1000.0f64)
-                                            as ::core::ffi::c_float;
-                                        (*fm).extend = (if d > 0 as ::core::ffi::c_int
-                                            as ::core::ffi::c_float
-                                        {
-                                            d as ::core::ffi::c_double + 0.5f64
-                                        } else {
-                                            d as ::core::ffi::c_double - 0.5f64
-                                        })
-                                            as integer;
+                                        let Ok(extend) = scaled_map_operand(d) else {
+                                            crate::utils::pdftex_warn_args(
+                                                c"invalid entry for `%s': ExtendFont value out of range".as_ptr(),
+                                                &[crate::utils::PrintfArg::from((*fm).tfm_name)],
+                                            );
+                                            delete_fm_entry(fm);
+                                            return;
+                                        };
+                                        (*fm).extend = extend;
                                         if (*fm).extend == 1000 as ::core::ffi::c_int {
                                             (*fm).extend = 0 as ::core::ffi::c_int as integer;
                                         }
