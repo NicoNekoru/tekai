@@ -39,6 +39,10 @@ cargo build -p tekai-engine \
   --locked
 cargo test --workspace --locked -- --test-threads=1
 cargo build --release --locked
+rustup run 1.89.0 cargo check --workspace --all-targets --locked
+rustup run 1.89.0 cargo check -p tekai-engine --bin tekai-engine \
+  --no-default-features --features standalone-binary --locked
+python3 -B -m unittest discover -s tools -p 'test_*.py'
 ```
 
 Focused commands are useful during iteration:
@@ -56,6 +60,19 @@ cargo test -p tekai-pdftex
 Integration tests that depend on optional external programs skip when those
 programs are unavailable. Do not interpret a skipped optional integration as
 proof that the external workflow works on the current machine.
+Run affected optional suites with `--show-output` to retain their skip notices.
+Report missing tools explicitly. Hosted BasicTeX results and local bundled
+results establish different coverage.
+
+Use fresh task-owned target directories for minimum-toolchain checks rather
+than mixing compiler versions in a development cache. Disable C and C++
+compilers with `CC=/usr/bin/false CXX=/usr/bin/false` for candidate checks.
+CI checks Rust 1.89 on ARM separately from the current-toolchain test matrix.
+Before pushing a benchmark-policy change, run the full paired gate below with
+actual locally built revisions, then run both hosted architectures. A local
+ARM pass cannot certify hosted Intel behavior. Keep this preflight's reports
+and binaries, and move its completed compilation directories to Trash when
+reclaiming disk space. Leave unrelated developer targets and caches alone.
 
 ### Property based tests
 
@@ -655,6 +672,10 @@ is research history. It is not the supported architecture.
 
 1. Update `CHANGELOG.md` and the package version.
 2. Run the full Rust, help, and rendered-PDF gates above.
+   Check the advertised minimum Rust toolchain. Preserve local optional-test
+   skip evidence and the final candidate's full paired comparison on both
+   hosted architectures. Keep inconclusive performance blocking unless an
+   explicit release decision accepts and publishes that qualification.
 3. Confirm every commit subject is a single printable ASCII line.
 4. Tag `v<version>` on `main` and create the matching GitHub release.
 5. Update `Formula/tekai.rb` in `NicoNekoru/homebrew-tap` with the release URL

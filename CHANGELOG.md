@@ -22,6 +22,10 @@ versioning.
   Preserve generated-file observations across lookup eviction and later
   non-overwriting passes, with bounded current-pass and whole-build ledgers.
   Record dependencies during draft passes as well as final passes.
+- Prevent scheduler-managed PGF externalization from publishing whole-document
+  cache state without figure-child dependency provenance. Rebuild the parent
+  while reusing up-to-date figures through `make`, and invalidate unsafe states
+  published by earlier builds.
 - Bound retained lookup indexes and decoded PNG pixels. Drop compressed PNG
   buffers after decoding and remove the redundant unbounded bundled-name cache.
 - Prune preview snapshots to active dependencies and cap their retained size.

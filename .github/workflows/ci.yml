@@ -50,6 +50,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  verify-msrv:
+    name: Rust 1.89 MSRV compile check (macOS ARM)
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      RUST_TOOLCHAIN: '1.89.0'
+      CARGO_INCREMENTAL: '0'
+      CC: /usr/bin/false
+      CXX: /usr/bin/false
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install the minimum supported Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustc -Vv
+
+      - name: Compile all workspace targets and the standalone engine
+        run: |
+          export CARGO_TARGET_DIR="$(mktemp -d "${{ runner.temp }}/tekai-msrv-target.XXXXXX")"
+          cargo check --workspace --all-targets --locked
+          # The engine binary is excluded unless its required feature is enabled.
+          cargo check -p tekai-engine --bin tekai-engine --no-default-features --features standalone-binary --locked
+
   verify-light:
     name: Rust and TeX lookup (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

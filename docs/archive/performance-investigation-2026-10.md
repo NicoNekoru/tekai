@@ -1038,3 +1038,181 @@ The default preserves both core architectures and the performance profile's
 existing runner selection. An Intel-only full dispatch still runs portable
 runner tests and every Intel correctness and strict performance gate. It uses
 the free `macos-15-intel` GitHub runner and creates no release.
+
+## Archived ownership checkpoints and remote comparisons, 12 October 2026
+
+The following record was moved from the status ledger during release cleanup.
+Its checkpoint totals and remote verdicts remain as originally recorded.
+Harness pass counts can include optional tests that return early, so they do
+not establish that every installed-tool workflow ran. Later `bd9bf45` evidence
+and the prospective policy change belong to the
+[current ledger](../performance-audit.md). The change does not rescore these
+historical reports.
+
+### Rust ownership checkpoints
+
+Local macOS workspace checks pass with C and C++ compilers disabled. CI now
+enforces this for candidate builds. BibTeX uses a Rust-only bridge, and
+compression uses Rust backends. Tekai's release support remains macOS.
+The engine stays a Rust library. Release builds retain fat LTO.
+
+Rust now owns engine allocations, decimal/integer formatting and engine streams.
+Streams own files, console access, pipes and gzip codecs. Read and write buffers
+have explicit bounds. EOF, write failures and retries cannot replay old input or
+grow retained output without limit. Compatibility properties use native
+formatting and stream implementations as test-only oracles.
+
+Integer prefix conversion also uses Rust byte slices, with constant storage,
+linear digit work, explicit overflow and consumed offsets. The replaced native
+integer functions remain test-only oracles. Actual CLI cases cover SyncTeX base selection and
+epoch success and failure paths.
+
+TrueType glyph selection and composite references check their array domains.
+Reserved glyphs own their output slots once. Unsigned optional indices replace
+the signed sentinel. An owned four-glyph font fixture verifies actual embedded
+outlines, metrics and every byte-code mapping. This is not a complete hostile
+font parser. The post table now has a checked Rust parser and stack-owned indexed
+names. One pass reads the referenced string prefix, and glyph lookups do not
+repeat string walks. Output indices preserve the full unsigned range. An owned
+304-glyph font verifies all 302 custom names across the old 256-name wrap, and
+malformed records fail through ordinary diagnostics. Legacy non-NUL name bytes
+through 255 bytes remain accepted. Name tables now retain only the union of
+referenced strings, at most 131070 bytes, and check actual storage offsets,
+format-1 language tags, UTF-16 lengths and output fields. The subset fallback
+uses exact suffix ranks and common-prefix queries rather than repeatedly walking
+long overlapping names. Other font-table readers still need checked ownership
+and bounds. The compact planner has bounded work but is not a globally optimal
+packing solver. It may reject a layout that requires a different shared-string
+assignment to fit the format's 16-bit offsets.
+
+Initialization now uses ordinary Rust calls. The core modules share one type
+family and checked state imports instead of duplicated external declarations.
+Layout tests pin field offsets and union-byte views to preserve existing format
+files. Rounding and termination also use checked Rust calls. Backend ABI
+connections and global ownership remain unfinished.
+
+The local name-table and backend-grammar checkpoint passed 742 workspace unit
+tests, including 266 engine tests, with 512 property cases. One unrelated unit
+test remains ignored. It also passed 14 no-system-TeX lookup tests, 11 compiler
+cache tests, 17 self-contained CLI tests, six diagnostic-profile tests, two
+SyncTeX/epoch tests, 366 Python policy tests and all 11 required runtime regression
+probes. Fresh format generation and loading passed. All 99 pages matched pinned
+reference pixels and extracted text. Strict Clippy, Rust 1.89 checks and the
+standalone engine build passed with C and C++ compilers disabled. The final
+candidate must repeat the required gates in CI.
+
+The exact engine still contains substantial pdfTeX-derived algorithms,
+raw-pointer callers, internal ABI connections and mutable global state. Three
+native floating-point scans, string utilities, option parsing and regex remain
+to be replaced. Fixed backend integer scans now use borrowed Rust grammars.
+Regex result storage is bounded by the pattern's possible captures, while its
+native compiler and matcher still require replacement.
+The Rust regex prototype is not production-ready. The remaining backend families
+need shared types and invocation-owned state. Necessary OS interfaces remain.
+Repeated in-process execution and leak freedom are not established. Remote
+timing for the new implementation is pending.
+
+Checked Rust backend cursors now validate SFD fields, inclusive ranges and
+destination capacity. Map-name assembly reserves its suffix and terminator
+before copies. Type1 copies validate both complete intervals. Overlength
+ToUnicode normalization returns a warning without changing the prior mapping.
+The owned CLI fixtures exercise valid boundary values and each rejection path.
+
+The Rust entry owns its argument bytes and claims permanent single entry before
+reset or initialization. Normal completion returns a typed result after flushing
+streams. One argument set stays alive for globals that borrow it. This prevents
+the entry from replacing borrowed backing or reinitializing global workspace
+pointers. Full invocation-owned engine state is still unfinished. Fatal exits
+bypass Rust drops, and several destructors leave stale global roots. Catching a
+panic across existing non-unwinding internal calls is not a safe replacement for
+process termination.
+
+Cache generation checks use filesystem metadata, including change times, to
+detect concurrent edits. They are not a snapshot filesystem. Cold dependency
+inventory can still revisit a directory already traversed by engine lookup.
+Unchanged warm checks do not recursively enumerate directories.
+
+### Remote comparisons and compact-state follow-up
+
+[Run 38132366060](https://github.com/NicoNekoru/tekai/actions/runs/38132366060)
+tested `9ae3878` against actual `main` at `0b6e92e`. Both architectures passed
+170 deterministic assertions and all 99 reference pages. Both core jobs failed
+the same generated-input lookup assertion, since fixed in `a27fe55`.
+
+| Case | Intel | ARM |
+| --- | --- | --- |
+| CLI startup | Pass, ratio 1.0761, interval 1.0483 to 1.0972 | Inconclusive, relative MAD 12.10% and 13.98%, ratio 1.0003 |
+| Nested lookup | Inconclusive, relative MAD 12.02% and 12.30%, ratio 0.1788 | Pass, ratio 0.1629 |
+| Image compilation | Pass, ratio 1.0132 | Pass, ratio 0.9934 |
+| Warm build cache | Initialization error, no scored samples | Initialization error, no scored samples |
+
+The first three cases each completed 128 pairs and 32 crossover units.
+Warm-cache initialization incorrectly searched generated output recursively,
+which intentionally prevents cache publication. The fixture correction in
+`9f78fe0` preserves that compiler guard and verifies genuine cache hits. Neither
+inconclusive result demonstrates a regression, but both remain blocking.
+
+ARM launch times drifted upward for both binaries, while parent memory and
+thread counts stayed nearly constant. Recorded host load fell during that drift,
+so it does not explain the slowdown. These measurements do not establish child
+leak freedom or isolate loader time. This run did not execute same-binary controls.
+
+Fresh Cargo release elapsed was 321.8 to 208.9 seconds on Intel and 145.3 to
+122.3 seconds on ARM. These are observed whole-candidate comparisons on shared
+runners, not a causal estimate for removing the C archive.
+
+[Run 38137192590](https://github.com/NicoNekoru/tekai/actions/runs/38137192590)
+tested `83156ff` against the same actual `main` on both free runner architectures.
+Later Rust ownership checkpoints are outside that comparison. Both architectures
+passed 170 deterministic assertions and all 99 reference pages. Both core jobs
+passed real installed-TeX lookup, then failed two outdated diagnostic-profile
+expectations, since corrected in `6d607e9`.
+
+| Case | Intel | ARM |
+| --- | --- | --- |
+| CLI startup | Inconclusive, ratio 1.0705, interval 1.0376 to 1.1014 | Pass, ratio 0.9828 |
+| Nested lookup | Pass, ratio 0.1837 | Pass, ratio 0.1727 |
+| Image compilation | Pass, ratio 1.0154 | Pass, ratio 1.0094 |
+| Warm build cache | Whole-run deadline, 16 complete units and an incomplete unit | Fail, ratio 1.9528, interval 1.9203 to 1.9776 |
+
+Intel completed 66 full warm pairs, then one baseline batch and 11 commands from
+the candidate batch. Its balanced 64-pair prefix had a descriptive ratio of
+2.0811, without a final warm verdict. Warm sampling began at 3170.116 seconds
+of its 3600-second budget. Scored compiler commands consumed 2687.570 seconds
+across the first three cases, including 1567.327 seconds for nested-lookup
+baseline commands. Checkpoints took 3.990 seconds. Reducing checkpoint work
+cannot resolve this deadline.
+The follow-up gives complete CI comparisons 5400 seconds and a 92-minute step
+limit. Local defaults remain 3600 seconds. All sample counts, matched iteration
+rules, intervals, thresholds and blocking exit decisions remain unchanged.
+
+All completed warm batches preserved state bytes and identity. Candidate
+opt-in profiles on both architectures recorded 3124 dependencies, 1031 metadata
+matches, 2093 virtual checks and no hash fallbacks. Median state parsing took
+31.812 milliseconds on Intel and 11.742 on ARM, compared with 7.394 and 4.559
+milliseconds for freshness checks. These profiles overlap and are diagnostic.
+They do not establish leak freedom or a final Intel warm timing result.
+
+The follow-up changes only dependency BuildState serialization to compact JSON,
+at schema 44, keeping every fingerprint, freshness guard and atomic publication
+rule. Legacy TOML files cause a safe rebuild and remain untouched. Auxiliary
+caches retain TOML. The benchmark pins either supported filename and format,
+so actual-main TOML baselines remain usable. Diagnostic protocol 4 identifies
+the new parser without relabeling observations from protocols 1 through 3.
+Local verification passed 744 workspace unit tests with 512 property cases,
+369 Python tests, all 104 compiler integrations, six diagnostic CLI tests,
+16 self-contained CLI tests and 14 no-system-TeX lookup tests. One unit and the
+separate large-paper CLI fixture were not run by those commands. Strict workspace
+Clippy and Rust 1.89 checks passed with C and C++ compilers disabled.
+
+A separate local ARM release diagnostic compared frozen `428f518` and `c3416d3`
+artifacts with 32 pairs, eight balanced units and 16 commands per batch. Source
+and executable hashes, all 1024 referenced inputs, PDF text, cache bytes and
+file identities remained verified. Eight opt-in measurements per artifact
+recorded identical route counts. Median state parsing changed from 8.846 to
+0.576 milliseconds, while freshness stayed at 2.882 and 2.824 milliseconds.
+The descriptive median unit ratio was 0.447. Builds and agent tests were idle
+during this measurement. An earlier overlapping Python-test trial remains
+recorded but excluded from timing evidence. This diagnostic uses the pre-JSON
+checkpoint rather than actual `main`, has fewer pairs than the required CI gate,
+and cannot replace remote verification.
