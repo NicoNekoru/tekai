@@ -1405,7 +1405,7 @@ fn latexmk_or_tectonic_build(options: &BuildOptions) -> Result<BuildReport> {
         bail!("--job-name is not supported with the tectonic engine");
     }
     if is_tekai_pdftex_engine(options.engine) {
-        bail!("the experimental tekai-pdftex engine only supports the direct runner");
+        bail!("the tekai-pdftex engine modes only support the direct runner");
     }
 
     let mut command = match options.engine {

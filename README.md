@@ -231,7 +231,7 @@ Historical evidence and known limits are recorded in these reports.
 | --- | --- |
 | `src/compiler.rs` | Direct build scheduler, caches, dependencies, auxiliary tools, and engine dispatch. |
 | `src/watch.rs` | Watch filtering, live preview, debounce, and structural fallbacks. |
-| `src/lint.rs` | Single-pass TeX-aware linting, safe fixes, prose policy, and suppression handling. |
+| `src/lint.rs` | Indexed TeX-aware scans, conservative fixes, prose policy, and suppression handling. |
 | `crates/tekai-engine` | Self-contained exact typesetting engine. |
 | `crates/tekai-pdftex` | Active experimental expansion core and approximate renderer. |
 | `editors/vscode` | VS Code diagnostics, builds, and embedded/system PDF preview. |
