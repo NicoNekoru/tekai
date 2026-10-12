@@ -55,8 +55,32 @@ struct Overlay {
     values: HashMap<OsString, OsString>,
     cnf: HashMap<OsString, OsString>,
     views: HashMap<OsString, usize>,
-    retained: Vec<CString>,
+    retained: Vec<RetainedString>,
     stored_bytes: usize,
+}
+
+// Convert the payload to raw ownership before publishing a borrowed pointer.
+// Moving or reborrowing a CString owner after as_ptr() can invalidate that
+// pointer's provenance even though the allocation's address does not change.
+// This handle never reconstructs an owning reference until all views are dead.
+struct RetainedString(NonNull<c_char>);
+
+impl RetainedString {
+    fn new(value: CString) -> Self {
+        Self(NonNull::new(value.into_raw()).expect("CString owns nonnull storage"))
+    }
+
+    fn as_ptr(&self) -> *mut c_char {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for RetainedString {
+    fn drop(&mut self) {
+        // SAFETY This handle uniquely owns the original into_raw allocation.
+        // Published views are read-only and end before the invocation drops it.
+        unsafe { drop(CString::from_raw(self.0.as_ptr())) };
+    }
 }
 
 impl Overlay {
@@ -116,7 +140,7 @@ impl Overlay {
             return Ok(ptr::null_mut());
         }
         if let Some(&index) = self.views.get(name) {
-            return Ok(self.retained[index].as_ptr().cast_mut());
+            return Ok(self.retained[index].as_ptr());
         }
         let Some(value) = self.values.get(name) else {
             return Ok(ptr::null_mut());
@@ -147,7 +171,8 @@ impl Overlay {
         self.views
             .try_reserve(1)
             .map_err(|_| EnvironmentError::Allocation)?;
-        let pointer = view.as_ptr().cast_mut();
+        let view = RetainedString::new(view);
+        let pointer = view.as_ptr();
         self.views.insert(name.to_owned(), self.retained.len());
         self.retained.push(view);
         self.stored_bytes = stored;
@@ -376,6 +401,45 @@ mod tests {
                 Err(std::env::VarError::NotUnicode(_))
             ));
         });
+    }
+
+    #[test]
+    fn historical_views_survive_growth_handle_moves_and_scope_reentry() {
+        let mut session = EnvironmentSession::new().unwrap();
+        let mut retained = Vec::new();
+        EnvironmentSession::scope(session.as_mut(), || {
+            for index in 0..128 {
+                let value = format!("owned historical value {index}");
+                set(OsStr::new("TEKAI_VIEW_GROWTH"), OsStr::new(&value)).unwrap();
+                let pointer = unsafe { getenv(c"TEKAI_VIEW_GROWTH".as_ptr()) };
+                retained.push((pointer, value));
+                for (old, expected) in &retained {
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(*old) }.to_bytes(),
+                        expected.as_bytes()
+                    );
+                }
+            }
+        })
+        .unwrap();
+        // Moving the pinned handle and reentering its scope must not reborrow
+        // the CString allocations backing earlier, still-live raw views.
+        let mut handles = vec![session];
+        for _ in 0..16 {
+            handles.push(EnvironmentSession::new().unwrap());
+        }
+        let mut session = handles.remove(0);
+        EnvironmentSession::scope(session.as_mut(), || {
+            remove(OsStr::new("TEKAI_VIEW_GROWTH")).unwrap();
+            assert!(unsafe { getenv(c"TEKAI_VIEW_GROWTH".as_ptr()) }.is_null());
+        })
+        .unwrap();
+        for (pointer, expected) in retained {
+            assert_eq!(
+                unsafe { CStr::from_ptr(pointer) }.to_bytes(),
+                expected.as_bytes()
+            );
+        }
     }
 
     #[test]

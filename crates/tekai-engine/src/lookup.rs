@@ -597,7 +597,12 @@ fn project_exclusions() -> Vec<PathBuf> {
     crate::environment::var_os("TEKAI_ENGINE_PROJECT_EXCLUDES")
         .map(|value| {
             std::env::split_paths(&value)
-                .filter_map(|path| path.canonicalize().ok())
+                .filter_map(|path| {
+                    crate::working_directory::resolve(&path)
+                        .ok()?
+                        .canonicalize()
+                        .ok()
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -1233,6 +1238,47 @@ mod tests {
             assert!(ACTIVE.with(Cell::get).is_none());
         })
         .unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn relative_project_exclusions_follow_the_owned_directory_without_chdir() {
+        let root = fixture();
+        fs::create_dir_all(root.join("a-generated")).unwrap();
+        fs::create_dir_all(root.join("z-source")).unwrap();
+        fs::write(root.join("a-generated/choice.sty"), "generated").unwrap();
+        fs::write(root.join("z-source/choice.sty"), "source").unwrap();
+        let process_directory = std::env::current_dir().unwrap();
+        let mut environment = crate::environment::EnvironmentSession::new().unwrap();
+        let mut directory =
+            crate::working_directory::WorkingDirectory::new(Some(root.clone())).unwrap();
+        crate::environment::EnvironmentSession::scope(environment.as_mut(), || {
+            crate::environment::set(
+                std::ffi::OsStr::new("TEKAI_ENGINE_PROJECT_EXCLUDES"),
+                std::ffi::OsStr::new("a-generated"),
+            )
+            .unwrap();
+            directory
+                .as_mut()
+                .scope(|| {
+                    assert_eq!(project_exclusions(), vec![root.join("a-generated")]);
+                    let entry = crate::search::SearchPath {
+                        path: ".//".to_string(),
+                        source: "project",
+                        bundled: false,
+                    };
+                    with_lookup_session(|| {
+                        assert_eq!(
+                            find_search_path(Path::new("."), "choice.sty", &entry),
+                            Some(root.join("z-source/choice.sty"))
+                        );
+                    });
+                    assert_eq!(std::env::current_dir().unwrap(), process_directory);
+                })
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(std::env::current_dir().unwrap(), process_directory);
         fs::remove_dir_all(root).unwrap();
     }
 

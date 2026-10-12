@@ -1,13 +1,23 @@
-//! Argument ownership for the process-isolated engine entry.
-//!
-//! Several generated globals retain pointers into the argument buffers after
-//! normal completion. Keep the one accepted argument set for the rest of the
-//! process until those aliases and the engine's other allocations have owners.
+//! Invocation configuration and argument ownership.
 
-use std::ffi::{c_char, c_int};
+use std::ffi::{c_char, c_int, OsString};
 use std::fmt;
+use std::path::PathBuf;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Per-call settings that do not mutate the host's directory or environment.
+#[derive(Clone, Debug, Default)]
+pub struct InvocationOptions {
+    /// Relative paths are resolved against the host directory at entry.
+    pub working_directory: Option<PathBuf>,
+    /// Apply these overrides to the invocation's parent-environment snapshot.
+    /// A `None` value removes the variable for this call only.
+    pub environment: Vec<(OsString, Option<OsString>)>,
+    pub interrupt: crate::InterruptToken,
+    /// Use `SupervisedProcess` only for an isolated engine worker whose parent
+    /// owns its whole process group and stops descendants before reaping it.
+    pub pipe_process_policy: crate::PipeProcessPolicy,
+}
 
 /// The result of the engine's normal completion path.
 ///
@@ -48,7 +58,7 @@ pub enum InvocationError {
         index: usize,
         position: usize,
     },
-    AlreadyInvoked,
+    NestedInvocation,
     ResourceSetup {
         resource: &'static str,
         message: String,
@@ -76,7 +86,9 @@ impl fmt::Display for InvocationError {
                     "engine argument {index} contains NUL at byte {position}"
                 )
             }
-            Self::AlreadyInvoked => formatter.write_str("engine already entered in this process"),
+            Self::NestedInvocation => {
+                formatter.write_str("nested engine invocation on this thread")
+            }
             Self::ResourceSetup { resource, message } => {
                 write!(formatter, "engine {resource} setup failed: {message}")
             }
@@ -116,7 +128,7 @@ fn validate_arguments(arguments: &[Vec<u8>]) -> Result<c_int, InvocationError> {
     Ok(argc)
 }
 
-struct OwnedArguments {
+pub(crate) struct OwnedArguments {
     argc: c_int,
     // getopt may reorder or replace argv entries. Own the byte buffers
     // separately so that the table never becomes their deallocation authority.
@@ -125,6 +137,11 @@ struct OwnedArguments {
 }
 
 impl OwnedArguments {
+    pub(crate) fn new(arguments: Vec<Vec<u8>>) -> Result<Self, InvocationError> {
+        let argc = validate_arguments(&arguments)?;
+        Ok(Self::from_validated(arguments, argc))
+    }
+
     fn from_validated(arguments: Vec<Vec<u8>>, argc: c_int) -> Self {
         let mut storage = arguments
             .into_iter()
@@ -145,49 +162,9 @@ impl OwnedArguments {
         }
     }
 
-    fn engine_args(&mut self) -> (c_int, *mut *mut c_char) {
+    pub(crate) fn engine_args(&mut self) -> (c_int, *mut *mut c_char) {
         (self.argc, self.argv.as_mut_ptr())
     }
-}
-
-struct EntryLatch(AtomicBool);
-
-impl EntryLatch {
-    const fn new() -> Self {
-        Self(AtomicBool::new(false))
-    }
-
-    fn prepare(&self, arguments: Vec<Vec<u8>>) -> Result<OwnedArguments, InvocationError> {
-        // Reject repeats before validation or allocating engine-owned storage.
-        if self.0.load(Ordering::Acquire) {
-            return Err(InvocationError::AlreadyInvoked);
-        }
-        let argc = validate_arguments(&arguments)?;
-        self.0
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| InvocationError::AlreadyInvoked)?;
-        // The latch is permanent even if initialization never reaches normal
-        // completion. Unwinding does not make the global engine reusable.
-        Ok(OwnedArguments::from_validated(arguments, argc))
-    }
-}
-
-static ENTRY_LATCH: EntryLatch = EntryLatch::new();
-static mut RETAINED_ARGUMENTS: Option<OwnedArguments> = None;
-
-pub(crate) unsafe fn retain_for_entry(
-    arguments: Vec<Vec<u8>>,
-) -> Result<(c_int, *mut *mut c_char), InvocationError> {
-    let mut owner = ENTRY_LATCH.prepare(arguments)?;
-    let engine_args = owner.engine_args();
-    // SAFETY: the permanent latch admits exactly one writer. No code reads,
-    // replaces, or drops this slot. Neither the buffers nor the argv table grow
-    // after construction. Moving their Vec owners preserves the allocations,
-    // including pointers retained by generated globals.
-    unsafe {
-        ptr::write(&raw mut RETAINED_ARGUMENTS, Some(owner));
-    }
-    Ok(engine_args)
 }
 
 #[cfg(test)]
@@ -195,42 +172,32 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use std::ffi::CStr;
-    use std::sync::{Arc, Barrier};
 
     #[test]
-    fn invalid_inputs_do_not_claim_entry() {
-        let latch = EntryLatch::new();
+    fn invalid_inputs_do_not_affect_later_arguments() {
         assert!(matches!(
-            latch.prepare(Vec::new()),
+            OwnedArguments::new(Vec::new()),
             Err(InvocationError::MissingProgramName)
         ));
         assert!(matches!(
-            latch.prepare(vec![b"pdflatex".to_vec(), b"bad\0argument".to_vec()]),
+            OwnedArguments::new(vec![b"pdflatex".to_vec(), b"bad\0argument".to_vec()]),
             Err(InvocationError::ArgumentContainsNul {
                 index: 1,
                 position: 3,
             })
         ));
-        assert!(!latch.0.load(Ordering::Acquire));
-        assert!(latch.prepare(vec![b"pdflatex".to_vec()]).is_ok());
+        assert!(OwnedArguments::new(vec![b"pdflatex".to_vec()]).is_ok());
     }
 
     #[test]
-    fn repeat_entry_cannot_replace_argument_backing() {
-        let latch = EntryLatch::new();
-        let mut retained = Some(
-            latch
-                .prepare(vec![b"pdflatex".to_vec(), b"--fmt=latex".to_vec()])
-                .unwrap(),
-        );
+    fn independent_arguments_cannot_replace_argument_backing() {
+        let mut retained =
+            Some(OwnedArguments::new(vec![b"pdflatex".to_vec(), b"--fmt=latex".to_vec()]).unwrap());
         let (argc, argv) = retained.as_mut().unwrap().engine_args();
         // SAFETY: this pointer is within the retained second argument buffer.
         let borrowed_format = unsafe { (*argv.add(1)).add(6) };
         for _ in 0..8 {
-            assert!(matches!(
-                latch.prepare(vec![b"replacement\0".to_vec()]),
-                Err(InvocationError::AlreadyInvoked)
-            ));
+            let _other = OwnedArguments::new(vec![b"replacement".to_vec()]).unwrap();
             assert_eq!(retained.as_mut().unwrap().engine_args(), (argc, argv));
         }
         // SAFETY: the retained owner still holds the NUL-terminated buffer.
@@ -242,10 +209,8 @@ mod tests {
 
     #[test]
     fn argv_mutations_do_not_change_buffer_ownership() {
-        let latch = EntryLatch::new();
-        let mut owner = latch
-            .prepare(vec![b"pdflatex".to_vec(), b"input.tex".to_vec()])
-            .unwrap();
+        let mut owner =
+            OwnedArguments::new(vec![b"pdflatex".to_vec(), b"input.tex".to_vec()]).unwrap();
         let original_buffers = owner
             ._storage
             .iter()
@@ -267,34 +232,6 @@ mod tests {
             original_buffers
         );
         drop(owner);
-    }
-
-    #[test]
-    fn concurrent_claims_admit_one_mutation() {
-        let latch = Arc::new(EntryLatch::new());
-        let start = Arc::new(Barrier::new(8));
-        let mutations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let threads = (0..8)
-            .map(|_| {
-                let latch = Arc::clone(&latch);
-                let start = Arc::clone(&start);
-                let mutations = Arc::clone(&mutations);
-                std::thread::spawn(move || {
-                    start.wait();
-                    if latch.prepare(vec![b"pdflatex".to_vec()]).is_ok() {
-                        mutations.fetch_add(1, Ordering::Relaxed);
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-        for thread in threads {
-            thread.join().unwrap();
-        }
-        assert_eq!(mutations.load(Ordering::Relaxed), 1);
-        assert!(matches!(
-            latch.prepare(vec![b"pdflatex".to_vec()]),
-            Err(InvocationError::AlreadyInvoked)
-        ));
     }
 
     proptest! {
@@ -322,8 +259,7 @@ mod tests {
             ),
         ) {
             let expected = arguments.clone();
-            let latch = EntryLatch::new();
-            let mut owner = latch.prepare(arguments).unwrap();
+            let mut owner = OwnedArguments::new(arguments).unwrap();
             let (argc, argv) = owner.engine_args();
             let retained = Some(owner);
             prop_assert_eq!(argc as usize, expected.len());
@@ -339,7 +275,7 @@ mod tests {
         }
 
         #[test]
-        fn nul_rejection_precedes_claim(
+        fn nul_rejection_reports_exact_position(
             prefix in prop::collection::vec(1u8..=u8::MAX, 0..64),
             suffix in prop::collection::vec(any::<u8>(), 0..64),
         ) {
@@ -347,13 +283,11 @@ mod tests {
             let mut invalid = prefix;
             invalid.push(0);
             invalid.extend(suffix);
-            let latch = EntryLatch::new();
             prop_assert!(matches!(
-                latch.prepare(vec![b"pdflatex".to_vec(), invalid]),
+                OwnedArguments::new(vec![b"pdflatex".to_vec(), invalid]),
                 Err(InvocationError::ArgumentContainsNul { index: 1, position: found })
                     if found == position
             ), "the first NUL must be rejected at its exact byte position");
-            prop_assert!(!latch.0.load(Ordering::Acquire));
         }
 
         #[test]

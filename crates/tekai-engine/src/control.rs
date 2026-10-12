@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 /// A caller may request an interrupt without touching engine memory or signal
 /// policy. Polling uses the engine's existing TeX interrupt/interaction rules.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct InterruptToken(Arc<AtomicBool>);
 
 impl InterruptToken {
@@ -83,13 +83,16 @@ fn take_request() -> bool {
 }
 
 pub(crate) unsafe fn interrupted() -> bool {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     // SAFETY: engine callers execute within the core state's exclusive scope.
     // The other thread only writes the AtomicBool, never this ordinary field.
     unsafe {
         if take_request() {
-            crate::generated::pdftexextra::interrupt = 1;
+            (*__tekai_state_generated_pdftexextra).interrupt = 1;
         }
-        crate::generated::pdftexextra::interrupt != 0
+        (*__tekai_state_generated_pdftexextra).interrupt != 0
     }
 }
 

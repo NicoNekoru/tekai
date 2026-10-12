@@ -25,18 +25,18 @@
 #![warn(clippy::all)]
 
 use std::alloc::{alloc, dealloc, realloc as realloc_block, Layout};
-use std::cell::{Cell, UnsafeCell};
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::marker::{PhantomData, PhantomPinned};
 use std::mem::{align_of, size_of};
 use std::pin::Pin;
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::rc::Rc;
 
 #[repr(C, align(16))]
 struct Header {
     payload_size: usize,
-    owner: *const AllocationArena,
+    owner: *mut ArenaState,
     previous: *mut Header,
     next: *mut Header,
 }
@@ -47,7 +47,7 @@ const HEADER_SIZE: usize = size_of::<Header>();
 thread_local! {
     // A scoped routing pointer, not an owner. Engine state must discard every
     // alias before dropping the arena. Each thread can route to its own arena.
-    static ACTIVE_ARENA: Cell<*const AllocationArena> = const { Cell::new(ptr::null()) };
+    static ACTIVE_ARENA: Cell<*mut ArenaState> = const { Cell::new(ptr::null_mut()) };
 }
 
 #[derive(Default)]
@@ -64,10 +64,12 @@ struct ArenaState {
 /// after a Rust unwind. This does not drop objects stored in the raw payloads.
 /// Such objects must keep their own typed owners and never allocate here.
 ///
-/// A boxed arena has a stable address while buffers retain its routing pointer.
-/// It is thread-confined and cannot be moved or shared across threads.
+/// The pinned handle owns a separate raw allocation. Headers retain that raw
+/// state's provenance, which handle moves and reborrows cannot invalidate.
+/// No `Box<ArenaState>` or whole-state reference exists while buffers are live.
+/// The handle is thread-confined and cannot be shared across threads.
 pub(crate) struct AllocationArena {
-    state: UnsafeCell<ArenaState>,
+    state: NonNull<ArenaState>,
     _thread_confined: PhantomData<Rc<()>>,
     _pinned: PhantomPinned,
 }
@@ -75,7 +77,10 @@ pub(crate) struct AllocationArena {
 impl AllocationArena {
     pub(crate) fn new() -> Pin<Box<Self>> {
         Box::pin(Self {
-            state: UnsafeCell::new(ArenaState::default()),
+            // Relinquish Box's unique payload borrow before the first header
+            // or routing pointer is formed. Only Drop reconstructs the Box.
+            state: NonNull::new(Box::into_raw(Box::new(ArenaState::default())))
+                .expect("Box allocation is non-null"),
             _thread_confined: PhantomData,
             _pinned: PhantomPinned,
         })
@@ -88,61 +93,65 @@ impl AllocationArena {
         struct RoutingGuard;
         impl Drop for RoutingGuard {
             fn drop(&mut self) {
-                ACTIVE_ARENA.with(|active| active.set(ptr::null()));
+                ACTIVE_ARENA.with(|active| active.set(ptr::null_mut()));
             }
         }
 
         ACTIVE_ARENA.with(|active| {
             assert!(active.get().is_null(), "nested allocation arena scope");
-            active.set(self.as_ref().get_ref());
+            active.set(self.as_ref().get_ref().state.as_ptr());
         });
         let _routing = RoutingGuard;
         operation()
     }
 
     pub(crate) fn live_allocations(&self) -> usize {
-        // No operation mutates the list concurrently. The arena is !Send/!Sync
-        // and allocation functions do not retain a reference into this state.
-        unsafe { (*self.state.get()).allocations }
+        // Reading the handle does not reborrow the independent raw state.
+        // No operation mutates its list concurrently, since it is !Send/!Sync.
+        unsafe { (*self.state.as_ptr()).allocations }
     }
 
     pub(crate) fn live_bytes(&self) -> usize {
-        unsafe { (*self.state.get()).bytes }
+        unsafe { (*self.state.as_ptr()).bytes }
     }
 }
 
 impl Drop for AllocationArena {
     fn drop(&mut self) {
-        let state = self.state.get_mut();
-        while !state.head.is_null() {
+        let state = self.state.as_ptr();
+        while !unsafe { (*state).head }.is_null() {
             // SAFETY: the list contains only live allocations created here.
             // An explicit free unlinks first. A successful realloc replaces
             // its entry before returning. Payloads contain no Rust drop glue.
             unsafe {
-                let header = state.head;
-                state.head = (*header).next;
+                let header = (*state).head;
+                (*state).head = (*header).next;
                 let layout = allocation_layout((*header).payload_size).unwrap_unchecked();
                 dealloc(header.cast(), layout);
             }
         }
-        state.allocations = 0;
-        state.bytes = 0;
+        unsafe {
+            (*state).allocations = 0;
+            (*state).bytes = 0;
+            // The private scope has unregistered routing and every payload
+            // alias has ended. Reconstruct raw state ownership exactly once.
+            drop(Box::from_raw(state));
+        }
     }
 }
 
-unsafe fn register(header: *mut Header, owner: *const AllocationArena) {
+unsafe fn register(header: *mut Header, owner: *mut ArenaState) {
     if owner.is_null() {
         return;
     }
     unsafe {
-        let state = &mut *(*owner).state.get();
-        (*header).next = state.head;
-        if !state.head.is_null() {
-            (*state.head).previous = header;
+        (*header).next = (*owner).head;
+        if !(*owner).head.is_null() {
+            (*(*owner).head).previous = header;
         }
-        state.head = header;
-        state.allocations += 1;
-        state.bytes += (*header).payload_size;
+        (*owner).head = header;
+        (*owner).allocations += 1;
+        (*owner).bytes += (*header).payload_size;
     }
 }
 
@@ -152,17 +161,16 @@ unsafe fn unlink(header: *mut Header) {
         if owner.is_null() {
             return;
         }
-        let state = &mut *(*owner).state.get();
         if (*header).previous.is_null() {
-            state.head = (*header).next;
+            (*owner).head = (*header).next;
         } else {
             (*(*header).previous).next = (*header).next;
         }
         if !(*header).next.is_null() {
             (*(*header).next).previous = (*header).previous;
         }
-        state.allocations -= 1;
-        state.bytes -= (*header).payload_size;
+        (*owner).allocations -= 1;
+        (*owner).bytes -= (*header).payload_size;
     }
 }
 
@@ -185,13 +193,11 @@ pub(crate) unsafe fn malloc(size: usize) -> *mut c_void {
         return ptr::null_mut();
     };
     let owner = ACTIVE_ARENA.with(Cell::get);
-    if !owner.is_null() {
-        let state = unsafe { &*(*owner).state.get() };
-        if state.allocations.checked_add(1).is_none()
-            || state.bytes.checked_add(size.max(1)).is_none()
-        {
-            return ptr::null_mut();
-        }
+    if !owner.is_null()
+        && (unsafe { (*owner).allocations }.checked_add(1).is_none()
+            || unsafe { (*owner).bytes }.checked_add(size.max(1)).is_none())
+    {
+        return ptr::null_mut();
     }
     let base = unsafe { alloc(layout) };
     if base.is_null() {
@@ -232,7 +238,7 @@ pub(crate) unsafe fn realloc(payload: *mut c_void, size: usize) -> *mut c_void {
         let previous = (*header).previous;
         let next = (*header).next;
         if !owner.is_null() {
-            let bytes = (*(*owner).state.get()).bytes;
+            let bytes = (*owner).bytes;
             if (bytes - old_size).checked_add(size.max(1)).is_none() {
                 return ptr::null_mut();
             }
@@ -251,16 +257,15 @@ pub(crate) unsafe fn realloc(payload: *mut c_void, size: usize) -> *mut c_void {
             next,
         });
         if !owner.is_null() {
-            let state = &mut *(*owner).state.get();
             if previous.is_null() {
-                state.head = new_header;
+                (*owner).head = new_header;
             } else {
                 (*previous).next = new_header;
             }
             if !next.is_null() {
                 (*next).previous = new_header;
             }
-            state.bytes = state.bytes - old_size + size.max(1);
+            (*owner).bytes = (*owner).bytes - old_size + size.max(1);
         }
         new_base.add(HEADER_SIZE).cast()
     }
@@ -372,6 +377,79 @@ mod tests {
         assert_eq!(arena.live_bytes(), 8192);
         // This intentionally leaves one buffer for the arena to release.
         drop(arena);
+        assert!(ACTIVE_ARENA.with(Cell::get).is_null());
+    }
+
+    #[test]
+    fn retained_owner_survives_handle_moves_reborrows_and_unscoped_resize() {
+        let mut arena = AllocationArena::new();
+        let state = arena.state.as_ptr();
+        let handle = arena.as_ref().get_ref() as *const AllocationArena;
+        assert_ne!(state.cast::<u8>(), handle.cast_mut().cast::<u8>());
+        let mut payload = arena.as_mut().scope(|| unsafe { malloc(17) });
+        assert!(!payload.is_null());
+        unsafe { ptr::write_bytes(payload.cast::<u8>(), 0x69, 17) };
+        let retained_owner =
+            unsafe { (*payload.cast::<u8>().sub(HEADER_SIZE).cast::<Header>()).owner };
+        assert_eq!(retained_owner, state);
+
+        // Moving the pinning pointer and borrowing the small handle must not
+        // create a new exclusive borrow of the retained raw ArenaState.
+        let mut moved = arena;
+        for size in [32, 8192, 9, 0, 65] {
+            assert_eq!(moved.live_allocations(), 1);
+            moved
+                .as_mut()
+                .scope(|| assert_eq!(ACTIVE_ARENA.with(Cell::get), state));
+            assert!(ACTIVE_ARENA.with(Cell::get).is_null());
+            let old_size = moved.live_bytes();
+            let resized = unsafe { realloc(payload, size) };
+            assert!(!resized.is_null());
+            payload = resized;
+            assert_eq!(payload as usize % ALIGNMENT, 0);
+            assert_eq!(
+                unsafe { (*payload.cast::<u8>().sub(HEADER_SIZE).cast::<Header>()).owner },
+                state
+            );
+            let preserved = old_size.min(size.max(1));
+            assert!(
+                unsafe { std::slice::from_raw_parts(payload.cast::<u8>(), preserved) }
+                    .iter()
+                    .all(|&byte| byte == 0x69)
+            );
+            unsafe { ptr::write_bytes(payload.cast::<u8>(), 0x69, size.max(1)) };
+            assert_eq!(moved.live_bytes(), size.max(1));
+        }
+        let again = moved;
+        assert_eq!(again.state.as_ptr(), retained_owner);
+        unsafe { free(payload) };
+        assert_eq!(again.live_allocations(), 0);
+        assert_eq!(again.live_bytes(), 0);
+    }
+
+    #[test]
+    fn unscoped_release_and_resize_use_the_retained_raw_owner_not_tls() {
+        let mut first = AllocationArena::new();
+        let mut second = AllocationArena::new();
+        let first_state = first.state.as_ptr();
+        let (head, tail) = first.as_mut().scope(|| unsafe { (malloc(8), malloc(16)) });
+        assert!(!head.is_null() && !tail.is_null());
+        let head = unsafe { realloc(head, 33) };
+        assert!(!head.is_null());
+        assert_eq!(first.live_allocations(), 2);
+        assert_eq!(first.live_bytes(), 49);
+        assert!(ACTIVE_ARENA.with(Cell::get).is_null());
+        second.as_mut().scope(|| unsafe {
+            assert_ne!(ACTIVE_ARENA.with(Cell::get), first_state);
+            free(tail);
+        });
+        assert_eq!(first.live_allocations(), 1);
+        assert_eq!(first.live_bytes(), 33);
+        assert_eq!(second.live_allocations(), 0);
+        assert_eq!(second.live_bytes(), 0);
+        unsafe { free(head) };
+        assert_eq!(first.live_allocations(), 0);
+        assert_eq!(first.live_bytes(), 0);
         assert!(ACTIVE_ARENA.with(Cell::get).is_null());
     }
 

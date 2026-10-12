@@ -5,12 +5,12 @@ pub use crate::generated::pdftex0::{
     getnullstr, getpdfsuppresswarningdupmap, zflushstr, zpackfilename, ztokenstostring,
 };
 pub use crate::generated::pdftexextra::makecstring;
-pub use crate::kpathsea::kpse_find_file;
+pub(crate) use crate::kpathsea::kpse_find_file;
 pub use crate::utils::maketexstring;
 
 pub use crate::generated::backend::avl::{
-    avl_comparison_func, avl_create, avl_delete, avl_destroy, avl_find, avl_item_func, avl_node,
-    avl_probe, avl_t_find, avl_t_next, avl_t_prev, avl_table, avl_traverser, libavl_allocator,
+    avl_create, avl_delete, avl_destroy, avl_find, avl_node, avl_probe, avl_t_find, avl_t_next,
+    avl_t_prev, avl_table, avl_traverser,
 };
 
 use crate::byte_string::isdigit;
@@ -31,14 +31,6 @@ use crate::openclose::{xmalloc, xstrdup};
 
 use crate::termination::__assert_rtn;
 
-extern "C" {
-    static mut nameoffile: *mut ASCIIcode;
-    static mut fontname: *mut strnumber;
-    static mut pdffontmap: *mut fmentryptr;
-    static mut lasttokensstring: strnumber;
-    static mut avl_xallocator: libavl_allocator;
-    static mut cur_file_name: *mut ::core::ffi::c_char;
-}
 pub type __uint32_t = u32;
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -155,11 +147,7 @@ pub const F_PK: ::core::ffi::c_int = 0x80 as ::core::ffi::c_int;
 pub const LINK_TFM: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
 pub const LINK_PS: ::core::ffi::c_int = 0x2 as ::core::ffi::c_int;
 pub const FD_FLAGS_NOT_SET_IN_MAPLINE: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
-static mut fm_file: *mut FILE = ::core::ptr::null::<FILE>() as *mut FILE;
-#[no_mangle]
-pub static mut mitem: *mut mapitem = ::core::ptr::null::<mapitem>() as *mut mapitem;
-static mut nontfm: [::core::ffi::c_char; 9] =
-    unsafe { ::core::mem::transmute::<[u8; 9], [::core::ffi::c_char; 9]>(*b"<nontfm>\0") };
+
 pub unsafe fn new_fm_entry() -> *mut fm_entry {
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     fm = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<fm_entry>() as size_t))
@@ -225,32 +213,13 @@ unsafe fn delete_ff_entry(mut ff: *mut ff_entry) {
     ff = ::core::ptr::null_mut::<ff_entry>();
 }
 unsafe fn dummy_fm_entry() -> *mut fm_entry {
-    static mut const_fm_entry: fm_entry = fm_entry {
-        tfm_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        sfd_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        ps_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        fd_flags: 0,
-        slant: 0,
-        extend: 0,
-        encname: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        ff_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        type_0: 0,
-        pid: 0,
-        eid: 0,
-        subfont: ::core::ptr::null_mut::<subfont_entry>(),
-        links: 0,
-        in_use: 0,
-    };
-    return &raw mut const_fm_entry;
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
+    return &raw mut (*__tekai_state_generated_backend_mapfile)
+        .local_dummy_fm_entry_228_const_fm_entry;
 }
-#[no_mangle]
-pub static mut tfm_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-#[no_mangle]
-pub static mut ps_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-#[no_mangle]
-pub static mut ff_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-#[no_mangle]
-pub static mut encname_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
+
 unsafe fn comp_fm_entry_tfm(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
@@ -311,7 +280,16 @@ unsafe fn comp_ff_entry(
     );
 }
 unsafe fn create_avl_trees() {
-    if !tfm_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
+    if !(*__tekai_state_generated_backend_mapfile)
+        .tfm_tree
+        .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"create_avl_trees\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -320,7 +298,7 @@ unsafe fn create_avl_trees() {
         );
     } else {
     };
-    tfm_tree = avl_create(
+    (*__tekai_state_generated_backend_mapfile).tfm_tree = avl_create(
         Some(
             comp_fm_entry_tfm
                 as unsafe fn(
@@ -330,9 +308,13 @@ unsafe fn create_avl_trees() {
                 ) -> ::core::ffi::c_int,
         ),
         NULL,
-        &raw mut avl_xallocator,
+        &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
     );
-    if tfm_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if (*__tekai_state_generated_backend_mapfile)
+        .tfm_tree
+        .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"create_avl_trees\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -341,7 +323,10 @@ unsafe fn create_avl_trees() {
         );
     } else {
     };
-    if !ps_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if !(*__tekai_state_generated_backend_mapfile).ps_tree.is_null() as ::core::ffi::c_int
+        as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"create_avl_trees\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -350,7 +335,7 @@ unsafe fn create_avl_trees() {
         );
     } else {
     };
-    ps_tree = avl_create(
+    (*__tekai_state_generated_backend_mapfile).ps_tree = avl_create(
         Some(
             comp_fm_entry_ps
                 as unsafe fn(
@@ -360,9 +345,12 @@ unsafe fn create_avl_trees() {
                 ) -> ::core::ffi::c_int,
         ),
         NULL,
-        &raw mut avl_xallocator,
+        &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
     );
-    if ps_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if (*__tekai_state_generated_backend_mapfile).ps_tree.is_null() as ::core::ffi::c_int
+        as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"create_avl_trees\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -371,7 +359,10 @@ unsafe fn create_avl_trees() {
         );
     } else {
     };
-    if !ff_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if !(*__tekai_state_generated_backend_mapfile).ff_tree.is_null() as ::core::ffi::c_int
+        as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"create_avl_trees\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -380,7 +371,7 @@ unsafe fn create_avl_trees() {
         );
     } else {
     };
-    ff_tree = avl_create(
+    (*__tekai_state_generated_backend_mapfile).ff_tree = avl_create(
         Some(
             comp_ff_entry
                 as unsafe fn(
@@ -390,9 +381,12 @@ unsafe fn create_avl_trees() {
                 ) -> ::core::ffi::c_int,
         ),
         NULL,
-        &raw mut avl_xallocator,
+        &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
     );
-    if ff_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if (*__tekai_state_generated_backend_mapfile).ff_tree.is_null() as ::core::ffi::c_int
+        as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"create_avl_trees\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -401,7 +395,11 @@ unsafe fn create_avl_trees() {
         );
     } else {
     };
-    if !encname_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if !(*__tekai_state_generated_backend_mapfile)
+        .encname_tree
+        .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"create_avl_trees\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -410,7 +408,7 @@ unsafe fn create_avl_trees() {
         );
     } else {
     };
-    encname_tree = avl_create(
+    (*__tekai_state_generated_backend_mapfile).encname_tree = avl_create(
         Some(
             comp_string_entry
                 as unsafe fn(
@@ -420,9 +418,13 @@ unsafe fn create_avl_trees() {
                 ) -> ::core::ffi::c_int,
         ),
         NULL,
-        &raw mut avl_xallocator,
+        &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
     );
-    if encname_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if (*__tekai_state_generated_backend_mapfile)
+        .encname_tree
+        .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"create_avl_trees\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -436,6 +438,9 @@ pub unsafe fn avl_do_entry(
     mut fm: *mut fm_entry,
     mut mode: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
     let mut current_block: u64;
     let mut p: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     let mut a: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
@@ -444,10 +449,13 @@ pub unsafe fn avl_do_entry(
         (getpdfsuppresswarningdupmap() > 0 as ::core::ffi::c_int) as ::core::ffi::c_int;
     if strcmp(
         (*fm).tfm_name,
-        &raw const nontfm as *const ::core::ffi::c_char,
+        &raw const (*__tekai_state_generated_backend_mapfile).nontfm as *const ::core::ffi::c_char,
     ) != 0 as ::core::ffi::c_int
     {
-        p = avl_find(tfm_tree, fm as *const ::core::ffi::c_void) as *mut fm_entry;
+        p = avl_find(
+            (*__tekai_state_generated_backend_mapfile).tfm_tree,
+            fm as *const ::core::ffi::c_void,
+        ) as *mut fm_entry;
         if !p.is_null() {
             match mode {
                 0 => {
@@ -471,7 +479,10 @@ pub unsafe fn avl_do_entry(
                         );
                         current_block = 12876239492772886194;
                     } else {
-                        a = avl_delete(tfm_tree, p as *const ::core::ffi::c_void);
+                        a = avl_delete(
+                            (*__tekai_state_generated_backend_mapfile).tfm_tree,
+                            p as *const ::core::ffi::c_void,
+                        );
                         if a.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
                             __assert_rtn(
                                 b"avl_do_entry\0" as *const u8 as *const ::core::ffi::c_char,
@@ -511,7 +522,10 @@ pub unsafe fn avl_do_entry(
             12876239492772886194 => {}
             _ => {
                 if mode != FM_DELETE as ::core::ffi::c_int {
-                    aa = avl_probe(tfm_tree, fm as *mut ::core::ffi::c_void);
+                    aa = avl_probe(
+                        (*__tekai_state_generated_backend_mapfile).tfm_tree,
+                        fm as *mut ::core::ffi::c_void,
+                    );
                     if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
                         __assert_rtn(
                             b"avl_do_entry\0" as *const u8 as *const ::core::ffi::c_char,
@@ -533,7 +547,10 @@ pub unsafe fn avl_do_entry(
     match current_block {
         4808432441040389987 => {
             if !(*fm).ps_name.is_null() {
-                p = avl_find(ps_tree, fm as *const ::core::ffi::c_void) as *mut fm_entry;
+                p = avl_find(
+                    (*__tekai_state_generated_backend_mapfile).ps_tree,
+                    fm as *const ::core::ffi::c_void,
+                ) as *mut fm_entry;
                 if !p.is_null() {
                     match mode {
                         0 => {
@@ -563,7 +580,10 @@ pub unsafe fn avl_do_entry(
                                     if (*p).in_use != 0 {
                                         current_block = 12876239492772886194;
                                     } else {
-                                        a = avl_delete(ps_tree, p as *const ::core::ffi::c_void);
+                                        a = avl_delete(
+                                            (*__tekai_state_generated_backend_mapfile).ps_tree,
+                                            p as *const ::core::ffi::c_void,
+                                        );
                                         if a.is_null() as ::core::ffi::c_int as ::core::ffi::c_long
                                             != 0
                                         {
@@ -612,7 +632,10 @@ pub unsafe fn avl_do_entry(
                                     if (*p).in_use != 0 {
                                         current_block = 12876239492772886194;
                                     } else {
-                                        a = avl_delete(ps_tree, p as *const ::core::ffi::c_void);
+                                        a = avl_delete(
+                                            (*__tekai_state_generated_backend_mapfile).ps_tree,
+                                            p as *const ::core::ffi::c_void,
+                                        );
                                         if a.is_null() as ::core::ffi::c_int as ::core::ffi::c_long
                                             != 0
                                         {
@@ -651,7 +674,10 @@ pub unsafe fn avl_do_entry(
                             && (*fm).type_0 as ::core::ffi::c_int & F_INCLUDED
                                 != 0 as ::core::ffi::c_int
                         {
-                            aa = avl_probe(ps_tree, fm as *mut ::core::ffi::c_void);
+                            aa = avl_probe(
+                                (*__tekai_state_generated_backend_mapfile).ps_tree,
+                                fm as *mut ::core::ffi::c_void,
+                            );
                             if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
                                 __assert_rtn(
                                     b"avl_do_entry\0" as *const u8 as *const ::core::ffi::c_char,
@@ -679,6 +705,9 @@ pub unsafe fn avl_do_entry(
     };
 }
 unsafe fn add_encname(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if s.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -690,7 +719,11 @@ unsafe fn add_encname(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_ch
         );
     } else {
     };
-    if encname_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if (*__tekai_state_generated_backend_mapfile)
+        .encname_tree
+        .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"add_encname\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -699,10 +732,16 @@ unsafe fn add_encname(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_ch
         );
     } else {
     };
-    p = avl_find(encname_tree, s as *const ::core::ffi::c_void) as *mut ::core::ffi::c_char;
+    p = avl_find(
+        (*__tekai_state_generated_backend_mapfile).encname_tree,
+        s as *const ::core::ffi::c_void,
+    ) as *mut ::core::ffi::c_char;
     if p.is_null() {
         p = xstrdup(s as const_string) as *mut ::core::ffi::c_char;
-        aa = avl_probe(encname_tree, p as *mut ::core::ffi::c_void);
+        aa = avl_probe(
+            (*__tekai_state_generated_backend_mapfile).encname_tree,
+            p as *mut ::core::ffi::c_void,
+        );
         if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
             __assert_rtn(
                 b"add_encname\0" as *const u8 as *const ::core::ffi::c_char,
@@ -863,46 +902,9 @@ unsafe fn check_fm_entry(mut fm: *mut fm_entry, mut warn: boolean) -> ::core::ff
     return a;
 }
 pub unsafe fn check_std_t1font(mut s: *mut ::core::ffi::c_char) -> ::core::ffi::c_int {
-    static mut std_t1font_names: [*const ::core::ffi::c_char; 14] = [
-        b"Courier\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Courier-Bold\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Courier-Oblique\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Courier-BoldOblique\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Helvetica\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Helvetica-Bold\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Helvetica-Oblique\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Helvetica-BoldOblique\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Symbol\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Times-Roman\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Times-Bold\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Times-Italic\0" as *const u8 as *const ::core::ffi::c_char,
-        b"Times-BoldItalic\0" as *const u8 as *const ::core::ffi::c_char,
-        b"ZapfDingbats\0" as *const u8 as *const ::core::ffi::c_char,
-    ];
-    static mut index: [::core::ffi::c_int; 22] = [
-        -(1 as ::core::ffi::c_int),
-        -(1 as ::core::ffi::c_int),
-        -(1 as ::core::ffi::c_int),
-        -(1 as ::core::ffi::c_int),
-        -(1 as ::core::ffi::c_int),
-        -(1 as ::core::ffi::c_int),
-        8 as ::core::ffi::c_int,
-        0 as ::core::ffi::c_int,
-        -(1 as ::core::ffi::c_int),
-        4 as ::core::ffi::c_int,
-        10 as ::core::ffi::c_int,
-        9 as ::core::ffi::c_int,
-        -(1 as ::core::ffi::c_int),
-        -(1 as ::core::ffi::c_int),
-        5 as ::core::ffi::c_int,
-        2 as ::core::ffi::c_int,
-        12 as ::core::ffi::c_int,
-        6 as ::core::ffi::c_int,
-        -(1 as ::core::ffi::c_int),
-        3 as ::core::ffi::c_int,
-        -(1 as ::core::ffi::c_int),
-        7 as ::core::ffi::c_int,
-    ];
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
     let mut n: size_t = 0;
     let mut k: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
     if s.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -932,16 +934,23 @@ pub unsafe fn check_std_t1font(mut s: *mut ::core::ffi::c_char) -> ::core::ffi::
             _ => return -(1 as ::core::ffi::c_int),
         }
     } else {
-        k = index[n as usize];
+        k = (*__tekai_state_generated_backend_mapfile).local_check_std_t1font_882_index[n as usize];
     }
     if k > -(1 as ::core::ffi::c_int)
-        && strcmp(std_t1font_names[k as usize], s) == 0 as ::core::ffi::c_int
+        && strcmp(
+            (*__tekai_state_generated_backend_mapfile).local_check_std_t1font_866_std_t1font_names
+                [k as usize],
+            s,
+        ) == 0 as ::core::ffi::c_int
     {
         return k;
     }
     return -(1 as ::core::ffi::c_int);
 }
 unsafe fn fm_scan_line() {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
     let mut current_block: u64;
     let mut a: ::core::ffi::c_int = 0;
     let mut b: ::core::ffi::c_int = 0;
@@ -957,11 +966,11 @@ unsafe fn fm_scan_line() {
     let mut r: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut s: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut initialized_line_end: Option<*mut ::core::ffi::c_char> = None;
-    match (*mitem).type_0 as ::core::ffi::c_uint {
+    match (*(*__tekai_state_generated_backend_mapfile).mitem).type_0 as ::core::ffi::c_uint {
         0 => {
             p = &raw mut fm_line as *mut ::core::ffi::c_char;
             loop {
-                c = xgetc(fm_file);
+                c = xgetc((*__tekai_state_generated_backend_mapfile).fm_file);
                 if c == 9 as ::core::ffi::c_int {
                     c = 32 as ::core::ffi::c_int;
                 }
@@ -1003,7 +1012,7 @@ unsafe fn fm_scan_line() {
             r = &raw mut fm_line as *mut ::core::ffi::c_char;
         }
         1 => {
-            r = (*mitem).line;
+            r = (*(*__tekai_state_generated_backend_mapfile).mitem).line;
         }
         _ => {
             if (0 as ::core::ffi::c_int == 0) as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -1442,10 +1451,17 @@ unsafe fn fm_scan_line() {
                     ((*fm).type_0 as ::core::ffi::c_int | F_TYPE1) as ::core::ffi::c_ushort;
             }
             if !(check_fm_entry(fm, true_0) != 0 as ::core::ffi::c_int) {
-                if handle_subfont_fm(fm, (*mitem).mode as ::core::ffi::c_int) != 0 {
+                if handle_subfont_fm(
+                    fm,
+                    (*(*__tekai_state_generated_backend_mapfile).mitem).mode as ::core::ffi::c_int,
+                ) != 0
+                {
                     return;
                 }
-                if avl_do_entry(fm, (*mitem).mode as ::core::ffi::c_int) == 0 as ::core::ffi::c_int
+                if avl_do_entry(
+                    fm,
+                    (*(*__tekai_state_generated_backend_mapfile).mitem).mode as ::core::ffi::c_int,
+                ) == 0 as ::core::ffi::c_int
                 {
                     return;
                 }
@@ -1456,19 +1472,36 @@ unsafe fn fm_scan_line() {
     delete_fm_entry(fm);
 }
 pub unsafe fn fm_read_info() {
-    if tfm_tree.is_null() {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    if (*__tekai_state_generated_backend_mapfile)
+        .tfm_tree
+        .is_null()
+    {
         create_avl_trees();
     }
-    if (*mitem).line.is_null() {
+    if (*(*__tekai_state_generated_backend_mapfile).mitem)
+        .line
+        .is_null()
+    {
         return;
     }
-    (*mitem).lineno = 1 as ::core::ffi::c_int;
-    match (*mitem).type_0 as ::core::ffi::c_uint {
+    (*(*__tekai_state_generated_backend_mapfile).mitem).lineno = 1 as ::core::ffi::c_int;
+    match (*(*__tekai_state_generated_backend_mapfile).mitem).type_0 as ::core::ffi::c_uint {
         0 => {
-            cur_file_name = (*mitem).line;
-            zpackfilename(maketexstring(cur_file_name), getnullstr(), getnullstr());
+            (*__tekai_state_utils).cur_file_name =
+                (*(*__tekai_state_generated_backend_mapfile).mitem).line;
+            zpackfilename(
+                maketexstring((*__tekai_state_utils).cur_file_name),
+                getnullstr(),
+                getnullstr(),
+            );
             if open_input(
-                &raw mut fm_file,
+                &raw mut (*__tekai_state_generated_backend_mapfile).fm_file,
                 kpse_fontmap_format as ::core::ffi::c_int,
                 FOPEN_RBIN_MODE.as_ptr(),
             ) == 0
@@ -1478,26 +1511,33 @@ pub unsafe fn fm_read_info() {
                     &[],
                 );
             } else {
-                cur_file_name = (nameoffile as *mut ::core::ffi::c_char)
-                    .offset(1 as ::core::ffi::c_int as isize);
+                (*__tekai_state_utils).cur_file_name =
+                    ((*__tekai_state_generated_pdftexextra).nameoffile as *mut ::core::ffi::c_char)
+                        .offset(1 as ::core::ffi::c_int as isize);
                 crate::utils::tex_printf_args(
                     b"{%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &[crate::utils::PrintfArg::from(cur_file_name)],
+                    &[crate::utils::PrintfArg::from(
+                        (*__tekai_state_utils).cur_file_name,
+                    )],
                 );
-                while feof(fm_file) == 0 {
+                while feof((*__tekai_state_generated_backend_mapfile).fm_file) == 0 {
                     fm_scan_line();
-                    (*mitem).lineno += 1;
+                    (*(*__tekai_state_generated_backend_mapfile).mitem).lineno += 1;
                 }
-                xfclose(fm_file, cur_file_name as const_string);
+                xfclose(
+                    (*__tekai_state_generated_backend_mapfile).fm_file,
+                    (*__tekai_state_utils).cur_file_name as const_string,
+                );
                 crate::utils::tex_printf_args(
                     b"}\0" as *const u8 as *const ::core::ffi::c_char,
                     &[],
                 );
-                fm_file = ::core::ptr::null_mut::<FILE>();
+                (*__tekai_state_generated_backend_mapfile).fm_file =
+                    ::core::ptr::null_mut::<FILE>();
             }
         }
         1 => {
-            cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
+            (*__tekai_state_utils).cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
             fm_scan_line();
         }
         _ => {
@@ -1512,10 +1552,16 @@ pub unsafe fn fm_read_info() {
             };
         }
     }
-    (*mitem).line = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    (*(*__tekai_state_generated_backend_mapfile).mitem).line =
+        ::core::ptr::null_mut::<::core::ffi::c_char>();
+    (*__tekai_state_utils).cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
 unsafe fn fmlookup(mut f: internalfontnumber) -> fmentryptr {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut tfm: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     let mut tmp: fm_entry = fm_entry {
@@ -1534,12 +1580,21 @@ unsafe fn fmlookup(mut f: internalfontnumber) -> fmentryptr {
         links: 0,
         in_use: 0,
     };
-    if tfm_tree.is_null() {
+    if (*__tekai_state_generated_backend_mapfile)
+        .tfm_tree
+        .is_null()
+    {
         fm_read_info();
     }
-    tfm = makecstring(*fontname.offset(f as isize) as integer);
-    if !(strcmp(tfm, &raw const nontfm as *const ::core::ffi::c_char) != 0 as ::core::ffi::c_int)
-        as ::core::ffi::c_int as ::core::ffi::c_long
+    tfm = makecstring(
+        *(*__tekai_state_generated_pdftexextra)
+            .fontname
+            .offset(f as isize) as integer,
+    );
+    if !(strcmp(
+        tfm,
+        &raw const (*__tekai_state_generated_backend_mapfile).nontfm as *const ::core::ffi::c_char,
+    ) != 0 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long
         != 0
     {
         __assert_rtn(
@@ -1551,7 +1606,10 @@ unsafe fn fmlookup(mut f: internalfontnumber) -> fmentryptr {
     } else {
     };
     tmp.tfm_name = tfm;
-    fm = avl_find(tfm_tree, &raw mut tmp as *const ::core::ffi::c_void) as *mut fm_entry;
+    fm = avl_find(
+        (*__tekai_state_generated_backend_mapfile).tfm_tree,
+        &raw mut tmp as *const ::core::ffi::c_void,
+    ) as *mut fm_entry;
     if !fm.is_null() {
         (*fm).in_use = true_0 as boolean;
         return fm as fmentryptr;
@@ -1559,11 +1617,24 @@ unsafe fn fmlookup(mut f: internalfontnumber) -> fmentryptr {
     return dummy_fm_entry() as fmentryptr;
 }
 pub unsafe fn hasfmentry(mut f: internalfontnumber) -> boolean {
-    if (*pdffontmap.offset(f as isize)).is_null() {
-        let ref mut fresh9 = *pdffontmap.offset(f as isize);
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
+    if (*(*__tekai_state_generated_pdftexextra)
+        .pdffontmap
+        .offset(f as isize))
+    .is_null()
+    {
+        let ref mut fresh9 = *(*__tekai_state_generated_pdftexextra)
+            .pdffontmap
+            .offset(f as isize);
         *fresh9 = fmlookup(f);
     }
-    if (*pdffontmap.offset(f as isize)).is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0
+    if (*(*__tekai_state_generated_pdftexextra)
+        .pdffontmap
+        .offset(f as isize))
+    .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+        != 0
     {
         __assert_rtn(
             b"hasfmentry\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1573,22 +1644,35 @@ pub unsafe fn hasfmentry(mut f: internalfontnumber) -> boolean {
         );
     } else {
     };
-    return (*pdffontmap.offset(f as isize) != dummy_fm_entry() as fmentryptr)
-        as ::core::ffi::c_int;
+    return (*(*__tekai_state_generated_pdftexextra)
+        .pdffontmap
+        .offset(f as isize)
+        != dummy_fm_entry() as fmentryptr) as ::core::ffi::c_int;
 }
 pub unsafe fn isscalable(mut f: internalfontnumber) -> boolean {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     return (hasfmentry(f) != 0
-        && !((*(*pdffontmap.offset(f as isize) as *mut fm_entry)).type_0 as ::core::ffi::c_int
+        && !((*(*(*__tekai_state_generated_pdftexextra)
+            .pdffontmap
+            .offset(f as isize) as *mut fm_entry))
+            .type_0 as ::core::ffi::c_int
             & F_PK
             != 0 as ::core::ffi::c_int)) as ::core::ffi::c_int;
 }
 pub unsafe fn hasspacechar(mut f: internalfontnumber) -> boolean {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     let mut fe: *mut fe_entry = ::core::ptr::null_mut::<fe_entry>();
     if isscalable(f) == 0 {
         return false_0;
     }
-    fm = *pdffontmap.offset(f as isize) as *mut fm_entry;
+    fm = *(*__tekai_state_generated_pdftexextra)
+        .pdffontmap
+        .offset(f as isize) as *mut fm_entry;
     if !(*fm).encname.is_null() && {
         fe = get_fe_entry((*fm).encname);
         !fe.is_null()
@@ -1660,6 +1744,9 @@ unsafe fn fm_valid_for_font_replacement(mut fm: *mut fm_entry) -> boolean {
     return true_0;
 }
 pub unsafe fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -> *mut fm_entry {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     let mut fm2: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     let mut tmp: fm_entry = fm_entry {
@@ -1701,7 +1788,10 @@ pub unsafe fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -> *mut fm_e
         avl_height: 0,
         avl_generation: 0,
     };
-    if tfm_tree.is_null() {
+    if (*__tekai_state_generated_backend_mapfile)
+        .tfm_tree
+        .is_null()
+    {
         fm_read_info();
     }
     if ps_name.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -1772,7 +1862,7 @@ pub unsafe fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -> *mut fm_e
     tmp.ps_name = s;
     fm = avl_t_find(
         &raw mut t,
-        ps_tree,
+        (*__tekai_state_generated_backend_mapfile).ps_tree,
         &raw mut tmp as *mut ::core::ffi::c_void,
     ) as *mut fm_entry;
     if fm.is_null() {
@@ -1810,6 +1900,9 @@ pub unsafe fn lookup_fontmap(mut ps_name: *mut ::core::ffi::c_char) -> *mut fm_e
     return ::core::ptr::null_mut::<fm_entry>();
 }
 unsafe fn process_map_item(mut s: *mut ::core::ffi::c_char, mut type_0: ::core::ffi::c_int) {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut mode: ::core::ffi::c_int = 0;
     if *s as ::core::ffi::c_int == ' ' as i32 {
@@ -1830,7 +1923,8 @@ unsafe fn process_map_item(mut s: *mut ::core::ffi::c_char, mut type_0: ::core::
         }
         _ => {
             mode = FM_DUPIGNORE as ::core::ffi::c_int;
-            (*mitem).line = ::core::ptr::null_mut::<::core::ffi::c_char>();
+            (*(*__tekai_state_generated_backend_mapfile).mitem).line =
+                ::core::ptr::null_mut::<::core::ffi::c_char>();
         }
     }
     if *s as ::core::ffi::c_int == ' ' as i32 {
@@ -1858,29 +1952,38 @@ unsafe fn process_map_item(mut s: *mut ::core::ffi::c_char, mut type_0: ::core::
             };
         }
     }
-    if !(*mitem).line.is_null() {
+    if !(*(*__tekai_state_generated_backend_mapfile).mitem)
+        .line
+        .is_null()
+    {
         fm_read_info();
     }
     if *s as ::core::ffi::c_int != '\0' as i32 {
-        (*mitem).mode = mode as updatemode;
-        (*mitem).type_0 = type_0 as maptype;
-        (*mitem).line = s;
+        (*(*__tekai_state_generated_backend_mapfile).mitem).mode = mode as updatemode;
+        (*(*__tekai_state_generated_backend_mapfile).mitem).type_0 = type_0 as maptype;
+        (*(*__tekai_state_generated_backend_mapfile).mitem).line = s;
         fm_read_info();
     }
 }
 pub unsafe fn pdfmapfile(mut t: integer) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     process_map_item(
         makecstring(ztokenstostring(t) as integer),
         MAPFILE as ::core::ffi::c_int,
     );
-    zflushstr(lasttokensstring);
+    zflushstr((*__tekai_state_generated_pdftexextra).lasttokensstring);
 }
 pub unsafe fn pdfmapline(mut t: integer) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     process_map_item(
         makecstring(ztokenstostring(t) as integer),
         MAPLINE as ::core::ffi::c_int,
     );
-    zflushstr(lasttokensstring);
+    zflushstr((*__tekai_state_generated_pdftexextra).lasttokensstring);
 }
 pub unsafe fn pdfmaplinesp() {
     process_map_item(
@@ -1890,7 +1993,13 @@ pub unsafe fn pdfmaplinesp() {
     );
 }
 pub unsafe fn pdfinitmapfile(mut map_name: const_string) {
-    if !mitem.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
+    if !(*__tekai_state_generated_backend_mapfile).mitem.is_null() as ::core::ffi::c_int
+        as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"pdfinitmapfile\0" as *const u8 as *const ::core::ffi::c_char,
             b"mapfile.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1899,16 +2008,21 @@ pub unsafe fn pdfinitmapfile(mut map_name: const_string) {
         );
     } else {
     };
-    mitem = xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<mapitem>() as size_t))
-        as *mut mapitem;
-    (*mitem).mode = FM_DUPIGNORE;
-    (*mitem).type_0 = MAPFILE;
-    (*mitem).line = xstrdup(map_name) as *mut ::core::ffi::c_char;
+    (*__tekai_state_generated_backend_mapfile).mitem =
+        xmalloc((1 as size_t).wrapping_mul(::core::mem::size_of::<mapitem>() as size_t))
+            as *mut mapitem;
+    (*(*__tekai_state_generated_backend_mapfile).mitem).mode = FM_DUPIGNORE;
+    (*(*__tekai_state_generated_backend_mapfile).mitem).type_0 = MAPFILE;
+    (*(*__tekai_state_generated_backend_mapfile).mitem).line =
+        xstrdup(map_name) as *mut ::core::ffi::c_char;
 }
 pub unsafe fn check_ff_exist(
     mut ff_name: *mut ::core::ffi::c_char,
     mut is_tt: boolean,
 ) -> *mut ff_entry {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
     let mut ff: *mut ff_entry = ::core::ptr::null_mut::<ff_entry>();
     let mut tmp: ff_entry = ff_entry {
         ff_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -1925,7 +2039,10 @@ pub unsafe fn check_ff_exist(
     } else {
     };
     tmp.ff_name = ff_name;
-    ff = avl_find(ff_tree, &raw mut tmp as *const ::core::ffi::c_void) as *mut ff_entry;
+    ff = avl_find(
+        (*__tekai_state_generated_backend_mapfile).ff_tree,
+        &raw mut tmp as *const ::core::ffi::c_void,
+    ) as *mut ff_entry;
     if ff.is_null() {
         ff = new_ff_entry();
         (*ff).ff_name = xstrdup(ff_name as const_string) as *mut ::core::ffi::c_char;
@@ -1937,7 +2054,10 @@ pub unsafe fn check_ff_exist(
             (*ff).ff_path = kpse_find_file(ff_name as const_string, kpse_type1_format, 0 as boolean)
                 as *mut ::core::ffi::c_char;
         }
-        aa = avl_probe(ff_tree, ff as *mut ::core::ffi::c_void);
+        aa = avl_probe(
+            (*__tekai_state_generated_backend_mapfile).ff_tree,
+            ff as *mut ::core::ffi::c_void,
+        );
         if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
             __assert_rtn(
                 b"check_ff_exist\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1974,35 +2094,403 @@ unsafe fn destroy_ff_entry(mut pa: *mut ::core::ffi::c_void, mut pb: *mut ::core
     delete_ff_entry(ff);
 }
 pub unsafe fn fm_free() {
-    if !tfm_tree.is_null() {
+    let __tekai_state_generated_backend_mapfile: *mut crate::generated::backend::mapfile::State =
+        unsafe { crate::generated::backend::mapfile::state() };
+
+    if !(*__tekai_state_generated_backend_mapfile)
+        .tfm_tree
+        .is_null()
+    {
         avl_destroy(
-            tfm_tree,
+            (*__tekai_state_generated_backend_mapfile).tfm_tree,
             Some(
                 destroy_fm_entry_tfm
                     as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
-        tfm_tree = ::core::ptr::null_mut::<avl_table>();
+        (*__tekai_state_generated_backend_mapfile).tfm_tree = ::core::ptr::null_mut::<avl_table>();
     }
-    if !ps_tree.is_null() {
+    if !(*__tekai_state_generated_backend_mapfile).ps_tree.is_null() {
         avl_destroy(
-            ps_tree,
+            (*__tekai_state_generated_backend_mapfile).ps_tree,
             Some(
                 destroy_fm_entry_ps
                     as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
-        ps_tree = ::core::ptr::null_mut::<avl_table>();
+        (*__tekai_state_generated_backend_mapfile).ps_tree = ::core::ptr::null_mut::<avl_table>();
     }
-    if !ff_tree.is_null() {
+    if !(*__tekai_state_generated_backend_mapfile).ff_tree.is_null() {
         avl_destroy(
-            ff_tree,
+            (*__tekai_state_generated_backend_mapfile).ff_tree,
             Some(
                 destroy_ff_entry
                     as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
-        ff_tree = ::core::ptr::null_mut::<avl_table>();
+        (*__tekai_state_generated_backend_mapfile).ff_tree = ::core::ptr::null_mut::<avl_table>();
     }
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+pub(crate) struct State {
+    fm_file: *mut FILE,
+    mitem: *mut mapitem,
+    nontfm: [::core::ffi::c_char; 9],
+    local_dummy_fm_entry_228_const_fm_entry: fm_entry,
+    tfm_tree: *mut avl_table,
+    ps_tree: *mut avl_table,
+    ff_tree: *mut avl_table,
+    encname_tree: *mut avl_table,
+    local_check_std_t1font_866_std_t1font_names: [*const ::core::ffi::c_char; 14],
+    local_check_std_t1font_882_index: [::core::ffi::c_int; 22],
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 10],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[9] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).local_check_std_t1font_882_index
+                ));
+            }
+            if self.initialized[8] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).local_check_std_t1font_866_std_t1font_names
+                ));
+            }
+            if self.initialized[7] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).encname_tree));
+            }
+            if self.initialized[6] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).ff_tree));
+            }
+            if self.initialized[5] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).ps_tree));
+            }
+            if self.initialized[4] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).tfm_tree));
+            }
+            if self.initialized[3] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).local_dummy_fm_entry_228_const_fm_entry
+                ));
+            }
+            if self.initialized[2] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).nontfm));
+            }
+            if self.initialized[1] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).mitem));
+            }
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).fm_file));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 10],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<*mut FILE>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).fm_file)
+            .write(::core::ptr::null::<FILE>() as *mut FILE);
+        self.initialized[0] = true;
+        const {
+            assert!(core::mem::size_of::<*mut mapitem>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).mitem)
+            .write(::core::ptr::null::<mapitem>() as *mut mapitem);
+        self.initialized[1] = true;
+        const {
+            assert!(core::mem::size_of::<[::core::ffi::c_char; 9]>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).nontfm).write(unsafe {
+            ::core::mem::transmute::<[u8; 9], [::core::ffi::c_char; 9]>(*b"<nontfm>\0")
+        });
+        self.initialized[2] = true;
+        const {
+            assert!(core::mem::size_of::<fm_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_dummy_fm_entry_228_const_fm_entry).write(
+            fm_entry {
+                tfm_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
+                sfd_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
+                ps_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
+                fd_flags: 0,
+                slant: 0,
+                extend: 0,
+                encname: ::core::ptr::null_mut::<::core::ffi::c_char>(),
+                ff_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
+                type_0: 0,
+                pid: 0,
+                eid: 0,
+                subfont: ::core::ptr::null_mut::<subfont_entry>(),
+                links: 0,
+                in_use: 0,
+            },
+        );
+        self.initialized[3] = true;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).tfm_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[4] = true;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).ps_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[5] = true;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).ff_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[6] = true;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).encname_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[7] = true;
+        const {
+            assert!((14) == 14);
+        }
+        __tekai_require_copy::<*const ::core::ffi::c_char>();
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[0])
+            .write(b"Courier\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[1])
+            .write(b"Courier-Bold\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[2])
+            .write(b"Courier-Oblique\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[3])
+            .write(b"Courier-BoldOblique\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[4])
+            .write(b"Helvetica\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[5])
+            .write(b"Helvetica-Bold\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[6])
+            .write(b"Helvetica-Oblique\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[7])
+            .write(b"Helvetica-BoldOblique\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[8])
+            .write(b"Symbol\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[9])
+            .write(b"Times-Roman\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[10])
+            .write(b"Times-Bold\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[11])
+            .write(b"Times-Italic\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[12])
+            .write(b"Times-BoldItalic\0" as *const u8 as *const ::core::ffi::c_char);
+        const {
+            assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_866_std_t1font_names[13])
+            .write(b"ZapfDingbats\0" as *const u8 as *const ::core::ffi::c_char);
+        self.initialized[8] = true;
+        const {
+            assert!((22) == 22);
+        }
+        __tekai_require_copy::<::core::ffi::c_int>();
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[0])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[1])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[2])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[3])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[4])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[5])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[6])
+            .write(8 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[7])
+            .write(0 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[8])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[9])
+            .write(4 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[10])
+            .write(10 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[11])
+            .write(9 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[12])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[13])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[14])
+            .write(5 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[15])
+            .write(2 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[16])
+            .write(12 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[17])
+            .write(6 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[18])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[19])
+            .write(3 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[20])
+            .write(-(1 as ::core::ffi::c_int));
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_check_std_t1font_882_index[21])
+            .write(7 as ::core::ffi::c_int);
+        self.initialized[9] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_mapfile
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
+}

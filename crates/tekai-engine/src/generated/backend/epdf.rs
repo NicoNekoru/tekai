@@ -3,9 +3,7 @@ pub use crate::generated::backend::writefont::{lookup_fd_entry, new_fd_entry, re
 pub use crate::generated::pdftex0::pdfnewobjnum;
 pub use crate::pdftoepdf::epdf_check_mem;
 
-pub use crate::generated::backend::avl::{
-    avl_comparison_func, avl_create, avl_find, avl_node, avl_probe, avl_table, libavl_allocator,
-};
+pub use crate::generated::backend::avl::{avl_create, avl_find, avl_probe};
 
 use crate::byte_string::strlen;
 
@@ -13,9 +11,6 @@ use crate::openclose::xstrdup;
 
 use crate::termination::__assert_rtn;
 
-extern "C" {
-    static mut avl_xallocator: libavl_allocator;
-}
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
 pub type boolean = ::core::ffi::c_int;
@@ -25,8 +20,10 @@ pub type integer = ::core::ffi::c_int;
 pub use crate::backend_types::_subfont_entry;
 pub type subfont_entry = _subfont_entry;
 pub use crate::backend_types::fd_entry_;
+#[cfg(test)]
 pub use crate::backend_types::fe_entry;
 pub use crate::backend_types::fm_entry;
+#[cfg(test)]
 pub use crate::backend_types::intparm;
 pub type fd_entry = fd_entry_;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
@@ -53,6 +50,9 @@ pub unsafe fn epdf_create_fontdescriptor(
     mut fm: *mut fm_entry,
     mut stemV: ::core::ffi::c_int,
 ) -> *mut fd_entry {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+
     let mut fd: *mut fd_entry = ::core::ptr::null_mut::<fd_entry>();
     fd = lookup_fd_entry((*fm).ff_name, (*fm).slant, (*fm).extend);
     if fd.is_null() {
@@ -83,7 +83,7 @@ pub unsafe fn epdf_create_fontdescriptor(
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
         if (*fd).gl_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
             __assert_rtn(

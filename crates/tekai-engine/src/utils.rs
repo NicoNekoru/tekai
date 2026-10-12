@@ -13,12 +13,11 @@ pub use crate::generated::backend::writettf::ttf_free;
 pub use crate::generated::pdftex0::{
     getnullstr, makestring, pdfflush, println, zflushstr, zpdfosgetosbuf, zprint, ztokenstostring,
 };
-pub use crate::generated::pdftexextra::{initstarttime, makecstring};
+pub use crate::generated::pdftexextra::makecstring;
 
 pub use crate::generated::backend::avl::{
-    avl_comparison_func as AvlComparisonFunc, avl_create, avl_find, avl_node as AvlNode, avl_probe,
-    avl_t_first, avl_t_init, avl_t_next, avl_table as AvlTable, avl_traverser as AvlTraverser,
-    libavl_allocator as LibAvlAllocator,
+    avl_create, avl_find, avl_probe, avl_t_first, avl_t_init, avl_t_next, avl_table as AvlTable,
+    avl_traverser as AvlTraverser,
 };
 
 use crate::regex_session::{self, MatchState};
@@ -56,65 +55,9 @@ type Address = *mut c_void;
 mod printf;
 pub use printf::PrintfArg;
 
-extern "C" {
-    static kpse_def_inst: KpathseaInstancePrefix;
-
-    static mut pdfbuf: *mut c_uchar;
-    static mut pdfbufsize: Integer;
-    static mut pdfptr: Integer;
-    static mut pdfosmode: Boolean;
-    static mut pdflastbyte: c_uchar;
-    static mut pdfgone: LongInteger;
-    static mut pdffile: *mut FILE;
-    static mut outputfilename: StrNumber;
-    static mut fixedpdfdraftmode: Integer;
-
-    static mut poolsize: Integer;
-    static mut poolptr: PoolPointer;
-    static mut strpool: *mut c_uchar;
-    static mut jobname: StrNumber;
-    static mut formatident: StrNumber;
-    static mut pdftexbanner: StrNumber;
-    static mut lasttokensstring: StrNumber;
-    static mut vfefnts: *mut Integer;
-    static mut vfifnts: *mut InternalFontNumber;
-    static mut fontmax: Integer;
-    static ptexbanner: *const c_char;
-    static versionstring: *const c_char;
-    static kpathsea_version_string: *const c_char;
-
-    static mut avl_xallocator: LibAvlAllocator;
-
-}
-pub use crate::backend_types::{
-    fd_entry as FdEntry, fe_entry as FeEntry, fm_entry as FmEntry, intparm as IntParm,
-};
-use crate::kpathsea_types::kpathsea_instance as KpathseaInstancePrefix;
-
-#[no_mangle]
-pub static mut cur_file_name: *mut c_char = ptr::null_mut();
-
-#[no_mangle]
-pub static mut last_ptr_index: SizeT = 0;
-
-#[no_mangle]
-pub static mut fb_ptr: *mut c_char = ptr::null_mut();
-#[no_mangle]
-pub static mut fb_array: *mut c_char = ptr::null_mut();
-#[no_mangle]
-pub static mut fb_limit: SizeT = 0;
-
-static mut LAST_TEX_STRING: StrNumber = 0;
-static mut JOB_ID_STRING: *mut c_char = ptr::null_mut();
-static mut JOBNAME_CSTR: *mut c_char = ptr::null_mut();
-static mut PSTRING_BUF: [c_char; MAX_PSTRING_LEN] = [0; MAX_PSTRING_LEN];
-
-static mut VF_E_FNTS_PTR: *mut Integer = ptr::null_mut();
-static mut VF_E_FNTS_ARRAY: *mut Integer = ptr::null_mut();
-static mut VF_E_FNTS_LIMIT: SizeT = 0;
-static mut VF_I_FNTS_PTR: *mut InternalFontNumber = ptr::null_mut();
-static mut VF_I_FNTS_ARRAY: *mut InternalFontNumber = ptr::null_mut();
-static mut VF_I_FNTS_LIMIT: SizeT = 0;
+pub use crate::backend_types::{fd_entry as FdEntry, fm_entry as FmEntry};
+#[cfg(test)]
+pub use crate::backend_types::{fe_entry as FeEntry, intparm as IntParm};
 
 #[derive(Clone)]
 struct ColorStack {
@@ -144,32 +87,26 @@ struct PosEntry {
     matrix_stack: usize,
 }
 
-static mut PAGE_MODE: Boolean = FALSE;
-static mut COLOR_STACKS: Option<Vec<ColorStack>> = None;
-static mut MATRIX_STACK: Vec<MatrixEntry> = Vec::new();
-static mut POS_STACK: Vec<PosEntry> = Vec::new();
-static mut RET_LLX: Scaled = 0;
-static mut RET_LLY: Scaled = 0;
-static mut RET_URX: Scaled = 0;
-static mut RET_URY: Scaled = 0;
-static mut LAST_LLX: Scaled = 0;
-static mut LAST_LLY: Scaled = 0;
-static mut LAST_URX: Scaled = 0;
-static mut LAST_URY: Scaled = 0;
-static mut SUBSET_TAG_TREE: *mut AvlTable = ptr::null_mut();
-
 unsafe fn kpse_invocation_name() -> *const c_char {
+    let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
+
     unsafe {
-        if kpse_def_inst.invocation_name.is_null() {
+        if (*__tekai_state_kpathsea)
+            .kpse_def_inst
+            .invocation_name
+            .is_null()
+        {
             c"pdftex".as_ptr()
         } else {
-            kpse_def_inst.invocation_name
+            (*__tekai_state_kpathsea).kpse_def_inst.invocation_name
         }
     }
 }
 
 unsafe fn kpathsea_debug_enabled() -> bool {
-    unsafe { kpse_def_inst.debug != 0 }
+    let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
+
+    unsafe { (*__tekai_state_kpathsea).kpse_def_inst.debug != 0 }
 }
 
 unsafe fn c_string_bytes(ptr: *const c_char) -> &'static [u8] {
@@ -223,9 +160,15 @@ unsafe fn c_str_len(ptr: *const c_char) -> usize {
 }
 
 fn check_pool_room(extra: usize) -> bool {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if poolptr as usize + extra >= poolsize as usize {
-            poolptr = poolsize;
+        if (*__tekai_state_generated_pdftexextra).poolptr as usize + extra
+            >= (*__tekai_state_generated_pdftexextra).poolsize as usize
+        {
+            (*__tekai_state_generated_pdftexextra).poolptr =
+                (*__tekai_state_generated_pdftexextra).poolsize;
             false
         } else {
             true
@@ -234,11 +177,16 @@ fn check_pool_room(extra: usize) -> bool {
 }
 
 unsafe fn pdf_room(n: usize) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if n + pdfptr as usize > pdfbufsize as usize {
-            if pdfosmode != 0 {
+        if n + (*__tekai_state_generated_pdftexextra).pdfptr as usize
+            > (*__tekai_state_generated_pdftexextra).pdfbufsize as usize
+        {
+            if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                 zpdfosgetosbuf(n as Integer);
-            } else if n > pdfbufsize as usize {
+            } else if n > (*__tekai_state_generated_pdftexextra).pdfbufsize as usize {
                 pdftex_fail_args(c"PDF output buffer overflowed".as_ptr(), &[]);
             } else {
                 pdfflush();
@@ -248,35 +196,56 @@ unsafe fn pdf_room(n: usize) {
 }
 
 pub unsafe fn pdf_out(byte: u8) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
         pdf_room(1);
-        *pdfbuf.add(pdfptr as usize) = byte;
-        pdfptr += 1;
-        pdflastbyte = byte;
+        *(*__tekai_state_generated_pdftexextra)
+            .pdfbuf
+            .add((*__tekai_state_generated_pdftexextra).pdfptr as usize) = byte;
+        (*__tekai_state_generated_pdftexextra).pdfptr += 1;
+        (*__tekai_state_generated_pdftexextra).pdflastbyte = byte;
     }
 }
 
 #[inline(always)]
 unsafe fn pdf_write_bytes_impl<const TRACK_LAST_BYTE: bool>(mut src: *const u8, mut len: usize) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
         while len > 0 {
-            if pdfptr as usize >= pdfbufsize as usize {
-                if pdfosmode != 0 {
-                    zpdfosgetosbuf(len.min(pdfbufsize as usize) as Integer);
+            if (*__tekai_state_generated_pdftexextra).pdfptr as usize
+                >= (*__tekai_state_generated_pdftexextra).pdfbufsize as usize
+            {
+                if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
+                    zpdfosgetosbuf(
+                        len.min((*__tekai_state_generated_pdftexextra).pdfbufsize as usize)
+                            as Integer,
+                    );
                 } else {
                     pdfflush();
                 }
             }
 
-            let available = (pdfbufsize - pdfptr) as usize;
+            let available = ((*__tekai_state_generated_pdftexextra).pdfbufsize
+                - (*__tekai_state_generated_pdftexextra).pdfptr)
+                as usize;
             if available == 0 {
                 continue;
             }
             let chunk = len.min(available);
-            ptr::copy_nonoverlapping(src, pdfbuf.add(pdfptr as usize), chunk);
-            pdfptr += chunk as Integer;
+            ptr::copy_nonoverlapping(
+                src,
+                (*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .add((*__tekai_state_generated_pdftexextra).pdfptr as usize),
+                chunk,
+            );
+            (*__tekai_state_generated_pdftexextra).pdfptr += chunk as Integer;
             if TRACK_LAST_BYTE {
-                pdflastbyte = *src.add(chunk - 1);
+                (*__tekai_state_generated_pdftexextra).pdflastbyte = *src.add(chunk - 1);
             }
             src = src.add(chunk);
             len -= chunk;
@@ -297,29 +266,45 @@ pub unsafe fn pdf_write_bytes_untracked(src: *const u8, len: usize) {
 }
 
 pub unsafe fn pdf_puts(s: *const c_char) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     if s.is_null() {
         return;
     }
     let bytes = unsafe { CStr::from_ptr(s).to_bytes() };
     unsafe {
         pdf_room(bytes.len() + 1);
-        ptr::copy_nonoverlapping(bytes.as_ptr(), pdfbuf.add(pdfptr as usize), bytes.len());
-        pdfptr += bytes.len() as Integer;
+        ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            (*__tekai_state_generated_pdftexextra)
+                .pdfbuf
+                .add((*__tekai_state_generated_pdftexextra).pdfptr as usize),
+            bytes.len(),
+        );
+        (*__tekai_state_generated_pdftexextra).pdfptr += bytes.len() as Integer;
         if let Some(&byte) = bytes.last() {
-            pdflastbyte = byte;
+            (*__tekai_state_generated_pdftexextra).pdflastbyte = byte;
         }
     }
 }
 
 pub unsafe fn pdf_newline() {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if pdflastbyte != b'\n' {
+        if (*__tekai_state_generated_pdftexextra).pdflastbyte != b'\n' {
             pdf_puts(c"\n".as_ptr());
         }
     }
 }
 
 pub unsafe fn maketexstring(s: *const c_char) -> StrNumber {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
         if s.is_null() || *s == 0 {
             return getnullstr();
@@ -328,10 +313,16 @@ pub unsafe fn maketexstring(s: *const c_char) -> StrNumber {
         if !check_pool_room(bytes.len()) {
             pdftex_fail_args(c"string pool overflow".as_ptr(), &[]);
         }
-        ptr::copy_nonoverlapping(bytes.as_ptr(), strpool.add(poolptr as usize), bytes.len());
-        poolptr += bytes.len() as PoolPointer;
-        LAST_TEX_STRING = makestring();
-        LAST_TEX_STRING
+        ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            (*__tekai_state_generated_pdftexextra)
+                .strpool
+                .add((*__tekai_state_generated_pdftexextra).poolptr as usize),
+            bytes.len(),
+        );
+        (*__tekai_state_generated_pdftexextra).poolptr += bytes.len() as PoolPointer;
+        (*__tekai_state_utils).LAST_TEX_STRING = makestring();
+        (*__tekai_state_utils).LAST_TEX_STRING
     }
 }
 
@@ -409,6 +400,8 @@ pub unsafe fn tex_printf_args(fmt: *const c_char, args: &[PrintfArg]) {
 }
 
 pub unsafe fn pdftex_warn_args(fmt: *const c_char, args: &[PrintfArg]) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     let bytes = unsafe { format_printf(fmt, args) };
     unsafe {
         println();
@@ -417,8 +410,11 @@ pub unsafe fn pdftex_warn_args(fmt: *const c_char, args: &[PrintfArg]) {
             c"pdfTeX warning: %s".as_ptr(),
             &[PrintfArg::from(kpse_invocation_name())],
         );
-        if !cur_file_name.is_null() {
-            tex_printf_args(c" (file %s)".as_ptr(), &[PrintfArg::from(cur_file_name)]);
+        if !(*__tekai_state_utils).cur_file_name.is_null() {
+            tex_printf_args(
+                c" (file %s)".as_ptr(),
+                &[PrintfArg::from((*__tekai_state_utils).cur_file_name)],
+            );
         }
         tex_printf_args(c": ".as_ptr(), &[]);
         safe_print_bytes(&bytes);
@@ -427,14 +423,16 @@ pub unsafe fn pdftex_warn_args(fmt: *const c_char, args: &[PrintfArg]) {
 }
 
 pub unsafe fn pdftex_fail_args(fmt: *const c_char, args: &[PrintfArg]) -> ! {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     let bytes = unsafe { format_printf(fmt, args) };
     unsafe {
         println();
         safe_print(c"!pdfTeX error: ".as_ptr());
         safe_print(kpse_invocation_name());
-        if !cur_file_name.is_null() {
+        if !(*__tekai_state_utils).cur_file_name.is_null() {
             safe_print(c" (file ".as_ptr());
-            safe_print(cur_file_name);
+            safe_print((*__tekai_state_utils).cur_file_name);
             safe_print(c")".as_ptr());
         }
         safe_print(c": ".as_ptr());
@@ -454,10 +452,16 @@ pub unsafe fn pdftex_fail_args(fmt: *const c_char, args: &[PrintfArg]) -> ! {
 }
 
 pub unsafe fn removepdffile() {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if !kpathsea_debug_enabled() && outputfilename != 0 && fixedpdfdraftmode == 0 {
-            let name = makecstring(outputfilename);
-            xfclose(pdffile, name);
+        if !kpathsea_debug_enabled()
+            && (*__tekai_state_generated_pdftexextra).outputfilename != 0
+            && (*__tekai_state_generated_pdftexextra).fixedpdfdraftmode == 0
+        {
+            let name = makecstring((*__tekai_state_generated_pdftexextra).outputfilename);
+            xfclose((*__tekai_state_generated_pdftexextra).pdffile, name);
             use std::os::unix::ffi::OsStrExt;
             let path =
                 std::path::Path::new(std::ffi::OsStr::from_bytes(CStr::from_ptr(name).to_bytes()));
@@ -514,20 +518,36 @@ pub(crate) unsafe fn xgetc(stream: *mut FILE) -> c_int {
 }
 
 pub unsafe fn writestreamlength(length: LongInteger, offset: LongInteger) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if JOBNAME_CSTR.is_null() {
-            JOBNAME_CSTR = c_strdup(makecstring(jobname));
+        if (*__tekai_state_utils).JOBNAME_CSTR.is_null() {
+            (*__tekai_state_utils).JOBNAME_CSTR =
+                c_strdup(makecstring((*__tekai_state_generated_pdftexextra).jobname));
         }
-        if fixedpdfdraftmode == 0 {
-            if crate::stdio::fseeko(pdffile, offset, libc::SEEK_SET) != 0 {
+        if (*__tekai_state_generated_pdftexextra).fixedpdfdraftmode == 0 {
+            if crate::stdio::fseeko(
+                (*__tekai_state_generated_pdftexextra).pdffile,
+                offset,
+                libc::SEEK_SET,
+            ) != 0
+            {
                 pdftex_fail_args(c"fseeko() failed".as_ptr(), &[]);
             }
             crate::stdio::fprintf_args(
-                pdffile,
+                (*__tekai_state_generated_pdftexextra).pdffile,
                 c"%lli".as_ptr(),
                 &[crate::utils::PrintfArg::from(length as c_longlong)],
             );
-            if crate::stdio::fseeko(pdffile, pdfgone + pdfptr as LongInteger, libc::SEEK_SET) != 0 {
+            if crate::stdio::fseeko(
+                (*__tekai_state_generated_pdftexextra).pdffile,
+                (*__tekai_state_generated_pdftexextra).pdfgone
+                    + (*__tekai_state_generated_pdftexextra).pdfptr as LongInteger,
+                libc::SEEK_SET,
+            ) != 0
+            {
                 pdftex_fail_args(c"fseeko() failed".as_ptr(), &[]);
             }
         }
@@ -535,8 +555,10 @@ pub unsafe fn writestreamlength(length: LongInteger, offset: LongInteger) {
 }
 
 pub unsafe fn convertStringToPDFString(input: *const c_char, len: c_int) -> *mut c_char {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        let out = &raw mut PSTRING_BUF as *mut c_char;
+        let out = &raw mut (*__tekai_state_utils).PSTRING_BUF as *mut c_char;
         let mut j = 0usize;
         for i in 0..len.max(0) as usize {
             if j + 4 >= MAX_PSTRING_LEN {
@@ -576,42 +598,58 @@ pub unsafe fn convertStringToPDFString(input: *const c_char, len: c_int) -> *mut
 }
 
 pub unsafe fn escapestring(input: PoolPointer) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        let out = poolptr;
+        let out = (*__tekai_state_generated_pdftexextra).poolptr;
         let mut pos = input;
         while pos < out {
             if !check_pool_room(4) {
                 return;
             }
-            let ch = *strpool.add(pos as usize);
+            let ch = *(*__tekai_state_generated_pdftexextra)
+                .strpool
+                .add(pos as usize);
             pos += 1;
             if !(b'!'..=b'~').contains(&ch) {
                 let frag = format!("\\{:03o}", ch);
                 for &byte in frag.as_bytes() {
-                    *strpool.add(poolptr as usize) = byte;
-                    poolptr += 1;
+                    *(*__tekai_state_generated_pdftexextra)
+                        .strpool
+                        .add((*__tekai_state_generated_pdftexextra).poolptr as usize) = byte;
+                    (*__tekai_state_generated_pdftexextra).poolptr += 1;
                 }
                 continue;
             }
             if ch == b'(' || ch == b')' || ch == b'\\' {
-                *strpool.add(poolptr as usize) = b'\\';
-                poolptr += 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .strpool
+                    .add((*__tekai_state_generated_pdftexextra).poolptr as usize) = b'\\';
+                (*__tekai_state_generated_pdftexextra).poolptr += 1;
             }
-            *strpool.add(poolptr as usize) = ch;
-            poolptr += 1;
+            *(*__tekai_state_generated_pdftexextra)
+                .strpool
+                .add((*__tekai_state_generated_pdftexextra).poolptr as usize) = ch;
+            (*__tekai_state_generated_pdftexextra).poolptr += 1;
         }
     }
 }
 
 pub unsafe fn escapename(input: PoolPointer) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        let out = poolptr;
+        let out = (*__tekai_state_generated_pdftexextra).poolptr;
         let mut pos = input;
         while pos < out {
             if !check_pool_room(3) {
                 return;
             }
-            let ch = *strpool.add(pos as usize);
+            let ch = *(*__tekai_state_generated_pdftexextra)
+                .strpool
+                .add(pos as usize);
             pos += 1;
             let escape = (1..=32).contains(&ch)
                 || ch >= 127
@@ -625,38 +663,55 @@ pub unsafe fn escapename(input: PoolPointer) {
             if escape {
                 let frag = format!("#{:02X}", ch);
                 for &byte in frag.as_bytes() {
-                    *strpool.add(poolptr as usize) = byte;
-                    poolptr += 1;
+                    *(*__tekai_state_generated_pdftexextra)
+                        .strpool
+                        .add((*__tekai_state_generated_pdftexextra).poolptr as usize) = byte;
+                    (*__tekai_state_generated_pdftexextra).poolptr += 1;
                 }
             } else {
-                *strpool.add(poolptr as usize) = ch;
-                poolptr += 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .strpool
+                    .add((*__tekai_state_generated_pdftexextra).poolptr as usize) = ch;
+                (*__tekai_state_generated_pdftexextra).poolptr += 1;
             }
         }
     }
 }
 
 pub unsafe fn escapehex(input: PoolPointer) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        let out = poolptr;
+        let out = (*__tekai_state_generated_pdftexextra).poolptr;
         let mut pos = input;
         while pos < out {
             if !check_pool_room(2) {
                 return;
             }
-            let frag = format!("{:02X}", *strpool.add(pos as usize));
+            let frag = format!(
+                "{:02X}",
+                *(*__tekai_state_generated_pdftexextra)
+                    .strpool
+                    .add(pos as usize)
+            );
             pos += 1;
             for &byte in frag.as_bytes() {
-                *strpool.add(poolptr as usize) = byte;
-                poolptr += 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .strpool
+                    .add((*__tekai_state_generated_pdftexextra).poolptr as usize) = byte;
+                (*__tekai_state_generated_pdftexextra).poolptr += 1;
             }
         }
     }
 }
 
 pub unsafe fn unescapehex(input: PoolPointer) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        let out = poolptr;
+        let out = (*__tekai_state_generated_pdftexextra).poolptr;
         let mut pos = input;
         let mut first = true;
         let mut high = 0u8;
@@ -664,7 +719,9 @@ pub unsafe fn unescapehex(input: PoolPointer) {
             if !check_pool_room(1) {
                 return;
             }
-            let ch = *strpool.add(pos as usize);
+            let ch = *(*__tekai_state_generated_pdftexextra)
+                .strpool
+                .add(pos as usize);
             pos += 1;
             let val = match ch {
                 b'0'..=b'9' => ch - b'0',
@@ -676,14 +733,18 @@ pub unsafe fn unescapehex(input: PoolPointer) {
                 high = val << 4;
                 first = false;
             } else {
-                *strpool.add(poolptr as usize) = high + val;
-                poolptr += 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .strpool
+                    .add((*__tekai_state_generated_pdftexextra).poolptr as usize) = high + val;
+                (*__tekai_state_generated_pdftexextra).poolptr += 1;
                 first = true;
             }
         }
         if !first {
-            *strpool.add(poolptr as usize) = high;
-            poolptr += 1;
+            *(*__tekai_state_generated_pdftexextra)
+                .strpool
+                .add((*__tekai_state_generated_pdftexextra).poolptr as usize) = high;
+            (*__tekai_state_generated_pdftexextra).poolptr += 1;
         }
     }
 }
@@ -724,10 +785,13 @@ pub unsafe fn printID(filename: StrNumber) {
 }
 
 pub unsafe fn printIDalt(toks: Integer) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
         let tex_string = ztokenstostring(toks);
         let s = makecstring(tex_string);
-        zflushstr(lasttokensstring);
+        zflushstr((*__tekai_state_generated_pdftexextra).lasttokensstring);
         if c_str_len(s) == 0 {
             return;
         }
@@ -766,15 +830,23 @@ pub unsafe fn printmoddate() {
 }
 
 pub unsafe fn setjobid(year: c_int, month: c_int, day: c_int, time: c_int) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
+    let __tekai_state_support: *mut crate::support::State = unsafe { crate::support::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if !JOB_ID_STRING.is_null() {
+        if !(*__tekai_state_utils).JOB_ID_STRING.is_null() {
             return;
         }
-        let name = c_string_bytes(makecstring(jobname));
-        let format = c_string_bytes(makecstring(formatident));
-        let banner = c_string_bytes(ptexbanner);
-        let version = c_string_bytes(versionstring);
-        let kpse = c_string_bytes(kpathsea_version_string);
+        let name = c_string_bytes(makecstring((*__tekai_state_generated_pdftexextra).jobname));
+        let format = c_string_bytes(makecstring(
+            (*__tekai_state_generated_pdftexextra).formatident,
+        ));
+        let banner = c_string_bytes((*__tekai_state_generated_pdftexextra).ptexbanner);
+        let version = c_string_bytes((*__tekai_state_support).versionstring);
+        let kpse = c_string_bytes((*__tekai_state_kpathsea).kpathsea_version_string);
         let s = format!(
             "{year:04}/{month:02}/{day:02} {:02}:{:02} {} {} {}{} {}",
             time / 60,
@@ -785,25 +857,34 @@ pub unsafe fn setjobid(year: c_int, month: c_int, day: c_int, time: c_int) {
             String::from_utf8_lossy(version),
             String::from_utf8_lossy(kpse)
         );
-        JOB_ID_STRING = malloced_c_string(s.as_bytes());
+        (*__tekai_state_utils).JOB_ID_STRING = malloced_c_string(s.as_bytes());
     }
 }
 
 pub unsafe fn makepdftexbanner() {
-    static mut PDFTEX_BANNER_INIT: Boolean = FALSE;
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
+    let __tekai_state_support: *mut crate::support::State = unsafe { crate::support::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if PDFTEX_BANNER_INIT != 0 {
+        if (*__tekai_state_utils).local_makepdftexbanner_793_PDFTEX_BANNER_INIT != 0 {
             return;
         }
         let s = format!(
             "{}{} {}",
-            String::from_utf8_lossy(c_string_bytes(ptexbanner)),
-            String::from_utf8_lossy(c_string_bytes(versionstring)),
-            String::from_utf8_lossy(c_string_bytes(kpathsea_version_string))
+            String::from_utf8_lossy(c_string_bytes(
+                (*__tekai_state_generated_pdftexextra).ptexbanner
+            )),
+            String::from_utf8_lossy(c_string_bytes((*__tekai_state_support).versionstring)),
+            String::from_utf8_lossy(c_string_bytes(
+                (*__tekai_state_kpathsea).kpathsea_version_string
+            ))
         );
         let c = CString::new(s).expect("banner has no nul");
-        pdftexbanner = maketexstring(c.as_ptr());
-        PDFTEX_BANNER_INIT = TRUE;
+        (*__tekai_state_generated_pdftexextra).pdftexbanner = maketexstring(c.as_ptr());
+        (*__tekai_state_utils).local_makepdftexbanner_793_PDFTEX_BANNER_INIT = TRUE;
     }
 }
 
@@ -819,8 +900,10 @@ fn resource_name_prefix(id: &[u8]) -> [u8; 6] {
 }
 
 pub unsafe fn getresnameprefix() -> StrNumber {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        let prefix = resource_name_prefix(c_string_bytes(JOB_ID_STRING));
+        let prefix = resource_name_prefix(c_string_bytes((*__tekai_state_utils).JOB_ID_STRING));
         let c = CString::new(prefix.as_slice()).expect("prefix has no nul");
         maketexstring(c.as_ptr())
     }
@@ -850,10 +933,15 @@ pub unsafe fn extxnoverd(x: Scaled, n: Scaled, d: Scaled) -> Scaled {
 }
 
 fn regex_pool_room(extra: usize) -> Option<usize> {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        let start = usize::try_from(poolptr).ok()?;
-        let size = usize::try_from(poolsize).ok()?;
-        (!strpool.is_null() && start.checked_add(extra)? < size).then_some(start)
+        let start = usize::try_from((*__tekai_state_generated_pdftexextra).poolptr).ok()?;
+        let size = usize::try_from((*__tekai_state_generated_pdftexextra).poolsize).ok()?;
+        (!(*__tekai_state_generated_pdftexextra).strpool.is_null()
+            && start.checked_add(extra)? < size)
+            .then_some(start)
     }
 }
 
@@ -866,6 +954,9 @@ fn warn_regex_stderr(error: &impl std::fmt::Display) {
 }
 
 unsafe fn append_regex_result(prefix: &[u8], bytes: &[u8]) -> bool {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let start = prefix
         .len()
         .checked_add(bytes.len())
@@ -874,22 +965,34 @@ unsafe fn append_regex_result(prefix: &[u8], bytes: &[u8]) -> bool {
         // The normal warning path allocates strings in this very pool.
         // Report exhaustion without recursively trying to allocate a warning.
         warn_regex_stderr(&"string pool overflow");
-        unsafe { poolptr = poolsize.max(0) };
+        unsafe {
+            (*__tekai_state_generated_pdftexextra).poolptr =
+                (*__tekai_state_generated_pdftexextra).poolsize.max(0)
+        };
         return false;
     };
     unsafe {
-        ptr::copy_nonoverlapping(prefix.as_ptr(), strpool.add(start), prefix.len());
+        ptr::copy_nonoverlapping(
+            prefix.as_ptr(),
+            (*__tekai_state_generated_pdftexextra).strpool.add(start),
+            prefix.len(),
+        );
         ptr::copy_nonoverlapping(
             bytes.as_ptr(),
-            strpool.add(start + prefix.len()),
+            (*__tekai_state_generated_pdftexextra)
+                .strpool
+                .add(start + prefix.len()),
             bytes.len(),
         );
-        poolptr = (start + prefix.len() + bytes.len()) as PoolPointer;
+        (*__tekai_state_generated_pdftexextra).poolptr =
+            (start + prefix.len() + bytes.len()) as PoolPointer;
     }
     true
 }
 
 fn warn_regex(error: &impl std::fmt::Display) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     use std::fmt::Write;
     struct Diagnostic {
         bytes: [u8; 256],
@@ -923,10 +1026,12 @@ fn warn_regex(error: &impl std::fmt::Display) {
         // Each warning fragment is printed then flushed from the TeX pool.
         // Check the largest fragment before using the traditional printer.
         let invocation = CStr::from_ptr(kpse_invocation_name()).to_bytes().len();
-        let file = if cur_file_name.is_null() {
+        let file = if (*__tekai_state_utils).cur_file_name.is_null() {
             0
         } else {
-            CStr::from_ptr(cur_file_name).to_bytes().len()
+            CStr::from_ptr((*__tekai_state_utils).cur_file_name)
+                .to_bytes()
+                .len()
         };
         let required = invocation
             .saturating_add(16)
@@ -1020,21 +1125,31 @@ pub unsafe fn getmatch(i: c_int) {
 }
 
 pub unsafe fn fb_offset() -> Integer {
-    unsafe { fb_ptr.offset_from(fb_array) as Integer }
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    unsafe {
+        (*__tekai_state_utils)
+            .fb_ptr
+            .offset_from((*__tekai_state_utils).fb_array) as Integer
+    }
 }
 
 pub unsafe fn fb_seek(offset: Integer) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        fb_ptr = fb_array.add(offset as usize);
+        (*__tekai_state_utils).fb_ptr = (*__tekai_state_utils).fb_array.add(offset as usize);
     }
 }
 
 unsafe fn ensure_fb_room(n: usize) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
         grow_array(
-            &mut fb_array,
-            &mut fb_ptr,
-            &mut fb_limit,
+            &mut (*__tekai_state_utils).fb_array,
+            &mut (*__tekai_state_utils).fb_ptr,
+            &mut (*__tekai_state_utils).fb_limit,
             n,
             SMALL_ARRAY_SIZE,
             c"fb_array exceeds size limit".as_ptr(),
@@ -1043,30 +1158,45 @@ unsafe fn ensure_fb_room(n: usize) {
 }
 
 pub unsafe fn fb_putchar(b: c_uchar) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
         ensure_fb_room(1);
-        *fb_ptr = b as c_char;
-        fb_ptr = fb_ptr.add(1);
+        *(*__tekai_state_utils).fb_ptr = b as c_char;
+        (*__tekai_state_utils).fb_ptr = (*__tekai_state_utils).fb_ptr.add(1);
     }
 }
 
 pub unsafe fn fb_flush() {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        let mut p = fb_array;
-        while p < fb_ptr {
-            let mut n = (pdfbufsize - pdfptr) as usize;
-            let remaining = fb_ptr.offset_from(p) as usize;
+        let mut p = (*__tekai_state_utils).fb_array;
+        while p < (*__tekai_state_utils).fb_ptr {
+            let mut n = ((*__tekai_state_generated_pdftexextra).pdfbufsize
+                - (*__tekai_state_generated_pdftexextra).pdfptr) as usize;
+            let remaining = (*__tekai_state_utils).fb_ptr.offset_from(p) as usize;
             if remaining < n {
                 n = remaining;
             }
-            ptr::copy_nonoverlapping(p as *const c_uchar, pdfbuf.add(pdfptr as usize), n);
-            pdfptr += n as Integer;
-            if pdfptr == pdfbufsize {
+            ptr::copy_nonoverlapping(
+                p as *const c_uchar,
+                (*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .add((*__tekai_state_generated_pdftexextra).pdfptr as usize),
+                n,
+            );
+            (*__tekai_state_generated_pdftexextra).pdfptr += n as Integer;
+            if (*__tekai_state_generated_pdftexextra).pdfptr
+                == (*__tekai_state_generated_pdftexextra).pdfbufsize
+            {
                 pdfflush();
             }
             p = p.add(n);
         }
-        fb_ptr = fb_array;
+        (*__tekai_state_utils).fb_ptr = (*__tekai_state_utils).fb_array;
     }
 }
 
@@ -1121,47 +1251,56 @@ unsafe fn grow_array<T>(
 }
 
 pub unsafe fn allocvffnts() {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if VF_E_FNTS_ARRAY.is_null() {
-            VF_E_FNTS_ARRAY = vfefnts;
-            VF_E_FNTS_LIMIT = fontmax as SizeT;
-            VF_E_FNTS_PTR = VF_E_FNTS_ARRAY;
-            VF_I_FNTS_ARRAY = vfifnts;
-            VF_I_FNTS_LIMIT = fontmax as SizeT;
-            VF_I_FNTS_PTR = VF_I_FNTS_ARRAY;
+        if (*__tekai_state_utils).VF_E_FNTS_ARRAY.is_null() {
+            (*__tekai_state_utils).VF_E_FNTS_ARRAY = (*__tekai_state_generated_pdftexextra).vfefnts;
+            (*__tekai_state_utils).VF_E_FNTS_LIMIT =
+                (*__tekai_state_generated_pdftexextra).fontmax as SizeT;
+            (*__tekai_state_utils).VF_E_FNTS_PTR = (*__tekai_state_utils).VF_E_FNTS_ARRAY;
+            (*__tekai_state_utils).VF_I_FNTS_ARRAY = (*__tekai_state_generated_pdftexextra).vfifnts;
+            (*__tekai_state_utils).VF_I_FNTS_LIMIT =
+                (*__tekai_state_generated_pdftexextra).fontmax as SizeT;
+            (*__tekai_state_utils).VF_I_FNTS_PTR = (*__tekai_state_utils).VF_I_FNTS_ARRAY;
         }
         grow_array(
-            &mut VF_E_FNTS_ARRAY,
-            &mut VF_E_FNTS_PTR,
-            &mut VF_E_FNTS_LIMIT,
+            &mut (*__tekai_state_utils).VF_E_FNTS_ARRAY,
+            &mut (*__tekai_state_utils).VF_E_FNTS_PTR,
+            &mut (*__tekai_state_utils).VF_E_FNTS_LIMIT,
             1,
-            fontmax as usize,
+            (*__tekai_state_generated_pdftexextra).fontmax as usize,
             c"vf_e_fnts_array exceeds size limit".as_ptr(),
         );
-        VF_E_FNTS_PTR = VF_E_FNTS_PTR.add(1);
+        (*__tekai_state_utils).VF_E_FNTS_PTR = (*__tekai_state_utils).VF_E_FNTS_PTR.add(1);
         grow_array(
-            &mut VF_I_FNTS_ARRAY,
-            &mut VF_I_FNTS_PTR,
-            &mut VF_I_FNTS_LIMIT,
+            &mut (*__tekai_state_utils).VF_I_FNTS_ARRAY,
+            &mut (*__tekai_state_utils).VF_I_FNTS_PTR,
+            &mut (*__tekai_state_utils).VF_I_FNTS_LIMIT,
             1,
-            fontmax as usize,
+            (*__tekai_state_generated_pdftexextra).fontmax as usize,
             c"vf_i_fnts_array exceeds size limit".as_ptr(),
         );
-        VF_I_FNTS_PTR = VF_I_FNTS_PTR.add(1);
-        if VF_E_FNTS_ARRAY != vfefnts {
-            vfefnts = VF_E_FNTS_ARRAY;
-            vfifnts = VF_I_FNTS_ARRAY;
+        (*__tekai_state_utils).VF_I_FNTS_PTR = (*__tekai_state_utils).VF_I_FNTS_PTR.add(1);
+        if (*__tekai_state_utils).VF_E_FNTS_ARRAY != (*__tekai_state_generated_pdftexextra).vfefnts
+        {
+            (*__tekai_state_generated_pdftexextra).vfefnts = (*__tekai_state_utils).VF_E_FNTS_ARRAY;
+            (*__tekai_state_generated_pdftexextra).vfifnts = (*__tekai_state_utils).VF_I_FNTS_ARRAY;
         }
     }
 }
 
 pub unsafe fn libpdffinish() {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        crate::allocation::free(fb_array as *mut c_void);
-        fb_array = ptr::null_mut();
-        fb_ptr = ptr::null_mut();
-        crate::allocation::free(JOB_ID_STRING as *mut c_void);
-        JOB_ID_STRING = ptr::null_mut();
+        crate::allocation::free((*__tekai_state_utils).fb_array as *mut c_void);
+        (*__tekai_state_utils).fb_array = ptr::null_mut();
+        (*__tekai_state_utils).fb_ptr = ptr::null_mut();
+        crate::allocation::free((*__tekai_state_utils).JOB_ID_STRING as *mut c_void);
+        (*__tekai_state_utils).JOB_ID_STRING = ptr::null_mut();
         fm_free();
         t1_free();
         enc_free();
@@ -1176,13 +1315,17 @@ pub unsafe fn libpdffinish() {
 }
 
 pub unsafe fn make_subset_tag(fd: *mut FdEntry) {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     const SUBSET_TAG_LENGTH: usize = 6;
     unsafe {
-        if SUBSET_TAG_TREE.is_null() {
-            SUBSET_TAG_TREE = avl_create(
+        if (*__tekai_state_utils).SUBSET_TAG_TREE.is_null() {
+            (*__tekai_state_utils).SUBSET_TAG_TREE = avl_create(
                 Some(comp_string_entry),
                 ptr::null_mut(),
-                &raw mut avl_xallocator,
+                &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
             );
         }
         if fd.is_null() || (*fd).gl_tree.is_null() || (*fd).fontname.is_null() {
@@ -1227,14 +1370,22 @@ pub unsafe fn make_subset_tag(fd: *mut FdEntry) {
             }
             *subset.add(SUBSET_TAG_LENGTH) = 0;
             round += 1;
-            if avl_find(SUBSET_TAG_TREE, subset as *const c_void).is_null() {
+            if avl_find(
+                (*__tekai_state_utils).SUBSET_TAG_TREE,
+                subset as *const c_void,
+            )
+            .is_null()
+            {
                 break;
             }
             if round >= 100 {
                 pdftex_fail_args(c"make_subset_tag(): subset-tag collision".as_ptr(), &[]);
             }
         }
-        let slot = avl_probe(SUBSET_TAG_TREE, subset as *mut c_void);
+        let slot = avl_probe(
+            (*__tekai_state_utils).SUBSET_TAG_TREE,
+            subset as *mut c_void,
+        );
         if slot.is_null() {
             pdftex_fail_args(c"make_subset_tag(): avl_probe failed".as_ptr(), &[]);
         }
@@ -1250,9 +1401,11 @@ pub unsafe fn make_subset_tag(fd: *mut FdEntry) {
 // The raw handle is valid only within the current invocation. Callers form
 // short local borrows, never a process-lifetime mutable reference.
 unsafe fn init_colorstacks() -> *mut Vec<ColorStack> {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if COLOR_STACKS.is_none() {
-            COLOR_STACKS = Some(vec![ColorStack {
+        if (*__tekai_state_utils).COLOR_STACKS.is_none() {
+            (*__tekai_state_utils).COLOR_STACKS = Some(vec![ColorStack {
                 page_stack: Vec::new(),
                 form_stack: Vec::new(),
                 page_current: Some(COLOR_DEFAULT.to_vec()),
@@ -1262,22 +1415,37 @@ unsafe fn init_colorstacks() -> *mut Vec<ColorStack> {
                 page_start: TRUE,
             }]);
         }
-        COLOR_STACKS.as_mut().expect("initialized") as *mut Vec<ColorStack>
+        (*__tekai_state_utils)
+            .COLOR_STACKS
+            .as_mut()
+            .expect("initialized") as *mut Vec<ColorStack>
     }
 }
 
 unsafe fn pool_put_bytes(start: PoolPointer, bytes: Option<&[u8]>) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
         let Some(bytes) = bytes else { return };
         if bytes.is_empty() {
             return;
         }
-        poolptr = start + bytes.len() as PoolPointer;
-        if poolptr >= poolsize {
-            poolptr = poolsize;
+        (*__tekai_state_generated_pdftexextra).poolptr = start + bytes.len() as PoolPointer;
+        if (*__tekai_state_generated_pdftexextra).poolptr
+            >= (*__tekai_state_generated_pdftexextra).poolsize
+        {
+            (*__tekai_state_generated_pdftexextra).poolptr =
+                (*__tekai_state_generated_pdftexextra).poolsize;
             return;
         }
-        ptr::copy_nonoverlapping(bytes.as_ptr(), strpool.add(start as usize), bytes.len());
+        ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            (*__tekai_state_generated_pdftexextra)
+                .strpool
+                .add(start as usize),
+            bytes.len(),
+        );
     }
 }
 
@@ -1319,10 +1487,12 @@ pub unsafe fn newcolorstack(s: Integer, literal_mode: Integer, page_start: Boole
 }
 
 pub unsafe fn colorstackset(colstack_no: c_int, s: Integer) -> Integer {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
         let stacks = &mut *init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
-        if PAGE_MODE != 0 {
+        if (*__tekai_state_utils).PAGE_MODE != 0 {
             stack.page_current = tex_string_bytes(s);
         } else {
             stack.form_current = tex_string_bytes(s);
@@ -1332,23 +1502,35 @@ pub unsafe fn colorstackset(colstack_no: c_int, s: Integer) -> Integer {
 }
 
 pub unsafe fn colorstackcurrent(colstack_no: c_int) -> Integer {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
         let stacks = &mut *init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
-        if PAGE_MODE != 0 {
-            pool_put_bytes(poolptr, stack.page_current.as_deref());
+        if (*__tekai_state_utils).PAGE_MODE != 0 {
+            pool_put_bytes(
+                (*__tekai_state_generated_pdftexextra).poolptr,
+                stack.page_current.as_deref(),
+            );
         } else {
-            pool_put_bytes(poolptr, stack.form_current.as_deref());
+            pool_put_bytes(
+                (*__tekai_state_generated_pdftexextra).poolptr,
+                stack.form_current.as_deref(),
+            );
         }
         stack.literal_mode
     }
 }
 
 pub unsafe fn colorstackpush(colstack_no: c_int, s: Integer) -> Integer {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
         let stacks = &mut *init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
-        if PAGE_MODE != 0 {
+        if (*__tekai_state_utils).PAGE_MODE != 0 {
             stack.page_stack.push(stack.page_current.take());
             stack.page_current = tex_string_bytes(s);
         } else {
@@ -1360,10 +1542,14 @@ pub unsafe fn colorstackpush(colstack_no: c_int, s: Integer) -> Integer {
 }
 
 pub unsafe fn colorstackpop(colstack_no: c_int) -> Integer {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
         let stacks = &mut *init_colorstacks();
         let stack = &mut stacks[colstack_no as usize];
-        if PAGE_MODE != 0 {
+        if (*__tekai_state_utils).PAGE_MODE != 0 {
             let Some(value) = stack.page_stack.pop() else {
                 pdftex_warn_args(
                     c"pop empty color page stack %u".as_ptr(),
@@ -1372,7 +1558,10 @@ pub unsafe fn colorstackpop(colstack_no: c_int) -> Integer {
                 return stack.literal_mode;
             };
             stack.page_current = value;
-            pool_put_bytes(poolptr, stack.page_current.as_deref());
+            pool_put_bytes(
+                (*__tekai_state_generated_pdftexextra).poolptr,
+                stack.page_current.as_deref(),
+            );
         } else {
             let Some(value) = stack.form_stack.pop() else {
                 pdftex_warn_args(
@@ -1382,15 +1571,20 @@ pub unsafe fn colorstackpop(colstack_no: c_int) -> Integer {
                 return stack.literal_mode;
             };
             stack.form_current = value;
-            pool_put_bytes(poolptr, stack.form_current.as_deref());
+            pool_put_bytes(
+                (*__tekai_state_generated_pdftexextra).poolptr,
+                stack.form_current.as_deref(),
+            );
         }
         stack.literal_mode
     }
 }
 
 unsafe fn colorstackpagestart() {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if PAGE_MODE != 0 {
+        if (*__tekai_state_utils).PAGE_MODE != 0 {
             return;
         }
         for stack in (&mut *init_colorstacks()).iter_mut() {
@@ -1417,16 +1611,20 @@ pub unsafe fn colorstackskippagestart(colstack_no: c_int) -> Integer {
 }
 
 pub unsafe fn matrixused() -> Boolean {
-    unsafe { (!MATRIX_STACK.is_empty()) as Boolean }
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    unsafe { (!(*__tekai_state_utils).MATRIX_STACK.is_empty()) as Boolean }
 }
 
 pub unsafe fn checkpdfsave(cur_h: c_int, cur_v: c_int) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        POS_STACK.push(PosEntry {
+        (*__tekai_state_utils).POS_STACK.push(PosEntry {
             pos_h: cur_h,
             pos_v: cur_v,
-            matrix_stack: if PAGE_MODE != 0 {
-                MATRIX_STACK.len()
+            matrix_stack: if (*__tekai_state_utils).PAGE_MODE != 0 {
+                (*__tekai_state_utils).MATRIX_STACK.len()
             } else {
                 0
             },
@@ -1435,8 +1633,10 @@ pub unsafe fn checkpdfsave(cur_h: c_int, cur_v: c_int) {
 }
 
 pub unsafe fn checkpdfrestore(cur_h: c_int, cur_v: c_int) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        let Some(pos) = POS_STACK.pop() else {
+        let Some(pos) = (*__tekai_state_utils).POS_STACK.pop() else {
             pdftex_warn_args(
                 c"%s".as_ptr(),
                 &[PrintfArg::from(c"\\pdfrestore: missing \\pdfsave".as_ptr())],
@@ -1454,16 +1654,20 @@ pub unsafe fn checkpdfrestore(cur_h: c_int, cur_v: c_int) {
                 ],
             );
         }
-        if PAGE_MODE != 0 {
-            MATRIX_STACK.truncate(pos.matrix_stack);
+        if (*__tekai_state_utils).PAGE_MODE != 0 {
+            (*__tekai_state_utils)
+                .MATRIX_STACK
+                .truncate(pos.matrix_stack);
         }
     }
 }
 
 pub unsafe fn pdfshipoutbegin(shipping_page: Boolean) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        POS_STACK.clear();
-        PAGE_MODE = shipping_page;
+        (*__tekai_state_utils).POS_STACK.clear();
+        (*__tekai_state_utils).PAGE_MODE = shipping_page;
         if shipping_page != 0 {
             colorstackpagestart();
         }
@@ -1471,12 +1675,14 @@ pub unsafe fn pdfshipoutbegin(shipping_page: Boolean) {
 }
 
 pub unsafe fn pdfshipoutend(shipping_page: Boolean) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if !POS_STACK.is_empty() {
+        if !(*__tekai_state_utils).POS_STACK.is_empty() {
             pdftex_fail_args(
                 c"%u unmatched \\pdfsave after %s shipout".as_ptr(),
                 &[
-                    PrintfArg::from(POS_STACK.len() as c_uint),
+                    PrintfArg::from((*__tekai_state_utils).POS_STACK.len() as c_uint),
                     PrintfArg::from(if shipping_page != 0 {
                         c"page".as_ptr()
                     } else {
@@ -1489,12 +1695,21 @@ pub unsafe fn pdfshipoutend(shipping_page: Boolean) {
 }
 
 pub unsafe fn pdfsetmatrix(input: PoolPointer, cur_h: Scaled, cur_v: Scaled) -> Integer {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if PAGE_MODE == 0 {
+        if (*__tekai_state_utils).PAGE_MODE == 0 {
             return 1;
         }
-        let len = (poolptr - input).max(0) as usize;
-        let bytes = slice::from_raw_parts(strpool.add(input as usize), len);
+        let len = ((*__tekai_state_generated_pdftexextra).poolptr - input).max(0) as usize;
+        let bytes = slice::from_raw_parts(
+            (*__tekai_state_generated_pdftexextra)
+                .strpool
+                .add(input as usize),
+            len,
+        );
         let text = String::from_utf8_lossy(bytes);
         let mut parts = text.split_whitespace();
         let (Some(a), Some(b), Some(c), Some(d), None) = (
@@ -1522,7 +1737,7 @@ pub unsafe fn pdfsetmatrix(input: PoolPointer, cur_h: Scaled, cur_v: Scaled) -> 
             e: cur_h as f64 * (1.0 - a) - cur_v as f64 * c,
             f: cur_v as f64 * (1.0 - d) - cur_h as f64 * b,
         };
-        let z = if let Some(y) = MATRIX_STACK.last().copied() {
+        let z = if let Some(y) = (*__tekai_state_utils).MATRIX_STACK.last().copied() {
             MatrixEntry {
                 a: x.a * y.a + x.b * y.c,
                 b: x.a * y.b + x.b * y.d,
@@ -1534,7 +1749,7 @@ pub unsafe fn pdfsetmatrix(input: PoolPointer, cur_h: Scaled, cur_v: Scaled) -> 
         } else {
             x
         };
-        MATRIX_STACK.push(z);
+        (*__tekai_state_utils).MATRIX_STACK.push(z);
         1
     }
 }
@@ -1548,8 +1763,13 @@ fn matrix_round(x: f64) -> Scaled {
 }
 
 unsafe fn do_matrixtransform(x: Scaled, y: Scaled) -> (Scaled, Scaled) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        let m = *MATRIX_STACK.last().expect("matrix exists");
+        let m = *(*__tekai_state_utils)
+            .MATRIX_STACK
+            .last()
+            .expect("matrix exists");
         let x_old = x as f64;
         let y_old = y as f64;
         (
@@ -1560,62 +1780,83 @@ unsafe fn do_matrixtransform(x: Scaled, y: Scaled) -> (Scaled, Scaled) {
 }
 
 pub unsafe fn matrixtransformrect(llx: Scaled, lly: Scaled, urx: Scaled, ury: Scaled) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if PAGE_MODE != 0 && !MATRIX_STACK.is_empty() {
-            LAST_LLX = llx;
-            LAST_LLY = lly;
-            LAST_URX = urx;
-            LAST_URY = ury;
+        if (*__tekai_state_utils).PAGE_MODE != 0 && !(*__tekai_state_utils).MATRIX_STACK.is_empty()
+        {
+            (*__tekai_state_utils).LAST_LLX = llx;
+            (*__tekai_state_utils).LAST_LLY = lly;
+            (*__tekai_state_utils).LAST_URX = urx;
+            (*__tekai_state_utils).LAST_URY = ury;
             let (x1, y1) = do_matrixtransform(llx, lly);
             let (x2, y2) = do_matrixtransform(llx, ury);
             let (x3, y3) = do_matrixtransform(urx, lly);
             let (x4, y4) = do_matrixtransform(urx, ury);
-            RET_LLX = x1.min(x2).min(x3.min(x4));
-            RET_LLY = y1.min(y2).min(y3.min(y4));
-            RET_URX = x1.max(x2).max(x3.max(x4));
-            RET_URY = y1.max(y2).max(y3.max(y4));
+            (*__tekai_state_utils).RET_LLX = x1.min(x2).min(x3.min(x4));
+            (*__tekai_state_utils).RET_LLY = y1.min(y2).min(y3.min(y4));
+            (*__tekai_state_utils).RET_URX = x1.max(x2).max(x3.max(x4));
+            (*__tekai_state_utils).RET_URY = y1.max(y2).max(y3.max(y4));
         } else {
-            RET_LLX = llx;
-            RET_LLY = lly;
-            RET_URX = urx;
-            RET_URY = ury;
+            (*__tekai_state_utils).RET_LLX = llx;
+            (*__tekai_state_utils).RET_LLY = lly;
+            (*__tekai_state_utils).RET_URX = urx;
+            (*__tekai_state_utils).RET_URY = ury;
         }
     }
 }
 
 pub unsafe fn matrixtransformpoint(x: Scaled, y: Scaled) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        if PAGE_MODE != 0 && !MATRIX_STACK.is_empty() {
+        if (*__tekai_state_utils).PAGE_MODE != 0 && !(*__tekai_state_utils).MATRIX_STACK.is_empty()
+        {
             let (x, y) = do_matrixtransform(x, y);
-            RET_LLX = x;
-            RET_LLY = y;
+            (*__tekai_state_utils).RET_LLX = x;
+            (*__tekai_state_utils).RET_LLY = y;
         } else {
-            RET_LLX = x;
-            RET_LLY = y;
+            (*__tekai_state_utils).RET_LLX = x;
+            (*__tekai_state_utils).RET_LLY = y;
         }
     }
 }
 
 pub unsafe fn matrixrecalculate(urx: Scaled) {
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     unsafe {
-        matrixtransformrect(LAST_LLX, LAST_LLY, urx, LAST_URY);
+        matrixtransformrect(
+            (*__tekai_state_utils).LAST_LLX,
+            (*__tekai_state_utils).LAST_LLY,
+            urx,
+            (*__tekai_state_utils).LAST_URY,
+        );
     }
 }
 
 pub unsafe fn getllx() -> Scaled {
-    unsafe { RET_LLX }
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    unsafe { (*__tekai_state_utils).RET_LLX }
 }
 
 pub unsafe fn getlly() -> Scaled {
-    unsafe { RET_LLY }
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    unsafe { (*__tekai_state_utils).RET_LLY }
 }
 
 pub unsafe fn geturx() -> Scaled {
-    unsafe { RET_URX }
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    unsafe { (*__tekai_state_utils).RET_URX }
 }
 
 pub unsafe fn getury() -> Scaled {
-    unsafe { RET_URY }
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    unsafe { (*__tekai_state_utils).RET_URY }
 }
 
 pub unsafe fn stripzeros(a: *mut c_char) -> *mut c_char {
@@ -1888,4 +2129,337 @@ mod tests {
             proptest::prop_assert_eq!(rust, native);
         }
     }
+}
+
+pub(crate) struct State {
+    pub(crate) cur_file_name: *mut c_char,
+    pub(crate) last_ptr_index: SizeT,
+    fb_ptr: *mut c_char,
+    pub(crate) fb_array: *mut c_char,
+    fb_limit: SizeT,
+    LAST_TEX_STRING: StrNumber,
+    JOB_ID_STRING: *mut c_char,
+    JOBNAME_CSTR: *mut c_char,
+    PSTRING_BUF: [c_char; MAX_PSTRING_LEN],
+    VF_E_FNTS_PTR: *mut Integer,
+    VF_E_FNTS_ARRAY: *mut Integer,
+    VF_E_FNTS_LIMIT: SizeT,
+    VF_I_FNTS_PTR: *mut InternalFontNumber,
+    VF_I_FNTS_ARRAY: *mut InternalFontNumber,
+    VF_I_FNTS_LIMIT: SizeT,
+    PAGE_MODE: Boolean,
+    COLOR_STACKS: Option<Vec<ColorStack>>,
+    MATRIX_STACK: Vec<MatrixEntry>,
+    POS_STACK: Vec<PosEntry>,
+    RET_LLX: Scaled,
+    RET_LLY: Scaled,
+    RET_URX: Scaled,
+    RET_URY: Scaled,
+    LAST_LLX: Scaled,
+    LAST_LLY: Scaled,
+    LAST_URX: Scaled,
+    LAST_URY: Scaled,
+    SUBSET_TAG_TREE: *mut AvlTable,
+    local_makepdftexbanner_793_PDFTEX_BANNER_INIT: Boolean,
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 29],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[28] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).local_makepdftexbanner_793_PDFTEX_BANNER_INIT
+                ));
+            }
+            if self.initialized[27] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).SUBSET_TAG_TREE));
+            }
+            if self.initialized[26] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).LAST_URY));
+            }
+            if self.initialized[25] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).LAST_URX));
+            }
+            if self.initialized[24] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).LAST_LLY));
+            }
+            if self.initialized[23] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).LAST_LLX));
+            }
+            if self.initialized[22] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).RET_URY));
+            }
+            if self.initialized[21] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).RET_URX));
+            }
+            if self.initialized[20] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).RET_LLY));
+            }
+            if self.initialized[19] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).RET_LLX));
+            }
+            if self.initialized[18] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).POS_STACK));
+            }
+            if self.initialized[17] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).MATRIX_STACK));
+            }
+            if self.initialized[16] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).COLOR_STACKS));
+            }
+            if self.initialized[15] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).PAGE_MODE));
+            }
+            if self.initialized[14] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).VF_I_FNTS_LIMIT));
+            }
+            if self.initialized[13] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).VF_I_FNTS_ARRAY));
+            }
+            if self.initialized[12] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).VF_I_FNTS_PTR));
+            }
+            if self.initialized[11] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).VF_E_FNTS_LIMIT));
+            }
+            if self.initialized[10] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).VF_E_FNTS_ARRAY));
+            }
+            if self.initialized[9] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).VF_E_FNTS_PTR));
+            }
+            if self.initialized[8] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).PSTRING_BUF));
+            }
+            if self.initialized[7] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).JOBNAME_CSTR));
+            }
+            if self.initialized[6] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).JOB_ID_STRING));
+            }
+            if self.initialized[5] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).LAST_TEX_STRING));
+            }
+            if self.initialized[4] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).fb_limit));
+            }
+            if self.initialized[3] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).fb_array));
+            }
+            if self.initialized[2] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).fb_ptr));
+            }
+            if self.initialized[1] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).last_ptr_index));
+            }
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).cur_file_name));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 29],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<*mut c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).cur_file_name).write(ptr::null_mut());
+        self.initialized[0] = true;
+        const {
+            assert!(core::mem::size_of::<SizeT>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).last_ptr_index).write(0);
+        self.initialized[1] = true;
+        const {
+            assert!(core::mem::size_of::<*mut c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).fb_ptr).write(ptr::null_mut());
+        self.initialized[2] = true;
+        const {
+            assert!(core::mem::size_of::<*mut c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).fb_array).write(ptr::null_mut());
+        self.initialized[3] = true;
+        const {
+            assert!(core::mem::size_of::<SizeT>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).fb_limit).write(0);
+        self.initialized[4] = true;
+        const {
+            assert!(core::mem::size_of::<StrNumber>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).LAST_TEX_STRING).write(0);
+        self.initialized[5] = true;
+        const {
+            assert!(core::mem::size_of::<*mut c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).JOB_ID_STRING).write(ptr::null_mut());
+        self.initialized[6] = true;
+        const {
+            assert!(core::mem::size_of::<*mut c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).JOBNAME_CSTR).write(ptr::null_mut());
+        self.initialized[7] = true;
+        const {
+            assert!((MAX_PSTRING_LEN) == (MAX_PSTRING_LEN));
+            assert!(core::mem::size_of::<c_char>() <= 16 * 1024);
+        }
+        __tekai_require_copy::<c_char>();
+        {
+            let __tekai_repeat_0: c_char = 0;
+            for __tekai_index_0 in 0..(MAX_PSTRING_LEN) {
+                core::ptr::addr_of_mut!((*destination).PSTRING_BUF[__tekai_index_0])
+                    .write(__tekai_repeat_0);
+            }
+        }
+        self.initialized[8] = true;
+        const {
+            assert!(core::mem::size_of::<*mut Integer>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).VF_E_FNTS_PTR).write(ptr::null_mut());
+        self.initialized[9] = true;
+        const {
+            assert!(core::mem::size_of::<*mut Integer>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).VF_E_FNTS_ARRAY).write(ptr::null_mut());
+        self.initialized[10] = true;
+        const {
+            assert!(core::mem::size_of::<SizeT>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).VF_E_FNTS_LIMIT).write(0);
+        self.initialized[11] = true;
+        const {
+            assert!(core::mem::size_of::<*mut InternalFontNumber>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).VF_I_FNTS_PTR).write(ptr::null_mut());
+        self.initialized[12] = true;
+        const {
+            assert!(core::mem::size_of::<*mut InternalFontNumber>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).VF_I_FNTS_ARRAY).write(ptr::null_mut());
+        self.initialized[13] = true;
+        const {
+            assert!(core::mem::size_of::<SizeT>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).VF_I_FNTS_LIMIT).write(0);
+        self.initialized[14] = true;
+        const {
+            assert!(core::mem::size_of::<Boolean>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PAGE_MODE).write(FALSE);
+        self.initialized[15] = true;
+        const {
+            assert!(core::mem::size_of::<Option<Vec<ColorStack>>>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).COLOR_STACKS).write(None);
+        self.initialized[16] = true;
+        const {
+            assert!(core::mem::size_of::<Vec<MatrixEntry>>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).MATRIX_STACK).write(Vec::new());
+        self.initialized[17] = true;
+        const {
+            assert!(core::mem::size_of::<Vec<PosEntry>>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).POS_STACK).write(Vec::new());
+        self.initialized[18] = true;
+        const {
+            assert!(core::mem::size_of::<Scaled>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).RET_LLX).write(0);
+        self.initialized[19] = true;
+        const {
+            assert!(core::mem::size_of::<Scaled>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).RET_LLY).write(0);
+        self.initialized[20] = true;
+        const {
+            assert!(core::mem::size_of::<Scaled>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).RET_URX).write(0);
+        self.initialized[21] = true;
+        const {
+            assert!(core::mem::size_of::<Scaled>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).RET_URY).write(0);
+        self.initialized[22] = true;
+        const {
+            assert!(core::mem::size_of::<Scaled>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).LAST_LLX).write(0);
+        self.initialized[23] = true;
+        const {
+            assert!(core::mem::size_of::<Scaled>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).LAST_LLY).write(0);
+        self.initialized[24] = true;
+        const {
+            assert!(core::mem::size_of::<Scaled>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).LAST_URX).write(0);
+        self.initialized[25] = true;
+        const {
+            assert!(core::mem::size_of::<Scaled>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).LAST_URY).write(0);
+        self.initialized[26] = true;
+        const {
+            assert!(core::mem::size_of::<*mut AvlTable>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).SUBSET_TAG_TREE).write(ptr::null_mut());
+        self.initialized[27] = true;
+        const {
+            assert!(core::mem::size_of::<Boolean>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_makepdftexbanner_793_PDFTEX_BANNER_INIT)
+            .write(FALSE);
+        self.initialized[28] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).utils
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
 }

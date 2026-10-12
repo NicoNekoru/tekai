@@ -289,9 +289,13 @@ pub fn tree_signature(base: &Path) -> String {
 fn signature_for_roots(base: &Path, roots: &[SearchPath]) -> String {
     use std::hash::{Hash, Hasher};
     let mut signature = std::collections::hash_map::DefaultHasher::new();
+    let base = crate::working_directory::resolve(base).ok();
     for root in roots {
         root.path.hash(&mut signature);
         let database_only = root.path.starts_with("!!");
+        let Some(base) = base.as_ref() else {
+            continue;
+        };
         let root = base.join(root.path.strip_prefix("!!").unwrap_or(&root.path));
         if database_only {
             // Database-only lookup never walks the tree. Its invalidation must
@@ -472,6 +476,42 @@ mod tests {
     fn cyclic_variables_and_brace_expansion_are_bounded() {
         assert_eq!(expand_with("$LOOP", &|_| Some("$LOOP".into())), vec![""]);
         assert_eq!(expand_with("a{broken", &|_| None), vec!["a{broken"]);
+    }
+
+    #[test]
+    fn relative_database_signatures_use_owned_directory() {
+        let parent = std::env::current_dir().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "tekai-owned-signature-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("database")).unwrap();
+        let database = root.join("database/ls-R");
+        std::fs::write(&database, "./tex/latex:\nfirst.sty\n").unwrap();
+        let roots = [SearchPath {
+            path: "!!database".into(),
+            source: "test",
+            bundled: false,
+        }];
+        let mut directory =
+            crate::working_directory::WorkingDirectory::new(Some(root.clone())).unwrap();
+        directory
+            .as_mut()
+            .scope(|| {
+                let before = signature_for_roots(Path::new("."), &roots);
+                assert_eq!(before, signature_for_roots(&root, &roots));
+                std::fs::write(&database, "./tex/latex:\nfirst.sty\nsecond.sty\n").unwrap();
+                let after = signature_for_roots(Path::new("."), &roots);
+                assert_eq!(after, signature_for_roots(&root, &roots));
+                assert_ne!(after, before);
+                assert_eq!(std::env::current_dir().unwrap(), parent);
+            })
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

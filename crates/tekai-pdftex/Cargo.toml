@@ -12,7 +12,6 @@ name = "tekai_pdftex"
 path = "src/lib.rs"
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
 flate2 = "1.0"
 lopdf = { version = "0.35", default-features = false, features = ["nom_parser"] }
 md-5 = "0.10"

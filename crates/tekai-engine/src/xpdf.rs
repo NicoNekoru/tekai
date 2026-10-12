@@ -5,8 +5,9 @@ use lopdf::{
 };
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, OsStr};
 use std::marker::{PhantomData, PhantomPinned};
+use std::os::unix::ffi::OsStrExt;
 use std::pin::Pin;
 use std::ptr;
 use std::ptr::NonNull;
@@ -1133,10 +1134,8 @@ pub unsafe fn xpdf_doc_new(file_name: *const c_char) -> *mut PDFDoc {
             _pinned: PhantomPinned,
         }));
     }
-    let path = unsafe { CStr::from_ptr(file_name) }
-        .to_string_lossy()
-        .into_owned();
-    let path = crate::working_directory::resolve(std::path::Path::new(&path));
+    let path = OsStr::from_bytes(unsafe { CStr::from_ptr(file_name) }.to_bytes());
+    let path = crate::working_directory::resolve(std::path::Path::new(path));
     let (doc, ok) =
         match path.and_then(|path| LoDocument::load(path).map_err(std::io::Error::other)) {
             Ok(doc) => (Some(doc), true),
@@ -1464,6 +1463,54 @@ mod tests {
         }));
         assert!(outcome.is_err());
         assert_eq!(count.get(), 3);
+    }
+
+    #[test]
+    fn decoder_byte_paths_use_owned_directory_without_replacement_spelling() {
+        let fixture = std::env::temp_dir().join(format!(
+            "tekai-byte-decoder-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&fixture).unwrap();
+        let replacement = fixture.join("input-\u{fffd}.pdf");
+        let raw = fixture.join(OsStr::from_bytes(b"input-\xff.pdf"));
+        let mut input = page_tree_document(false);
+        input.max_id = 3;
+        input.save(&replacement).unwrap();
+        let request = CString::new(b"input-\xff.pdf".as_slice()).unwrap();
+        let mut directory =
+            crate::working_directory::WorkingDirectory::new(Some(fixture.clone())).unwrap();
+        directory
+            .as_mut()
+            .scope(|| {
+                let mut owner = XpdfSession::new();
+                XpdfSession::scope(owner.as_mut(), || unsafe {
+                    let document = xpdf_doc_new(request.as_ptr());
+                    assert_eq!(xpdf_doc_is_ok(document), 0);
+                    xpdf_doc_delete(document);
+                    match std::fs::copy(&replacement, &raw) {
+                        Ok(_) => {
+                            let document = xpdf_doc_new(request.as_ptr());
+                            assert_ne!(xpdf_doc_is_ok(document), 0);
+                            xpdf_doc_delete(document);
+                        }
+                        Err(error) => {
+                            // APFS rejects non-UTF-8 filenames. The missing
+                            // raw spelling must still never load its neighbor.
+                            #[cfg(target_os = "macos")]
+                            assert_eq!(error.raw_os_error(), Some(libc::EILSEQ));
+                            #[cfg(not(target_os = "macos"))]
+                            panic!("cannot create byte-path PDF fixture: {error}");
+                        }
+                    }
+                });
+            })
+            .unwrap();
+        std::fs::remove_dir_all(fixture).unwrap();
     }
 
     #[test]

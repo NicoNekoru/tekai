@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const BUNDLE_ID: &str = include_str!("../../../runtime/bundle-id.txt");
 pub const FORMAT_ID: &str = include_str!("../../../formats/format-id.txt");
+pub use crate::time::LocalPdfDateFormatter;
 /// Owns one cache-root selection and its lazy installation result.
 pub(crate) struct RuntimeSession {
     cache_root: PathBuf,

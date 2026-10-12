@@ -5,12 +5,10 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CACHE_DIRECTORY: &str = "raw-formats-v1";
 const BUFFER_SIZE: usize = 64 * 1024;
-static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// The same open file is hashed and decoded. Replacements cannot redirect the
 /// decoder to a different source, and in-place edits invalidate the result.
@@ -274,16 +272,21 @@ struct StagingFile {
 
 impl StagingFile {
     fn new(cache: &Path) -> io::Result<Self> {
-        for _ in 0..100 {
-            let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        Self::with_nonce(cache, nonce)
+    }
+
+    fn with_nonce(cache: &Path, nonce: u128) -> io::Result<Self> {
+        for attempt in 0..100 {
             let path = cache.join(format!(
-                ".format-{}-{nonce}-{sequence}.tmp",
+                ".format-{}-{nonce}-{attempt}.tmp",
                 std::process::id()
             ));
+            // Names only reduce collisions. Exclusive creation remains the
+            // authority, including across concurrent independent invocations.
             match OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -311,7 +314,10 @@ mod tests {
     use super::*;
     use flate2::{write::GzEncoder, Compression};
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
+
+    static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     struct TestDirectory(PathBuf);
 
@@ -343,6 +349,58 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn staging_collisions_never_overwrite_or_remove_foreign_paths() {
+        let fixture = TestDirectory::new();
+        let occupied = |attempt| {
+            fixture
+                .0
+                .join(format!(".format-{}-0-{attempt}.tmp", std::process::id()))
+        };
+        let sentinel = occupied(0);
+        fs::write(&sentinel, b"foreign contents").unwrap();
+        let staging = StagingFile::with_nonce(&fixture.0, 0).unwrap();
+        assert_eq!(staging.path, occupied(1));
+        drop(staging);
+        assert_eq!(fs::read(&sentinel).unwrap(), b"foreign contents");
+        assert!(!occupied(1).exists());
+        for attempt in 1..100 {
+            fs::write(occupied(attempt), b"foreign contents").unwrap();
+        }
+        assert!(StagingFile::with_nonce(&fixture.0, 0).is_err());
+        assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 100);
+        for attempt in 0..100 {
+            assert_eq!(fs::read(occupied(attempt)).unwrap(), b"foreign contents");
+        }
+    }
+
+    #[test]
+    fn concurrent_same_nonce_staging_files_have_separate_exclusive_owners() {
+        let fixture = TestDirectory::new();
+        let barrier = Arc::new(Barrier::new(8));
+        let workers = (0..8)
+            .map(|_| {
+                let directory = fixture.0.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let staging = StagingFile::with_nonce(&directory, 0).unwrap();
+                    let path = staging.path.clone();
+                    barrier.wait();
+                    assert!(path.is_file());
+                    drop(staging);
+                    path
+                })
+            })
+            .collect::<Vec<_>>();
+        let paths = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(paths.len(), 8);
+        assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 0);
     }
 
     fn gzip(bytes: &[u8]) -> Vec<u8> {

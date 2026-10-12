@@ -4,7 +4,6 @@ use crate::allocation::{free, malloc};
 
 use crate::termination::__assert_rtn;
 
-extern "C" {}
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
 pub type avl_comparison_func = unsafe fn(
@@ -54,6 +53,9 @@ pub unsafe fn avl_create(
     mut param: *mut ::core::ffi::c_void,
     mut allocator: *mut libavl_allocator,
 ) -> *mut avl_table {
+    let __tekai_state_generated_backend_avl: *mut crate::generated::backend::avl::State =
+        unsafe { crate::generated::backend::avl::state() };
+
     let mut tree: *mut avl_table = ::core::ptr::null_mut::<avl_table>();
     if compare.is_none() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -65,7 +67,7 @@ pub unsafe fn avl_create(
     } else {
     };
     if allocator.is_null() {
-        allocator = &raw mut avl_allocator_default;
+        allocator = &raw mut (*__tekai_state_generated_backend_avl).avl_allocator_default;
     }
     tree = (*allocator)
         .libavl_malloc
@@ -1186,17 +1188,7 @@ pub unsafe fn avl_free(mut allocator: *mut libavl_allocator, mut block: *mut ::c
     };
     free(block);
 }
-#[no_mangle]
-pub static mut avl_allocator_default: libavl_allocator = unsafe {
-    libavl_allocator {
-        libavl_malloc: Some(
-            avl_malloc as unsafe fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void,
-        ),
-        libavl_free: Some(
-            avl_free as unsafe fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> (),
-        ),
-    }
-};
+
 pub unsafe fn avl_assert_insert(mut table: *mut avl_table, mut item: *mut ::core::ffi::c_void) {
     let mut p: *mut *mut ::core::ffi::c_void = avl_probe(table, item);
     if !(!p.is_null() && *p == item) as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -1224,4 +1216,86 @@ pub unsafe fn avl_assert_delete(
     } else {
     };
     return p;
+}
+
+pub(crate) struct State {
+    avl_allocator_default: libavl_allocator,
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 1],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).avl_allocator_default
+                ));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 1],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<libavl_allocator>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).avl_allocator_default).write(unsafe {
+            libavl_allocator {
+                libavl_malloc: Some(
+                    avl_malloc
+                        as unsafe fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void,
+                ),
+                libavl_free: Some(
+                    avl_free as unsafe fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> (),
+                ),
+            }
+        });
+        self.initialized[0] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_avl
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
 }

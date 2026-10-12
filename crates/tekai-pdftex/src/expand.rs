@@ -4,7 +4,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use chrono::{DateTime, Local};
 use md5::{Digest, Md5};
 
 use crate::token::{CatCode, CatCodeTable, Token};
@@ -193,6 +192,7 @@ pub struct ExpansionEngine<'a> {
     scopes: Vec<ExpansionScopeSnapshot>,
     file_context: Option<ExpansionFileContext>,
     creation_time: SystemTime,
+    date_formatter: tekai_engine::runtime::LocalPdfDateFormatter,
 }
 
 #[derive(Debug, Clone)]
@@ -256,6 +256,7 @@ impl<'a> ExpansionEngine<'a> {
             scopes: Vec::new(),
             file_context: None,
             creation_time: SystemTime::now(),
+            date_formatter: tekai_engine::runtime::LocalPdfDateFormatter::new(),
         }
     }
 
@@ -281,6 +282,7 @@ impl<'a> ExpansionEngine<'a> {
             scopes: Vec::new(),
             file_context: None,
             creation_time: SystemTime::now(),
+            date_formatter: tekai_engine::runtime::LocalPdfDateFormatter::new(),
         }
     }
 
@@ -527,9 +529,9 @@ impl<'a> ExpansionEngine<'a> {
                     expanded.extend(self.read_pdfprimitive_tokens()?);
                 }
                 Token::ControlSequence(name) if name == "pdfcreationdate" => {
-                    expanded.extend(tokens_from_ascii_other(&pdf_date_string(
-                        self.creation_time,
-                    )));
+                    expanded.extend(tokens_from_ascii_other(
+                        &self.pdf_date_string(self.creation_time)?,
+                    ));
                 }
                 Token::ControlSequence(name) if name == "pdffilesize" => {
                     expanded.extend(self.read_pdffilesize_tokens()?);
@@ -1637,7 +1639,15 @@ impl<'a> ExpansionEngine<'a> {
                     path.display()
                 ))
             })?;
-        Ok(tokens_from_ascii_other(&pdf_date_string(modified)))
+        Ok(tokens_from_ascii_other(&self.pdf_date_string(modified)?))
+    }
+
+    fn pdf_date_string(&mut self, time: SystemTime) -> Result<String, ExpandError> {
+        // Experimental expansion keeps its local creation/modification date
+        // rules. SOURCE_DATE_EPOCH and FORCE_SOURCE_DATE are not added here.
+        self.date_formatter
+            .format(time)
+            .map_err(|error| ExpandError::new(format!("could not format PDF date: {error}")))
     }
 
     fn read_pdffiledump_tokens(&mut self) -> Result<Vec<Token>, ExpandError> {
@@ -2663,7 +2673,7 @@ impl<'a> ExpansionEngine<'a> {
                 self.read_pdfprimitive_tokens()
             }
             Token::ControlSequence(name) if name == "pdfcreationdate" => Ok(
-                tokens_from_ascii_other(&pdf_date_string(self.creation_time)),
+                tokens_from_ascii_other(&self.pdf_date_string(self.creation_time)?),
             ),
             Token::ControlSequence(name) if name == "pdffilesize" => self.read_pdffilesize_tokens(),
             Token::ControlSequence(name) if name == "pdffilemoddate" => {
@@ -2794,7 +2804,10 @@ impl<'a> ExpansionEngine<'a> {
         }
     }
 
-    fn expand_known_macros_in_tokens(&self, tokens: Vec<Token>) -> Result<Vec<Token>, ExpandError> {
+    fn expand_known_macros_in_tokens(
+        &mut self,
+        tokens: Vec<Token>,
+    ) -> Result<Vec<Token>, ExpandError> {
         let mut pending = tokens.into_iter().rev().collect::<Vec<_>>();
         let mut output = Vec::new();
         while let Some(token) = pending.pop() {
@@ -3649,7 +3662,7 @@ fn read_macro_arguments_from_pending(
 }
 
 fn expand_after_once_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
 ) -> Result<Vec<Token>, ExpandError> {
     let first = pending
@@ -3664,7 +3677,7 @@ fn expand_after_once_from_pending(
 }
 
 fn expand_one_token_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     token: Token,
     pending: &mut Vec<Token>,
 ) -> Result<Vec<Token>, ExpandError> {
@@ -3702,7 +3715,7 @@ fn expand_one_token_from_pending(
 }
 
 fn read_csname_control_sequence_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
 ) -> Result<Token, ExpandError> {
     let mut name = String::new();
@@ -3726,7 +3739,7 @@ fn read_csname_control_sequence_from_pending(
 }
 
 fn expand_primitive_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     name: &str,
     pending: &mut Vec<Token>,
 ) -> Result<Option<Vec<Token>>, ExpandError> {
@@ -3766,7 +3779,9 @@ fn expand_primitive_from_pending(
             vec![token]
         }
         "jobname" => engine.jobname_tokens(),
-        "pdfcreationdate" => tokens_from_ascii_other(&pdf_date_string(engine.creation_time)),
+        "pdfcreationdate" => {
+            tokens_from_ascii_other(&engine.pdf_date_string(engine.creation_time)?)
+        }
         "pdffilesize" => {
             let file_name = read_expanded_file_name_from_pending(engine, pending, "\\pdffilesize")?;
             let Some(path) = engine.resolve_pdftex_file(&file_name, "\\pdffilesize")? else {
@@ -3796,7 +3811,7 @@ fn expand_primitive_from_pending(
                         path.display()
                     ))
                 })?;
-            tokens_from_ascii_other(&pdf_date_string(modified))
+            tokens_from_ascii_other(&engine.pdf_date_string(modified)?)
         }
         "pdffiledump" => {
             let (offset, length) = read_pdffiledump_options_from_pending(engine, pending)?;
@@ -3841,7 +3856,7 @@ fn expand_primitive_from_pending(
 }
 
 fn expand_pdfprimitive_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
 ) -> Result<Option<Vec<Token>>, ExpandError> {
     skip_space_like_pending(pending);
@@ -3870,7 +3885,7 @@ fn expand_pdfprimitive_from_pending(
 }
 
 fn read_the_quantity_tokens_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
 ) -> Result<Vec<Token>, ExpandError> {
     skip_space_like_pending(pending);
@@ -3930,7 +3945,7 @@ fn read_the_quantity_tokens_from_pending(
 }
 
 fn read_integer_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
 ) -> Result<i64, ExpandError> {
     skip_space_like_pending(pending);
@@ -4007,7 +4022,7 @@ fn read_integer_from_pending(
 }
 
 fn read_integer_expression_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
 ) -> Result<i64, ExpandError> {
     let mut value = read_integer_product_from_pending(engine, pending)?;
@@ -4038,7 +4053,7 @@ fn read_integer_expression_from_pending(
 }
 
 fn read_integer_product_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
 ) -> Result<i64, ExpandError> {
     let mut value = read_integer_from_pending(engine, pending)?;
@@ -4085,7 +4100,7 @@ fn read_optional_integer_sign_from_pending(pending: &mut Vec<Token>) -> i64 {
 }
 
 fn read_non_negative_register_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
     primitive: &str,
 ) -> Result<i64, ExpandError> {
@@ -4099,7 +4114,7 @@ fn read_non_negative_register_from_pending(
 }
 
 fn read_non_negative_usize_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
     primitive: &str,
 ) -> Result<usize, ExpandError> {
@@ -4131,7 +4146,7 @@ fn read_required_group_argument_from_pending(
 }
 
 fn read_expanded_group_text_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
     primitive: &str,
 ) -> Result<String, ExpandError> {
@@ -4141,7 +4156,7 @@ fn read_expanded_group_text_from_pending(
 }
 
 fn read_expanded_file_name_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
     primitive: &str,
 ) -> Result<String, ExpandError> {
@@ -4150,7 +4165,7 @@ fn read_expanded_file_name_from_pending(
 }
 
 fn read_pdffiledump_options_from_pending(
-    engine: &ExpansionEngine<'_>,
+    engine: &mut ExpansionEngine<'_>,
     pending: &mut Vec<Token>,
 ) -> Result<(usize, Option<usize>), ExpandError> {
     let mut offset = 0_usize;
@@ -4562,17 +4577,6 @@ fn pdf_md5_sum_bytes(bytes: &[u8]) -> String {
         write!(&mut output, "{byte:02X}").expect("writing to a string cannot fail");
     }
     output
-}
-
-fn pdf_date_string(time: SystemTime) -> String {
-    let date_time: DateTime<Local> = time.into();
-    let offset = date_time.format("%z").to_string();
-    let zone = if offset == "+0000" || offset == "-0000" {
-        "Z".to_string()
-    } else {
-        format!("{}'{}'", &offset[..3], &offset[3..])
-    };
-    format!("D:{}{}", date_time.format("%Y%m%d%H%M%S"), zone)
 }
 
 fn decimal_dimension_to_sp(value: f64, unit: &str) -> Result<i64, ExpandError> {
@@ -5504,6 +5508,51 @@ mod tests {
         assert_eq!(parts[12], "dump");
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn creation_date_routes_share_the_owned_formatter_and_clones_keep_the_snapshot() {
+        let instant = std::time::UNIX_EPOCH;
+        let mut formatter = tekai_engine::runtime::LocalPdfDateFormatter::new();
+        let expected = formatter.format(instant).unwrap();
+        for source in [
+            r"\pdfcreationdate",
+            r"\edef\date{\pdfcreationdate}\date",
+            r"\expanded{\pdfcreationdate}",
+            r"\pdfprimitive\pdfcreationdate",
+        ] {
+            let mut engine = ExpansionEngine::new(source);
+            engine.creation_time = instant;
+            let mut cloned = engine.clone();
+            let expanded = engine.expand_all().unwrap();
+            assert_eq!(tokens_to_text(&expanded), expected, "{source}");
+            assert_eq!(
+                tokens_to_text(&cloned.expand_all().unwrap()),
+                expected,
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn unrepresentable_creation_dates_return_expansion_errors_in_every_route() {
+        // Year 10001 is outside the PDF four-digit year/calendar domain,
+        // independently of any valid local offset.
+        let instant = std::time::UNIX_EPOCH + std::time::Duration::from_secs(253_433_923_200);
+        for source in [
+            r"\pdfcreationdate",
+            r"\edef\date{\pdfcreationdate}\date",
+            r"\expanded{\pdfcreationdate}",
+            r"\pdfprimitive\pdfcreationdate",
+        ] {
+            let mut engine = ExpansionEngine::new(source);
+            engine.creation_time = instant;
+            let error = engine.expand_all().unwrap_err();
+            assert!(
+                error.to_string().contains("could not format PDF date"),
+                "{source}: {error}"
+            );
+        }
     }
 
     #[test]

@@ -6,10 +6,11 @@
 //! runtime.
 
 use std::cell::{Cell, RefCell};
-use std::ffi::CString;
+use std::ffi::{CString, OsStr};
 use std::fs::{self, File};
 use std::io::{self, Write as _};
 use std::marker::{PhantomData, PhantomPinned};
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::ptr::NonNull;
@@ -17,8 +18,6 @@ use std::rc::Rc;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
-
-use crate::generated::pdftexextra as engine;
 
 type Integer = core::ffi::c_int;
 type Boolean = core::ffi::c_int;
@@ -108,6 +107,9 @@ impl SyncTexContext {
     }
 
     fn finish(mut self) -> io::Result<Option<PathBuf>> {
+        let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+            unsafe { crate::generated::pdftexextra::state() };
+
         if !self.content_ready || !self.not_void {
             return Ok(None);
         }
@@ -118,7 +120,8 @@ impl SyncTexContext {
         self.push_anchor();
         self.push_text("Post scriptum:\n");
 
-        let Some(path) = tex_string(unsafe { engine::texmflogname }).map(PathBuf::from) else {
+        let Some(path) = tex_path(unsafe { (*__tekai_state_generated_pdftexextra).texmflogname })
+        else {
             return Ok(None);
         };
         let mut path = crate::working_directory::resolve(&path)?;
@@ -217,42 +220,69 @@ fn remove_if_exists(path: &PathBuf) -> io::Result<()> {
 }
 
 fn record_output(path: &PathBuf) {
-    let bytes = path.to_string_lossy();
-    if let Ok(path) = CString::new(bytes.as_bytes()) {
+    if let Ok(path) = CString::new(path.as_os_str().as_bytes()) {
         unsafe {
             crate::openclose::recorder_record_output(path.as_ptr());
         }
     }
 }
 
-fn tex_string(number: Integer) -> Option<String> {
+fn tex_value<T>(number: Integer, convert: impl FnOnce(&[u8]) -> T) -> Option<T> {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if engine::strstart.is_null()
-            || engine::strpool.is_null()
+        if (*__tekai_state_generated_pdftexextra).strstart.is_null()
+            || (*__tekai_state_generated_pdftexextra).strpool.is_null()
             || number < 0
-            || number >= engine::strptr
+            || number >= (*__tekai_state_generated_pdftexextra).strptr
         {
             return None;
         }
-        let start = *engine::strstart.offset(number as isize);
-        let end = *engine::strstart.offset((number + 1) as isize);
-        if start < 0 || end < start || end > engine::poolptr {
+        let start = *(*__tekai_state_generated_pdftexextra)
+            .strstart
+            .offset(number as isize);
+        let end = *(*__tekai_state_generated_pdftexextra)
+            .strstart
+            .offset((number + 1) as isize);
+        if start < 0 || end < start || end > (*__tekai_state_generated_pdftexextra).poolptr {
             return None;
         }
         let bytes = core::slice::from_raw_parts(
-            engine::strpool.offset(start as isize),
+            (*__tekai_state_generated_pdftexextra)
+                .strpool
+                .offset(start as isize),
             (end - start) as usize,
         );
-        Some(String::from_utf8_lossy(bytes).into_owned())
+        Some(convert(bytes))
     }
 }
 
+fn tex_path(number: Integer) -> Option<PathBuf> {
+    tex_value(number, |bytes| PathBuf::from(OsStr::from_bytes(bytes)))
+}
+
+fn tex_string(number: Integer) -> Option<String> {
+    tex_value(number, |bytes| String::from_utf8_lossy(bytes).into_owned())
+}
+
 fn current_input_name() -> Option<String> {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if engine::fullsourcefilenamestack.is_null() || engine::inopen < 0 {
+        if (*__tekai_state_generated_pdftexextra)
+            .fullsourcefilenamestack
+            .is_null()
+            || (*__tekai_state_generated_pdftexextra).inopen < 0
+        {
             return None;
         }
-        let name = tex_string(*engine::fullsourcefilenamestack.offset(engine::inopen as isize))?;
+        let name = tex_string(
+            *(*__tekai_state_generated_pdftexextra)
+                .fullsourcefilenamestack
+                .offset((*__tekai_state_generated_pdftexextra).inopen as isize),
+        )?;
         let path = crate::working_directory::resolve(&PathBuf::from(&name)).ok()?;
         Some(
             fs::canonicalize(&path)
@@ -264,41 +294,76 @@ fn current_input_name() -> Option<String> {
 }
 
 fn synctex_value() -> Integer {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if engine::zeqtb.is_null() || engine::synctexoffset <= 0 {
+        if (*__tekai_state_generated_pdftexextra).zeqtb.is_null()
+            || (*__tekai_state_generated_pdftexextra).synctexoffset <= 0
+        {
             return 0;
         }
-        (*engine::zeqtb.offset(engine::synctexoffset as isize))
-            .u
-            .CINT
+        (*(*__tekai_state_generated_pdftexextra)
+            .zeqtb
+            .offset((*__tekai_state_generated_pdftexextra).synctexoffset as isize))
+        .u
+        .CINT
     }
 }
 
 unsafe fn set_synctex_value(value: Integer) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if !engine::zeqtb.is_null() && engine::synctexoffset > 0 {
-            (*engine::zeqtb.offset(engine::synctexoffset as isize))
-                .u
-                .CINT = value;
+        if !(*__tekai_state_generated_pdftexextra).zeqtb.is_null()
+            && (*__tekai_state_generated_pdftexextra).synctexoffset > 0
+        {
+            (*(*__tekai_state_generated_pdftexextra)
+                .zeqtb
+                .offset((*__tekai_state_generated_pdftexextra).synctexoffset as isize))
+            .u
+            .CINT = value;
         }
     }
 }
 
 fn memory_int(index: Halfword) -> Integer {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if engine::zmem.is_null() || index < engine::memmin || index > engine::memmax {
+        if (*__tekai_state_generated_pdftexextra).zmem.is_null()
+            || index < (*__tekai_state_generated_pdftexextra).memmin
+            || index > (*__tekai_state_generated_pdftexextra).memmax
+        {
             return 0;
         }
-        (*engine::zmem.offset(index as isize)).u.CINT
+        (*(*__tekai_state_generated_pdftexextra)
+            .zmem
+            .offset(index as isize))
+        .u
+        .CINT
     }
 }
 
 fn node_type(node: Halfword) -> Integer {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if engine::zmem.is_null() || node < engine::memmin || node > engine::memmax {
+        if (*__tekai_state_generated_pdftexextra).zmem.is_null()
+            || node < (*__tekai_state_generated_pdftexextra).memmin
+            || node > (*__tekai_state_generated_pdftexextra).memmax
+        {
             return -1;
         }
-        (*engine::zmem.offset(node as isize)).hh.u.B0 as Integer
+        (*(*__tekai_state_generated_pdftexextra)
+            .zmem
+            .offset(node as isize))
+        .hh
+        .u
+        .B0 as Integer
     }
 }
 
@@ -310,7 +375,15 @@ fn node_context(node: Halfword, tag_offset: Halfword, line_offset: Halfword) -> 
 }
 
 fn position() -> (Integer, Integer) {
-    unsafe { (engine::curh, engine::curv) }
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
+    unsafe {
+        (
+            (*__tekai_state_generated_pdftexextra).curh,
+            (*__tekai_state_generated_pdftexextra).curv,
+        )
+    }
 }
 
 fn record_box(node: Halfword, marker: char) {
@@ -369,6 +442,9 @@ fn record_medium_node(node: Halfword, marker: char, include_width: bool) {
 fn record_rule(node: Halfword) {
     unsafe {
         with_context(|context| {
+            let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+                unsafe { crate::generated::pdftexextra::state() };
+
             if context.off || !context.content_ready || synctex_value() == 0 {
                 return;
             }
@@ -381,17 +457,20 @@ fn record_rule(node: Halfword) {
             context.current_line = line;
             context.push_record(&format!(
                 "r{tag},{line}:{h},{v}:{},{},{}\n",
-                engine::rulewd,
-                engine::ruleht,
-                engine::ruledp
+                (*__tekai_state_generated_pdftexextra).rulewd,
+                (*__tekai_state_generated_pdftexextra).ruleht,
+                (*__tekai_state_generated_pdftexextra).ruledp
             ));
         });
     }
 }
 
 pub fn synctexinitcommand() {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        let option = engine::synctexoption;
+        let option = (*__tekai_state_generated_pdftexextra).synctexoption;
         with_context(|context| {
             if option == SYNCTEX_NO_OPTION {
                 set_synctex_value(0);
@@ -416,13 +495,20 @@ pub fn synctexabort(_log_opened: Boolean) {
 pub fn synctexstartinput() {
     unsafe {
         with_context(|context| {
+            let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+                unsafe { crate::generated::pdftexextra::state() };
+
             if context.off {
-                engine::curinput.synctextagfield = 0;
+                (*__tekai_state_generated_pdftexextra)
+                    .curinput
+                    .synctextagfield = 0;
                 return;
             }
             context.tag_counter = context.tag_counter.saturating_add(1);
             let tag = context.tag_counter;
-            engine::curinput.synctextagfield = tag;
+            (*__tekai_state_generated_pdftexextra)
+                .curinput
+                .synctextagfield = tag;
             if let Some(name) = current_input_name() {
                 context.add_input(tag, name);
             }
@@ -452,11 +538,18 @@ pub fn synctexterminate(log_opened: Boolean) {
 pub fn synctexsheet(magnification: Integer) {
     unsafe {
         with_context(|context| {
+            let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+                unsafe { crate::generated::pdftexextra::state() };
+
             if context.off || synctex_value() == 0 {
                 return;
             }
             context.prepare_content(magnification);
-            context.begin_sheet(engine::totalpages.saturating_add(1));
+            context.begin_sheet(
+                (*__tekai_state_generated_pdftexextra)
+                    .totalpages
+                    .saturating_add(1),
+            );
         });
     }
 }
@@ -464,10 +557,13 @@ pub fn synctexsheet(magnification: Integer) {
 pub fn synctexteehs() {
     unsafe {
         with_context(|context| {
+            let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+                unsafe { crate::generated::pdftexextra::state() };
+
             if context.off || !context.content_ready {
                 return;
             }
-            context.end_sheet(engine::totalpages);
+            context.end_sheet((*__tekai_state_generated_pdftexextra).totalpages);
         });
     }
 }
@@ -546,6 +642,67 @@ pub fn synctexcurrent() {
 mod tests {
     use super::*;
     use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[test]
+    fn final_sidecar_path_preserves_pool_bytes_and_uses_owned_directory() {
+        let fixture = std::env::temp_dir().join(format!(
+            "tekai-byte-synctex-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&fixture).unwrap();
+        let mut directory =
+            crate::working_directory::WorkingDirectory::new(Some(fixture.clone())).unwrap();
+        directory
+            .as_mut()
+            .scope(|| {
+                for name in [b"output-\xc3\xa9.log".as_slice(), b"output-\xff.log"] {
+                    let mut bytes = name.to_vec();
+                    let mut starts = [0, bytes.len() as Integer];
+                    crate::invocation_state::with_fixture(|| unsafe {
+                        let state = crate::generated::pdftexextra::state();
+                        (*state).strpool = bytes.as_mut_ptr();
+                        (*state).strstart = starts.as_mut_ptr();
+                        (*state).strptr = 1;
+                        (*state).poolptr = bytes.len() as Integer;
+                        (*state).texmflogname = 0;
+                        assert_eq!(tex_path(0).unwrap().as_os_str().as_bytes(), name);
+                        let mut context = SyncTexContext::new();
+                        context.content_ready = true;
+                        context.not_void = true;
+                        context.compress = false;
+                        let mut expected = fixture.join(OsStr::from_bytes(name));
+                        expected.set_extension("synctex");
+                        match context.finish() {
+                            Ok(Some(path)) => {
+                                assert_eq!(path, expected);
+                                assert!(std::fs::read(path)
+                                    .unwrap()
+                                    .starts_with(b"SyncTeX Version:1\n"));
+                            }
+                            Err(error) if std::str::from_utf8(name).is_err() => {
+                                #[cfg(target_os = "macos")]
+                                assert_eq!(error.raw_os_error(), Some(libc::EILSEQ));
+                                #[cfg(not(target_os = "macos"))]
+                                panic!("cannot create byte-path sidecar fixture: {error}");
+                            }
+                            outcome => panic!("unexpected sidecar result: {outcome:?}"),
+                        }
+                        if std::str::from_utf8(name).is_err() {
+                            let mut replacement =
+                                fixture.join(String::from_utf8_lossy(name).as_ref());
+                            replacement.set_extension("synctex");
+                            assert!(!replacement.exists());
+                        }
+                    });
+                }
+            })
+            .unwrap();
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
 
     #[test]
     fn unfinished_sidecar_is_discarded_on_unwind_and_routing_is_cleared() {

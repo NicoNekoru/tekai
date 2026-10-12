@@ -3,8 +3,8 @@ pub use crate::generated::pdftex0::{pdfenddict, zpdfbegindict};
 pub use crate::utils::pdf_puts;
 
 pub use crate::generated::backend::avl::{
-    avl_comparison_func, avl_create, avl_destroy, avl_find, avl_item_func, avl_node, avl_probe,
-    avl_t_first, avl_t_init, avl_t_next, avl_table, avl_traverser, libavl_allocator,
+    avl_create, avl_destroy, avl_find, avl_node, avl_probe, avl_t_first, avl_t_init, avl_t_next,
+    avl_table, avl_traverser,
 };
 
 use crate::byte_string::strcmp;
@@ -14,18 +14,13 @@ use crate::openclose::xmalloc;
 
 use crate::termination::__assert_rtn;
 
-extern "C" {
-    static mut avl_xallocator: libavl_allocator;
-    static mut notdef: [::core::ffi::c_char; 0];
-}
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
 pub type address = *mut ::core::ffi::c_void;
 pub type integer = ::core::ffi::c_int;
 pub use crate::backend_types::fe_entry;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-#[no_mangle]
-pub static mut fe_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
+
 unsafe fn comp_fe_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
@@ -47,6 +42,11 @@ unsafe fn new_fe_entry() -> *mut fe_entry {
     return fe;
 }
 unsafe fn lookup_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe_entry {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_writeenc: *mut crate::generated::backend::writeenc::State =
+        unsafe { crate::generated::backend::writeenc::state() };
+
     let mut fe: fe_entry = fe_entry {
         fe_objnum: 0,
         name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -63,8 +63,11 @@ unsafe fn lookup_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe_entry {
     } else {
     };
     fe.name = s;
-    if fe_tree.is_null() {
-        fe_tree = avl_create(
+    if (*__tekai_state_generated_backend_writeenc)
+        .fe_tree
+        .is_null()
+    {
+        (*__tekai_state_generated_backend_writeenc).fe_tree = avl_create(
             Some(
                 comp_fe_entry
                     as unsafe fn(
@@ -74,9 +77,13 @@ unsafe fn lookup_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe_entry {
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if fe_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+        if (*__tekai_state_generated_backend_writeenc)
+            .fe_tree
+            .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+            != 0
+        {
             __assert_rtn(
                 b"lookup_fe_entry\0" as *const u8 as *const ::core::ffi::c_char,
                 b"writeenc.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -86,12 +93,23 @@ unsafe fn lookup_fe_entry(mut s: *mut ::core::ffi::c_char) -> *mut fe_entry {
         } else {
         };
     }
-    return avl_find(fe_tree, &raw mut fe as *const ::core::ffi::c_void) as *mut fe_entry;
+    return avl_find(
+        (*__tekai_state_generated_backend_writeenc).fe_tree,
+        &raw mut fe as *const ::core::ffi::c_void,
+    ) as *mut fe_entry;
 }
 unsafe fn register_fe_entry(mut fe: *mut fe_entry) {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_writeenc: *mut crate::generated::backend::writeenc::State =
+        unsafe { crate::generated::backend::writeenc::state() };
+
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    if fe_tree.is_null() {
-        fe_tree = avl_create(
+    if (*__tekai_state_generated_backend_writeenc)
+        .fe_tree
+        .is_null()
+    {
+        (*__tekai_state_generated_backend_writeenc).fe_tree = avl_create(
             Some(
                 comp_fe_entry
                     as unsafe fn(
@@ -101,9 +119,13 @@ unsafe fn register_fe_entry(mut fe: *mut fe_entry) {
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if fe_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+        if (*__tekai_state_generated_backend_writeenc)
+            .fe_tree
+            .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+            != 0
+        {
             __assert_rtn(
                 b"register_fe_entry\0" as *const u8 as *const ::core::ffi::c_char,
                 b"writeenc.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -140,7 +162,10 @@ unsafe fn register_fe_entry(mut fe: *mut fe_entry) {
         );
     } else {
     };
-    aa = avl_probe(fe_tree, fe as *mut ::core::ffi::c_void);
+    aa = avl_probe(
+        (*__tekai_state_generated_backend_writeenc).fe_tree,
+        fe as *mut ::core::ffi::c_void,
+    );
     if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"register_fe_entry\0" as *const u8 as *const ::core::ffi::c_char,
@@ -170,6 +195,9 @@ pub unsafe fn epdf_write_enc(
     mut glyph_names: *mut *mut ::core::ffi::c_char,
     mut fe_objnum: ::core::ffi::c_int,
 ) {
+    let __tekai_state_generated_backend_writettf: *mut crate::generated::backend::writettf::State =
+        unsafe { crate::generated::backend::writettf::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     let mut i_old: ::core::ffi::c_int = 0;
     if glyph_names.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -196,7 +224,10 @@ pub unsafe fn epdf_write_enc(
     i = 0 as ::core::ffi::c_int;
     i_old = -(2 as ::core::ffi::c_int);
     while i < 256 as ::core::ffi::c_int {
-        if *glyph_names.offset(i as isize) != &raw mut notdef as *mut ::core::ffi::c_char {
+        if *glyph_names.offset(i as isize)
+            != &raw mut (*__tekai_state_generated_backend_writettf).notdef
+                as *mut ::core::ffi::c_char
+        {
             if i == i_old + 1 as ::core::ffi::c_int {
                 crate::utils::pdf_printf_args(
                     b"/%s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -323,6 +354,9 @@ unsafe fn write_fontencoding(mut fe: *mut fe_entry) {
     );
 }
 pub unsafe fn write_fontencodings() {
+    let __tekai_state_generated_backend_writeenc: *mut crate::generated::backend::writeenc::State =
+        unsafe { crate::generated::backend::writeenc::state() };
+
     let mut fe: *mut fe_entry = ::core::ptr::null_mut::<fe_entry>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
@@ -331,11 +365,20 @@ pub unsafe fn write_fontencodings() {
         avl_height: 0,
         avl_generation: 0,
     };
-    if fe_tree.is_null() {
+    if (*__tekai_state_generated_backend_writeenc)
+        .fe_tree
+        .is_null()
+    {
         return;
     }
-    avl_t_init(&raw mut t, fe_tree);
-    fe = avl_t_first(&raw mut t, fe_tree) as *mut fe_entry;
+    avl_t_init(
+        &raw mut t,
+        (*__tekai_state_generated_backend_writeenc).fe_tree,
+    );
+    fe = avl_t_first(
+        &raw mut t,
+        (*__tekai_state_generated_backend_writeenc).fe_tree,
+    ) as *mut fe_entry;
     while !fe.is_null() {
         if (*fe).fe_objnum != 0 as ::core::ffi::c_int {
             write_fontencoding(fe);
@@ -344,6 +387,9 @@ pub unsafe fn write_fontencodings() {
     }
 }
 unsafe fn destroy_fe_entry(mut pa: *mut ::core::ffi::c_void, mut pb: *mut ::core::ffi::c_void) {
+    let __tekai_state_generated_backend_writettf: *mut crate::generated::backend::writettf::State =
+        unsafe { crate::generated::backend::writettf::state() };
+
     let mut p: *mut fe_entry = ::core::ptr::null_mut::<fe_entry>();
     let mut i: ::core::ffi::c_int = 0;
     p = pa as *mut fe_entry;
@@ -354,7 +400,10 @@ unsafe fn destroy_fe_entry(mut pa: *mut ::core::ffi::c_void, mut pb: *mut ::core
     if !(*p).glyph_names.is_null() {
         i = 0 as ::core::ffi::c_int;
         while i < 256 as ::core::ffi::c_int {
-            if *(*p).glyph_names.offset(i as isize) != &raw mut notdef as *mut ::core::ffi::c_char {
+            if *(*p).glyph_names.offset(i as isize)
+                != &raw mut (*__tekai_state_generated_backend_writettf).notdef
+                    as *mut ::core::ffi::c_char
+            {
                 if !(*(*p).glyph_names.offset(i as isize)).is_null() {
                     free(*(*p).glyph_names.offset(i as isize) as *mut ::core::ffi::c_void);
                 }
@@ -374,15 +423,92 @@ unsafe fn destroy_fe_entry(mut pa: *mut ::core::ffi::c_void, mut pb: *mut ::core
     p = ::core::ptr::null_mut::<fe_entry>();
 }
 pub unsafe fn enc_free() {
-    if !fe_tree.is_null() {
+    let __tekai_state_generated_backend_writeenc: *mut crate::generated::backend::writeenc::State =
+        unsafe { crate::generated::backend::writeenc::state() };
+
+    if !(*__tekai_state_generated_backend_writeenc)
+        .fe_tree
+        .is_null()
+    {
         avl_destroy(
-            fe_tree,
+            (*__tekai_state_generated_backend_writeenc).fe_tree,
             Some(
                 destroy_fe_entry
                     as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
             ),
         );
     }
-    fe_tree = ::core::ptr::null_mut::<avl_table>();
+    (*__tekai_state_generated_backend_writeenc).fe_tree = ::core::ptr::null_mut::<avl_table>();
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+pub(crate) struct State {
+    fe_tree: *mut avl_table,
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 1],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).fe_tree));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 1],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).fe_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[0] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_writeenc
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
+}

@@ -9,14 +9,6 @@ use std::ffi::{CStr, CString};
 use std::os::unix::ffi::OsStrExt;
 use std::ptr;
 
-#[no_mangle]
-pub static mut versionstring: *const c_char = c" (TeX Live 2027/dev)".as_ptr();
-
-extern "C" {
-    static kpathsea_version_string: *const c_char;
-
-}
-
 #[inline]
 unsafe fn fast_fgetc(stream: *mut FILE) -> c_int {
     unsafe { crate::stdio::fgetc(stream) }
@@ -390,11 +382,14 @@ pub unsafe fn printversionandexit(
     _author: *const c_char,
     extra_info: *const c_char,
 ) {
+    let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
+    let __tekai_state_support: *mut crate::support::State = unsafe { crate::support::state() };
+
     unsafe {
         let prog_name_end = crate::byte_string::strchr(banner, b',' as c_int);
         let prog_version = crate::byte_string::strrchr(banner, b' ' as c_int);
         if prog_name_end.is_null() || prog_version.is_null() {
-            libc::abort();
+            panic!("invalid engine version banner");
         }
 
         let len = prog_name_end.offset_from(banner) as usize;
@@ -405,7 +400,7 @@ pub unsafe fn printversionandexit(
         let prog_name_start =
             crate::byte_string::strrchr(prog_name.as_ptr() as *const c_char, b' ' as c_int);
         if prog_name_start.is_null() {
-            libc::abort();
+            panic!("engine version banner has no program name");
         }
         let prog_name_start = prog_name_start.add(1);
         let prog_version = prog_version.add(1);
@@ -415,10 +410,10 @@ pub unsafe fn printversionandexit(
             &[
                 crate::utils::PrintfArg::from(prog_name_start),
                 crate::utils::PrintfArg::from(prog_version),
-                crate::utils::PrintfArg::from(versionstring),
+                crate::utils::PrintfArg::from((*__tekai_state_support).versionstring),
             ],
         );
-        crate::stdio::puts(kpathsea_version_string);
+        crate::stdio::puts((*__tekai_state_kpathsea).kpathsea_version_string);
 
         crate::stdio::puts(c"Copyright 2026 Tekai contributors.".as_ptr());
         crate::stdio::puts(c"Licensed under the MIT License.".as_ptr());
@@ -434,6 +429,30 @@ pub unsafe fn printversionandexit(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn malformed_internal_version_banners_unwind_instead_of_aborting_the_host() {
+        for banner in [c"missing delimiter", c"pdfTeX, Version 1.0"] {
+            let result = std::panic::catch_unwind(|| {
+                crate::invocation_state::with_fixture(|| unsafe {
+                    super::printversionandexit(
+                        banner.as_ptr(),
+                        std::ptr::null(),
+                        std::ptr::null(),
+                        std::ptr::null(),
+                    );
+                });
+            });
+            assert!(result.is_err());
+            assert!(!crate::invocation_state::is_active());
+        }
+        crate::invocation_state::with_fixture(|| {
+            assert_eq!(
+                unsafe { (*crate::generated::pdftexextra::state()).history },
+                0
+            );
+        });
+    }
+
     use super::{basenamechangesuffix, chartostring, inputint, read_line, xgetcwd};
     use libc::c_void;
     use proptest::prelude::*;
@@ -530,4 +549,75 @@ mod tests {
             prop_assert!(at_eof);
         }
     }
+}
+
+pub(crate) struct State {
+    pub(crate) versionstring: *const c_char,
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 1],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).versionstring));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 1],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<*const c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).versionstring)
+            .write(c" (TeX Live 2027/dev)".as_ptr());
+        self.initialized[0] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).support
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
 }

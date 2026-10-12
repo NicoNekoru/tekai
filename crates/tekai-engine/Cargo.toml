@@ -8,7 +8,8 @@ repository = "https://github.com/NicoNekoru/tekai"
 publish = false
 
 [features]
-standalone-binary = []
+standalone-binary = ["cli-supervisor"]
+cli-supervisor = ["dep:signal-hook"]
 
 [lib]
 name = "tekai_engine"
@@ -33,6 +34,11 @@ sha2 = "0.11"
 tar = "0.4"
 walkdir = "2.5"
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["process", "termios"] }
+signal-hook = { version = "0.4", optional = true }
+
 [dev-dependencies]
 libz-rs-sys = { version = "0.6.5", features = ["gz"] }
 proptest = { workspace = true }
+syn = { version = "2.0", features = ["full", "visit"] }

@@ -215,14 +215,16 @@ impl PgfExternalFixture {
         fs::write(
             &shim,
             "#!/bin/sh\nset -eu\n\
-             if [ \"${1-}\" = __tekai-engine ]; then\n\
+             mode=__tekai-engine\n\
+             if [ \"${1-}\" = __tekai-engine ] || [ \"${1-}\" = __tekai-engine-worker ]; then\n\
+               mode=$1\n\
                shift\n\
              else\n\
                unset TEXINPUTS_pdflatex\n\
                printf '%s\\n' \"$*\" >> pgf-child.invocations\n\
                set -- -recorder \"$@\"\n\
              fi\n\
-             exec \"${TEKAI_PGF_TEST_ENGINE:?missing bundled engine}\" __tekai-engine -8bit \"$@\"\n",
+             exec \"${TEKAI_PGF_TEST_ENGINE:?missing bundled engine}\" \"$mode\" -8bit \"$@\"\n",
         )
         .unwrap();
         fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();

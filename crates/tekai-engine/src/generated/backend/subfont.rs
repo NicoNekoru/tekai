@@ -2,10 +2,7 @@ pub use crate::generated::backend::mapfile::{avl_do_entry, delete_fm_entry, new_
 pub use crate::generated::pdftex0::{getnullstr, zpackfilename};
 pub use crate::utils::maketexstring;
 
-pub use crate::generated::backend::avl::{
-    avl_comparison_func, avl_create, avl_destroy, avl_find, avl_item_func, avl_node, avl_probe,
-    avl_table, libavl_allocator,
-};
+pub use crate::generated::backend::avl::{avl_create, avl_destroy, avl_find, avl_probe, avl_table};
 
 use crate::byte_string::{strchr, strcmp};
 
@@ -21,10 +18,6 @@ use crate::openclose::{xmalloc, xstrdup};
 
 use crate::termination::__assert_rtn;
 
-extern "C" {
-    static mut avl_xallocator: libavl_allocator;
-    static mut cur_file_name: *mut ::core::ffi::c_char;
-}
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
     unsafe { crate::stdio::fgetc(stream) }
@@ -118,9 +111,7 @@ pub const FOPEN_RBIN_MODE: [::core::ffi::c_char; 3] =
 pub const true_0: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const false_0: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const F_SUBFONT: ::core::ffi::c_int = 0x8 as ::core::ffi::c_int;
-static mut sfd_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-static mut sfd_file: *mut FILE = ::core::ptr::null::<FILE>() as *mut FILE;
-static mut sfd_line: [::core::ffi::c_char; 256] = [0; 256];
+
 unsafe fn new_subfont_entry() -> *mut subfont_entry {
     let mut i: ::core::ffi::c_int = 0;
     let mut subfont: *mut subfont_entry = ::core::ptr::null_mut::<subfont_entry>();
@@ -177,9 +168,15 @@ unsafe fn comp_sfd_entry(
     );
 }
 pub unsafe fn sfd_free() {
-    if !sfd_tree.is_null() {
+    let __tekai_state_generated_backend_subfont: *mut crate::generated::backend::subfont::State =
+        unsafe { crate::generated::backend::subfont::state() };
+
+    if !(*__tekai_state_generated_backend_subfont)
+        .sfd_tree
+        .is_null()
+    {
         avl_destroy(
-            sfd_tree,
+            (*__tekai_state_generated_backend_subfont).sfd_tree,
             Some(
                 destroy_sfd_entry
                     as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
@@ -188,10 +185,13 @@ pub unsafe fn sfd_free() {
     }
 }
 unsafe fn sfd_getline(mut expect_eof: boolean) {
+    let __tekai_state_generated_backend_subfont: *mut crate::generated::backend::subfont::State =
+        unsafe { crate::generated::backend::subfont::state() };
+
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut c: ::core::ffi::c_int = 0;
     loop {
-        if feof(sfd_file) != 0 {
+        if feof((*__tekai_state_generated_backend_subfont).sfd_file) != 0 {
             if expect_eof != 0 {
                 return;
             } else {
@@ -201,9 +201,10 @@ unsafe fn sfd_getline(mut expect_eof: boolean) {
                 );
             }
         }
-        p = &raw mut sfd_line as *mut ::core::ffi::c_char;
+        p = &raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+            as *mut ::core::ffi::c_char;
         loop {
-            c = fast_fgetc(sfd_file);
+            c = fast_fgetc((*__tekai_state_generated_backend_subfont).sfd_file);
             if c == 9 as ::core::ffi::c_int {
                 c = 32 as ::core::ffi::c_int;
             }
@@ -211,12 +212,15 @@ unsafe fn sfd_getline(mut expect_eof: boolean) {
                 c = 10 as ::core::ffi::c_int;
             }
             if c != ' ' as i32
-                || p > &raw mut sfd_line as *mut ::core::ffi::c_char
+                || p > &raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+                    as *mut ::core::ffi::c_char
                     && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
                         != 32 as ::core::ffi::c_int
             {
-                if (p.offset_from(&raw mut sfd_line as *mut ::core::ffi::c_char)
-                    as ::core::ffi::c_long
+                if (p.offset_from(
+                    &raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+                        as *mut ::core::ffi::c_char,
+                ) as ::core::ffi::c_long
                     + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
                     > 256 as ::core::ffi::c_int as ::core::ffi::c_uint
                 {
@@ -240,7 +244,10 @@ unsafe fn sfd_getline(mut expect_eof: boolean) {
                 break;
             }
         }
-        if (p.offset_from(&raw mut sfd_line as *mut ::core::ffi::c_char) as ::core::ffi::c_long
+        if (p.offset_from(
+            &raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+                as *mut ::core::ffi::c_char,
+        ) as ::core::ffi::c_long
             + 2 as ::core::ffi::c_long) as ::core::ffi::c_uint
             > 256 as ::core::ffi::c_int as ::core::ffi::c_uint
         {
@@ -255,7 +262,10 @@ unsafe fn sfd_getline(mut expect_eof: boolean) {
                 ],
             );
         }
-        if p.offset_from(&raw mut sfd_line as *mut ::core::ffi::c_char) as ::core::ffi::c_long
+        if p.offset_from(
+            &raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+                as *mut ::core::ffi::c_char,
+        ) as ::core::ffi::c_long
             > 1 as ::core::ffi::c_long
             && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
                 != 10 as ::core::ffi::c_int
@@ -264,7 +274,10 @@ unsafe fn sfd_getline(mut expect_eof: boolean) {
             p = p.offset(1);
             *fresh4 = 10 as ::core::ffi::c_char;
         }
-        if p.offset_from(&raw mut sfd_line as *mut ::core::ffi::c_char) as ::core::ffi::c_long
+        if p.offset_from(
+            &raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+                as *mut ::core::ffi::c_char,
+        ) as ::core::ffi::c_long
             > 2 as ::core::ffi::c_long
             && *p.offset(-(2 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
                 == 32 as ::core::ffi::c_int
@@ -273,15 +286,26 @@ unsafe fn sfd_getline(mut expect_eof: boolean) {
             p = p.offset(-1);
         }
         *p = 0 as ::core::ffi::c_char;
-        if !((p.offset_from(&raw mut sfd_line as *mut ::core::ffi::c_char) as ::core::ffi::c_long)
+        if !((p.offset_from(
+            &raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+                as *mut ::core::ffi::c_char,
+        ) as ::core::ffi::c_long)
             < 2 as ::core::ffi::c_long
-            || *(&raw mut sfd_line as *mut ::core::ffi::c_char) as ::core::ffi::c_int == '#' as i32)
+            || *(&raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+                as *mut ::core::ffi::c_char) as ::core::ffi::c_int
+                == '#' as i32)
         {
             break;
         }
     }
 }
 unsafe fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_subfont: *mut crate::generated::backend::subfont::State =
+        unsafe { crate::generated::backend::subfont::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     let mut sfd: *mut sfd_entry = ::core::ptr::null_mut::<sfd_entry>();
     let mut tmp_sfd: sfd_entry = sfd_entry {
@@ -295,8 +319,11 @@ unsafe fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
     let mut j: ::core::ffi::c_long = 0;
     let mut k: ::core::ffi::c_long = 0;
     tmp_sfd.name = sfd_name;
-    if sfd_tree.is_null() {
-        sfd_tree = avl_create(
+    if (*__tekai_state_generated_backend_subfont)
+        .sfd_tree
+        .is_null()
+    {
+        (*__tekai_state_generated_backend_subfont).sfd_tree = avl_create(
             Some(
                 comp_sfd_entry
                     as unsafe fn(
@@ -306,9 +333,13 @@ unsafe fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if sfd_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+        if (*__tekai_state_generated_backend_subfont)
+            .sfd_tree
+            .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+            != 0
+        {
             __assert_rtn(
                 b"read_sfd\0" as *const u8 as *const ::core::ffi::c_char,
                 b"subfont.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -318,14 +349,21 @@ unsafe fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
         } else {
         };
     }
-    sfd = avl_find(sfd_tree, &raw mut tmp_sfd as *const ::core::ffi::c_void) as *mut sfd_entry;
+    sfd = avl_find(
+        (*__tekai_state_generated_backend_subfont).sfd_tree,
+        &raw mut tmp_sfd as *const ::core::ffi::c_void,
+    ) as *mut sfd_entry;
     if !sfd.is_null() {
         return sfd;
     }
-    cur_file_name = sfd_name;
-    zpackfilename(maketexstring(cur_file_name), getnullstr(), getnullstr());
+    (*__tekai_state_utils).cur_file_name = sfd_name;
+    zpackfilename(
+        maketexstring((*__tekai_state_utils).cur_file_name),
+        getnullstr(),
+        getnullstr(),
+    );
     if open_input(
-        &raw mut sfd_file,
+        &raw mut (*__tekai_state_generated_backend_subfont).sfd_file,
         kpse_sfd_format as ::core::ffi::c_int,
         FOPEN_RBIN_MODE.as_ptr(),
     ) == 0
@@ -334,19 +372,22 @@ unsafe fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
             b"cannot open SFD file for reading\0" as *const u8 as *const ::core::ffi::c_char,
             &[],
         );
-        cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        (*__tekai_state_utils).cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
         return ::core::ptr::null_mut::<sfd_entry>();
     }
     crate::utils::tex_printf_args(b"{\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     crate::utils::tex_printf_args(
         b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[crate::utils::PrintfArg::from(cur_file_name)],
+        &[crate::utils::PrintfArg::from(
+            (*__tekai_state_utils).cur_file_name,
+        )],
     );
     sfd = new_sfd_entry();
     (*sfd).name = xstrdup(sfd_name as const_string) as *mut ::core::ffi::c_char;
-    while feof(sfd_file) == 0 {
+    while feof((*__tekai_state_generated_backend_subfont).sfd_file) == 0 {
         sfd_getline(true_0);
-        if *(&raw mut sfd_line as *mut ::core::ffi::c_char) as ::core::ffi::c_int
+        if *(&raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+            as *mut ::core::ffi::c_char) as ::core::ffi::c_int
             == 10 as ::core::ffi::c_int
         {
             break;
@@ -354,13 +395,17 @@ unsafe fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
         sf = new_subfont_entry();
         (*sf).next = (*sfd).subfont;
         (*sfd).subfont = sf;
-        let mut cursor = Cursor::new(CStr::from_ptr((&raw const sfd_line).cast()).to_bytes());
+        let mut cursor = Cursor::new(
+            CStr::from_ptr((&raw const (*__tekai_state_generated_backend_subfont).sfd_line).cast())
+                .to_bytes(),
+        );
         let infix = match cursor.word(None) {
             Ok(infix) if infix.len() < buf.len() => infix,
             _ => crate::utils::pdftex_fail_args(
                 b"invalid token:\n%s\0" as *const u8 as *const ::core::ffi::c_char,
                 &[crate::utils::PrintfArg::from(
-                    (&raw const sfd_line).cast::<::core::ffi::c_char>(),
+                    (&raw const (*__tekai_state_generated_backend_subfont).sfd_line)
+                        .cast::<::core::ffi::c_char>(),
                 )],
             ),
         };
@@ -369,12 +414,15 @@ unsafe fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
         cursor.skip_whitespace();
         (*sf).infix = xstrdup(&raw mut buf as *mut ::core::ffi::c_char as const_string)
             as *mut ::core::ffi::c_char;
-        p = (&raw mut sfd_line as *mut ::core::ffi::c_char).add(cursor.offset());
+        p = (&raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+            as *mut ::core::ffi::c_char)
+            .add(cursor.offset());
         k = 0 as ::core::ffi::c_long;
         loop {
             if *p as ::core::ffi::c_int == '\\' as i32 {
                 sfd_getline(false_0);
-                p = &raw mut sfd_line as *mut ::core::ffi::c_char;
+                p = &raw mut (*__tekai_state_generated_backend_subfont).sfd_line
+                    as *mut ::core::ffi::c_char;
             } else {
                 if *p as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
                     break;
@@ -431,9 +479,15 @@ unsafe fn read_sfd(mut sfd_name: *mut ::core::ffi::c_char) -> *mut sfd_entry {
             }
         }
     }
-    xfclose(sfd_file, cur_file_name as const_string);
+    xfclose(
+        (*__tekai_state_generated_backend_subfont).sfd_file,
+        (*__tekai_state_utils).cur_file_name as const_string,
+    );
     crate::utils::tex_printf_args(b"}\0" as *const u8 as *const ::core::ffi::c_char, &[]);
-    aa = avl_probe(sfd_tree, sfd as *mut ::core::ffi::c_void);
+    aa = avl_probe(
+        (*__tekai_state_generated_backend_subfont).sfd_tree,
+        sfd as *mut ::core::ffi::c_void,
+    );
     if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"read_sfd\0" as *const u8 as *const ::core::ffi::c_char,
@@ -559,3 +613,101 @@ pub unsafe fn handle_subfont_fm(mut fm: *mut fm_entry, mut mode: ::core::ffi::c_
     return true_0;
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+pub(crate) struct State {
+    sfd_tree: *mut avl_table,
+    sfd_file: *mut FILE,
+    sfd_line: [::core::ffi::c_char; 256],
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 3],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[2] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).sfd_line));
+            }
+            if self.initialized[1] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).sfd_file));
+            }
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).sfd_tree));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 3],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).sfd_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[0] = true;
+        const {
+            assert!(core::mem::size_of::<*mut FILE>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).sfd_file)
+            .write(::core::ptr::null::<FILE>() as *mut FILE);
+        self.initialized[1] = true;
+        const {
+            assert!((256) == (256));
+            assert!(core::mem::size_of::<::core::ffi::c_char>() <= 16 * 1024);
+        }
+        __tekai_require_copy::<::core::ffi::c_char>();
+        {
+            let __tekai_repeat_0: ::core::ffi::c_char = 0;
+            for __tekai_index_0 in 0..(256) {
+                core::ptr::addr_of_mut!((*destination).sfd_line[__tekai_index_0])
+                    .write(__tekai_repeat_0);
+            }
+        }
+        self.initialized[2] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_subfont
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
+}

@@ -4,8 +4,8 @@ pub use crate::generated::pdftex0::{
 pub use crate::utils::pdf_puts;
 
 pub use crate::generated::backend::avl::{
-    avl_comparison_func, avl_create, avl_find, avl_node, avl_probe, avl_t_first, avl_t_init,
-    avl_t_next, avl_table, avl_traverser, libavl_allocator,
+    avl_create, avl_find, avl_node, avl_probe, avl_t_first, avl_t_init, avl_t_next, avl_table,
+    avl_traverser,
 };
 
 use crate::byte_string::strcmp;
@@ -20,15 +20,6 @@ pub use crate::pngshim::png_info_def;
 
 use crate::termination::__assert_rtn;
 
-extern "C" {
-    static mut pdfbuf: *mut eightbits;
-    static mut pdfbufsize: integer;
-    static mut pdfptr: integer;
-    static mut pdfosmode: boolean;
-    static mut objptr: integer;
-    static mut avl_xallocator: libavl_allocator;
-    static mut image_array: *mut image_entry;
-}
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
     unsafe { crate::stdio::fgetc(stream) }
@@ -124,11 +115,17 @@ pub type png_struct = png_struct_def;
 pub type png_structp = *mut png_struct;
 pub type png_info = png_info_def;
 pub type png_infop = *mut png_info;
+#[cfg(test)]
 pub use crate::backend_types::image_entry;
+#[cfg(test)]
 pub use crate::backend_types::pdf_image_struct;
+#[cfg(test)]
 pub use crate::backend_types::png_image_struct;
+#[cfg(test)]
 pub use crate::backend_types::ImageData as C2RustUnnamed;
+#[cfg(test)]
 pub use crate::backend_types::JBIG2_IMAGE_INFO;
+#[cfg(test)]
 pub use crate::backend_types::JPG_IMAGE_INFO;
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const SEEK_SET: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
@@ -161,8 +158,7 @@ pub const M_EndOfFile: ::core::ffi::c_uint = 51 as ::core::ffi::c_uint;
 pub const M_Profiles: ::core::ffi::c_uint = 52 as ::core::ffi::c_uint;
 pub const M_Tables: ::core::ffi::c_uint = 53 as ::core::ffi::c_uint;
 pub const M_Extension: ::core::ffi::c_uint = 62 as ::core::ffi::c_uint;
-#[no_mangle]
-pub static mut file_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
+
 unsafe fn comp_file_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
@@ -284,6 +280,9 @@ unsafe fn litem_append(mut lp: *mut LIST) -> *mut LIST {
     return lp;
 }
 unsafe fn pages_maketree(mut plp: *mut LIST) {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+
     let mut ip: *mut LITEM = ::core::ptr::null_mut::<LITEM>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if !(*plp).tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -305,7 +304,7 @@ unsafe fn pages_maketree(mut plp: *mut LIST) {
                 ) -> ::core::ffi::c_int,
         ),
         NULL,
-        &raw mut avl_xallocator,
+        &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
     );
     if (*plp).tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -335,6 +334,9 @@ unsafe fn pages_maketree(mut plp: *mut LIST) {
     }
 }
 unsafe fn segments_maketree(mut slp: *mut LIST) {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+
     let mut ip: *mut LITEM = ::core::ptr::null_mut::<LITEM>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if !(*slp).tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -356,7 +358,7 @@ unsafe fn segments_maketree(mut slp: *mut LIST) {
                 ) -> ::core::ffi::c_int,
         ),
         NULL,
-        &raw mut avl_xallocator,
+        &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
     );
     if (*slp).tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -589,15 +591,20 @@ unsafe fn readseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) -> boolean {
     return true_0;
 }
 unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut i: ::core::ffi::c_uint = 0;
     let mut referedseg: ::core::ffi::c_ulong = 0 as ::core::ffi::c_ulong;
     i = 0 as ::core::ffi::c_uint;
     while i < (5 as ::core::ffi::c_uint).wrapping_add((*sip).fieldlen) {
-        if (1 as integer + pdfptr) as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-            if pdfosmode != 0 {
+        if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr) as ::core::ffi::c_uint
+            > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
+        {
+            if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                 zpdfosgetosbuf(1 as ::core::ffi::c_int);
             } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                > pdfbufsize as ::core::ffi::c_uint
+                > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
             {
                 crate::utils::pdftex_fail_args(
                     b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char,
@@ -607,9 +614,12 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                 pdfflush();
             }
         }
-        let fresh1 = pdfptr;
-        pdfptr = pdfptr + 1;
-        *pdfbuf.offset(fresh1 as isize) = ygetc((*fip).file) as eightbits;
+        let fresh1 = (*__tekai_state_generated_pdftexextra).pdfptr;
+        (*__tekai_state_generated_pdftexextra).pdfptr =
+            (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+        *(*__tekai_state_generated_pdftexextra)
+            .pdfbuf
+            .offset(fresh1 as isize) = ygetc((*fip).file) as eightbits;
         i = i.wrapping_add(1);
     }
     i = 0 as ::core::ffi::c_uint;
@@ -617,13 +627,14 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
         match (*sip).segnumwidth {
             1 => {
                 referedseg = ygetc((*fip).file) as ::core::ffi::c_ulong;
-                if (1 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
+                if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr)
+                    as ::core::ffi::c_uint
+                    > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                 {
-                    if pdfosmode != 0 {
+                    if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                         zpdfosgetosbuf(1 as ::core::ffi::c_int);
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
+                        > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                     {
                         crate::utils::pdftex_fail_args(
                             b"PDF output buffer overflowed\0" as *const u8
@@ -634,19 +645,23 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                         pdfflush();
                     }
                 }
-                let fresh2 = pdfptr;
-                pdfptr = pdfptr + 1;
-                *pdfbuf.offset(fresh2 as isize) = referedseg as eightbits;
+                let fresh2 = (*__tekai_state_generated_pdftexextra).pdfptr;
+                (*__tekai_state_generated_pdftexextra).pdfptr =
+                    (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .offset(fresh2 as isize) = referedseg as eightbits;
             }
             2 => {
                 referedseg = read2bytes((*fip).file) as ::core::ffi::c_ulong;
-                if (1 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
+                if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr)
+                    as ::core::ffi::c_uint
+                    > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                 {
-                    if pdfosmode != 0 {
+                    if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                         zpdfosgetosbuf(1 as ::core::ffi::c_int);
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
+                        > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                     {
                         crate::utils::pdftex_fail_args(
                             b"PDF output buffer overflowed\0" as *const u8
@@ -657,18 +672,22 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                         pdfflush();
                     }
                 }
-                let fresh3 = pdfptr;
-                pdfptr = pdfptr + 1;
-                *pdfbuf.offset(fresh3 as isize) = (referedseg >> 8 as ::core::ffi::c_int
+                let fresh3 = (*__tekai_state_generated_pdftexextra).pdfptr;
+                (*__tekai_state_generated_pdftexextra).pdfptr =
+                    (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .offset(fresh3 as isize) = (referedseg >> 8 as ::core::ffi::c_int
                     & 0xff as ::core::ffi::c_ulong)
                     as eightbits;
-                if (1 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
+                if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr)
+                    as ::core::ffi::c_uint
+                    > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                 {
-                    if pdfosmode != 0 {
+                    if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                         zpdfosgetosbuf(1 as ::core::ffi::c_int);
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
+                        > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                     {
                         crate::utils::pdftex_fail_args(
                             b"PDF output buffer overflowed\0" as *const u8
@@ -679,20 +698,24 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                         pdfflush();
                     }
                 }
-                let fresh4 = pdfptr;
-                pdfptr = pdfptr + 1;
-                *pdfbuf.offset(fresh4 as isize) =
+                let fresh4 = (*__tekai_state_generated_pdftexextra).pdfptr;
+                (*__tekai_state_generated_pdftexextra).pdfptr =
+                    (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .offset(fresh4 as isize) =
                     (referedseg & 0xff as ::core::ffi::c_ulong) as eightbits;
             }
             4 => {
                 referedseg = read4bytes((*fip).file);
-                if (1 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
+                if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr)
+                    as ::core::ffi::c_uint
+                    > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                 {
-                    if pdfosmode != 0 {
+                    if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                         zpdfosgetosbuf(1 as ::core::ffi::c_int);
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
+                        > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                     {
                         crate::utils::pdftex_fail_args(
                             b"PDF output buffer overflowed\0" as *const u8
@@ -703,18 +726,22 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                         pdfflush();
                     }
                 }
-                let fresh5 = pdfptr;
-                pdfptr = pdfptr + 1;
-                *pdfbuf.offset(fresh5 as isize) = (referedseg >> 24 as ::core::ffi::c_int
+                let fresh5 = (*__tekai_state_generated_pdftexextra).pdfptr;
+                (*__tekai_state_generated_pdftexextra).pdfptr =
+                    (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .offset(fresh5 as isize) = (referedseg >> 24 as ::core::ffi::c_int
                     & 0xff as ::core::ffi::c_ulong)
                     as eightbits;
-                if (1 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
+                if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr)
+                    as ::core::ffi::c_uint
+                    > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                 {
-                    if pdfosmode != 0 {
+                    if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                         zpdfosgetosbuf(1 as ::core::ffi::c_int);
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
+                        > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                     {
                         crate::utils::pdftex_fail_args(
                             b"PDF output buffer overflowed\0" as *const u8
@@ -725,18 +752,22 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                         pdfflush();
                     }
                 }
-                let fresh6 = pdfptr;
-                pdfptr = pdfptr + 1;
-                *pdfbuf.offset(fresh6 as isize) = (referedseg >> 16 as ::core::ffi::c_int
+                let fresh6 = (*__tekai_state_generated_pdftexextra).pdfptr;
+                (*__tekai_state_generated_pdftexextra).pdfptr =
+                    (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .offset(fresh6 as isize) = (referedseg >> 16 as ::core::ffi::c_int
                     & 0xff as ::core::ffi::c_ulong)
                     as eightbits;
-                if (1 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
+                if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr)
+                    as ::core::ffi::c_uint
+                    > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                 {
-                    if pdfosmode != 0 {
+                    if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                         zpdfosgetosbuf(1 as ::core::ffi::c_int);
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
+                        > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                     {
                         crate::utils::pdftex_fail_args(
                             b"PDF output buffer overflowed\0" as *const u8
@@ -747,18 +778,22 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                         pdfflush();
                     }
                 }
-                let fresh7 = pdfptr;
-                pdfptr = pdfptr + 1;
-                *pdfbuf.offset(fresh7 as isize) = (referedseg >> 8 as ::core::ffi::c_int
+                let fresh7 = (*__tekai_state_generated_pdftexextra).pdfptr;
+                (*__tekai_state_generated_pdftexextra).pdfptr =
+                    (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .offset(fresh7 as isize) = (referedseg >> 8 as ::core::ffi::c_int
                     & 0xff as ::core::ffi::c_ulong)
                     as eightbits;
-                if (1 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
+                if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr)
+                    as ::core::ffi::c_uint
+                    > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                 {
-                    if pdfosmode != 0 {
+                    if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                         zpdfosgetosbuf(1 as ::core::ffi::c_int);
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
+                        > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                     {
                         crate::utils::pdftex_fail_args(
                             b"PDF output buffer overflowed\0" as *const u8
@@ -769,9 +804,12 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                         pdfflush();
                     }
                 }
-                let fresh8 = pdfptr;
-                pdfptr = pdfptr + 1;
-                *pdfbuf.offset(fresh8 as isize) =
+                let fresh8 = (*__tekai_state_generated_pdftexextra).pdfptr;
+                (*__tekai_state_generated_pdftexextra).pdfptr =
+                    (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .offset(fresh8 as isize) =
                     (referedseg & 0xff as ::core::ffi::c_ulong) as eightbits;
             }
             _ => {}
@@ -788,11 +826,13 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
         i = 0 as ::core::ffi::c_uint;
         while i < 3 as ::core::ffi::c_uint {
             ygetc((*fip).file);
-            if (1 as integer + pdfptr) as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-                if pdfosmode != 0 {
+            if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr) as ::core::ffi::c_uint
+                > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
+            {
+                if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                     zpdfosgetosbuf(1 as ::core::ffi::c_int);
                 } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
+                    > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                 {
                     crate::utils::pdftex_fail_args(
                         b"PDF output buffer overflowed\0" as *const u8
@@ -803,17 +843,23 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                     pdfflush();
                 }
             }
-            let fresh9 = pdfptr;
-            pdfptr = pdfptr + 1;
-            *pdfbuf.offset(fresh9 as isize) = 0 as eightbits;
+            let fresh9 = (*__tekai_state_generated_pdftexextra).pdfptr;
+            (*__tekai_state_generated_pdftexextra).pdfptr =
+                (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+            *(*__tekai_state_generated_pdftexextra)
+                .pdfbuf
+                .offset(fresh9 as isize) = 0 as eightbits;
             i = i.wrapping_add(1);
         }
     }
     ygetc((*fip).file);
-    if (1 as integer + pdfptr) as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-        if pdfosmode != 0 {
+    if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr) as ::core::ffi::c_uint
+        > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
+    {
+        if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
             zpdfosgetosbuf(1 as ::core::ffi::c_int);
-        } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint
+        } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
+            > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
         {
             crate::utils::pdftex_fail_args(
                 b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char,
@@ -823,20 +869,25 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
             pdfflush();
         }
     }
-    let fresh10 = pdfptr;
-    pdfptr = pdfptr + 1;
-    *pdfbuf.offset(fresh10 as isize) = (if (*sip).segpage > 0 as ::core::ffi::c_long {
+    let fresh10 = (*__tekai_state_generated_pdftexextra).pdfptr;
+    (*__tekai_state_generated_pdftexextra).pdfptr =
+        (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+    *(*__tekai_state_generated_pdftexextra)
+        .pdfbuf
+        .offset(fresh10 as isize) = (if (*sip).segpage > 0 as ::core::ffi::c_long {
         1 as ::core::ffi::c_int
     } else {
         0 as ::core::ffi::c_int
     }) as eightbits;
     i = 0 as ::core::ffi::c_uint;
     while i < 4 as ::core::ffi::c_uint {
-        if (1 as integer + pdfptr) as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-            if pdfosmode != 0 {
+        if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr) as ::core::ffi::c_uint
+            > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
+        {
+            if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                 zpdfosgetosbuf(1 as ::core::ffi::c_int);
             } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                > pdfbufsize as ::core::ffi::c_uint
+                > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
             {
                 crate::utils::pdftex_fail_args(
                     b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char,
@@ -846,9 +897,12 @@ unsafe fn writeseghdr(mut fip: *mut FILEINFO, mut sip: *mut SEGINFO) {
                 pdfflush();
             }
         }
-        let fresh11 = pdfptr;
-        pdfptr = pdfptr + 1;
-        *pdfbuf.offset(fresh11 as isize) = ygetc((*fip).file) as eightbits;
+        let fresh11 = (*__tekai_state_generated_pdftexextra).pdfptr;
+        (*__tekai_state_generated_pdftexextra).pdfptr =
+            (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+        *(*__tekai_state_generated_pdftexextra)
+            .pdfbuf
+            .offset(fresh11 as isize) = ygetc((*fip).file) as eightbits;
         i = i.wrapping_add(1);
     }
 }
@@ -1094,6 +1148,9 @@ unsafe fn rd_jbig2_info(mut fip: *mut FILEINFO) {
     xfclose((*fip).file, (*fip).filename as const_string);
 }
 unsafe fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_ulong) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut slip: *mut LITEM = ::core::ptr::null_mut::<LITEM>();
     let mut pip: *mut PAGEINFO = ::core::ptr::null_mut::<PAGEINFO>();
     let mut sip: *mut SEGINFO = ::core::ptr::null_mut::<SEGINFO>();
@@ -1131,7 +1188,8 @@ unsafe fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_ulong) {
         if !(*fip).page0.last.is_null() {
             if (*fip).pdfpage0objnum == 0 as ::core::ffi::c_ulong {
                 zpdfcreateobj(0 as ::core::ffi::c_int, 0 as ::core::ffi::c_int);
-                (*fip).pdfpage0objnum = objptr as ::core::ffi::c_ulong;
+                (*fip).pdfpage0objnum =
+                    (*__tekai_state_generated_pdftexextra).objptr as ::core::ffi::c_ulong;
             }
             crate::utils::pdf_printf_args(
                 b"/DecodeParms [<< /JBIG2Globals %lu 0 R >>]\n\0" as *const u8
@@ -1180,13 +1238,14 @@ unsafe fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_ulong) {
             );
             i = (*sip).datastart;
             while i < (*sip).dataend {
-                if (1 as integer + pdfptr) as ::core::ffi::c_uint
-                    > pdfbufsize as ::core::ffi::c_uint
+                if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr)
+                    as ::core::ffi::c_uint
+                    > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                 {
-                    if pdfosmode != 0 {
+                    if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                         zpdfosgetosbuf(1 as ::core::ffi::c_int);
                     } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                        > pdfbufsize as ::core::ffi::c_uint
+                        > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
                     {
                         crate::utils::pdftex_fail_args(
                             b"PDF output buffer overflowed\0" as *const u8
@@ -1197,9 +1256,12 @@ unsafe fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_ulong) {
                         pdfflush();
                     }
                 }
-                let fresh0 = pdfptr;
-                pdfptr = pdfptr + 1;
-                *pdfbuf.offset(fresh0 as isize) = ygetc((*fip).file) as eightbits;
+                let fresh0 = (*__tekai_state_generated_pdftexextra).pdfptr;
+                (*__tekai_state_generated_pdftexextra).pdfptr =
+                    (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+                *(*__tekai_state_generated_pdftexextra)
+                    .pdfbuf
+                    .offset(fresh0 as isize) = ygetc((*fip).file) as eightbits;
                 i += 1;
             }
         }
@@ -1209,6 +1271,12 @@ unsafe fn wr_jbig2(mut fip: *mut FILEINFO, mut page: ::core::ffi::c_ulong) {
     xfclose((*fip).file, (*fip).filename as const_string);
 }
 pub unsafe fn read_jbig2_info(mut img: integer) {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_backend_writejbig2: *mut crate::generated::backend::writejbig2::State = unsafe { crate::generated::backend::writejbig2::state() };
+
     let mut fip: *mut FILEINFO = ::core::ptr::null_mut::<FILEINFO>();
     let mut tmp: FILEINFO = _FILEINFO {
         file: ::core::ptr::null_mut::<FILE>(),
@@ -1233,19 +1301,32 @@ pub unsafe fn read_jbig2_info(mut img: integer) {
     };
     let mut pip: *mut PAGEINFO = ::core::ptr::null_mut::<PAGEINFO>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    if (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page
+    if (*(*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_struct
+    .jbig2)
+        .selected_page
         < 1 as ::core::ffi::c_int
     {
         crate::utils::pdftex_fail_args(
             b"read_jbig2_info(): page %d not in JBIG2 image file; page must be > 0\0" as *const u8
                 as *const ::core::ffi::c_char,
             &[crate::utils::PrintfArg::from(
-                (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page,
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jbig2)
+                    .selected_page,
             )],
         );
     }
-    if file_tree.is_null() {
-        file_tree = avl_create(
+    if (*__tekai_state_generated_backend_writejbig2)
+        .file_tree
+        .is_null()
+    {
+        (*__tekai_state_generated_backend_writejbig2).file_tree = avl_create(
             Some(
                 comp_file_entry
                     as unsafe fn(
@@ -1255,9 +1336,13 @@ pub unsafe fn read_jbig2_info(mut img: integer) {
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if file_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+        if (*__tekai_state_generated_backend_writejbig2)
+            .file_tree
+            .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+            != 0
+        {
             __assert_rtn(
                 b"read_jbig2_info\0" as *const u8 as *const ::core::ffi::c_char,
                 b"writejbig2.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1267,13 +1352,26 @@ pub unsafe fn read_jbig2_info(mut img: integer) {
         } else {
         };
     }
-    tmp.filename = (*image_array.offset(img as isize)).image_name;
-    fip = avl_find(file_tree, &raw mut tmp as *const ::core::ffi::c_void) as *mut FILEINFO;
+    tmp.filename = (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_name;
+    fip = avl_find(
+        (*__tekai_state_generated_backend_writejbig2).file_tree,
+        &raw mut tmp as *const ::core::ffi::c_void,
+    ) as *mut FILEINFO;
     if fip.is_null() {
         fip = new_fileinfo();
-        (*fip).filename = xstrdup((*image_array.offset(img as isize)).image_name as const_string)
-            as *mut ::core::ffi::c_char;
-        aa = avl_probe(file_tree, fip as *mut ::core::ffi::c_void);
+        (*fip).filename = xstrdup(
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_name as const_string,
+        ) as *mut ::core::ffi::c_char;
+        aa = avl_probe(
+            (*__tekai_state_generated_backend_writejbig2).file_tree,
+            fip as *mut ::core::ffi::c_void,
+        );
         if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
             __assert_rtn(
                 b"read_jbig2_info\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1295,27 +1393,55 @@ pub unsafe fn read_jbig2_info(mut img: integer) {
     }
     pip = find_pageinfo(
         &raw mut (*fip).pages,
-        (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page
-            as ::core::ffi::c_ulong,
+        (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jbig2)
+            .selected_page as ::core::ffi::c_ulong,
     );
     if pip.is_null() {
         crate::utils::pdftex_fail_args(
             b"read_jbig2_info(): page %d not found in JBIG2 image file\0" as *const u8
                 as *const ::core::ffi::c_char,
             &[crate::utils::PrintfArg::from(
-                (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page,
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jbig2)
+                    .selected_page,
             )],
         );
     }
-    (*image_array.offset(img as isize)).num_pages = (*fip).numofpages as integer;
-    (*image_array.offset(img as isize)).width = (*pip).width as integer;
-    (*image_array.offset(img as isize)).height = (*pip).height as integer;
-    (*image_array.offset(img as isize)).x_res = ((*pip).xres as ::core::ffi::c_double * 0.0254f64
-        + 0.5f64) as ::core::ffi::c_int as integer;
-    (*image_array.offset(img as isize)).y_res = ((*pip).yres as ::core::ffi::c_double * 0.0254f64
-        + 0.5f64) as ::core::ffi::c_int as integer;
+    (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .num_pages = (*fip).numofpages as integer;
+    (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .width = (*pip).width as integer;
+    (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .height = (*pip).height as integer;
+    (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .x_res = ((*pip).xres as ::core::ffi::c_double * 0.0254f64 + 0.5f64) as ::core::ffi::c_int
+        as integer;
+    (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .y_res = ((*pip).yres as ::core::ffi::c_double * 0.0254f64 + 0.5f64) as ::core::ffi::c_int
+        as integer;
 }
 pub unsafe fn write_jbig2(mut img: integer) {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_backend_writejbig2: *mut crate::generated::backend::writejbig2::State = unsafe { crate::generated::backend::writejbig2::state() };
+
     let mut fip: *mut FILEINFO = ::core::ptr::null_mut::<FILEINFO>();
     let mut tmp: FILEINFO = _FILEINFO {
         file: ::core::ptr::null_mut::<FILE>(),
@@ -1339,7 +1465,11 @@ pub unsafe fn write_jbig2(mut img: integer) {
         phase: INITIAL,
     };
     let mut pip: *mut PAGEINFO = ::core::ptr::null_mut::<PAGEINFO>();
-    if file_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if (*__tekai_state_generated_backend_writejbig2)
+        .file_tree
+        .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"write_jbig2\0" as *const u8 as *const ::core::ffi::c_char,
             b"writejbig2.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1348,8 +1478,14 @@ pub unsafe fn write_jbig2(mut img: integer) {
         );
     } else {
     };
-    tmp.filename = (*image_array.offset(img as isize)).image_name;
-    fip = avl_find(file_tree, &raw mut tmp as *const ::core::ffi::c_void) as *mut FILEINFO;
+    tmp.filename = (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_name;
+    fip = avl_find(
+        (*__tekai_state_generated_backend_writejbig2).file_tree,
+        &raw mut tmp as *const ::core::ffi::c_void,
+    ) as *mut FILEINFO;
     if fip.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"write_jbig2\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1374,8 +1510,12 @@ pub unsafe fn write_jbig2(mut img: integer) {
     };
     pip = find_pageinfo(
         &raw mut (*fip).pages,
-        (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page
-            as ::core::ffi::c_ulong,
+        (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jbig2)
+            .selected_page as ::core::ffi::c_ulong,
     );
     if pip.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -1389,6 +1529,8 @@ pub unsafe fn write_jbig2(mut img: integer) {
     wr_jbig2(fip, (*pip).pagenum);
 }
 pub unsafe fn flushjbig2page0objects() {
+    let __tekai_state_generated_backend_writejbig2: *mut crate::generated::backend::writejbig2::State = unsafe { crate::generated::backend::writejbig2::state() };
+
     let mut fip: *mut FILEINFO = ::core::ptr::null_mut::<FILEINFO>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
@@ -1397,9 +1539,18 @@ pub unsafe fn flushjbig2page0objects() {
         avl_height: 0,
         avl_generation: 0,
     };
-    if !file_tree.is_null() {
-        avl_t_init(&raw mut t, file_tree);
-        fip = avl_t_first(&raw mut t, file_tree) as *mut FILEINFO;
+    if !(*__tekai_state_generated_backend_writejbig2)
+        .file_tree
+        .is_null()
+    {
+        avl_t_init(
+            &raw mut t,
+            (*__tekai_state_generated_backend_writejbig2).file_tree,
+        );
+        fip = avl_t_first(
+            &raw mut t,
+            (*__tekai_state_generated_backend_writejbig2).file_tree,
+        ) as *mut FILEINFO;
         while !fip.is_null() {
             if !(*fip).page0.last.is_null() {
                 wr_jbig2(fip, 0 as ::core::ffi::c_ulong);
@@ -1409,3 +1560,74 @@ pub unsafe fn flushjbig2page0objects() {
     }
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+pub(crate) struct State {
+    file_tree: *mut avl_table,
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 1],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).file_tree));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 1],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).file_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[0] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_writejbig2
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
+}

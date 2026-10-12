@@ -1,5 +1,5 @@
 pub use crate::generated::backend::avl::{
-    avl_comparison_func, avl_create, avl_find, avl_node, avl_probe, avl_table, libavl_allocator,
+    avl_create, avl_find, avl_probe, avl_table, libavl_allocator,
 };
 
 use crate::byte_string::strcmp;
@@ -9,11 +9,6 @@ use crate::openclose::xmalloc;
 
 use crate::termination::__assert_rtn;
 
-extern "C" {
-    static mut strpool: *mut packedASCIIcode;
-    static mut strstart: *mut poolpointer;
-    static mut objtab: *mut objentry;
-}
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
 pub type __darwin_off_t = __int64_t;
@@ -41,19 +36,7 @@ pub struct oentry_ {
     pub objptr: integer,
 }
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-static mut PdfObjTree: [*mut avl_table; 11] = [
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-    ::core::ptr::null::<avl_table>() as *mut avl_table,
-];
+
 unsafe fn avl_xmalloc(
     mut allocator: *mut libavl_allocator,
     mut size: size_t,
@@ -87,17 +70,7 @@ unsafe fn avl_xfree(mut allocator: *mut libavl_allocator, mut block: *mut ::core
     }
     block = NULL;
 }
-#[no_mangle]
-pub static mut avl_xallocator: libavl_allocator = unsafe {
-    libavl_allocator {
-        libavl_malloc: Some(
-            avl_xmalloc as unsafe fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void,
-        ),
-        libavl_free: Some(
-            avl_xfree as unsafe fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> (),
-        ),
-    }
-};
+
 pub unsafe fn comp_int_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
@@ -126,6 +99,9 @@ unsafe fn compare_info(
     mut pb: *const ::core::ffi::c_void,
     mut param: *mut ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut a: integer = 0;
     let mut b: integer = 0;
     let mut as_0: ::core::ffi::c_int = 0;
@@ -137,11 +113,19 @@ unsafe fn compare_info(
     a = (*(pa as *const oentry)).int0;
     b = (*(pb as *const oentry)).int0;
     if a < 0 as ::core::ffi::c_int && b < 0 as ::core::ffi::c_int {
-        as_0 = *strstart.offset(-a as isize) as ::core::ffi::c_int;
-        ae = *strstart.offset((-(a as ::core::ffi::c_int) + 1 as ::core::ffi::c_int) as isize)
+        as_0 = *(*__tekai_state_generated_pdftexextra)
+            .strstart
+            .offset(-a as isize) as ::core::ffi::c_int;
+        ae = *(*__tekai_state_generated_pdftexextra)
+            .strstart
+            .offset((-(a as ::core::ffi::c_int) + 1 as ::core::ffi::c_int) as isize)
             as ::core::ffi::c_int;
-        bs = *strstart.offset(-b as isize) as ::core::ffi::c_int;
-        be = *strstart.offset((-(b as ::core::ffi::c_int) + 1 as ::core::ffi::c_int) as isize)
+        bs = *(*__tekai_state_generated_pdftexextra)
+            .strstart
+            .offset(-b as isize) as ::core::ffi::c_int;
+        be = *(*__tekai_state_generated_pdftexextra)
+            .strstart
+            .offset((-(b as ::core::ffi::c_int) + 1 as ::core::ffi::c_int) as isize)
             as ::core::ffi::c_int;
         al = ae - as_0;
         bl = be - bs;
@@ -152,13 +136,21 @@ unsafe fn compare_info(
             return 1 as ::core::ffi::c_int;
         }
         while as_0 < ae {
-            if (*strpool.offset(as_0 as isize) as ::core::ffi::c_int)
-                < *strpool.offset(bs as isize) as ::core::ffi::c_int
+            if (*(*__tekai_state_generated_pdftexextra)
+                .strpool
+                .offset(as_0 as isize) as ::core::ffi::c_int)
+                < *(*__tekai_state_generated_pdftexextra)
+                    .strpool
+                    .offset(bs as isize) as ::core::ffi::c_int
             {
                 return -(1 as ::core::ffi::c_int);
             }
-            if *strpool.offset(as_0 as isize) as ::core::ffi::c_int
-                > *strpool.offset(bs as isize) as ::core::ffi::c_int
+            if *(*__tekai_state_generated_pdftexextra)
+                .strpool
+                .offset(as_0 as isize) as ::core::ffi::c_int
+                > *(*__tekai_state_generated_pdftexextra)
+                    .strpool
+                    .offset(bs as isize) as ::core::ffi::c_int
             {
                 return 1 as ::core::ffi::c_int;
             }
@@ -176,8 +168,13 @@ unsafe fn compare_info(
     return 0 as ::core::ffi::c_int;
 }
 pub unsafe fn avlputobj(mut objptr: integer, mut t: integer) {
-    if PdfObjTree[t as usize].is_null() {
-        PdfObjTree[t as usize] = avl_create(
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
+    if (*__tekai_state_generated_backend_avlstuff).PdfObjTree[t as usize].is_null() {
+        (*__tekai_state_generated_backend_avlstuff).PdfObjTree[t as usize] = avl_create(
             Some(
                 compare_info
                     as unsafe fn(
@@ -187,9 +184,9 @@ pub unsafe fn avlputobj(mut objptr: integer, mut t: integer) {
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if PdfObjTree[t as usize].is_null() {
+        if (*__tekai_state_generated_backend_avlstuff).PdfObjTree[t as usize].is_null() {
             crate::utils::pdftex_fail_args(
                 b"avlstuff.c: avl_create() PdfObjTree failed\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -198,9 +195,12 @@ pub unsafe fn avlputobj(mut objptr: integer, mut t: integer) {
         }
     }
     insert_object_entry(
-        PdfObjTree[t as usize],
+        (*__tekai_state_generated_backend_avlstuff).PdfObjTree[t as usize],
         oentry {
-            int0: (*objtab.offset(objptr as isize)).int0,
+            int0: (*(*__tekai_state_generated_pdftexextra)
+                .objtab
+                .offset(objptr as isize))
+            .int0,
             objptr,
         },
     );
@@ -244,49 +244,68 @@ unsafe fn insert_object_entry(tree: *mut avl_table, entry: oentry) {
     }
 }
 pub unsafe fn avlfindobj(mut t: integer, mut i: integer, mut byname: integer) -> integer {
-    static mut p: *mut oentry = ::core::ptr::null::<oentry>() as *mut oentry;
-    static mut tmp: oentry = oentry_ { int0: 0, objptr: 0 };
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+
     if byname > 0 as ::core::ffi::c_int {
-        tmp.int0 = -i;
+        (*__tekai_state_generated_backend_avlstuff)
+            .local_avlfindobj_248_tmp
+            .int0 = -i;
     } else {
-        tmp.int0 = i;
+        (*__tekai_state_generated_backend_avlstuff)
+            .local_avlfindobj_248_tmp
+            .int0 = i;
     }
-    if PdfObjTree[t as usize].is_null() {
+    if (*__tekai_state_generated_backend_avlstuff).PdfObjTree[t as usize].is_null() {
         return 0 as integer;
     }
-    p = avl_find(
-        PdfObjTree[t as usize],
-        &raw mut tmp as *const ::core::ffi::c_void,
+    (*__tekai_state_generated_backend_avlstuff).local_avlfindobj_247_p = avl_find(
+        (*__tekai_state_generated_backend_avlstuff).PdfObjTree[t as usize],
+        &raw mut (*__tekai_state_generated_backend_avlstuff).local_avlfindobj_248_tmp
+            as *const ::core::ffi::c_void,
     ) as *mut oentry;
-    if p.is_null() {
+    if (*__tekai_state_generated_backend_avlstuff)
+        .local_avlfindobj_247_p
+        .is_null()
+    {
         return 0 as integer;
     }
-    return (*p).objptr;
+    return (*(*__tekai_state_generated_backend_avlstuff).local_avlfindobj_247_p).objptr;
 }
-#[no_mangle]
-pub static mut mf_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
+
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    struct TestAllocator(std::ptr::NonNull<libavl_allocator>);
+
+    impl Drop for TestAllocator {
+        fn drop(&mut self) {
+            unsafe { drop(Box::from_raw(self.0.as_ptr())) };
+        }
+    }
+
     struct TestObjectTree {
         tree: *mut avl_table,
-        _allocator: Box<libavl_allocator>,
+        _allocator: TestAllocator,
     }
 
     impl TestObjectTree {
         fn new() -> Self {
-            let mut allocator = Box::new(libavl_allocator {
-                libavl_malloc: Some(avl_xmalloc),
-                libavl_free: Some(avl_xfree),
-            });
+            let allocator = TestAllocator(
+                std::ptr::NonNull::new(Box::into_raw(Box::new(libavl_allocator {
+                    libavl_malloc: Some(avl_xmalloc),
+                    libavl_free: Some(avl_xfree),
+                })))
+                .unwrap(),
+            );
             let tree = unsafe {
                 avl_create(
                     Some(compare_info),
                     ::core::ptr::null_mut(),
-                    allocator.as_mut(),
+                    allocator.0.as_ptr(),
                 )
             };
             assert!(!tree.is_null());
@@ -356,41 +375,223 @@ mod tests {
 
     #[test]
     fn unique_object_keys_transfer_each_allocation_to_the_tree() {
-        reset_counts();
-        let tree = TestObjectTree::new();
-        let keys = [3, 1, 2, 0, 9, 8, 7];
-        for key in keys {
-            tree.insert(key, key + 100);
-        }
-        assert_eq!(tree.len(), keys.len());
-        assert_eq!(allocation_counts(), (keys.len(), 0));
-        for key in keys {
-            assert_eq!(tree.find(key), Some(key + 100));
-        }
-        assert_eq!(tree.find(4), None);
-        drop(tree);
-        assert_eq!(allocation_counts(), (keys.len(), keys.len()));
+        crate::invocation_state::with_fixture(|| {
+            reset_counts();
+            let tree = TestObjectTree::new();
+            let keys = [3, 1, 2, 0, 9, 8, 7];
+            for key in keys {
+                tree.insert(key, key + 100);
+            }
+            assert_eq!(tree.len(), keys.len());
+            assert_eq!(allocation_counts(), (keys.len(), 0));
+            for key in keys {
+                assert_eq!(tree.find(key), Some(key + 100));
+            }
+            assert_eq!(tree.find(4), None);
+            drop(tree);
+            assert_eq!(allocation_counts(), (keys.len(), keys.len()));
+        });
     }
 
     #[test]
     fn repeated_object_keys_release_candidates_and_preserve_the_first_object() {
-        reset_counts();
-        let tree = TestObjectTree::new();
-        tree.insert(0, 100);
-        tree.insert(6, 200);
-        for index in 0..64 {
-            tree.insert(0, 101 + index);
-            tree.insert(6, 201 + index);
-            assert_eq!(tree.len(), 2);
-            assert_eq!(tree.find(0), Some(100));
-            assert_eq!(tree.find(6), Some(200));
-            assert_eq!(
-                allocation_counts(),
-                (4 + 2 * index as usize, 2 + 2 * index as usize)
-            );
-        }
-        assert_eq!(allocation_counts(), (130, 128));
-        drop(tree);
-        assert_eq!(allocation_counts(), (130, 130));
+        crate::invocation_state::with_fixture(|| {
+            reset_counts();
+            let tree = TestObjectTree::new();
+            tree.insert(0, 100);
+            tree.insert(6, 200);
+            for index in 0..64 {
+                tree.insert(0, 101 + index);
+                tree.insert(6, 201 + index);
+                assert_eq!(tree.len(), 2);
+                assert_eq!(tree.find(0), Some(100));
+                assert_eq!(tree.find(6), Some(200));
+                assert_eq!(
+                    allocation_counts(),
+                    (4 + 2 * index as usize, 2 + 2 * index as usize)
+                );
+            }
+            assert_eq!(allocation_counts(), (130, 128));
+            drop(tree);
+            assert_eq!(allocation_counts(), (130, 130));
+        });
     }
+}
+
+pub(crate) struct State {
+    PdfObjTree: [*mut avl_table; 11],
+    pub(crate) avl_xallocator: libavl_allocator,
+    local_avlfindobj_247_p: *mut oentry,
+    local_avlfindobj_248_tmp: oentry,
+    mf_tree: *mut avl_table,
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 5],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[4] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).mf_tree));
+            }
+            if self.initialized[3] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).local_avlfindobj_248_tmp
+                ));
+            }
+            if self.initialized[2] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).local_avlfindobj_247_p
+                ));
+            }
+            if self.initialized[1] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).avl_xallocator));
+            }
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).PdfObjTree));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 5],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!((11) == 11);
+        }
+        __tekai_require_copy::<*mut avl_table>();
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[0])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[1])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[2])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[3])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[4])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[5])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[6])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[7])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[8])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[9])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).PdfObjTree[10])
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[0] = true;
+        const {
+            assert!(core::mem::size_of::<libavl_allocator>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).avl_xallocator).write(unsafe {
+            libavl_allocator {
+                libavl_malloc: Some(
+                    avl_xmalloc
+                        as unsafe fn(*mut libavl_allocator, size_t) -> *mut ::core::ffi::c_void,
+                ),
+                libavl_free: Some(
+                    avl_xfree as unsafe fn(*mut libavl_allocator, *mut ::core::ffi::c_void) -> (),
+                ),
+            }
+        });
+        self.initialized[1] = true;
+        const {
+            assert!(core::mem::size_of::<*mut oentry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_avlfindobj_247_p)
+            .write(::core::ptr::null::<oentry>() as *mut oentry);
+        self.initialized[2] = true;
+        const {
+            assert!(core::mem::size_of::<oentry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_avlfindobj_248_tmp)
+            .write(oentry_ { int0: 0, objptr: 0 });
+        self.initialized[3] = true;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).mf_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[4] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_avlstuff
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
 }

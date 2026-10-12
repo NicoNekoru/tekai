@@ -9,16 +9,6 @@ pub use crate::pngshim::png_struct_def;
 
 pub use crate::pngshim::png_info_def;
 
-extern "C" {
-    static mut pdfbuf: *mut eightbits;
-    static mut pdfbufsize: integer;
-    static mut pdfptr: integer;
-    static mut pdfosmode: boolean;
-    static mut fixedpdfmajorversion: integer;
-    static mut fixedpdfminorversion: integer;
-    static mut cur_file_name: *mut ::core::ffi::c_char;
-    static mut image_array: *mut image_entry;
-}
 #[inline(always)]
 unsafe fn fast_fgetc(stream: *mut FILE) -> ::core::ffi::c_int {
     unsafe { crate::stdio::fgetc(stream) }
@@ -38,11 +28,17 @@ pub type png_struct = png_struct_def;
 pub type png_structp = *mut png_struct;
 pub type png_info = png_info_def;
 pub type png_infop = *mut png_info;
+#[cfg(test)]
 pub use crate::backend_types::image_entry;
+#[cfg(test)]
 pub use crate::backend_types::pdf_image_struct;
+#[cfg(test)]
 pub use crate::backend_types::png_image_struct;
+#[cfg(test)]
 pub use crate::backend_types::ImageData as C2RustUnnamed;
+#[cfg(test)]
 pub use crate::backend_types::JBIG2_IMAGE_INFO;
+#[cfg(test)]
 pub use crate::backend_types::JPG_IMAGE_INFO;
 pub const M_RST7: C2RustUnnamed_0 = 215;
 pub const M_RST6: C2RustUnnamed_0 = 214;
@@ -118,37 +114,83 @@ unsafe fn read2bytes(mut f: *mut FILE) -> ::core::ffi::c_uint {
     ((high as ::core::ffi::c_uint) << 8) | low as ::core::ffi::c_uint
 }
 pub unsafe fn read_jpg_info(mut img: integer) {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     let mut units: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
     let mut appmk: ::core::ffi::c_ushort = 0;
     let mut jpg_id: [::core::ffi::c_uchar; 5] =
         ::core::mem::transmute::<[u8; 5], [::core::ffi::c_uchar; 5]>(*b"JFIF\0");
-    let ref mut fresh0 = (*image_array.offset(img as isize)).y_res;
+    let ref mut fresh0 = (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .y_res;
     *fresh0 = 0 as ::core::ffi::c_int as integer;
-    (*image_array.offset(img as isize)).x_res = *fresh0;
-    let ref mut fresh1 = (*(*image_array.offset(img as isize)).image_struct.jpg).file;
+    (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .x_res = *fresh0;
+    let ref mut fresh1 = (*(*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_struct
+    .jpg)
+        .file;
     *fresh1 = xfopen(
-        (*image_array.offset(img as isize)).image_name as const_string,
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_name as const_string,
         FOPEN_RBIN_MODE.as_ptr(),
     );
     xfseek(
-        (*(*image_array.offset(img as isize)).image_struct.jpg).file,
+        (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jpg)
+            .file,
         0 as ::core::ffi::c_long,
         SEEK_END,
-        cur_file_name as const_string,
+        (*__tekai_state_utils).cur_file_name as const_string,
     );
-    (*(*image_array.offset(img as isize)).image_struct.jpg).length = xftell(
-        (*(*image_array.offset(img as isize)).image_struct.jpg).file,
-        cur_file_name as const_string,
+    (*(*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_struct
+    .jpg)
+        .length = xftell(
+        (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jpg)
+            .file,
+        (*__tekai_state_utils).cur_file_name as const_string,
     ) as ::core::ffi::c_ulong;
     xfseek(
-        (*(*image_array.offset(img as isize)).image_struct.jpg).file,
+        (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jpg)
+            .file,
         0 as ::core::ffi::c_long,
         SEEK_SET,
-        cur_file_name as const_string,
+        (*__tekai_state_utils).cur_file_name as const_string,
     );
-    if read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file)
-        != 0xffd8 as ::core::ffi::c_uint
+    if read2bytes(
+        (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jpg)
+            .file,
+    ) != 0xffd8 as ::core::ffi::c_uint
     {
         crate::utils::pdftex_fail_args(
             b"reading JPEG image failed (no JPEG header found)\0" as *const u8
@@ -156,53 +198,149 @@ pub unsafe fn read_jpg_info(mut img: integer) {
             &[],
         );
     }
-    appmk = read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file)
-        as ::core::ffi::c_ushort;
+    appmk = read2bytes(
+        (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jpg)
+            .file,
+    ) as ::core::ffi::c_ushort;
     if appmk as ::core::ffi::c_int == 0xffe0 as ::core::ffi::c_int {
-        read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file);
+        read2bytes(
+            (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .jpg)
+                .file,
+        );
         i = 0 as ::core::ffi::c_int;
         while i < 5 as ::core::ffi::c_int {
-            if xgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file)
-                != jpg_id[i as usize] as ::core::ffi::c_int
+            if xgetc(
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .file,
+            ) != jpg_id[i as usize] as ::core::ffi::c_int
             {
                 break;
             }
             i += 1;
         }
         if i == 5 as ::core::ffi::c_int {
-            read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file);
-            units = xgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file);
-            (*image_array.offset(img as isize)).x_res =
-                read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file) as integer;
-            (*image_array.offset(img as isize)).y_res =
-                read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file) as integer;
+            read2bytes(
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .file,
+            );
+            units = xgetc(
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .file,
+            );
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .x_res = read2bytes(
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .file,
+            ) as integer;
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .y_res = read2bytes(
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .file,
+            ) as integer;
             match units {
                 1 => {}
                 2 => {
-                    let ref mut fresh2 = (*image_array.offset(img as isize)).x_res;
+                    let ref mut fresh2 = (*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .x_res;
                     *fresh2 = (*fresh2 as ::core::ffi::c_double * 2.54f64) as integer;
-                    let ref mut fresh3 = (*image_array.offset(img as isize)).y_res;
+                    let ref mut fresh3 = (*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .y_res;
                     *fresh3 = (*fresh3 as ::core::ffi::c_double * 2.54f64) as integer;
                 }
                 _ => {
-                    let ref mut fresh4 = (*image_array.offset(img as isize)).y_res;
+                    let ref mut fresh4 = (*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .y_res;
                     *fresh4 = 0 as ::core::ffi::c_int as integer;
-                    (*image_array.offset(img as isize)).x_res = *fresh4;
+                    (*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .x_res = *fresh4;
                 }
             }
         }
-        if (*image_array.offset(img as isize)).x_res == 0 as ::core::ffi::c_int
-            && (*image_array.offset(img as isize)).y_res != 0 as ::core::ffi::c_int
+        if (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .x_res
+            == 0 as ::core::ffi::c_int
+            && (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .y_res
+                != 0 as ::core::ffi::c_int
         {
-            (*image_array.offset(img as isize)).x_res = (*image_array.offset(img as isize)).y_res;
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .x_res = (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .y_res;
         }
-        if (*image_array.offset(img as isize)).y_res == 0 as ::core::ffi::c_int
-            && (*image_array.offset(img as isize)).x_res != 0 as ::core::ffi::c_int
+        if (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .y_res
+            == 0 as ::core::ffi::c_int
+            && (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .x_res
+                != 0 as ::core::ffi::c_int
         {
-            (*image_array.offset(img as isize)).y_res = (*image_array.offset(img as isize)).x_res;
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .y_res = (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .x_res;
         }
     } else if appmk as ::core::ffi::c_int == 0xffe1 as ::core::ffi::c_int {
-        let fp = (*(*image_array.offset(img as isize)).image_struct.jpg).file;
+        let fp = (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jpg)
+            .file;
         let segment_length = read2bytes(fp) as u16;
         let Some(payload_length) = crate::jpeg_exif::app1_payload_length(segment_length) else {
             crate::utils::pdftex_fail_args(
@@ -227,26 +365,51 @@ pub unsafe fn read_jpg_info(mut img: integer) {
             );
         }
         if let Some((xres, yres)) = crate::jpeg_exif::parse_exif_resolution(&payload) {
-            (*image_array.offset(img as isize)).x_res = xres as integer;
-            (*image_array.offset(img as isize)).y_res = yres as integer;
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .x_res = xres as integer;
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .y_res = yres as integer;
         }
     }
     xfseek(
-        (*(*image_array.offset(img as isize)).image_struct.jpg).file,
+        (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jpg)
+            .file,
         0 as ::core::ffi::c_long,
         SEEK_SET,
-        cur_file_name as const_string,
+        (*__tekai_state_utils).cur_file_name as const_string,
     );
     loop {
-        if feof((*(*image_array.offset(img as isize)).image_struct.jpg).file) != 0 {
+        if feof(
+            (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .jpg)
+                .file,
+        ) != 0
+        {
             crate::utils::pdftex_fail_args(
                 b"reading JPEG image failed (premature file end)\0" as *const u8
                     as *const ::core::ffi::c_char,
                 &[],
             );
         }
-        let marker_prefix =
-            fast_fgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file);
+        let marker_prefix = fast_fgetc(
+            (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .jpg)
+                .file,
+        );
         if marker_prefix == libc::EOF {
             crate::utils::pdftex_fail_args(
                 b"reading JPEG image failed (premature file end)\0" as *const u8
@@ -261,7 +424,14 @@ pub unsafe fn read_jpg_info(mut img: integer) {
                 &[],
             );
         }
-        let marker = xgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file);
+        let marker = xgetc(
+            (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .jpg)
+                .file,
+        );
         if marker == libc::EOF {
             crate::utils::pdftex_fail_args(
                 b"reading JPEG image failed (premature file end)\0" as *const u8
@@ -278,8 +448,10 @@ pub unsafe fn read_jpg_info(mut img: integer) {
                 );
             }
             194 => {
-                if fixedpdfmajorversion == 1 as ::core::ffi::c_int
-                    && fixedpdfminorversion <= 2 as ::core::ffi::c_int
+                if (*__tekai_state_generated_pdftexextra).fixedpdfmajorversion
+                    == 1 as ::core::ffi::c_int
+                    && (*__tekai_state_generated_pdftexextra).fixedpdfminorversion
+                        <= 2 as ::core::ffi::c_int
                 {
                     crate::utils::pdftex_fail_args(
                         b"cannot use progressive DCT with PDF-1.2\0" as *const u8
@@ -297,12 +469,24 @@ pub unsafe fn read_jpg_info(mut img: integer) {
             }
             _ => {
                 xfseek(
-                    (*(*image_array.offset(img as isize)).image_struct.jpg).file,
-                    read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file)
-                        .wrapping_sub(2 as ::core::ffi::c_uint)
+                    (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .jpg)
+                        .file,
+                    read2bytes(
+                        (*(*(*__tekai_state_generated_backend_writeimg)
+                            .image_array
+                            .offset(img as isize))
+                        .image_struct
+                        .jpg)
+                            .file,
+                    )
+                    .wrapping_sub(2 as ::core::ffi::c_uint)
                         as ::core::ffi::c_long,
                     SEEK_CUR,
-                    cur_file_name as const_string,
+                    (*__tekai_state_utils).cur_file_name as const_string,
                 );
                 current_block_62 = 12930649117290160518;
             }
@@ -310,40 +494,109 @@ pub unsafe fn read_jpg_info(mut img: integer) {
         match current_block_62 {
             12930649117290160518 => {}
             _ => {
-                read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file);
-                (*(*image_array.offset(img as isize)).image_struct.jpg).bits_per_component =
-                    xgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file)
-                        as ::core::ffi::c_uchar;
-                (*image_array.offset(img as isize)).height =
-                    read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file)
-                        as integer;
-                (*image_array.offset(img as isize)).width =
-                    read2bytes((*(*image_array.offset(img as isize)).image_struct.jpg).file)
-                        as integer;
-                (*(*image_array.offset(img as isize)).image_struct.jpg).color_space =
-                    xgetc((*(*image_array.offset(img as isize)).image_struct.jpg).file);
+                read2bytes(
+                    (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .jpg)
+                        .file,
+                );
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .bits_per_component = xgetc(
+                    (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .jpg)
+                        .file,
+                ) as ::core::ffi::c_uchar;
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .height = read2bytes(
+                    (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .jpg)
+                        .file,
+                ) as integer;
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .width = read2bytes(
+                    (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .jpg)
+                        .file,
+                ) as integer;
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .color_space = xgetc(
+                    (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .jpg)
+                        .file,
+                );
                 xfseek(
-                    (*(*image_array.offset(img as isize)).image_struct.jpg).file,
+                    (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .jpg)
+                        .file,
                     0 as ::core::ffi::c_long,
                     SEEK_SET,
-                    cur_file_name as const_string,
+                    (*__tekai_state_utils).cur_file_name as const_string,
                 );
-                match (*(*image_array.offset(img as isize)).image_struct.jpg).color_space {
+                match (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .color_space
+                {
                     JPG_GRAY => {
-                        (*image_array.offset(img as isize)).color_type = IMAGE_COLOR_B;
+                        (*(*__tekai_state_generated_backend_writeimg)
+                            .image_array
+                            .offset(img as isize))
+                        .color_type = IMAGE_COLOR_B;
                     }
                     JPG_RGB => {
-                        (*image_array.offset(img as isize)).color_type = IMAGE_COLOR_C;
+                        (*(*__tekai_state_generated_backend_writeimg)
+                            .image_array
+                            .offset(img as isize))
+                        .color_type = IMAGE_COLOR_C;
                     }
                     JPG_CMYK => {
-                        (*image_array.offset(img as isize)).color_type = IMAGE_COLOR_C;
+                        (*(*__tekai_state_generated_backend_writeimg)
+                            .image_array
+                            .offset(img as isize))
+                        .color_type = IMAGE_COLOR_C;
                     }
                     _ => {
                         crate::utils::pdftex_fail_args(
                             b"Unsupported color space %i\0" as *const u8
                                 as *const ::core::ffi::c_char,
                             &[crate::utils::PrintfArg::from(
-                                (*(*image_array.offset(img as isize)).image_struct.jpg).color_space,
+                                (*(*(*__tekai_state_generated_backend_writeimg)
+                                    .image_array
+                                    .offset(img as isize))
+                                .image_struct
+                                .jpg)
+                                    .color_space,
                             )],
                         );
                     }
@@ -354,6 +607,11 @@ pub unsafe fn read_jpg_info(mut img: integer) {
     }
 }
 pub unsafe fn write_jpg(mut img: integer) {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut l: ::core::ffi::c_ulong = 0;
     let mut f: *mut FILE = ::core::ptr::null_mut::<FILE>();
     pdf_puts(b"/Type /XObject\n/Subtype /Image\n\0" as *const u8 as *const ::core::ffi::c_char);
@@ -361,28 +619,60 @@ pub unsafe fn write_jpg(mut img: integer) {
         b"/Width %i\n/Height %i\n/BitsPerComponent %i\n/Length %i\n\0" as *const u8
             as *const ::core::ffi::c_char,
         &[
-            crate::utils::PrintfArg::from((*image_array.offset(img as isize)).width),
-            crate::utils::PrintfArg::from((*image_array.offset(img as isize)).height),
             crate::utils::PrintfArg::from(
-                (*(*image_array.offset(img as isize)).image_struct.jpg).bits_per_component
-                    as ::core::ffi::c_int,
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .width,
             ),
             crate::utils::PrintfArg::from(
-                (*(*image_array.offset(img as isize)).image_struct.jpg).length
-                    as ::core::ffi::c_int,
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .height,
+            ),
+            crate::utils::PrintfArg::from(
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .bits_per_component as ::core::ffi::c_int,
+            ),
+            crate::utils::PrintfArg::from(
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .length as ::core::ffi::c_int,
             ),
         ],
     );
     pdf_puts(b"/ColorSpace \0" as *const u8 as *const ::core::ffi::c_char);
-    if (*image_array.offset(img as isize)).colorspace_ref != 0 as ::core::ffi::c_int {
+    if (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .colorspace_ref
+        != 0 as ::core::ffi::c_int
+    {
         crate::utils::pdf_printf_args(
             b"%i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
             &[crate::utils::PrintfArg::from(
-                (*image_array.offset(img as isize)).colorspace_ref,
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .colorspace_ref,
             )],
         );
     } else {
-        match (*(*image_array.offset(img as isize)).image_struct.jpg).color_space {
+        match (*(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_struct
+        .jpg)
+            .color_space
+        {
             JPG_GRAY => {
                 pdf_puts(b"/DeviceGray\n\0" as *const u8 as *const ::core::ffi::c_char);
             }
@@ -399,21 +689,38 @@ pub unsafe fn write_jpg(mut img: integer) {
                 crate::utils::pdftex_fail_args(
                     b"Unsupported color space %i\0" as *const u8 as *const ::core::ffi::c_char,
                     &[crate::utils::PrintfArg::from(
-                        (*(*image_array.offset(img as isize)).image_struct.jpg).color_space,
+                        (*(*(*__tekai_state_generated_backend_writeimg)
+                            .image_array
+                            .offset(img as isize))
+                        .image_struct
+                        .jpg)
+                            .color_space,
                     )],
                 );
             }
         }
     }
     pdf_puts(b"/Filter /DCTDecode\n>>\nstream\n\0" as *const u8 as *const ::core::ffi::c_char);
-    l = (*(*image_array.offset(img as isize)).image_struct.jpg).length;
-    f = (*(*image_array.offset(img as isize)).image_struct.jpg).file;
+    l = (*(*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_struct
+    .jpg)
+        .length;
+    f = (*(*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_struct
+    .jpg)
+        .file;
     while l > 0 as ::core::ffi::c_ulong {
-        if (1 as integer + pdfptr) as ::core::ffi::c_uint > pdfbufsize as ::core::ffi::c_uint {
-            if pdfosmode != 0 {
+        if (1 as integer + (*__tekai_state_generated_pdftexextra).pdfptr) as ::core::ffi::c_uint
+            > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
+        {
+            if (*__tekai_state_generated_pdftexextra).pdfosmode != 0 {
                 zpdfosgetosbuf(1 as ::core::ffi::c_int);
             } else if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
-                > pdfbufsize as ::core::ffi::c_uint
+                > (*__tekai_state_generated_pdftexextra).pdfbufsize as ::core::ffi::c_uint
             {
                 crate::utils::pdftex_fail_args(
                     b"PDF output buffer overflowed\0" as *const u8 as *const ::core::ffi::c_char,
@@ -423,9 +730,12 @@ pub unsafe fn write_jpg(mut img: integer) {
                 pdfflush();
             }
         }
-        let fresh11 = pdfptr;
-        pdfptr = pdfptr + 1;
-        *pdfbuf.offset(fresh11 as isize) = xgetc(f) as eightbits;
+        let fresh11 = (*__tekai_state_generated_pdftexextra).pdfptr;
+        (*__tekai_state_generated_pdftexextra).pdfptr =
+            (*__tekai_state_generated_pdftexextra).pdfptr + 1;
+        *(*__tekai_state_generated_pdftexextra)
+            .pdfbuf
+            .offset(fresh11 as isize) = xgetc(f) as eightbits;
         l = l.wrapping_sub(1);
     }
     pdfendstream();

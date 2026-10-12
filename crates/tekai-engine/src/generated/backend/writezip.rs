@@ -1,10 +1,8 @@
 //! Invocation-owned PDF compression with the legacy output batching protocol.
 
 use crate::generated::pdftex0::getpdfcompresslevel;
-use crate::generated::pdftexextra::{
-    pdfbuf, pdfbufsize, pdffile, pdfgone, pdflastbyte, pdfptr, pdfstreamlength,
-};
-use crate::utils::{cur_file_name, xfflush, xfwrite};
+
+use crate::utils::{xfflush, xfwrite};
 use flate2::{Compress, Compression, FlushCompress, Status};
 use std::cell::Cell;
 use std::ffi::CString;
@@ -305,40 +303,61 @@ unsafe fn fail(error: CompressionError) -> ! {
 /// this function returns, and callbacks must not access the session. The caller
 /// retains responsibility for clearing pdfptr.
 pub unsafe fn writezip(finish: i32) {
-    if pdfptr < 0 || pdfbufsize < 0 || pdfptr > pdfbufsize {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    if (*__tekai_state_generated_pdftexextra).pdfptr < 0
+        || (*__tekai_state_generated_pdftexextra).pdfbufsize < 0
+        || (*__tekai_state_generated_pdftexextra).pdfptr
+            > (*__tekai_state_generated_pdftexextra).pdfbufsize
+    {
         fail(CompressionError::InvalidState(
             "invalid PDF input buffer length",
         ));
     }
-    let count = pdfptr as usize;
-    if count != 0 && pdfbuf.is_null() {
+    let count = (*__tekai_state_generated_pdftexextra).pdfptr as usize;
+    if count != 0 && (*__tekai_state_generated_pdftexextra).pdfbuf.is_null() {
         fail(CompressionError::InvalidState("missing PDF input buffer"));
     }
     let input = if count == 0 {
         &[]
     } else {
-        std::slice::from_raw_parts(pdfbuf, count)
+        std::slice::from_raw_parts((*__tekai_state_generated_pdftexextra).pdfbuf, count)
     };
     let level = getpdfcompresslevel();
     if level <= 0 {
         fail(CompressionError::InvalidLevel(level));
     }
-    cur_file_name = std::ptr::null_mut();
+    (*__tekai_state_utils).cur_file_name = std::ptr::null_mut();
     let result = with_current(|session| {
-        if pdfstreamlength == 0 {
+        let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+            unsafe { crate::generated::pdftexextra::state() };
+
+        if (*__tekai_state_generated_pdftexextra).pdfstreamlength == 0 {
             session.start(level)?;
         }
         session.process(input, finish != 0, &mut |output| {
-            let written = xfwrite(output.as_ptr().cast_mut().cast(), 1, output.len(), pdffile);
+            let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+                unsafe { crate::generated::pdftexextra::state() };
+
+            let written = xfwrite(
+                output.as_ptr().cast_mut().cast(),
+                1,
+                output.len(),
+                (*__tekai_state_generated_pdftexextra).pdffile,
+            );
             if written != output.len() {
                 return Err(CompressionError::InvalidState(
                     "short PDF compression write",
                 ));
             }
-            pdfgone = pdfgone
+            (*__tekai_state_generated_pdftexextra).pdfgone = (*__tekai_state_generated_pdftexextra)
+                .pdfgone
                 .checked_add(i64::try_from(written).map_err(|_| CompressionError::LengthOverflow)?)
                 .ok_or(CompressionError::LengthOverflow)?;
-            pdflastbyte = *output.last().expect("output batches are nonempty");
+            (*__tekai_state_generated_pdftexextra).pdflastbyte =
+                *output.last().expect("output batches are nonempty");
             Ok(())
         })
     });
@@ -347,9 +366,9 @@ pub unsafe fn writezip(finish: i32) {
         Err(error) => fail(error),
     };
     if finish != 0 {
-        xfflush(pdffile);
+        xfflush((*__tekai_state_generated_pdftexextra).pdffile);
     }
-    pdfstreamlength = match i64::try_from(total_out) {
+    (*__tekai_state_generated_pdftexextra).pdfstreamlength = match i64::try_from(total_out) {
         Ok(length) => length,
         Err(_) => fail(CompressionError::LengthOverflow),
     };

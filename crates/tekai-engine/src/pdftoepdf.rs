@@ -95,30 +95,6 @@ impl Drop for Obj {
     }
 }
 
-extern "C" {
-    static mut epdf_width: c_float;
-    static mut epdf_height: c_float;
-    static mut epdf_orig_x: c_float;
-    static mut epdf_orig_y: c_float;
-    static mut epdf_rotate: c_float;
-    static mut epdf_selected_page: c_int;
-    static mut epdf_num_pages: c_int;
-    static mut epdf_page_box: c_int;
-    static mut epdf_doc: *mut c_void;
-    static mut epdf_has_page_group: c_int;
-
-    static mut pdfpagegroupval: c_int;
-    static mut fixedinclusioncopyfont: c_int;
-    static mut pdflastbyte: u8;
-    static mut pdfboxspecmedia: c_int;
-    static mut pdfboxspeccrop: c_int;
-    static mut pdfboxspecbleed: c_int;
-    static mut pdfboxspectrim: c_int;
-    static mut pdfboxspecart: c_int;
-    static mut notdef: [c_char; 8];
-
-}
-
 pub(crate) struct PdfInclusionSession {
     in_obj_list: Cell<*mut InObj>,
     encoding_list: Cell<*mut UsedEncoding>,
@@ -565,12 +541,15 @@ unsafe fn copy_font_dict(obj: *mut Object, r: *mut InObj) {
 }
 
 unsafe fn copy_stream(stream: *mut Stream) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
         xpdf_stream_reset(stream);
         let mut len: libc::size_t = 0;
         let data = xpdf_stream_get_remaining_data(stream, &mut len);
         if data.is_null() || len == 0 {
-            pdflastbyte = 0;
+            (*__tekai_state_generated_pdftexextra).pdflastbyte = 0;
             return;
         }
         pdf_write_bytes(data, len);
@@ -603,6 +582,9 @@ unsafe fn copy_proc_set(obj: *mut Object) {
 }
 
 unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
         let ref_ = xpdf_object_get_ref(font_ref);
         let mut p = in_obj_list();
@@ -626,7 +608,7 @@ unsafe fn copy_font(tag: *mut c_char, font_ref: *mut Object) {
         let fetched = xpdf_object_fetch(font_ref, xref(), fontdict.ptr);
         let mut fontmap: *mut FmEntry = ptr::null_mut();
         let replaceable = REPLACE_EMBEDDED_TYPE1_FONTS
-            && fixedinclusioncopyfont == 0
+            && (*__tekai_state_generated_pdftexextra).fixedinclusioncopyfont == 0
             && xpdf_object_is_dict(fetched) != 0
             && {
                 xpdf_object_dict_lookup(fontdict.ptr, c"Subtype".as_ptr(), subtype.ptr);
@@ -936,6 +918,9 @@ unsafe fn write_refs() {
 }
 
 unsafe fn write_encodings() {
+    let __tekai_state_generated_backend_writettf: *mut crate::generated::backend::writettf::State =
+        unsafe { crate::generated::backend::writettf::state() };
+
     unsafe {
         let mut r = encoding_list();
         while !r.is_null() {
@@ -950,7 +935,7 @@ unsafe fn write_encodings() {
                 }
                 let name = xpdf_gfx_8bit_font_char_name((*r).font, i as c_int);
                 glyph_names[i] = if name.is_null() {
-                    &raw mut notdef as *mut c_char
+                    &raw mut (*__tekai_state_generated_backend_writettf).notdef as *mut c_char
                 } else {
                     name
                 };
@@ -970,16 +955,19 @@ unsafe fn write_encodings() {
 }
 
 unsafe fn get_pagebox(page: *mut Page, pagebox_spec: c_int) -> Rect {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        if pagebox_spec == pdfboxspecmedia {
+        if pagebox_spec == (*__tekai_state_generated_pdftexextra).pdfboxspecmedia {
             xpdf_page_media_box(page)
-        } else if pagebox_spec == pdfboxspeccrop {
+        } else if pagebox_spec == (*__tekai_state_generated_pdftexextra).pdfboxspeccrop {
             xpdf_page_crop_box(page)
-        } else if pagebox_spec == pdfboxspecbleed {
+        } else if pagebox_spec == (*__tekai_state_generated_pdftexextra).pdfboxspecbleed {
             xpdf_page_bleed_box(page)
-        } else if pagebox_spec == pdfboxspectrim {
+        } else if pagebox_spec == (*__tekai_state_generated_pdftexextra).pdfboxspectrim {
             xpdf_page_trim_box(page)
-        } else if pagebox_spec == pdfboxspecart {
+        } else if pagebox_spec == (*__tekai_state_generated_pdftexextra).pdfboxspecart {
             xpdf_page_art_box(page)
         } else {
             pdftex_fail_args(
@@ -999,13 +987,16 @@ pub unsafe fn read_pdf_info(
     minor_pdf_version_wanted: c_int,
     pdf_inclusion_errorlevel: c_int,
 ) -> c_int {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
     unsafe {
         if initialized() == 0 {
             xpdf_global_params_init();
             set_initialized(1);
         }
         let pdf_doc = find_add_document(image_name);
-        epdf_doc = pdf_doc as *mut c_void;
+        (*__tekai_state_generated_backend_writeimg).epdf_doc = pdf_doc as *mut c_void;
         let found = xpdf_doc_pdf_version((*pdf_doc).doc);
         let wanted =
             major_pdf_version_wanted as c_float + minor_pdf_version_wanted as c_float * 0.1;
@@ -1025,7 +1016,8 @@ pub unsafe fn read_pdf_info(
             }
         }
         let catalog = xpdf_doc_catalog((*pdf_doc).doc);
-        epdf_num_pages = xpdf_catalog_num_pages(catalog);
+        (*__tekai_state_generated_backend_writeimg).epdf_num_pages =
+            xpdf_catalog_num_pages(catalog);
         if !page_name.is_null() {
             let link = xpdf_doc_find_dest((*pdf_doc).doc, page_name);
             if link.is_null() || xpdf_link_dest_is_ok(link) == 0 {
@@ -1043,34 +1035,43 @@ pub unsafe fn read_pdf_info(
                 );
             }
             xpdf_link_dest_delete(link);
-        } else if page_num <= 0 || page_num > epdf_num_pages {
+        } else if page_num <= 0
+            || page_num > (*__tekai_state_generated_backend_writeimg).epdf_num_pages
+        {
             pdftex_fail_args(
                 c"PDF inclusion: required page does not exist <%i>".as_ptr(),
-                &[PrintfArg::from(epdf_num_pages)],
+                &[PrintfArg::from(
+                    (*__tekai_state_generated_backend_writeimg).epdf_num_pages,
+                )],
             );
         }
         let page = xpdf_catalog_get_page(catalog, page_num);
         let pagebox = get_pagebox(page, pagebox_spec);
         if pagebox.x2 > pagebox.x1 {
-            epdf_orig_x = pagebox.x1 as c_float;
-            epdf_width = (pagebox.x2 - pagebox.x1) as c_float;
+            (*__tekai_state_generated_backend_writeimg).epdf_orig_x = pagebox.x1 as c_float;
+            (*__tekai_state_generated_backend_writeimg).epdf_width =
+                (pagebox.x2 - pagebox.x1) as c_float;
         } else {
-            epdf_orig_x = pagebox.x2 as c_float;
-            epdf_width = (pagebox.x1 - pagebox.x2) as c_float;
+            (*__tekai_state_generated_backend_writeimg).epdf_orig_x = pagebox.x2 as c_float;
+            (*__tekai_state_generated_backend_writeimg).epdf_width =
+                (pagebox.x1 - pagebox.x2) as c_float;
         }
         if pagebox.y2 > pagebox.y1 {
-            epdf_orig_y = pagebox.y1 as c_float;
-            epdf_height = (pagebox.y2 - pagebox.y1) as c_float;
+            (*__tekai_state_generated_backend_writeimg).epdf_orig_y = pagebox.y1 as c_float;
+            (*__tekai_state_generated_backend_writeimg).epdf_height =
+                (pagebox.y2 - pagebox.y1) as c_float;
         } else {
-            epdf_orig_y = pagebox.y2 as c_float;
-            epdf_height = (pagebox.y1 - pagebox.y2) as c_float;
+            (*__tekai_state_generated_backend_writeimg).epdf_orig_y = pagebox.y2 as c_float;
+            (*__tekai_state_generated_backend_writeimg).epdf_height =
+                (pagebox.y1 - pagebox.y2) as c_float;
         }
         let mut rotate = xpdf_page_rotate(page) % 360;
         if rotate < 0 {
             rotate += 360;
         }
-        epdf_rotate = rotate as c_float;
-        epdf_has_page_group = (!xpdf_page_group(page).is_null()) as c_int;
+        (*__tekai_state_generated_backend_writeimg).epdf_rotate = rotate as c_float;
+        (*__tekai_state_generated_backend_writeimg).epdf_has_page_group =
+            (!xpdf_page_group(page).is_null()) as c_int;
         (*pdf_doc).xref = xpdf_doc_xref((*pdf_doc).doc);
         page_num
     }
@@ -1108,15 +1109,26 @@ unsafe fn write_page_dict_key(page_dict: *mut Dict, key: &'static CStr) {
 }
 
 pub unsafe fn write_epdf() {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     unsafe {
-        let pdf_doc = epdf_doc as *mut PdfDocument;
+        let pdf_doc = (*__tekai_state_generated_backend_writeimg).epdf_doc as *mut PdfDocument;
         (*pdf_doc).occurrences -= 1;
         set_xref((*pdf_doc).xref);
         set_in_obj_list((*pdf_doc).in_obj_list);
         set_encoding_list(ptr::null_mut());
         let catalog = xpdf_doc_catalog((*pdf_doc).doc);
-        let page = xpdf_catalog_get_page(catalog, epdf_selected_page);
-        let page_ref = xpdf_catalog_get_page_ref(catalog, epdf_selected_page);
+        let page = xpdf_catalog_get_page(
+            catalog,
+            (*__tekai_state_generated_backend_writeimg).epdf_selected_page,
+        );
+        let page_ref = xpdf_catalog_get_page_ref(
+            catalog,
+            (*__tekai_state_generated_backend_writeimg).epdf_selected_page,
+        );
         let page_obj = Obj::new();
         xpdf_xref_fetch(xref(), page_ref.num, page_ref.gen, page_obj.ptr);
         let page_dict = xpdf_object_get_dict(page_obj.ptr);
@@ -1150,7 +1162,10 @@ pub unsafe fn write_epdf() {
         if suppress_ptex_info & MASK_SUPPRESS_PTEX_PAGENUMBER == 0 {
             pdf_printf_args(
                 c"/PTEX%sPageNumber %i\n".as_ptr(),
-                &[PrintfArg::from(sep), PrintfArg::from(epdf_selected_page)],
+                &[
+                    PrintfArg::from(sep),
+                    PrintfArg::from((*__tekai_state_generated_backend_writeimg).epdf_selected_page),
+                ],
             );
         }
         if suppress_ptex_info & MASK_SUPPRESS_PTEX_INFODICT == 0 {
@@ -1170,7 +1185,10 @@ pub unsafe fn write_epdf() {
             }
         }
 
-        let pagebox = get_pagebox(page, epdf_page_box);
+        let pagebox = get_pagebox(
+            page,
+            (*__tekai_state_generated_backend_writeimg).epdf_page_box,
+        );
         if rotate != 0 && rotate % 90 == 0 {
             let mut scale = [0.0f64; 6];
             let mut write_matrix = true;
@@ -1225,7 +1243,7 @@ pub unsafe fn write_epdf() {
         let mut write_sep_group = false;
         let group_dict = Obj::new();
         if xpdf_object_is_null(dict_obj.ptr) == 0 {
-            if pdfpagegroupval == 0 {
+            if (*__tekai_state_generated_pdftexextra).pdfpagegroupval == 0 {
                 if getpdfsuppresswarningpagegroup() == 0 {
                     pdftex_warn_args(
                         c"PDF inclusion: multiple pdfs with page group included in a single page"
@@ -1246,7 +1264,9 @@ pub unsafe fn write_epdf() {
                 xpdf_object_init_dict_from_dict(group_dict.ptr, xref(), xpdf_page_group(page));
                 pdf_printf_args(
                     c"/Group %ld 0 R\n".as_ptr(),
-                    &[PrintfArg::from(pdfpagegroupval as c_long)],
+                    &[PrintfArg::from(
+                        (*__tekai_state_generated_pdftexextra).pdfpagegroupval as c_long,
+                    )],
                 );
             }
         }
@@ -1334,11 +1354,11 @@ pub unsafe fn write_epdf() {
 
         write_encodings();
         if write_sep_group {
-            zpdfbeginobj(pdfpagegroupval, 2);
+            zpdfbeginobj((*__tekai_state_generated_pdftexextra).pdfpagegroupval, 2);
             copy_object(group_dict.ptr);
             crate::utils::pdf_puts(c"\n".as_ptr());
             pdfendobj();
-            pdfpagegroupval = 0;
+            (*__tekai_state_generated_pdftexextra).pdfpagegroupval = 0;
         }
         write_refs();
         (*pdf_doc).in_obj_list = in_obj_list();
@@ -1347,8 +1367,11 @@ pub unsafe fn write_epdf() {
 }
 
 pub unsafe fn epdf_delete() {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
     unsafe {
-        let pdf_doc = epdf_doc as *mut PdfDocument;
+        let pdf_doc = (*__tekai_state_generated_backend_writeimg).epdf_doc as *mut PdfDocument;
         set_xref((*pdf_doc).xref);
         if (*pdf_doc).occurrences < 0 {
             delete_document(pdf_doc);

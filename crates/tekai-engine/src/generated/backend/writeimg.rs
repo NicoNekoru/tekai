@@ -2,7 +2,7 @@ pub use crate::generated::backend::writejbig2::{read_jbig2_info, write_jbig2};
 pub use crate::generated::backend::writejpg::{read_jpg_info, write_jpg};
 pub use crate::generated::backend::writepng::{read_png_info, write_png};
 pub use crate::generated::pdftexextra::{find_input_file, makecstring};
-pub use crate::kpathsea::kpse_find_file;
+pub(crate) use crate::kpathsea::kpse_find_file;
 pub use crate::openclose::recorder_record_input;
 pub use crate::pdftoepdf::{epdf_delete, read_pdf_info, write_epdf};
 pub use crate::pngshim::{png_destroy_read_struct, png_get_bit_depth, png_get_io_ptr};
@@ -22,14 +22,6 @@ pub use crate::pngshim::png_struct_def;
 
 pub use crate::pngshim::png_info_def;
 
-extern "C" {
-    static mut iniversion: boolean;
-    static mut onehundredbp: scaled;
-    static mut pdfimageprocset: integer;
-    static mut fmtfile: wordfile;
-    static mut cur_file_name: *mut ::core::ffi::c_char;
-    static mut last_ptr_index: size_t;
-}
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
 pub type __darwin_off_t = __int64_t;
@@ -109,7 +101,9 @@ pub type strnumber = integer;
 pub type scaled = integer;
 pub type wordfile = gzFile;
 pub use crate::backend_types::image_entry;
+#[cfg(test)]
 pub use crate::backend_types::png_image_struct;
+#[cfg(test)]
 pub use crate::backend_types::ImageData as C2RustUnnamed;
 pub use crate::backend_types::JBIG2_IMAGE_INFO;
 pub use crate::backend_types::JPG_IMAGE_INFO;
@@ -137,108 +131,173 @@ pub const IMAGE_TYPE_JBIG2: ::core::ffi::c_int = 5;
 pub const IMAGE_COLOR_B: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 pub const IMAGE_COLOR_C: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
 pub const IMAGE_COLOR_I: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
-#[no_mangle]
-pub static mut image_ptr: *mut image_entry = ::core::ptr::null::<image_entry>() as *mut image_entry;
-#[no_mangle]
-pub static mut image_array: *mut image_entry =
-    ::core::ptr::null::<image_entry>() as *mut image_entry;
-#[no_mangle]
-pub static mut image_limit: integer = 0;
-#[no_mangle]
-pub static mut epdf_width: ::core::ffi::c_float = 0.;
-#[no_mangle]
-pub static mut epdf_height: ::core::ffi::c_float = 0.;
-#[no_mangle]
-pub static mut epdf_orig_x: ::core::ffi::c_float = 0.;
-#[no_mangle]
-pub static mut epdf_orig_y: ::core::ffi::c_float = 0.;
-#[no_mangle]
-pub static mut epdf_rotate: ::core::ffi::c_float = 0.;
-#[no_mangle]
-pub static mut epdf_selected_page: ::core::ffi::c_int = 0;
-#[no_mangle]
-pub static mut epdf_num_pages: ::core::ffi::c_int = 0;
-#[no_mangle]
-pub static mut epdf_page_box: ::core::ffi::c_int = 0;
-#[no_mangle]
-pub static mut epdf_doc: *mut ::core::ffi::c_void =
-    ::core::ptr::null::<::core::ffi::c_void>() as *mut ::core::ffi::c_void;
-#[no_mangle]
-pub static mut epdf_has_page_group: ::core::ffi::c_int = 0;
+
 unsafe fn new_image_entry() -> integer {
-    if image_array.is_null() {
-        image_limit = 256 as ::core::ffi::c_int as integer;
-        if 1 as ::core::ffi::c_int as ::core::ffi::c_uint > image_limit as ::core::ffi::c_uint {
-            image_limit = 1 as ::core::ffi::c_int as integer;
-        }
-        image_array = xmalloc(
-            (image_limit as size_t).wrapping_mul(::core::mem::size_of::<image_entry>() as size_t),
-        ) as *mut image_entry;
-        image_ptr = image_array;
-    } else if (image_ptr.offset_from(image_array) as ::core::ffi::c_long + 1 as ::core::ffi::c_long)
-        as ::core::ffi::c_uint
-        > image_limit as ::core::ffi::c_uint
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    if (*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .is_null()
     {
-        last_ptr_index = image_ptr.offset_from(image_array) as ::core::ffi::c_long as size_t;
-        image_limit *= 2 as ::core::ffi::c_int;
-        if (image_ptr.offset_from(image_array) as ::core::ffi::c_long + 1 as ::core::ffi::c_long)
-            as ::core::ffi::c_uint
-            > image_limit as ::core::ffi::c_uint
+        (*__tekai_state_generated_backend_writeimg).image_limit =
+            256 as ::core::ffi::c_int as integer;
+        if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
+            > (*__tekai_state_generated_backend_writeimg).image_limit as ::core::ffi::c_uint
         {
-            image_limit = (image_ptr.offset_from(image_array) as ::core::ffi::c_long
-                + 1 as ::core::ffi::c_long) as integer;
+            (*__tekai_state_generated_backend_writeimg).image_limit =
+                1 as ::core::ffi::c_int as integer;
         }
-        if image_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
+        (*__tekai_state_generated_backend_writeimg).image_array = xmalloc(
+            ((*__tekai_state_generated_backend_writeimg).image_limit as size_t)
+                .wrapping_mul(::core::mem::size_of::<image_entry>() as size_t),
+        ) as *mut image_entry;
+        (*__tekai_state_generated_backend_writeimg).image_ptr =
+            (*__tekai_state_generated_backend_writeimg).image_array;
+    } else if ((*__tekai_state_generated_backend_writeimg)
+        .image_ptr
+        .offset_from((*__tekai_state_generated_backend_writeimg).image_array)
+        as ::core::ffi::c_long
+        + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
+        > (*__tekai_state_generated_backend_writeimg).image_limit as ::core::ffi::c_uint
+    {
+        (*__tekai_state_utils).last_ptr_index = (*__tekai_state_generated_backend_writeimg)
+            .image_ptr
+            .offset_from((*__tekai_state_generated_backend_writeimg).image_array)
+            as ::core::ffi::c_long as size_t;
+        (*__tekai_state_generated_backend_writeimg).image_limit *= 2 as ::core::ffi::c_int;
+        if ((*__tekai_state_generated_backend_writeimg)
+            .image_ptr
+            .offset_from((*__tekai_state_generated_backend_writeimg).image_array)
+            as ::core::ffi::c_long
+            + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
+            > (*__tekai_state_generated_backend_writeimg).image_limit as ::core::ffi::c_uint
+        {
+            (*__tekai_state_generated_backend_writeimg).image_limit =
+                ((*__tekai_state_generated_backend_writeimg)
+                    .image_ptr
+                    .offset_from((*__tekai_state_generated_backend_writeimg).image_array)
+                    as ::core::ffi::c_long
+                    + 1 as ::core::ffi::c_long) as integer;
+        }
+        if (*__tekai_state_generated_backend_writeimg).image_limit as ::core::ffi::c_uint
+            > INT_MAX as ::core::ffi::c_uint
+        {
             crate::utils::pdftex_fail_args(
                 b"image_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
             );
         }
-        image_array = xrealloc(
-            image_array as address,
-            (image_limit as size_t).wrapping_mul(::core::mem::size_of::<image_entry>() as size_t),
+        (*__tekai_state_generated_backend_writeimg).image_array = xrealloc(
+            (*__tekai_state_generated_backend_writeimg).image_array as address,
+            ((*__tekai_state_generated_backend_writeimg).image_limit as size_t)
+                .wrapping_mul(::core::mem::size_of::<image_entry>() as size_t),
         ) as *mut image_entry;
-        image_ptr = image_array.offset(last_ptr_index as isize);
+        (*__tekai_state_generated_backend_writeimg).image_ptr =
+            (*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset((*__tekai_state_utils).last_ptr_index as isize);
     }
-    (*image_ptr).image_type = IMAGE_TYPE_NONE;
-    (*image_ptr).color_type = 0 as ::core::ffi::c_int;
-    (*image_ptr).num_pages = 0 as ::core::ffi::c_int as integer;
-    (*image_ptr).x_res = 0 as ::core::ffi::c_int as integer;
-    (*image_ptr).y_res = 0 as ::core::ffi::c_int as integer;
-    (*image_ptr).width = 0 as ::core::ffi::c_int as integer;
-    (*image_ptr).height = 0 as ::core::ffi::c_int as integer;
-    (*image_ptr).rotate = 0 as ::core::ffi::c_int as integer;
-    (*image_ptr).colorspace_ref = 0 as ::core::ffi::c_int as integer;
-    (*image_ptr).group_ref = 0 as ::core::ffi::c_int as integer;
-    let fresh5 = image_ptr;
-    image_ptr = image_ptr.offset(1);
-    return fresh5.offset_from(image_array) as ::core::ffi::c_long as integer;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).image_type = IMAGE_TYPE_NONE;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).color_type = 0 as ::core::ffi::c_int;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).num_pages =
+        0 as ::core::ffi::c_int as integer;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).x_res =
+        0 as ::core::ffi::c_int as integer;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).y_res =
+        0 as ::core::ffi::c_int as integer;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).width =
+        0 as ::core::ffi::c_int as integer;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).height =
+        0 as ::core::ffi::c_int as integer;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).rotate =
+        0 as ::core::ffi::c_int as integer;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).colorspace_ref =
+        0 as ::core::ffi::c_int as integer;
+    (*(*__tekai_state_generated_backend_writeimg).image_ptr).group_ref =
+        0 as ::core::ffi::c_int as integer;
+    let fresh5 = (*__tekai_state_generated_backend_writeimg).image_ptr;
+    (*__tekai_state_generated_backend_writeimg).image_ptr =
+        (*__tekai_state_generated_backend_writeimg)
+            .image_ptr
+            .offset(1);
+    return fresh5.offset_from((*__tekai_state_generated_backend_writeimg).image_array)
+        as ::core::ffi::c_long as integer;
 }
 pub unsafe fn imagecolor(mut img: integer) -> integer {
-    return (*image_array.offset(img as isize)).color_type as integer;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .color_type as integer;
 }
 pub unsafe fn imagewidth(mut img: integer) -> integer {
-    return (*image_array.offset(img as isize)).width;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .width;
 }
 pub unsafe fn imageheight(mut img: integer) -> integer {
-    return (*image_array.offset(img as isize)).height;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .height;
 }
 pub unsafe fn imagerotate(mut img: integer) -> integer {
-    return (*image_array.offset(img as isize)).rotate;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .rotate;
 }
 pub unsafe fn imagexres(mut img: integer) -> integer {
-    return (*image_array.offset(img as isize)).x_res;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .x_res;
 }
 pub unsafe fn imageyres(mut img: integer) -> integer {
-    return (*image_array.offset(img as isize)).y_res;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .y_res;
 }
 pub unsafe fn ispdfimage(mut img: integer) -> boolean {
-    return ((*image_array.offset(img as isize)).image_type == IMAGE_TYPE_PDF)
-        as ::core::ffi::c_int;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return ((*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_type
+        == IMAGE_TYPE_PDF) as ::core::ffi::c_int;
 }
 pub unsafe fn ispngimage(mut img: integer) -> boolean {
-    return ((*image_array.offset(img as isize)).image_type == IMAGE_TYPE_PNG)
-        as ::core::ffi::c_int;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return ((*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_type
+        == IMAGE_TYPE_PNG) as ::core::ffi::c_int;
 }
 pub unsafe fn checkimageb(mut procset: integer) -> boolean {
     return procset as boolean & IMAGE_COLOR_B;
@@ -250,31 +309,80 @@ pub unsafe fn checkimagei(mut procset: integer) -> boolean {
     return procset as boolean & IMAGE_COLOR_I;
 }
 pub unsafe fn updateimageprocset(mut img: integer) {
-    pdfimageprocset |= (*image_array.offset(img as isize)).color_type;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
+    (*__tekai_state_generated_pdftexextra).pdfimageprocset |=
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .color_type;
 }
 pub unsafe fn epdforigx(mut img: integer) -> integer {
-    return (*(*image_array.offset(img as isize)).image_struct.pdf).orig_x;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_struct
+    .pdf)
+        .orig_x;
 }
 pub unsafe fn epdforigy(mut img: integer) -> integer {
-    return (*(*image_array.offset(img as isize)).image_struct.pdf).orig_y;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_struct
+    .pdf)
+        .orig_y;
 }
 pub unsafe fn imagepages(mut img: integer) -> integer {
-    return (*image_array.offset(img as isize)).num_pages;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .num_pages;
 }
 pub unsafe fn imagecolordepth(mut img: integer) -> integer {
-    match (*image_array.offset(img as isize)).image_type {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    match (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_type
+    {
         IMAGE_TYPE_PNG => {
             return png_get_bit_depth(
-                (*image_array.offset(img as isize)).image_struct.png.png_ptr as png_const_structrp,
-                (*image_array.offset(img as isize))
-                    .image_struct
-                    .png
-                    .info_ptr as png_const_inforp,
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .png
+                .png_ptr as png_const_structrp,
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .png
+                .info_ptr as png_const_inforp,
             ) as integer;
         }
         IMAGE_TYPE_JPG => {
-            return (*(*image_array.offset(img as isize)).image_struct.jpg).bits_per_component
-                as integer;
+            return (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .jpg)
+                .bits_per_component as integer;
         }
         IMAGE_TYPE_JBIG2 => return 0 as integer,
         IMAGE_TYPE_PDF => return 0 as integer,
@@ -287,10 +395,22 @@ pub unsafe fn imagecolordepth(mut img: integer) -> integer {
     };
 }
 pub unsafe fn getimagegroupref(mut img: integer) -> integer {
-    return (*image_array.offset(img as isize)).group_ref;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    return (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .group_ref;
 }
 pub unsafe fn setimagegroupref(mut img: integer, mut value: integer) {
-    (*image_array.offset(img as isize)).group_ref = value;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .group_ref = value;
 }
 pub const HEADER_JPG: [::core::ffi::c_char; 3] =
     unsafe { ::core::mem::transmute::<[u8; 3], [::core::ffi::c_char; 3]>(*b"\xFF\xD8\0") };
@@ -303,14 +423,25 @@ pub const HEADER_PDF: [::core::ffi::c_char; 8] =
 pub const MAX_HEADER: usize =
     (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as usize).wrapping_sub(1 as usize);
 unsafe fn checktypebyheader(mut img: integer) {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     let mut file: *mut FILE = ::core::ptr::null_mut::<FILE>();
     let mut header: [::core::ffi::c_char; 8] = [0; 8];
-    if (*image_array.offset(img as isize)).image_type != IMAGE_TYPE_NONE {
+    if (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_type
+        != IMAGE_TYPE_NONE
+    {
         return;
     }
     file = xfopen(
-        (*image_array.offset(img as isize)).image_name as const_string,
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_name as const_string,
         FOPEN_RBIN_MODE.as_ptr(),
     );
     i = 0 as ::core::ffi::c_int;
@@ -326,7 +457,10 @@ unsafe fn checktypebyheader(mut img: integer) {
     }
     xfclose(
         file,
-        (*image_array.offset(img as isize)).image_name as const_string,
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_name as const_string,
     );
     if strncmp(
         &raw mut header as *mut ::core::ffi::c_char,
@@ -334,44 +468,71 @@ unsafe fn checktypebyheader(mut img: integer) {
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1 as size_t),
     ) == 0 as ::core::ffi::c_int
     {
-        (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_JPG;
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type = IMAGE_TYPE_JPG;
     } else if strncmp(
         &raw mut header as *mut ::core::ffi::c_char,
         HEADER_PNG.as_ptr(),
         (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1 as size_t),
     ) == 0 as ::core::ffi::c_int
     {
-        (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_PNG;
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type = IMAGE_TYPE_PNG;
     } else if strncmp(
         &raw mut header as *mut ::core::ffi::c_char,
         HEADER_JBIG2.as_ptr(),
         (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1 as size_t),
     ) == 0 as ::core::ffi::c_int
     {
-        (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_JBIG2;
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type = IMAGE_TYPE_JBIG2;
     } else if strncmp(
         &raw mut header as *mut ::core::ffi::c_char,
         HEADER_PDF.as_ptr(),
         (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t).wrapping_sub(1 as size_t),
     ) == 0 as ::core::ffi::c_int
     {
-        (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_PDF;
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type = IMAGE_TYPE_PDF;
     }
 }
 unsafe fn checktypebyextension(mut img: integer) {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     let mut image_suffix: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    if (*image_array.offset(img as isize)).image_type != IMAGE_TYPE_NONE {
+    if (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_type
+        != IMAGE_TYPE_NONE
+    {
         return;
     }
-    image_suffix = strrchr(cur_file_name, '.' as i32);
+    image_suffix = strrchr((*__tekai_state_utils).cur_file_name, '.' as i32);
     if image_suffix.is_null() {
-        (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_NONE;
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type = IMAGE_TYPE_NONE;
     } else if strcasecmp(
         image_suffix,
         b".png\0" as *const u8 as *const ::core::ffi::c_char,
     ) == 0 as ::core::ffi::c_int
     {
-        (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_PNG;
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type = IMAGE_TYPE_PNG;
     } else if strcasecmp(
         image_suffix,
         b".jpg\0" as *const u8 as *const ::core::ffi::c_char,
@@ -381,7 +542,10 @@ unsafe fn checktypebyextension(mut img: integer) {
             b".jpeg\0" as *const u8 as *const ::core::ffi::c_char,
         ) == 0 as ::core::ffi::c_int
     {
-        (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_JPG;
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type = IMAGE_TYPE_JPG;
     } else if strcasecmp(
         image_suffix,
         b".jbig2\0" as *const u8 as *const ::core::ffi::c_char,
@@ -391,13 +555,19 @@ unsafe fn checktypebyextension(mut img: integer) {
             b".jb2\0" as *const u8 as *const ::core::ffi::c_char,
         ) == 0 as ::core::ffi::c_int
     {
-        (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_JBIG2;
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type = IMAGE_TYPE_JBIG2;
     } else if strcasecmp(
         image_suffix,
         b".pdf\0" as *const u8 as *const ::core::ffi::c_char,
     ) == 0 as ::core::ffi::c_int
     {
-        (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_PDF;
+        (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type = IMAGE_TYPE_PDF;
     }
 }
 pub unsafe fn readimage(
@@ -410,34 +580,68 @@ pub unsafe fn readimage(
     mut pdfminorversion: integer,
     mut pdfinclusionerrorlevel: integer,
 ) -> integer {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     let mut dest: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut img: integer = new_image_entry();
-    (*image_array.offset(img as isize)).colorspace_ref = colorspace;
+    (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .colorspace_ref = colorspace;
     if page_name != 0 as ::core::ffi::c_int {
         dest =
             xstrdup(makecstring(page_name as integer) as const_string) as *mut ::core::ffi::c_char;
     }
-    cur_file_name = find_input_file(s as integer) as *mut ::core::ffi::c_char;
-    let ref mut fresh0 = (*image_array.offset(img as isize)).image_name;
-    *fresh0 = cur_file_name;
-    if (*image_array.offset(img as isize)).image_name.is_null() {
+    (*__tekai_state_utils).cur_file_name =
+        find_input_file(s as integer) as *mut ::core::ffi::c_char;
+    let ref mut fresh0 = (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_name;
+    *fresh0 = (*__tekai_state_utils).cur_file_name;
+    if (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_name
+    .is_null()
+    {
         crate::utils::pdftex_fail_args(
             b"cannot find image file %s\0" as *const u8 as *const ::core::ffi::c_char,
             &[crate::utils::PrintfArg::from(makecstring(s as integer))],
         );
     }
-    recorder_record_input(cur_file_name as const_string);
+    recorder_record_input((*__tekai_state_utils).cur_file_name as const_string);
     checktypebyheader(img);
     checktypebyextension(img);
-    match (*image_array.offset(img as isize)).image_type {
+    match (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_type
+    {
         IMAGE_TYPE_PDF => {
-            let ref mut fresh1 = (*image_array.offset(img as isize)).image_struct.pdf;
+            let ref mut fresh1 = (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .pdf;
             *fresh1 = xmalloc(
                 (1 as size_t).wrapping_mul(::core::mem::size_of::<pdf_image_struct>() as size_t),
             ) as *mut pdf_image_struct;
-            (*(*image_array.offset(img as isize)).image_struct.pdf).page_box = pagebox;
+            (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .pdf)
+                .page_box = pagebox;
             page_num = read_pdf_info(
-                (*image_array.offset(img as isize)).image_name,
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_name,
                 dest,
                 page_num as ::core::ffi::c_int,
                 pagebox as ::core::ffi::c_int,
@@ -445,44 +649,101 @@ pub unsafe fn readimage(
                 pdfminorversion as ::core::ffi::c_int,
                 pdfinclusionerrorlevel as ::core::ffi::c_int,
             ) as integer;
-            (*image_array.offset(img as isize)).width = zround(
-                epdf_width as ::core::ffi::c_double
-                    * (onehundredbp as ::core::ffi::c_double / 100.0f64),
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .width = zround(
+                (*__tekai_state_generated_backend_writeimg).epdf_width as ::core::ffi::c_double
+                    * ((*__tekai_state_generated_pdftexextra).onehundredbp
+                        as ::core::ffi::c_double
+                        / 100.0f64),
             );
-            (*image_array.offset(img as isize)).height = zround(
-                epdf_height as ::core::ffi::c_double
-                    * (onehundredbp as ::core::ffi::c_double / 100.0f64),
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .height = zround(
+                (*__tekai_state_generated_backend_writeimg).epdf_height as ::core::ffi::c_double
+                    * ((*__tekai_state_generated_pdftexextra).onehundredbp
+                        as ::core::ffi::c_double
+                        / 100.0f64),
             );
-            (*image_array.offset(img as isize)).rotate = epdf_rotate as integer;
-            (*image_array.offset(img as isize)).num_pages = epdf_num_pages as integer;
-            (*(*image_array.offset(img as isize)).image_struct.pdf).orig_x = zround(
-                epdf_orig_x as ::core::ffi::c_double
-                    * (onehundredbp as ::core::ffi::c_double / 100.0f64),
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .rotate = (*__tekai_state_generated_backend_writeimg).epdf_rotate as integer;
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .num_pages = (*__tekai_state_generated_backend_writeimg).epdf_num_pages as integer;
+            (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .pdf)
+                .orig_x = zround(
+                (*__tekai_state_generated_backend_writeimg).epdf_orig_x as ::core::ffi::c_double
+                    * ((*__tekai_state_generated_pdftexextra).onehundredbp
+                        as ::core::ffi::c_double
+                        / 100.0f64),
             );
-            (*(*image_array.offset(img as isize)).image_struct.pdf).orig_y = zround(
-                epdf_orig_y as ::core::ffi::c_double
-                    * (onehundredbp as ::core::ffi::c_double / 100.0f64),
+            (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .pdf)
+                .orig_y = zround(
+                (*__tekai_state_generated_backend_writeimg).epdf_orig_y as ::core::ffi::c_double
+                    * ((*__tekai_state_generated_pdftexextra).onehundredbp
+                        as ::core::ffi::c_double
+                        / 100.0f64),
             );
-            (*(*image_array.offset(img as isize)).image_struct.pdf).selected_page = page_num;
-            let ref mut fresh2 = (*(*image_array.offset(img as isize)).image_struct.pdf).doc;
-            *fresh2 = epdf_doc;
-            if epdf_has_page_group == 1 as ::core::ffi::c_int {
-                (*image_array.offset(img as isize)).group_ref =
-                    -(1 as ::core::ffi::c_int) as integer;
+            (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .pdf)
+                .selected_page = page_num;
+            let ref mut fresh2 = (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .pdf)
+                .doc;
+            *fresh2 = (*__tekai_state_generated_backend_writeimg).epdf_doc;
+            if (*__tekai_state_generated_backend_writeimg).epdf_has_page_group
+                == 1 as ::core::ffi::c_int
+            {
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .group_ref = -(1 as ::core::ffi::c_int) as integer;
             } else {
-                (*image_array.offset(img as isize)).group_ref = 0 as ::core::ffi::c_int as integer;
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .group_ref = 0 as ::core::ffi::c_int as integer;
             }
         }
         IMAGE_TYPE_PNG => {
-            (*image_array.offset(img as isize)).num_pages = 1 as ::core::ffi::c_int as integer;
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .num_pages = 1 as ::core::ffi::c_int as integer;
             read_png_info(img);
         }
         IMAGE_TYPE_JPG => {
-            let ref mut fresh3 = (*image_array.offset(img as isize)).image_struct.jpg;
+            let ref mut fresh3 = (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .jpg;
             *fresh3 = xmalloc(
                 (1 as size_t).wrapping_mul(::core::mem::size_of::<JPG_IMAGE_INFO>() as size_t),
             ) as *mut JPG_IMAGE_INFO;
-            (*image_array.offset(img as isize)).num_pages = 1 as ::core::ffi::c_int as integer;
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .num_pages = 1 as ::core::ffi::c_int as integer;
             read_jpg_info(img);
         }
         IMAGE_TYPE_JBIG2 => {
@@ -492,12 +753,24 @@ pub unsafe fn readimage(
                 crate::utils::pdftex_fail_args(b"JBIG2 images only possible with at least PDF 1.4; you are generating PDF 1.%i\0"
                         as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(pdfminorversion)]);
             }
-            let ref mut fresh4 = (*image_array.offset(img as isize)).image_struct.jbig2;
+            let ref mut fresh4 = (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .jbig2;
             *fresh4 = xmalloc(
                 (1 as size_t).wrapping_mul(::core::mem::size_of::<JBIG2_IMAGE_INFO>() as size_t),
             ) as *mut JBIG2_IMAGE_INFO;
-            (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_JBIG2;
-            (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page = page_num;
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_type = IMAGE_TYPE_JBIG2;
+            (*(*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .jbig2)
+                .selected_page = page_num;
             read_jbig2_info(img);
         }
         _ => {
@@ -511,18 +784,32 @@ pub unsafe fn readimage(
         free(dest as *mut ::core::ffi::c_void);
     }
     dest = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    (*__tekai_state_utils).cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
     return img;
 }
 pub unsafe fn writeimage(mut img: integer) {
-    cur_file_name = (*image_array.offset(img as isize)).image_name;
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    (*__tekai_state_utils).cur_file_name = (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_name;
     crate::utils::tex_printf_args(
         b" <%s\0" as *const u8 as *const ::core::ffi::c_char,
         &[crate::utils::PrintfArg::from(
-            (*image_array.offset(img as isize)).image_name,
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_name,
         )],
     );
-    match (*image_array.offset(img as isize)).image_type {
+    match (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_type
+    {
         IMAGE_TYPE_PNG => {
             write_png(img);
         }
@@ -533,11 +820,27 @@ pub unsafe fn writeimage(mut img: integer) {
             write_jbig2(img);
         }
         IMAGE_TYPE_PDF => {
-            epdf_doc = (*(*image_array.offset(img as isize)).image_struct.pdf).doc;
-            epdf_selected_page = (*(*image_array.offset(img as isize)).image_struct.pdf)
-                .selected_page as ::core::ffi::c_int;
-            epdf_page_box = (*(*image_array.offset(img as isize)).image_struct.pdf).page_box
-                as ::core::ffi::c_int;
+            (*__tekai_state_generated_backend_writeimg).epdf_doc =
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf)
+                    .doc;
+            (*__tekai_state_generated_backend_writeimg).epdf_selected_page =
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf)
+                    .selected_page as ::core::ffi::c_int;
+            (*__tekai_state_generated_backend_writeimg).epdf_page_box =
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf)
+                    .page_box as ::core::ffi::c_int;
             write_epdf();
         }
         _ => {
@@ -548,38 +851,70 @@ pub unsafe fn writeimage(mut img: integer) {
         }
     }
     crate::utils::tex_printf_args(b">\0" as *const u8 as *const ::core::ffi::c_char, &[]);
-    cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    (*__tekai_state_utils).cur_file_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
 pub unsafe fn deleteimage(mut img: integer) {
-    if iniversion != 0 {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    if (*__tekai_state_generated_pdftexextra).iniversion != 0 {
         return;
     }
-    match (*image_array.offset(img as isize)).image_type {
+    match (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_type
+    {
         IMAGE_TYPE_PDF => {
-            epdf_doc = (*(*image_array.offset(img as isize)).image_struct.pdf).doc;
+            (*__tekai_state_generated_backend_writeimg).epdf_doc =
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf)
+                    .doc;
             epdf_delete();
         }
         IMAGE_TYPE_PNG => {
             xfclose(
                 png_get_io_ptr(
-                    (*image_array.offset(img as isize)).image_struct.png.png_ptr
-                        as png_const_structrp,
-                ) as *mut FILE,
-                cur_file_name as const_string,
-            );
-            png_destroy_read_struct(
-                &raw mut (*image_array.offset(img as isize)).image_struct.png.png_ptr,
-                &raw mut (*image_array.offset(img as isize))
+                    (*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
                     .image_struct
                     .png
-                    .info_ptr,
+                    .png_ptr as png_const_structrp,
+                ) as *mut FILE,
+                (*__tekai_state_utils).cur_file_name as const_string,
+            );
+            png_destroy_read_struct(
+                &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .png
+                .png_ptr,
+                &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .png
+                .info_ptr,
                 ::core::ptr::null_mut::<*mut png_info>(),
             );
         }
         IMAGE_TYPE_JPG => {
             xfclose(
-                (*(*image_array.offset(img as isize)).image_struct.jpg).file,
-                cur_file_name as const_string,
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg)
+                    .file,
+                (*__tekai_state_utils).cur_file_name as const_string,
             );
         }
         IMAGE_TYPE_JBIG2 => {}
@@ -590,51 +925,93 @@ pub unsafe fn deleteimage(mut img: integer) {
             );
         }
     }
-    if !(*image_array.offset(img as isize)).image_name.is_null() {
-        free((*image_array.offset(img as isize)).image_name as *mut ::core::ffi::c_void);
+    if !(*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_name
+    .is_null()
+    {
+        free(
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_name as *mut ::core::ffi::c_void,
+        );
     }
-    let ref mut fresh6 = (*image_array.offset(img as isize)).image_name;
+    let ref mut fresh6 = (*(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .offset(img as isize))
+    .image_name;
     *fresh6 = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
 pub unsafe fn img_free() {
-    if !image_array.is_null() {
-        free(image_array as *mut ::core::ffi::c_void);
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+
+    if !(*__tekai_state_generated_backend_writeimg)
+        .image_array
+        .is_null()
+    {
+        free((*__tekai_state_generated_backend_writeimg).image_array as *mut ::core::ffi::c_void);
     }
-    image_array = ::core::ptr::null_mut::<image_entry>();
+    (*__tekai_state_generated_backend_writeimg).image_array =
+        ::core::ptr::null_mut::<image_entry>();
 }
 pub unsafe fn dumpimagemeta() {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut cur_image: ::core::ffi::c_int = 0;
     let mut img: ::core::ffi::c_int = 0;
     do_dump(
-        &raw mut image_limit as *mut ::core::ffi::c_char,
+        &raw mut (*__tekai_state_generated_backend_writeimg).image_limit
+            as *mut ::core::ffi::c_char,
         ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
         1 as ::core::ffi::c_int,
-        fmtfile as gzFile,
+        (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
     );
-    cur_image = image_ptr.offset_from(image_array) as ::core::ffi::c_long as ::core::ffi::c_int;
+    cur_image = (*__tekai_state_generated_backend_writeimg)
+        .image_ptr
+        .offset_from((*__tekai_state_generated_backend_writeimg).image_array)
+        as ::core::ffi::c_long as ::core::ffi::c_int;
     do_dump(
         &raw mut cur_image as *mut ::core::ffi::c_char,
         ::core::mem::size_of::<::core::ffi::c_int>() as ::core::ffi::c_int,
         1 as ::core::ffi::c_int,
-        fmtfile as gzFile,
+        (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
     );
     img = 0 as ::core::ffi::c_int;
     while img < cur_image {
         let mut x: integer = 0;
-        if !(*image_array.offset(img as isize)).image_name.is_null() {
-            x = strlen((*image_array.offset(img as isize)).image_name).wrapping_add(1 as size_t)
-                as integer;
+        if !(*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_name
+        .is_null()
+        {
+            x = strlen(
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_name,
+            )
+            .wrapping_add(1 as size_t) as integer;
             do_dump(
                 &raw mut x as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                 1 as ::core::ffi::c_int,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
             do_dump(
-                (*image_array.offset(img as isize)).image_name,
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_name,
                 ::core::mem::size_of::<::core::ffi::c_char>() as ::core::ffi::c_int,
                 x,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
         } else {
             x = 0 as ::core::ffi::c_int as integer;
@@ -642,85 +1019,134 @@ pub unsafe fn dumpimagemeta() {
                 &raw mut x as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                 1 as ::core::ffi::c_int,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
         }
         do_dump(
-            &raw mut (*image_array.offset(img as isize)).image_type as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_type as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<::core::ffi::c_int>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_dump(
-            &raw mut (*image_array.offset(img as isize)).color_type as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .color_type as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<::core::ffi::c_int>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_dump(
-            &raw mut (*image_array.offset(img as isize)).width as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .width as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_dump(
-            &raw mut (*image_array.offset(img as isize)).height as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .height as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_dump(
-            &raw mut (*image_array.offset(img as isize)).x_res as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .x_res as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_dump(
-            &raw mut (*image_array.offset(img as isize)).y_res as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .y_res as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_dump(
-            &raw mut (*image_array.offset(img as isize)).num_pages as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .num_pages as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_dump(
-            &raw mut (*image_array.offset(img as isize)).colorspace_ref as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .colorspace_ref as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_dump(
-            &raw mut (*image_array.offset(img as isize)).group_ref as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .group_ref as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
-        if (*image_array.offset(img as isize)).image_type == IMAGE_TYPE_PDF {
+        if (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type
+            == IMAGE_TYPE_PDF
+        {
             do_dump(
-                &raw mut (*(*image_array.offset(img as isize)).image_struct.pdf).page_box
-                    as *mut ::core::ffi::c_char,
+                &raw mut (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf)
+                    .page_box as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                 1 as ::core::ffi::c_int,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
             do_dump(
-                &raw mut (*(*image_array.offset(img as isize)).image_struct.pdf).selected_page
-                    as *mut ::core::ffi::c_char,
+                &raw mut (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf)
+                    .selected_page as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                 1 as ::core::ffi::c_int,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
-        } else if (*image_array.offset(img as isize)).image_type == IMAGE_TYPE_JBIG2 {
+        } else if (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type
+            == IMAGE_TYPE_JBIG2
+        {
             do_dump(
-                &raw mut (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page
-                    as *mut ::core::ffi::c_char,
+                &raw mut (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jbig2)
+                    .selected_page as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                 1 as ::core::ffi::c_int,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
         }
         img += 1;
@@ -731,24 +1157,34 @@ pub unsafe fn undumpimagemeta(
     mut pdfminorversion: integer,
     mut pdfinclusionerrorlevel: integer,
 ) {
+    let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
+        unsafe { crate::generated::backend::writeimg::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut cur_image: ::core::ffi::c_int = 0;
     let mut img: ::core::ffi::c_int = 0;
     do_undump(
-        &raw mut image_limit as *mut ::core::ffi::c_char,
+        &raw mut (*__tekai_state_generated_backend_writeimg).image_limit
+            as *mut ::core::ffi::c_char,
         ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
         1 as ::core::ffi::c_int,
-        fmtfile as gzFile,
+        (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
     );
-    image_array = xmalloc(
-        (image_limit as size_t).wrapping_mul(::core::mem::size_of::<image_entry>() as size_t),
+    (*__tekai_state_generated_backend_writeimg).image_array = xmalloc(
+        ((*__tekai_state_generated_backend_writeimg).image_limit as size_t)
+            .wrapping_mul(::core::mem::size_of::<image_entry>() as size_t),
     ) as *mut image_entry;
     do_undump(
         &raw mut cur_image as *mut ::core::ffi::c_char,
         ::core::mem::size_of::<::core::ffi::c_int>() as ::core::ffi::c_int,
         1 as ::core::ffi::c_int,
-        fmtfile as gzFile,
+        (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
     );
-    image_ptr = image_array.offset(cur_image as isize);
+    (*__tekai_state_generated_backend_writeimg).image_ptr =
+        (*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(cur_image as isize);
     img = 0 as ::core::ffi::c_int;
     while img < cur_image {
         let mut x: integer = 0;
@@ -757,7 +1193,7 @@ pub unsafe fn undumpimagemeta(
             &raw mut x as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         if x > 0 as ::core::ffi::c_int {
             a = xmalloc(x as size_t) as *mut ::core::ffi::c_char;
@@ -765,70 +1201,106 @@ pub unsafe fn undumpimagemeta(
                 a,
                 ::core::mem::size_of::<::core::ffi::c_char>() as ::core::ffi::c_int,
                 x,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
-            let ref mut fresh7 = (*image_array.offset(img as isize)).image_name;
+            let ref mut fresh7 = (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_name;
             *fresh7 = a;
         } else {
-            let ref mut fresh8 = (*image_array.offset(img as isize)).image_name;
+            let ref mut fresh8 = (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_name;
             *fresh8 = ::core::ptr::null_mut::<::core::ffi::c_char>();
         }
         do_undump(
-            &raw mut (*image_array.offset(img as isize)).image_type as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_type as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<::core::ffi::c_int>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_undump(
-            &raw mut (*image_array.offset(img as isize)).color_type as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .color_type as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<::core::ffi::c_int>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_undump(
-            &raw mut (*image_array.offset(img as isize)).width as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .width as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_undump(
-            &raw mut (*image_array.offset(img as isize)).height as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .height as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_undump(
-            &raw mut (*image_array.offset(img as isize)).x_res as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .x_res as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_undump(
-            &raw mut (*image_array.offset(img as isize)).y_res as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .y_res as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_undump(
-            &raw mut (*image_array.offset(img as isize)).num_pages as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .num_pages as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_undump(
-            &raw mut (*image_array.offset(img as isize)).colorspace_ref as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .colorspace_ref as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         do_undump(
-            &raw mut (*image_array.offset(img as isize)).group_ref as *mut ::core::ffi::c_char,
+            &raw mut (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .group_ref as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         if kpse_find_file(
-            (*image_array.offset(img as isize)).image_name as const_string,
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_name as const_string,
             kpse_tex_format,
             true_0,
         )
@@ -837,72 +1309,147 @@ pub unsafe fn undumpimagemeta(
             crate::utils::pdftex_fail_args(
                 b"cannot find image file %s\0" as *const u8 as *const ::core::ffi::c_char,
                 &[crate::utils::PrintfArg::from(
-                    (*image_array.offset(img as isize)).image_name,
+                    (*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_name,
                 )],
             );
         }
-        match (*image_array.offset(img as isize)).image_type {
+        match (*(*__tekai_state_generated_backend_writeimg)
+            .image_array
+            .offset(img as isize))
+        .image_type
+        {
             IMAGE_TYPE_PDF => {
-                let ref mut fresh9 = (*image_array.offset(img as isize)).image_struct.pdf;
+                let ref mut fresh9 = (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf;
                 *fresh9 = xmalloc(
                     (1 as size_t)
                         .wrapping_mul(::core::mem::size_of::<pdf_image_struct>() as size_t),
                 ) as *mut pdf_image_struct;
                 do_undump(
-                    &raw mut (*(*image_array.offset(img as isize)).image_struct.pdf).page_box
-                        as *mut ::core::ffi::c_char,
+                    &raw mut (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .pdf)
+                        .page_box as *mut ::core::ffi::c_char,
                     ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                     1 as ::core::ffi::c_int,
-                    fmtfile as gzFile,
+                    (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
                 );
                 do_undump(
-                    &raw mut (*(*image_array.offset(img as isize)).image_struct.pdf).selected_page
-                        as *mut ::core::ffi::c_char,
+                    &raw mut (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .pdf)
+                        .selected_page as *mut ::core::ffi::c_char,
                     ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                     1 as ::core::ffi::c_int,
-                    fmtfile as gzFile,
+                    (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
                 );
                 read_pdf_info(
-                    (*image_array.offset(img as isize)).image_name,
+                    (*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_name,
                     ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                    (*(*image_array.offset(img as isize)).image_struct.pdf).selected_page
-                        as ::core::ffi::c_int,
-                    (*(*image_array.offset(img as isize)).image_struct.pdf).page_box
-                        as ::core::ffi::c_int,
+                    (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .pdf)
+                        .selected_page as ::core::ffi::c_int,
+                    (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .pdf)
+                        .page_box as ::core::ffi::c_int,
                     pdfmajorversion as ::core::ffi::c_int,
                     pdfminorversion as ::core::ffi::c_int,
                     pdfinclusionerrorlevel as ::core::ffi::c_int,
                 );
-                (*image_array.offset(img as isize)).width = zround(
-                    epdf_width as ::core::ffi::c_double
-                        * (onehundredbp as ::core::ffi::c_double / 100.0f64),
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .width = zround(
+                    (*__tekai_state_generated_backend_writeimg).epdf_width as ::core::ffi::c_double
+                        * ((*__tekai_state_generated_pdftexextra).onehundredbp
+                            as ::core::ffi::c_double
+                            / 100.0f64),
                 );
-                (*image_array.offset(img as isize)).height = zround(
-                    epdf_height as ::core::ffi::c_double
-                        * (onehundredbp as ::core::ffi::c_double / 100.0f64),
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .height = zround(
+                    (*__tekai_state_generated_backend_writeimg).epdf_height
+                        as ::core::ffi::c_double
+                        * ((*__tekai_state_generated_pdftexextra).onehundredbp
+                            as ::core::ffi::c_double
+                            / 100.0f64),
                 );
-                (*image_array.offset(img as isize)).num_pages = epdf_num_pages as integer;
-                (*(*image_array.offset(img as isize)).image_struct.pdf).orig_x = zround(
-                    epdf_orig_x as ::core::ffi::c_double
-                        * (onehundredbp as ::core::ffi::c_double / 100.0f64),
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .num_pages = (*__tekai_state_generated_backend_writeimg).epdf_num_pages as integer;
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf)
+                    .orig_x = zround(
+                    (*__tekai_state_generated_backend_writeimg).epdf_orig_x
+                        as ::core::ffi::c_double
+                        * ((*__tekai_state_generated_pdftexextra).onehundredbp
+                            as ::core::ffi::c_double
+                            / 100.0f64),
                 );
-                (*(*image_array.offset(img as isize)).image_struct.pdf).orig_y = zround(
-                    epdf_orig_y as ::core::ffi::c_double
-                        * (onehundredbp as ::core::ffi::c_double / 100.0f64),
+                (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf)
+                    .orig_y = zround(
+                    (*__tekai_state_generated_backend_writeimg).epdf_orig_y
+                        as ::core::ffi::c_double
+                        * ((*__tekai_state_generated_pdftexextra).onehundredbp
+                            as ::core::ffi::c_double
+                            / 100.0f64),
                 );
-                let ref mut fresh10 = (*(*image_array.offset(img as isize)).image_struct.pdf).doc;
-                *fresh10 = epdf_doc;
+                let ref mut fresh10 = (*(*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .pdf)
+                    .doc;
+                *fresh10 = (*__tekai_state_generated_backend_writeimg).epdf_doc;
             }
             IMAGE_TYPE_PNG => {
-                (*image_array.offset(img as isize)).num_pages = 1 as ::core::ffi::c_int as integer;
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .num_pages = 1 as ::core::ffi::c_int as integer;
                 read_png_info(img as integer);
             }
             IMAGE_TYPE_JPG => {
-                let ref mut fresh11 = (*image_array.offset(img as isize)).image_struct.jpg;
+                let ref mut fresh11 = (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jpg;
                 *fresh11 = xmalloc(
                     (1 as size_t).wrapping_mul(::core::mem::size_of::<JPG_IMAGE_INFO>() as size_t),
                 ) as *mut JPG_IMAGE_INFO;
-                (*image_array.offset(img as isize)).num_pages = 1 as ::core::ffi::c_int as integer;
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .num_pages = 1 as ::core::ffi::c_int as integer;
                 read_jpg_info(img as integer);
             }
             IMAGE_TYPE_JBIG2 => {
@@ -912,18 +1459,29 @@ pub unsafe fn undumpimagemeta(
                     crate::utils::pdftex_fail_args(b"JBIG2 images only possible with at least PDF 1.4; you are generating PDF 1.%i\0"
                             as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(pdfminorversion)]);
                 }
-                let ref mut fresh12 = (*image_array.offset(img as isize)).image_struct.jbig2;
+                let ref mut fresh12 = (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_struct
+                .jbig2;
                 *fresh12 = xmalloc(
                     (1 as size_t)
                         .wrapping_mul(::core::mem::size_of::<JBIG2_IMAGE_INFO>() as size_t),
                 ) as *mut JBIG2_IMAGE_INFO;
-                (*image_array.offset(img as isize)).image_type = IMAGE_TYPE_JBIG2;
+                (*(*__tekai_state_generated_backend_writeimg)
+                    .image_array
+                    .offset(img as isize))
+                .image_type = IMAGE_TYPE_JBIG2;
                 do_undump(
-                    &raw mut (*(*image_array.offset(img as isize)).image_struct.jbig2).selected_page
-                        as *mut ::core::ffi::c_char,
+                    &raw mut (*(*(*__tekai_state_generated_backend_writeimg)
+                        .image_array
+                        .offset(img as isize))
+                    .image_struct
+                    .jbig2)
+                        .selected_page as *mut ::core::ffi::c_char,
                     ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                     1 as ::core::ffi::c_int,
-                    fmtfile as gzFile,
+                    (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
                 );
                 read_jbig2_info(img as integer);
             }
@@ -938,3 +1496,188 @@ pub unsafe fn undumpimagemeta(
     }
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+pub(crate) struct State {
+    image_ptr: *mut image_entry,
+    pub(crate) image_array: *mut image_entry,
+    image_limit: integer,
+    pub(crate) epdf_width: ::core::ffi::c_float,
+    pub(crate) epdf_height: ::core::ffi::c_float,
+    pub(crate) epdf_orig_x: ::core::ffi::c_float,
+    pub(crate) epdf_orig_y: ::core::ffi::c_float,
+    pub(crate) epdf_rotate: ::core::ffi::c_float,
+    pub(crate) epdf_selected_page: ::core::ffi::c_int,
+    pub(crate) epdf_num_pages: ::core::ffi::c_int,
+    pub(crate) epdf_page_box: ::core::ffi::c_int,
+    pub(crate) epdf_doc: *mut ::core::ffi::c_void,
+    pub(crate) epdf_has_page_group: ::core::ffi::c_int,
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 13],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[12] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).epdf_has_page_group
+                ));
+            }
+            if self.initialized[11] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).epdf_doc));
+            }
+            if self.initialized[10] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).epdf_page_box));
+            }
+            if self.initialized[9] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).epdf_num_pages));
+            }
+            if self.initialized[8] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).epdf_selected_page
+                ));
+            }
+            if self.initialized[7] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).epdf_rotate));
+            }
+            if self.initialized[6] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).epdf_orig_y));
+            }
+            if self.initialized[5] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).epdf_orig_x));
+            }
+            if self.initialized[4] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).epdf_height));
+            }
+            if self.initialized[3] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).epdf_width));
+            }
+            if self.initialized[2] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).image_limit));
+            }
+            if self.initialized[1] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).image_array));
+            }
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).image_ptr));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 13],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<*mut image_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).image_ptr)
+            .write(::core::ptr::null::<image_entry>() as *mut image_entry);
+        self.initialized[0] = true;
+        const {
+            assert!(core::mem::size_of::<*mut image_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).image_array)
+            .write(::core::ptr::null::<image_entry>() as *mut image_entry);
+        self.initialized[1] = true;
+        const {
+            assert!(core::mem::size_of::<integer>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).image_limit).write(0);
+        self.initialized[2] = true;
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_float>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_width).write(0.);
+        self.initialized[3] = true;
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_float>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_height).write(0.);
+        self.initialized[4] = true;
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_float>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_orig_x).write(0.);
+        self.initialized[5] = true;
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_float>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_orig_y).write(0.);
+        self.initialized[6] = true;
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_float>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_rotate).write(0.);
+        self.initialized[7] = true;
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_selected_page).write(0);
+        self.initialized[8] = true;
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_num_pages).write(0);
+        self.initialized[9] = true;
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_page_box).write(0);
+        self.initialized[10] = true;
+        const {
+            assert!(core::mem::size_of::<*mut ::core::ffi::c_void>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_doc)
+            .write(::core::ptr::null::<::core::ffi::c_void>() as *mut ::core::ffi::c_void);
+        self.initialized[11] = true;
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).epdf_has_page_group).write(0);
+        self.initialized[12] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_writeimg
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
+}

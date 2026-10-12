@@ -7,9 +7,9 @@ runtime interfaces needed by the default `tekai-engine` build path.
 
 The crate produces a Rust library only. Both the CLI and standalone runner
 call its Rust entrypoint directly. It does not produce `libtekai_engine.a`
-or provide a C `main` entrypoint for external TeX Live linking. Some translated
-backend modules still have internal C-style connections. Those are migration
-work, separate from necessary system interfaces.
+or provide a C `main` entrypoint for external TeX Live linking. Internal core
+and backend calls use Rust functions and shared Rust record definitions.
+Necessary operating-system interfaces remain separate from the Rust engine.
 
 The engine is built entirely by Cargo and does not link a system TeX engine,
 Kpathsea, libpng, or PDF library. Packages, fonts, maps, encodings, and the
@@ -27,13 +27,37 @@ rebuild, and tests compare the embedded bytes with their source files. This
 reduces build-folder size without stripping debugger information or requiring
 an additional compiler, download, or runtime file beside the executable.
 
-The default CLI starts a dedicated child process using the same executable.
-That child calls the library's unsafe Rust `run_from_args` entry with owned
-argument bytes. The entry accepts one invocation per process, before any reset
-or initialization. Normal completion returns a typed result after flushing
-engine streams. Argument backing remains alive because generated globals borrow
-it. Other engine state is not torn down, and fatal paths still terminate the
-process. This is not a reusable or concurrent in-process engine API.
+The default CLI keeps a dedicated child process for cancellation and fault
+containment. The library does not require process isolation for state reuse.
+Its unsafe `run_from_args` and `run_with_options` entries own core state,
+argument bytes, raw buffers, streams, decoders, compression and lookup caches
+for each call. Normal completion, fatal diagnostics and help/version exits
+return a typed result without terminating the host. Unexpected Rust panics
+propagate after teardown. Calls may repeat or run independently on separate
+threads. Nested entries on one thread are rejected.
+
+`InvocationOptions` supplies an owned directory, an environment overlay and an
+interrupt token without changing the host directory, environment or signal
+handlers. Recovery requires unwind-enabled builds, and the crate rejects
+`panic=abort`. Host callers must not independently reap engine pipe children
+or configure SIGCHLD to reap them automatically.
+
+The CLI registers its own signal adapters outside the engine. Its supervising
+parent owns the worker group until completion and stops residual descendants
+before reaping the worker. Nested engine/PGF jobs inherit that managed group.
+Standalone execution uses the same whole-job cleanup policy. Reusable-library
+calls instead own private pipe groups and stop abandoned commands on teardown.
+Explicit `pclose` and `system` preserve POSIX rules for deliberately released
+background commands, which remain the library caller's responsibility.
+SIGKILL of a supervising parent cannot run cleanup, and kernel-uninterruptible
+processes cannot be given a hard termination deadline.
+
+Translated pointer operations and format readers still require trusted input.
+The library is not a security sandbox, and engine ownership alone does not
+establish that every malformed font or format is memory-safe.
+Filename search expressions currently require UTF-8. Invalid requests fail
+rather than selecting a replacement spelling. Direct file and decoder paths
+preserve OS filename bytes.
 
 For focused debugging, build its standalone executable with:
 

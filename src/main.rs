@@ -12,8 +12,8 @@ use tekai::cli::{
     WatchArgs,
 };
 use tekai::compiler::{
-    BuildOptions, BuildOutputLock, EMBEDDED_ENGINE_RUNNER_ENV, EMBEDDED_ENGINE_SUBCOMMAND, build,
-    tex_source_dependency_paths,
+    BuildOptions, BuildOutputLock, EMBEDDED_ENGINE_RUNNER_ENV, EMBEDDED_ENGINE_SUBCOMMAND,
+    EMBEDDED_ENGINE_WORKER_SUBCOMMAND, build, tex_source_dependency_paths,
 };
 use tekai::config::{
     BuildConfig, find_project_config, load_build_config, load_lint_config, load_project_config,
@@ -29,6 +29,10 @@ use tekai::watch::{WatchOptions, watch};
 fn main() -> Result<()> {
     if std::env::args_os().nth(1).as_deref() == Some(OsStr::new(EMBEDDED_ENGINE_SUBCOMMAND)) {
         return run_embedded_engine();
+    }
+    if std::env::args_os().nth(1).as_deref() == Some(OsStr::new(EMBEDDED_ENGINE_WORKER_SUBCOMMAND))
+    {
+        return run_embedded_engine_worker();
     }
     diagnostic_profile::initialize();
     let result = run_cli();
@@ -127,17 +131,70 @@ fn enable_embedded_engine_runner() -> Result<()> {
 }
 
 fn run_embedded_engine() -> Result<()> {
+    // Nested TeX shell/PGF jobs already belong to the outer worker's group.
+    // Starting another isolated group would escape that owner's cancellation.
+    if tekai_engine::cli_supervisor::inherited_group_is_supervised() {
+        return run_embedded_engine_worker();
+    }
+    let mut command = std::process::Command::new(std::env::current_exe()?);
+    command
+        .arg(EMBEDDED_ENGINE_WORKER_SUBCOMMAND)
+        .args(std::env::args_os().skip(2));
+    let status = tekai_engine::cli_supervisor::supervise(&mut command)?;
+    #[cfg(unix)]
+    let code = {
+        use std::os::unix::process::ExitStatusExt;
+        status
+            .code()
+            .unwrap_or_else(|| 128 + status.signal().unwrap_or(1))
+    };
+    #[cfg(not(unix))]
+    let code = status.code().unwrap_or(1);
+    std::process::exit(code)
+}
+
+fn run_embedded_engine_worker() -> Result<()> {
     tekai_engine::runtime::texmf_root().context("failed to prepare bundled TeX data")?;
     let mut args = Vec::new();
     args.push(b"pdflatex".to_vec());
     for arg in std::env::args_os().skip(2) {
         args.push(os_arg_bytes(&arg));
     }
-    // SAFETY: this subcommand is a dedicated engine child process. No Tekai
-    // watcher, cancellation worker, or other engine invocation runs here.
-    let completion = unsafe { tekai_engine::run_from_args(args) }
-        .context("failed to enter the process-isolated TeX engine")?;
+    let options = tekai_engine::InvocationOptions {
+        pipe_process_policy: tekai_engine::PipeProcessPolicy::SupervisedProcess,
+        environment: vec![(
+            tekai_engine::cli_supervisor::SUPERVISED_GROUP_ENV.into(),
+            Some(
+                rustix::process::getpgrp()
+                    .as_raw_nonzero()
+                    .to_string()
+                    .into(),
+            ),
+        )],
+        ..tekai_engine::InvocationOptions::default()
+    };
+    #[cfg(unix)]
+    let handler = EngineInterruptHandler(signal_hook::flag::register(
+        signal_hook::consts::SIGINT,
+        options.interrupt.signal_flag(),
+    )?);
+    // SAFETY This child runs trusted bundled formats. Shell execution remains
+    // governed by the engine options. Signal policy belongs to this CLI only.
+    let completion = unsafe { tekai_engine::run_with_options(args, options) }
+        .context("failed to enter the TeX engine")?;
+    #[cfg(unix)]
+    drop(handler);
     std::process::exit(completion.exit_code())
+}
+
+#[cfg(unix)]
+struct EngineInterruptHandler(signal_hook::SigId);
+
+#[cfg(unix)]
+impl Drop for EngineInterruptHandler {
+    fn drop(&mut self) {
+        signal_hook::low_level::unregister(self.0);
+    }
 }
 
 #[cfg(unix)]

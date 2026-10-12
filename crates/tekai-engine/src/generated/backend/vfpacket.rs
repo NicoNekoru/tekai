@@ -3,15 +3,6 @@ use crate::byte_string::memcpy;
 use crate::allocation::free;
 use crate::openclose::{xmalloc, xrealloc};
 
-extern "C" {
-    static mut strpool: *mut packedASCIIcode;
-    static mut strstart: *mut poolpointer;
-    static mut fontbc: *mut eightbits;
-    static mut fontec: *mut eightbits;
-    static mut vfpacketbase: *mut integer;
-    static mut vfpacketlength: integer;
-    static mut last_ptr_index: size_t;
-}
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
 pub type address = *mut ::core::ffi::c_void;
@@ -36,181 +27,336 @@ pub struct packet_entry {
 }
 pub const __DARWIN_NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const INT_MAX: ::core::ffi::c_int = 2147483647 as ::core::ffi::c_int;
-#[no_mangle]
-pub static mut packet_limit: size_t = 0;
-#[no_mangle]
-pub static mut packet_array: *mut packet_entry =
-    ::core::ptr::null::<packet_entry>() as *mut packet_entry;
-#[no_mangle]
-pub static mut packet_ptr: *mut packet_entry =
-    ::core::ptr::null::<packet_entry>() as *mut packet_entry;
-#[no_mangle]
-pub static mut vf_array: *mut vf_entry = ::core::ptr::null::<vf_entry>() as *mut vf_entry;
-#[no_mangle]
-pub static mut vf_limit: size_t = 0;
-#[no_mangle]
-pub static mut vf_ptr: *mut vf_entry = ::core::ptr::null::<vf_entry>() as *mut vf_entry;
-static mut packet_data_ptr: *mut ::core::ffi::c_char =
-    ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
+
 pub unsafe fn newvfpacket(mut f: internalfontnumber) -> integer {
+    let __tekai_state_generated_backend_vfpacket: *mut crate::generated::backend::vfpacket::State =
+        unsafe { crate::generated::backend::vfpacket::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
     let mut i: ::core::ffi::c_int = 0;
-    let mut n: ::core::ffi::c_int = *fontec.offset(f as isize) as ::core::ffi::c_int
-        - *fontbc.offset(f as isize) as ::core::ffi::c_int
+    let mut n: ::core::ffi::c_int = *(*__tekai_state_generated_pdftexextra)
+        .fontec
+        .offset(f as isize) as ::core::ffi::c_int
+        - *(*__tekai_state_generated_pdftexextra)
+            .fontbc
+            .offset(f as isize) as ::core::ffi::c_int
         + 1 as ::core::ffi::c_int;
-    if vf_array.is_null() {
-        vf_limit = 256 as size_t;
-        if 1 as ::core::ffi::c_int as ::core::ffi::c_uint > vf_limit as ::core::ffi::c_uint {
-            vf_limit = 1 as size_t;
-        }
-        vf_array = xmalloc(vf_limit.wrapping_mul(::core::mem::size_of::<vf_entry>() as size_t))
-            as *mut vf_entry;
-        vf_ptr = vf_array;
-    } else if (vf_ptr.offset_from(vf_array) as ::core::ffi::c_long + 1 as ::core::ffi::c_long)
-        as ::core::ffi::c_uint
-        > vf_limit as ::core::ffi::c_uint
+    if (*__tekai_state_generated_backend_vfpacket)
+        .vf_array
+        .is_null()
     {
-        last_ptr_index = vf_ptr.offset_from(vf_array) as ::core::ffi::c_long as size_t;
-        vf_limit = vf_limit.wrapping_mul(2 as size_t);
-        if (vf_ptr.offset_from(vf_array) as ::core::ffi::c_long + 1 as ::core::ffi::c_long)
-            as ::core::ffi::c_uint
-            > vf_limit as ::core::ffi::c_uint
+        (*__tekai_state_generated_backend_vfpacket).vf_limit = 256 as size_t;
+        if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
+            > (*__tekai_state_generated_backend_vfpacket).vf_limit as ::core::ffi::c_uint
         {
-            vf_limit = (vf_ptr.offset_from(vf_array) as ::core::ffi::c_long
-                + 1 as ::core::ffi::c_long) as size_t;
+            (*__tekai_state_generated_backend_vfpacket).vf_limit = 1 as size_t;
         }
-        if vf_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
+        (*__tekai_state_generated_backend_vfpacket).vf_array = xmalloc(
+            (*__tekai_state_generated_backend_vfpacket)
+                .vf_limit
+                .wrapping_mul(::core::mem::size_of::<vf_entry>() as size_t),
+        ) as *mut vf_entry;
+        (*__tekai_state_generated_backend_vfpacket).vf_ptr =
+            (*__tekai_state_generated_backend_vfpacket).vf_array;
+    } else if ((*__tekai_state_generated_backend_vfpacket)
+        .vf_ptr
+        .offset_from((*__tekai_state_generated_backend_vfpacket).vf_array)
+        as ::core::ffi::c_long
+        + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
+        > (*__tekai_state_generated_backend_vfpacket).vf_limit as ::core::ffi::c_uint
+    {
+        (*__tekai_state_utils).last_ptr_index = (*__tekai_state_generated_backend_vfpacket)
+            .vf_ptr
+            .offset_from((*__tekai_state_generated_backend_vfpacket).vf_array)
+            as ::core::ffi::c_long as size_t;
+        (*__tekai_state_generated_backend_vfpacket).vf_limit =
+            (*__tekai_state_generated_backend_vfpacket)
+                .vf_limit
+                .wrapping_mul(2 as size_t);
+        if ((*__tekai_state_generated_backend_vfpacket)
+            .vf_ptr
+            .offset_from((*__tekai_state_generated_backend_vfpacket).vf_array)
+            as ::core::ffi::c_long
+            + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
+            > (*__tekai_state_generated_backend_vfpacket).vf_limit as ::core::ffi::c_uint
+        {
+            (*__tekai_state_generated_backend_vfpacket).vf_limit =
+                ((*__tekai_state_generated_backend_vfpacket)
+                    .vf_ptr
+                    .offset_from((*__tekai_state_generated_backend_vfpacket).vf_array)
+                    as ::core::ffi::c_long
+                    + 1 as ::core::ffi::c_long) as size_t;
+        }
+        if (*__tekai_state_generated_backend_vfpacket).vf_limit as ::core::ffi::c_uint
+            > INT_MAX as ::core::ffi::c_uint
+        {
             crate::utils::pdftex_fail_args(
                 b"vf_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
             );
         }
-        vf_array = xrealloc(
-            vf_array as address,
-            vf_limit.wrapping_mul(::core::mem::size_of::<vf_entry>() as size_t),
+        (*__tekai_state_generated_backend_vfpacket).vf_array = xrealloc(
+            (*__tekai_state_generated_backend_vfpacket).vf_array as address,
+            (*__tekai_state_generated_backend_vfpacket)
+                .vf_limit
+                .wrapping_mul(::core::mem::size_of::<vf_entry>() as size_t),
         ) as *mut vf_entry;
-        vf_ptr = vf_array.offset(last_ptr_index as isize);
+        (*__tekai_state_generated_backend_vfpacket).vf_ptr =
+            (*__tekai_state_generated_backend_vfpacket)
+                .vf_array
+                .offset((*__tekai_state_utils).last_ptr_index as isize);
     }
-    (*vf_ptr).len =
+    (*(*__tekai_state_generated_backend_vfpacket).vf_ptr).len =
         xmalloc((n as size_t).wrapping_mul(::core::mem::size_of::<::core::ffi::c_int>() as size_t))
             as *mut ::core::ffi::c_int;
-    (*vf_ptr).data = xmalloc(
+    (*(*__tekai_state_generated_backend_vfpacket).vf_ptr).data = xmalloc(
         (n as size_t).wrapping_mul(::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t),
-    ) as *mut *mut ::core::ffi::c_char;
-    (*vf_ptr).char_count = n;
+    )
+        as *mut *mut ::core::ffi::c_char;
+    (*(*__tekai_state_generated_backend_vfpacket).vf_ptr).char_count = n;
     i = 0 as ::core::ffi::c_int;
     while i < n {
-        let ref mut fresh0 = *(*vf_ptr).data.offset(i as isize);
+        let ref mut fresh0 = *(*(*__tekai_state_generated_backend_vfpacket).vf_ptr)
+            .data
+            .offset(i as isize);
         *fresh0 = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        *(*vf_ptr).len.offset(i as isize) = 0 as ::core::ffi::c_int;
+        *(*(*__tekai_state_generated_backend_vfpacket).vf_ptr)
+            .len
+            .offset(i as isize) = 0 as ::core::ffi::c_int;
         i += 1;
     }
-    let fresh1 = vf_ptr;
-    vf_ptr = vf_ptr.offset(1);
-    return fresh1.offset_from(vf_array) as ::core::ffi::c_long as integer;
+    let fresh1 = (*__tekai_state_generated_backend_vfpacket).vf_ptr;
+    (*__tekai_state_generated_backend_vfpacket).vf_ptr =
+        (*__tekai_state_generated_backend_vfpacket).vf_ptr.offset(1);
+    return fresh1.offset_from((*__tekai_state_generated_backend_vfpacket).vf_array)
+        as ::core::ffi::c_long as integer;
 }
 pub unsafe fn storepacket(mut f: internalfontnumber, mut c: integer, mut s: strnumber) {
-    let mut l: ::core::ffi::c_int = *strstart
+    let __tekai_state_generated_backend_vfpacket: *mut crate::generated::backend::vfpacket::State =
+        unsafe { crate::generated::backend::vfpacket::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
+    let mut l: ::core::ffi::c_int = *(*__tekai_state_generated_pdftexextra)
+        .strstart
         .offset((s as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as isize)
         as ::core::ffi::c_int
-        - *strstart.offset(s as isize) as ::core::ffi::c_int;
-    *(*vf_array.offset(*vfpacketbase.offset(f as isize) as isize))
-        .len
-        .offset(
-            (c as ::core::ffi::c_int - *fontbc.offset(f as isize) as ::core::ffi::c_int) as isize,
-        ) = l;
-    let ref mut fresh2 = *(*vf_array.offset(*vfpacketbase.offset(f as isize) as isize))
-        .data
-        .offset(
-            (c as ::core::ffi::c_int - *fontbc.offset(f as isize) as ::core::ffi::c_int) as isize,
-        );
+        - *(*__tekai_state_generated_pdftexextra)
+            .strstart
+            .offset(s as isize) as ::core::ffi::c_int;
+    *(*(*__tekai_state_generated_backend_vfpacket).vf_array.offset(
+        *(*__tekai_state_generated_pdftexextra)
+            .vfpacketbase
+            .offset(f as isize) as isize,
+    ))
+    .len
+    .offset(
+        (c as ::core::ffi::c_int
+            - *(*__tekai_state_generated_pdftexextra)
+                .fontbc
+                .offset(f as isize) as ::core::ffi::c_int) as isize,
+    ) = l;
+    let ref mut fresh2 = *(*(*__tekai_state_generated_backend_vfpacket).vf_array.offset(
+        *(*__tekai_state_generated_pdftexextra)
+            .vfpacketbase
+            .offset(f as isize) as isize,
+    ))
+    .data
+    .offset(
+        (c as ::core::ffi::c_int
+            - *(*__tekai_state_generated_pdftexextra)
+                .fontbc
+                .offset(f as isize) as ::core::ffi::c_int) as isize,
+    );
     *fresh2 = xmalloc(
         (l as size_t).wrapping_mul(::core::mem::size_of::<::core::ffi::c_char>() as size_t),
     ) as *mut ::core::ffi::c_char;
     memcpy(
-        *(*vf_array.offset(*vfpacketbase.offset(f as isize) as isize))
-            .data
-            .offset(
-                (c as ::core::ffi::c_int - *fontbc.offset(f as isize) as ::core::ffi::c_int)
-                    as isize,
-            ) as *mut ::core::ffi::c_void,
-        strpool.offset(*strstart.offset(s as isize) as isize) as *mut ::core::ffi::c_void,
+        *(*(*__tekai_state_generated_backend_vfpacket).vf_array.offset(
+            *(*__tekai_state_generated_pdftexextra)
+                .vfpacketbase
+                .offset(f as isize) as isize,
+        ))
+        .data
+        .offset(
+            (c as ::core::ffi::c_int
+                - *(*__tekai_state_generated_pdftexextra)
+                    .fontbc
+                    .offset(f as isize) as ::core::ffi::c_int) as isize,
+        ) as *mut ::core::ffi::c_void,
+        (*__tekai_state_generated_pdftexextra).strpool.offset(
+            *(*__tekai_state_generated_pdftexextra)
+                .strstart
+                .offset(s as isize) as isize,
+        ) as *mut ::core::ffi::c_void,
         l as ::core::ffi::c_uint as size_t,
     );
 }
 pub unsafe fn startpacket(mut f: internalfontnumber, mut c: eightbits) {
-    packet_data_ptr = *(*vf_array.offset(*vfpacketbase.offset(f as isize) as isize))
+    let __tekai_state_generated_backend_vfpacket: *mut crate::generated::backend::vfpacket::State =
+        unsafe { crate::generated::backend::vfpacket::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
+    (*__tekai_state_generated_backend_vfpacket).packet_data_ptr =
+        *(*(*__tekai_state_generated_backend_vfpacket).vf_array.offset(
+            *(*__tekai_state_generated_pdftexextra)
+                .vfpacketbase
+                .offset(f as isize) as isize,
+        ))
         .data
         .offset(
-            (c as ::core::ffi::c_int - *fontbc.offset(f as isize) as ::core::ffi::c_int) as isize,
+            (c as ::core::ffi::c_int
+                - *(*__tekai_state_generated_pdftexextra)
+                    .fontbc
+                    .offset(f as isize) as ::core::ffi::c_int) as isize,
         );
-    vfpacketlength = *(*vf_array.offset(*vfpacketbase.offset(f as isize) as isize))
+    (*__tekai_state_generated_pdftexextra).vfpacketlength =
+        *(*(*__tekai_state_generated_backend_vfpacket).vf_array.offset(
+            *(*__tekai_state_generated_pdftexextra)
+                .vfpacketbase
+                .offset(f as isize) as isize,
+        ))
         .len
         .offset(
-            (c as ::core::ffi::c_int - *fontbc.offset(f as isize) as ::core::ffi::c_int) as isize,
+            (c as ::core::ffi::c_int
+                - *(*__tekai_state_generated_pdftexextra)
+                    .fontbc
+                    .offset(f as isize) as ::core::ffi::c_int) as isize,
         ) as integer;
 }
 pub unsafe fn packetbyte() -> eightbits {
-    vfpacketlength -= 1;
-    let fresh3 = packet_data_ptr;
-    packet_data_ptr = packet_data_ptr.offset(1);
+    let __tekai_state_generated_backend_vfpacket: *mut crate::generated::backend::vfpacket::State =
+        unsafe { crate::generated::backend::vfpacket::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
+    (*__tekai_state_generated_pdftexextra).vfpacketlength -= 1;
+    let fresh3 = (*__tekai_state_generated_backend_vfpacket).packet_data_ptr;
+    (*__tekai_state_generated_backend_vfpacket).packet_data_ptr =
+        (*__tekai_state_generated_backend_vfpacket)
+            .packet_data_ptr
+            .offset(1);
     return *fresh3 as eightbits;
 }
 pub unsafe fn pushpacketstate() {
-    if packet_array.is_null() {
-        packet_limit = 256 as size_t;
-        if 1 as ::core::ffi::c_int as ::core::ffi::c_uint > packet_limit as ::core::ffi::c_uint {
-            packet_limit = 1 as size_t;
-        }
-        packet_array =
-            xmalloc(packet_limit.wrapping_mul(::core::mem::size_of::<packet_entry>() as size_t))
-                as *mut packet_entry;
-        packet_ptr = packet_array;
-    } else if (packet_ptr.offset_from(packet_array) as ::core::ffi::c_long
-        + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
-        > packet_limit as ::core::ffi::c_uint
+    let __tekai_state_generated_backend_vfpacket: *mut crate::generated::backend::vfpacket::State =
+        unsafe { crate::generated::backend::vfpacket::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+    let __tekai_state_utils: *mut crate::utils::State = unsafe { crate::utils::state() };
+
+    if (*__tekai_state_generated_backend_vfpacket)
+        .packet_array
+        .is_null()
     {
-        last_ptr_index = packet_ptr.offset_from(packet_array) as ::core::ffi::c_long as size_t;
-        packet_limit = packet_limit.wrapping_mul(2 as size_t);
-        if (packet_ptr.offset_from(packet_array) as ::core::ffi::c_long + 1 as ::core::ffi::c_long)
-            as ::core::ffi::c_uint
-            > packet_limit as ::core::ffi::c_uint
+        (*__tekai_state_generated_backend_vfpacket).packet_limit = 256 as size_t;
+        if 1 as ::core::ffi::c_int as ::core::ffi::c_uint
+            > (*__tekai_state_generated_backend_vfpacket).packet_limit as ::core::ffi::c_uint
         {
-            packet_limit = (packet_ptr.offset_from(packet_array) as ::core::ffi::c_long
-                + 1 as ::core::ffi::c_long) as size_t;
+            (*__tekai_state_generated_backend_vfpacket).packet_limit = 1 as size_t;
         }
-        if packet_limit as ::core::ffi::c_uint > INT_MAX as ::core::ffi::c_uint {
+        (*__tekai_state_generated_backend_vfpacket).packet_array = xmalloc(
+            (*__tekai_state_generated_backend_vfpacket)
+                .packet_limit
+                .wrapping_mul(::core::mem::size_of::<packet_entry>() as size_t),
+        ) as *mut packet_entry;
+        (*__tekai_state_generated_backend_vfpacket).packet_ptr =
+            (*__tekai_state_generated_backend_vfpacket).packet_array;
+    } else if ((*__tekai_state_generated_backend_vfpacket)
+        .packet_ptr
+        .offset_from((*__tekai_state_generated_backend_vfpacket).packet_array)
+        as ::core::ffi::c_long
+        + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
+        > (*__tekai_state_generated_backend_vfpacket).packet_limit as ::core::ffi::c_uint
+    {
+        (*__tekai_state_utils).last_ptr_index = (*__tekai_state_generated_backend_vfpacket)
+            .packet_ptr
+            .offset_from((*__tekai_state_generated_backend_vfpacket).packet_array)
+            as ::core::ffi::c_long as size_t;
+        (*__tekai_state_generated_backend_vfpacket).packet_limit =
+            (*__tekai_state_generated_backend_vfpacket)
+                .packet_limit
+                .wrapping_mul(2 as size_t);
+        if ((*__tekai_state_generated_backend_vfpacket)
+            .packet_ptr
+            .offset_from((*__tekai_state_generated_backend_vfpacket).packet_array)
+            as ::core::ffi::c_long
+            + 1 as ::core::ffi::c_long) as ::core::ffi::c_uint
+            > (*__tekai_state_generated_backend_vfpacket).packet_limit as ::core::ffi::c_uint
+        {
+            (*__tekai_state_generated_backend_vfpacket).packet_limit =
+                ((*__tekai_state_generated_backend_vfpacket)
+                    .packet_ptr
+                    .offset_from((*__tekai_state_generated_backend_vfpacket).packet_array)
+                    as ::core::ffi::c_long
+                    + 1 as ::core::ffi::c_long) as size_t;
+        }
+        if (*__tekai_state_generated_backend_vfpacket).packet_limit as ::core::ffi::c_uint
+            > INT_MAX as ::core::ffi::c_uint
+        {
             crate::utils::pdftex_fail_args(
                 b"packet_array exceeds size limit\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
             );
         }
-        packet_array = xrealloc(
-            packet_array as address,
-            packet_limit.wrapping_mul(::core::mem::size_of::<packet_entry>() as size_t),
+        (*__tekai_state_generated_backend_vfpacket).packet_array = xrealloc(
+            (*__tekai_state_generated_backend_vfpacket).packet_array as address,
+            (*__tekai_state_generated_backend_vfpacket)
+                .packet_limit
+                .wrapping_mul(::core::mem::size_of::<packet_entry>() as size_t),
         ) as *mut packet_entry;
-        packet_ptr = packet_array.offset(last_ptr_index as isize);
+        (*__tekai_state_generated_backend_vfpacket).packet_ptr =
+            (*__tekai_state_generated_backend_vfpacket)
+                .packet_array
+                .offset((*__tekai_state_utils).last_ptr_index as isize);
     }
-    (*packet_ptr).dataptr = packet_data_ptr;
-    (*packet_ptr).len = vfpacketlength;
-    packet_ptr = packet_ptr.offset(1);
+    (*(*__tekai_state_generated_backend_vfpacket).packet_ptr).dataptr =
+        (*__tekai_state_generated_backend_vfpacket).packet_data_ptr;
+    (*(*__tekai_state_generated_backend_vfpacket).packet_ptr).len =
+        (*__tekai_state_generated_pdftexextra).vfpacketlength;
+    (*__tekai_state_generated_backend_vfpacket).packet_ptr =
+        (*__tekai_state_generated_backend_vfpacket)
+            .packet_ptr
+            .offset(1);
 }
 pub unsafe fn poppacketstate() {
-    if packet_ptr == packet_array {
+    let __tekai_state_generated_backend_vfpacket: *mut crate::generated::backend::vfpacket::State =
+        unsafe { crate::generated::backend::vfpacket::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
+    if (*__tekai_state_generated_backend_vfpacket).packet_ptr
+        == (*__tekai_state_generated_backend_vfpacket).packet_array
+    {
         crate::utils::pdftex_fail_args(
             b"packet stack empty, impossible to pop\0" as *const u8 as *const ::core::ffi::c_char,
             &[],
         );
     }
-    packet_ptr = packet_ptr.offset(-1);
-    packet_data_ptr = (*packet_ptr).dataptr;
-    vfpacketlength = (*packet_ptr).len;
+    (*__tekai_state_generated_backend_vfpacket).packet_ptr =
+        (*__tekai_state_generated_backend_vfpacket)
+            .packet_ptr
+            .offset(-1);
+    (*__tekai_state_generated_backend_vfpacket).packet_data_ptr =
+        (*(*__tekai_state_generated_backend_vfpacket).packet_ptr).dataptr;
+    (*__tekai_state_generated_pdftexextra).vfpacketlength =
+        (*(*__tekai_state_generated_backend_vfpacket).packet_ptr).len;
 }
 pub unsafe fn vf_free() {
+    let __tekai_state_generated_backend_vfpacket: *mut crate::generated::backend::vfpacket::State =
+        unsafe { crate::generated::backend::vfpacket::state() };
+
     let mut v: *mut vf_entry = ::core::ptr::null_mut::<vf_entry>();
     let mut p: *mut *mut ::core::ffi::c_char = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
-    if !vf_array.is_null() {
-        v = vf_array;
-        while v < vf_ptr {
+    if !(*__tekai_state_generated_backend_vfpacket)
+        .vf_array
+        .is_null()
+    {
+        v = (*__tekai_state_generated_backend_vfpacket).vf_array;
+        while v < (*__tekai_state_generated_backend_vfpacket).vf_ptr {
             if !(*v).len.is_null() {
                 free((*v).len as *mut ::core::ffi::c_void);
             }
@@ -231,14 +377,150 @@ pub unsafe fn vf_free() {
             (*v).data = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
             v = v.offset(1);
         }
-        if !vf_array.is_null() {
-            free(vf_array as *mut ::core::ffi::c_void);
+        if !(*__tekai_state_generated_backend_vfpacket)
+            .vf_array
+            .is_null()
+        {
+            free((*__tekai_state_generated_backend_vfpacket).vf_array as *mut ::core::ffi::c_void);
         }
-        vf_array = ::core::ptr::null_mut::<vf_entry>();
+        (*__tekai_state_generated_backend_vfpacket).vf_array = ::core::ptr::null_mut::<vf_entry>();
     }
-    if !packet_array.is_null() {
-        free(packet_array as *mut ::core::ffi::c_void);
+    if !(*__tekai_state_generated_backend_vfpacket)
+        .packet_array
+        .is_null()
+    {
+        free((*__tekai_state_generated_backend_vfpacket).packet_array as *mut ::core::ffi::c_void);
     }
-    packet_array = ::core::ptr::null_mut::<packet_entry>();
+    (*__tekai_state_generated_backend_vfpacket).packet_array =
+        ::core::ptr::null_mut::<packet_entry>();
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+pub(crate) struct State {
+    packet_limit: size_t,
+    packet_array: *mut packet_entry,
+    packet_ptr: *mut packet_entry,
+    vf_array: *mut vf_entry,
+    vf_limit: size_t,
+    vf_ptr: *mut vf_entry,
+    packet_data_ptr: *mut ::core::ffi::c_char,
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 7],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[6] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).packet_data_ptr));
+            }
+            if self.initialized[5] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).vf_ptr));
+            }
+            if self.initialized[4] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).vf_limit));
+            }
+            if self.initialized[3] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).vf_array));
+            }
+            if self.initialized[2] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).packet_ptr));
+            }
+            if self.initialized[1] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).packet_array));
+            }
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).packet_limit));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 7],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<size_t>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).packet_limit).write(0);
+        self.initialized[0] = true;
+        const {
+            assert!(core::mem::size_of::<*mut packet_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).packet_array)
+            .write(::core::ptr::null::<packet_entry>() as *mut packet_entry);
+        self.initialized[1] = true;
+        const {
+            assert!(core::mem::size_of::<*mut packet_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).packet_ptr)
+            .write(::core::ptr::null::<packet_entry>() as *mut packet_entry);
+        self.initialized[2] = true;
+        const {
+            assert!(core::mem::size_of::<*mut vf_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).vf_array)
+            .write(::core::ptr::null::<vf_entry>() as *mut vf_entry);
+        self.initialized[3] = true;
+        const {
+            assert!(core::mem::size_of::<size_t>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).vf_limit).write(0);
+        self.initialized[4] = true;
+        const {
+            assert!(core::mem::size_of::<*mut vf_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).vf_ptr)
+            .write(::core::ptr::null::<vf_entry>() as *mut vf_entry);
+        self.initialized[5] = true;
+        const {
+            assert!(core::mem::size_of::<*mut ::core::ffi::c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).packet_data_ptr)
+            .write(::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char);
+        self.initialized[6] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_vfpacket
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
+}

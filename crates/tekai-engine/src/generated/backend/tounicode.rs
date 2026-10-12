@@ -2,8 +2,8 @@ pub use crate::generated::pdftex0::{pdfbeginstream, pdfendstream, pdfnewobjnum, 
 pub use crate::generated::pdftexextra::makecstring;
 
 pub use crate::generated::backend::avl::{
-    avl_comparison_func, avl_create, avl_destroy, avl_find, avl_item_func, avl_node, avl_probe,
-    avl_t_init, avl_t_next, avl_table, avl_traverser, libavl_allocator,
+    avl_create, avl_destroy, avl_find, avl_node, avl_probe, avl_t_init, avl_t_next, avl_table,
+    avl_traverser,
 };
 
 use crate::byte_string::isdigit;
@@ -18,12 +18,6 @@ use std::ffi::CStr;
 
 use crate::termination::__assert_rtn;
 
-extern "C" {
-    static mut fixedgentounicode: integer;
-    static mut fmtfile: wordfile;
-    static mut avl_xallocator: libavl_allocator;
-    static mut notdef: [::core::ffi::c_char; 0];
-}
 pub type __uint32_t = u32;
 pub type __int64_t = i64;
 pub type __darwin_size_t = usize;
@@ -54,7 +48,7 @@ pub const false_0: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 pub const UNI_UNDEF: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 pub const UNI_STRING: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
 pub const UNI_EXTRA_STRING: ::core::ffi::c_int = -(3 as ::core::ffi::c_int);
-static mut glyph_unicode_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
+
 unsafe fn comp_glyph_unicode_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
@@ -100,9 +94,14 @@ unsafe fn destroy_glyph_unicode_entry(
     }
 }
 pub unsafe fn glyph_unicode_free() {
-    if !glyph_unicode_tree.is_null() {
+    let __tekai_state_generated_backend_tounicode: *mut crate::generated::backend::tounicode::State = unsafe { crate::generated::backend::tounicode::state() };
+
+    if !(*__tekai_state_generated_backend_tounicode)
+        .glyph_unicode_tree
+        .is_null()
+    {
         avl_destroy(
-            glyph_unicode_tree,
+            (*__tekai_state_generated_backend_tounicode).glyph_unicode_tree,
             Some(
                 destroy_glyph_unicode_entry
                     as unsafe fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
@@ -111,6 +110,12 @@ pub unsafe fn glyph_unicode_free() {
     }
 }
 pub unsafe fn deftounicode(mut glyph: strnumber, mut unistr: strnumber) {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_tounicode: *mut crate::generated::backend::tounicode::State = unsafe { crate::generated::backend::tounicode::state() };
+    let __tekai_state_generated_backend_writettf: *mut crate::generated::backend::writettf::State =
+        unsafe { crate::generated::backend::writettf::state() };
+
     let mut buf: [::core::ffi::c_char; 256] = [0; 256];
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut buf2: [u8; 256] = [0; 256];
@@ -181,7 +186,7 @@ pub unsafe fn deftounicode(mut glyph: strnumber, mut unistr: strnumber) {
         || strlen(&raw mut buf as *mut ::core::ffi::c_char) == 0 as size_t
         || strcmp(
             &raw mut buf as *mut ::core::ffi::c_char,
-            &raw mut notdef as *mut ::core::ffi::c_char,
+            &raw mut (*__tekai_state_generated_backend_writettf).notdef as *mut ::core::ffi::c_char,
         ) == 0 as ::core::ffi::c_int
     {
         crate::utils::pdftex_warn_args(
@@ -194,8 +199,11 @@ pub unsafe fn deftounicode(mut glyph: strnumber, mut unistr: strnumber) {
         );
         return;
     }
-    if glyph_unicode_tree.is_null() {
-        glyph_unicode_tree = avl_create(
+    if (*__tekai_state_generated_backend_tounicode)
+        .glyph_unicode_tree
+        .is_null()
+    {
+        (*__tekai_state_generated_backend_tounicode).glyph_unicode_tree = avl_create(
             Some(
                 comp_glyph_unicode_entry
                     as unsafe fn(
@@ -205,9 +213,13 @@ pub unsafe fn deftounicode(mut glyph: strnumber, mut unistr: strnumber) {
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if glyph_unicode_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+        if (*__tekai_state_generated_backend_tounicode)
+            .glyph_unicode_tree
+            .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+            != 0
+        {
             __assert_rtn(
                 b"deftounicode\0" as *const u8 as *const ::core::ffi::c_char,
                 b"tounicode.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -218,8 +230,10 @@ pub unsafe fn deftounicode(mut glyph: strnumber, mut unistr: strnumber) {
         };
     }
     t.name = &raw mut buf as *mut ::core::ffi::c_char;
-    gu = avl_find(glyph_unicode_tree, &raw mut t as *const ::core::ffi::c_void)
-        as *mut glyph_unicode_entry;
+    gu = avl_find(
+        (*__tekai_state_generated_backend_tounicode).glyph_unicode_tree,
+        &raw mut t as *const ::core::ffi::c_void,
+    ) as *mut glyph_unicode_entry;
     if !gu.is_null() {
         if (*gu).code == UNI_STRING {
             if (*gu).unicode_seq.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -257,7 +271,10 @@ pub unsafe fn deftounicode(mut glyph: strnumber, mut unistr: strnumber) {
             (*gu).code = sscan_result as integer;
         }
     }
-    aa = avl_probe(glyph_unicode_tree, gu as *mut ::core::ffi::c_void);
+    aa = avl_probe(
+        (*__tekai_state_generated_backend_tounicode).glyph_unicode_tree,
+        gu as *mut ::core::ffi::c_void,
+    );
     if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"deftounicode\0" as *const u8 as *const ::core::ffi::c_char,
@@ -323,7 +340,8 @@ unsafe fn check_unicode_value(
     return code;
 }
 unsafe fn utf16be_str(mut code: ::core::ffi::c_long) -> *mut ::core::ffi::c_char {
-    static mut buf: [::core::ffi::c_char; 256] = [0; 256];
+    let __tekai_state_generated_backend_tounicode: *mut crate::generated::backend::tounicode::State = unsafe { crate::generated::backend::tounicode::state() };
+
     let mut v: ::core::ffi::c_long = 0;
     let mut vh: ::core::ffi::c_uint = 0;
     let mut vl: ::core::ffi::c_uint = 0;
@@ -338,7 +356,8 @@ unsafe fn utf16be_str(mut code: ::core::ffi::c_long) -> *mut ::core::ffi::c_char
     };
     if code <= 0xffff as ::core::ffi::c_long {
         crate::utils::sprintf_args(
-            &raw mut buf as *mut ::core::ffi::c_char,
+            &raw mut (*__tekai_state_generated_backend_tounicode).local_utf16be_str_326_buf
+                as *mut ::core::ffi::c_char,
             b"%04lX\0" as *const u8 as *const ::core::ffi::c_char,
             &[crate::utils::PrintfArg::from(code)],
         );
@@ -349,7 +368,8 @@ unsafe fn utf16be_str(mut code: ::core::ffi::c_long) -> *mut ::core::ffi::c_char
         vl = (v % 0x400 as ::core::ffi::c_long + 0xdc00 as ::core::ffi::c_long)
             as ::core::ffi::c_uint;
         crate::utils::sprintf_args(
-            &raw mut buf as *mut ::core::ffi::c_char,
+            &raw mut (*__tekai_state_generated_backend_tounicode).local_utf16be_str_326_buf
+                as *mut ::core::ffi::c_char,
             b"%04X%04X\0" as *const u8 as *const ::core::ffi::c_char,
             &[
                 crate::utils::PrintfArg::from(vh),
@@ -357,13 +377,18 @@ unsafe fn utf16be_str(mut code: ::core::ffi::c_long) -> *mut ::core::ffi::c_char
             ],
         );
     }
-    return &raw mut buf as *mut ::core::ffi::c_char;
+    return &raw mut (*__tekai_state_generated_backend_tounicode).local_utf16be_str_326_buf
+        as *mut ::core::ffi::c_char;
 }
 unsafe fn set_glyph_unicode(
     mut s: *const ::core::ffi::c_char,
     mut tfmname: *const ::core::ffi::c_char,
     mut gp: *mut glyph_unicode_entry,
 ) {
+    let __tekai_state_generated_backend_tounicode: *mut crate::generated::backend::tounicode::State = unsafe { crate::generated::backend::tounicode::state() };
+    let __tekai_state_generated_backend_writettf: *mut crate::generated::backend::writettf::State =
+        unsafe { crate::generated::backend::writettf::state() };
+
     let mut buf: [::core::ffi::c_char; 256] = [0; 256];
     let mut buf2: [::core::ffi::c_char; 256] = [0; 256];
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -376,7 +401,9 @@ unsafe fn set_glyph_unicode(
         unicode_seq: ::core::ptr::null_mut::<::core::ffi::c_char>(),
     };
     let mut ptmp: *mut glyph_unicode_entry = ::core::ptr::null_mut::<glyph_unicode_entry>();
-    if s.is_null() || s == &raw mut notdef as *mut ::core::ffi::c_char as *const ::core::ffi::c_char
+    if s.is_null()
+        || s == &raw mut (*__tekai_state_generated_backend_writettf).notdef
+            as *mut ::core::ffi::c_char as *const ::core::ffi::c_char
     {
         return;
     }
@@ -515,7 +542,7 @@ unsafe fn set_glyph_unicode(
     tmp.name = &raw mut buf2 as *mut ::core::ffi::c_char;
     tmp.code = UNI_UNDEF as integer;
     ptmp = avl_find(
-        glyph_unicode_tree,
+        (*__tekai_state_generated_backend_tounicode).glyph_unicode_tree,
         &raw mut tmp as *const ::core::ffi::c_void,
     ) as *mut glyph_unicode_entry;
     if !ptmp.is_null() {
@@ -532,7 +559,7 @@ unsafe fn set_glyph_unicode(
     tmp.name = &raw mut buf2 as *mut ::core::ffi::c_char;
     tmp.code = UNI_UNDEF as integer;
     ptmp = avl_find(
-        glyph_unicode_tree,
+        (*__tekai_state_generated_backend_tounicode).glyph_unicode_tree,
         &raw mut tmp as *const ::core::ffi::c_void,
     ) as *mut glyph_unicode_entry;
     if !ptmp.is_null() {
@@ -598,10 +625,13 @@ pub unsafe fn write_tounicode(
     mut tfmname: *const ::core::ffi::c_char,
     mut encname: *const ::core::ffi::c_char,
 ) -> integer {
+    let __tekai_state_generated_backend_tounicode: *mut crate::generated::backend::tounicode::State = unsafe { crate::generated::backend::tounicode::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut buf: [::core::ffi::c_char; 256] = [0; 256];
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    static mut builtin_suffix: [::core::ffi::c_char; 8] =
-        unsafe { ::core::mem::transmute::<[u8; 8], [::core::ffi::c_char; 8]>(*b"builtin\0") };
+
     let mut range_size: [::core::ffi::c_short; 257] = [0; 257];
     let mut gtab: [glyph_unicode_entry; 257] = [glyph_unicode_entry {
         name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -614,13 +644,17 @@ pub unsafe fn write_tounicode(
     let mut bfchar_count: ::core::ffi::c_int = 0;
     let mut bfrange_count: ::core::ffi::c_int = 0;
     let mut subrange_count: ::core::ffi::c_int = 0;
-    if glyph_unicode_tree.is_null() {
+    if (*__tekai_state_generated_backend_tounicode)
+        .glyph_unicode_tree
+        .is_null()
+    {
         crate::utils::pdftex_warn_args(
             b"no GlyphToUnicode entry has been inserted yet!\0" as *const u8
                 as *const ::core::ffi::c_char,
             &[],
         );
-        fixedgentounicode = 0 as ::core::ffi::c_int as integer;
+        (*__tekai_state_generated_pdftexextra).fixedgentounicode =
+            0 as ::core::ffi::c_int as integer;
         return 0 as integer;
     }
     strcpy(&raw mut buf as *mut ::core::ffi::c_char, tfmname);
@@ -659,7 +693,11 @@ pub unsafe fn write_tounicode(
         }
     } else {
         if !(strlen(tfmname)
-            .wrapping_add(strlen(&raw mut builtin_suffix as *mut ::core::ffi::c_char))
+            .wrapping_add(strlen(
+                &raw mut (*__tekai_state_generated_backend_tounicode)
+                    .local_write_tounicode_603_builtin_suffix
+                    as *mut ::core::ffi::c_char,
+            ))
             .wrapping_add(1 as size_t)
             < 256 as size_t) as ::core::ffi::c_int as ::core::ffi::c_long
             != 0
@@ -675,7 +713,8 @@ pub unsafe fn write_tounicode(
         };
         strcat(
             &raw mut buf as *mut ::core::ffi::c_char,
-            &raw mut builtin_suffix as *mut ::core::ffi::c_char,
+            &raw mut (*__tekai_state_generated_backend_tounicode)
+                .local_write_tounicode_603_builtin_suffix as *mut ::core::ffi::c_char,
         );
     }
     objnum = pdfnewobjnum();
@@ -878,6 +917,10 @@ pub unsafe fn write_tounicode(
     return objnum;
 }
 pub unsafe fn dumptounicode() {
+    let __tekai_state_generated_backend_tounicode: *mut crate::generated::backend::tounicode::State = unsafe { crate::generated::backend::tounicode::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut traverse: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
         avl_node: ::core::ptr::null_mut::<avl_node>(),
@@ -887,24 +930,30 @@ pub unsafe fn dumptounicode() {
     };
     let mut count: integer = 0;
     let mut gu: *mut glyph_unicode_entry = ::core::ptr::null_mut::<glyph_unicode_entry>();
-    if glyph_unicode_tree.is_null() {
+    if (*__tekai_state_generated_backend_tounicode)
+        .glyph_unicode_tree
+        .is_null()
+    {
         count = 0 as ::core::ffi::c_int as integer;
         do_dump(
             &raw mut count as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         return;
     }
-    count = (*glyph_unicode_tree).avl_count as integer;
+    count = (*(*__tekai_state_generated_backend_tounicode).glyph_unicode_tree).avl_count as integer;
     do_dump(
         &raw mut count as *mut ::core::ffi::c_char,
         ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
         1 as ::core::ffi::c_int,
-        fmtfile as gzFile,
+        (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
     );
-    avl_t_init(&raw mut traverse, glyph_unicode_tree);
+    avl_t_init(
+        &raw mut traverse,
+        (*__tekai_state_generated_backend_tounicode).glyph_unicode_tree,
+    );
     loop {
         gu = avl_t_next(&raw mut traverse) as *mut glyph_unicode_entry;
         if gu.is_null() {
@@ -917,13 +966,13 @@ pub unsafe fn dumptounicode() {
                 &raw mut x as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                 1 as ::core::ffi::c_int,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
             do_dump(
                 (*gu).name,
                 ::core::mem::size_of::<::core::ffi::c_char>() as ::core::ffi::c_int,
                 x,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
         } else {
             x = 0 as ::core::ffi::c_int as integer;
@@ -931,14 +980,14 @@ pub unsafe fn dumptounicode() {
                 &raw mut x as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                 1 as ::core::ffi::c_int,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
         }
         do_dump(
             &raw mut (*gu).code as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         if (*gu).code == UNI_STRING {
             let mut x_0: integer = 0;
@@ -948,13 +997,13 @@ pub unsafe fn dumptounicode() {
                     &raw mut x_0 as *mut ::core::ffi::c_char,
                     ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                     1 as ::core::ffi::c_int,
-                    fmtfile as gzFile,
+                    (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
                 );
                 do_dump(
                     (*gu).unicode_seq,
                     ::core::mem::size_of::<::core::ffi::c_char>() as ::core::ffi::c_int,
                     x_0,
-                    fmtfile as gzFile,
+                    (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
                 );
             } else {
                 x_0 = 0 as ::core::ffi::c_int as integer;
@@ -962,25 +1011,35 @@ pub unsafe fn dumptounicode() {
                     &raw mut x_0 as *mut ::core::ffi::c_char,
                     ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                     1 as ::core::ffi::c_int,
-                    fmtfile as gzFile,
+                    (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
                 );
             }
         }
     }
 }
 pub unsafe fn undumptounicode() {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_tounicode: *mut crate::generated::backend::tounicode::State = unsafe { crate::generated::backend::tounicode::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut tmp: *mut glyph_unicode_entry = ::core::ptr::null_mut::<glyph_unicode_entry>();
     let mut remaining: integer = 0;
     do_undump(
         &raw mut remaining as *mut ::core::ffi::c_char,
         ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
         1 as ::core::ffi::c_int,
-        fmtfile as gzFile,
+        (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
     );
     if remaining == 0 as ::core::ffi::c_int {
         return;
     }
-    if !glyph_unicode_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if !(*__tekai_state_generated_backend_tounicode)
+        .glyph_unicode_tree
+        .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"undumptounicode\0" as *const u8 as *const ::core::ffi::c_char,
             b"tounicode.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -989,7 +1048,7 @@ pub unsafe fn undumptounicode() {
         );
     } else {
     };
-    glyph_unicode_tree = avl_create(
+    (*__tekai_state_generated_backend_tounicode).glyph_unicode_tree = avl_create(
         Some(
             comp_glyph_unicode_entry
                 as unsafe fn(
@@ -999,9 +1058,13 @@ pub unsafe fn undumptounicode() {
                 ) -> ::core::ffi::c_int,
         ),
         NULL,
-        &raw mut avl_xallocator,
+        &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
     );
-    if glyph_unicode_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+    if (*__tekai_state_generated_backend_tounicode)
+        .glyph_unicode_tree
+        .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+        != 0
+    {
         __assert_rtn(
             b"undumptounicode\0" as *const u8 as *const ::core::ffi::c_char,
             b"tounicode.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1025,7 +1088,7 @@ pub unsafe fn undumptounicode() {
             &raw mut x as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         if x > 0 as ::core::ffi::c_int {
             a = xmalloc(x as size_t) as *mut ::core::ffi::c_char;
@@ -1033,7 +1096,7 @@ pub unsafe fn undumptounicode() {
                 a,
                 ::core::mem::size_of::<::core::ffi::c_char>() as ::core::ffi::c_int,
                 x,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
             (*gu).name = a;
         } else {
@@ -1049,7 +1112,7 @@ pub unsafe fn undumptounicode() {
             &raw mut (*gu).code as *mut ::core::ffi::c_char,
             ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
             1 as ::core::ffi::c_int,
-            fmtfile as gzFile,
+            (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
         );
         if (*gu).code == UNI_STRING {
             let mut x_0: integer = 0;
@@ -1058,7 +1121,7 @@ pub unsafe fn undumptounicode() {
                 &raw mut x_0 as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<integer>() as ::core::ffi::c_int,
                 1 as ::core::ffi::c_int,
-                fmtfile as gzFile,
+                (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
             );
             if x_0 > 0 as ::core::ffi::c_int {
                 a_0 = xmalloc(x_0 as size_t) as *mut ::core::ffi::c_char;
@@ -1066,7 +1129,7 @@ pub unsafe fn undumptounicode() {
                     a_0,
                     ::core::mem::size_of::<::core::ffi::c_char>() as ::core::ffi::c_int,
                     x_0,
-                    fmtfile as gzFile,
+                    (*__tekai_state_generated_pdftexextra).fmtfile as gzFile,
                 );
                 (*gu).unicode_seq = a_0;
             } else {
@@ -1080,7 +1143,10 @@ pub unsafe fn undumptounicode() {
                 );
             }
         }
-        result = avl_probe(glyph_unicode_tree, gu as *mut ::core::ffi::c_void);
+        result = avl_probe(
+            (*__tekai_state_generated_backend_tounicode).glyph_unicode_tree,
+            gu as *mut ::core::ffi::c_void,
+        );
         if !(*result == gu as *mut ::core::ffi::c_void) as ::core::ffi::c_int as ::core::ffi::c_long
             != 0
         {
@@ -1095,3 +1161,108 @@ pub unsafe fn undumptounicode() {
     }
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+pub(crate) struct State {
+    glyph_unicode_tree: *mut avl_table,
+    local_utf16be_str_326_buf: [::core::ffi::c_char; 256],
+    local_write_tounicode_603_builtin_suffix: [::core::ffi::c_char; 8],
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 3],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[2] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).local_write_tounicode_603_builtin_suffix
+                ));
+            }
+            if self.initialized[1] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).local_utf16be_str_326_buf
+                ));
+            }
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).glyph_unicode_tree
+                ));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 3],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).glyph_unicode_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[0] = true;
+        const {
+            assert!((256) == (256));
+            assert!(core::mem::size_of::<::core::ffi::c_char>() <= 16 * 1024);
+        }
+        __tekai_require_copy::<::core::ffi::c_char>();
+        {
+            let __tekai_repeat_0: ::core::ffi::c_char = 0;
+            for __tekai_index_0 in 0..(256) {
+                core::ptr::addr_of_mut!((*destination).local_utf16be_str_326_buf[__tekai_index_0])
+                    .write(__tekai_repeat_0);
+            }
+        }
+        self.initialized[1] = true;
+        const {
+            assert!(core::mem::size_of::<[::core::ffi::c_char; 8]>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_tounicode_603_builtin_suffix).write(
+            unsafe { ::core::mem::transmute::<[u8; 8], [::core::ffi::c_char; 8]>(*b"builtin\0") },
+        );
+        self.initialized[2] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_tounicode
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
+}

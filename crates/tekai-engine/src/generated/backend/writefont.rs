@@ -13,8 +13,8 @@ pub use crate::generated::pdftex0::{
 pub use crate::utils::{fb_flush, pdf_puts};
 
 pub use crate::generated::backend::avl::{
-    avl_comparison_func, avl_create, avl_find, avl_node, avl_probe, avl_t_first, avl_t_init,
-    avl_t_next, avl_table, avl_traverser, libavl_allocator,
+    avl_create, avl_find, avl_node, avl_probe, avl_t_first, avl_t_init, avl_t_next, avl_table,
+    avl_traverser,
 };
 
 use crate::byte_string::strcmp;
@@ -23,22 +23,6 @@ use crate::openclose::{xmalloc, xstrdup};
 
 use crate::termination::__assert_rtn;
 
-extern "C" {
-    static mut fontbc: *mut eightbits;
-    static mut fontec: *mut eightbits;
-    static mut fixedgentounicode: integer;
-    static mut pdffontattr: *mut strnumber;
-    static mut pdffontnobuiltintounicode: *mut boolean;
-    static mut pdfcharused: *mut charusedarray;
-    static mut pdffontsize: *mut scaled;
-    static mut pdffontmap: *mut fmentryptr;
-    static mut avl_xallocator: libavl_allocator;
-    static mut t1_length1: integer;
-    static mut t1_length3: integer;
-    static mut t1_length2: integer;
-    static mut ttf_length: integer;
-    static mut notdef: [::core::ffi::c_char; 0];
-}
 pub type __darwin_size_t = usize;
 pub type size_t = __darwin_size_t;
 pub type boolean = ::core::ffi::c_int;
@@ -90,78 +74,7 @@ pub const F_PK: ::core::ffi::c_int = 0x80 as ::core::ffi::c_int;
 pub const FD_FLAGS_NOT_SET_IN_MAPLINE: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 pub const FD_FLAGS_DEFAULT_EMBED: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
 pub const FD_FLAGS_DEFAULT_NON_EMBED: ::core::ffi::c_int = 0x22 as ::core::ffi::c_int;
-static mut font_key: [key_entry; 11] = [
-    key_entry {
-        pdfname: b"Ascent\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"Ascender\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0.,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"CapHeight\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"CapHeight\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0.,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"Descent\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"Descender\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0.,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"ItalicAngle\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"ItalicAngle\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0.,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"StemV\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"StdVW\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0.,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"XHeight\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"XHeight\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0.,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"FontBBox\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"FontBBox\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0.,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0 as ::core::ffi::c_int as ::core::ffi::c_float,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0 as ::core::ffi::c_int as ::core::ffi::c_float,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0 as ::core::ffi::c_int as ::core::ffi::c_float,
-        valid: 0,
-    },
-    key_entry {
-        pdfname: b"FontName\0" as *const u8 as *const ::core::ffi::c_char,
-        t1name: b"FontName\0" as *const u8 as *const ::core::ffi::c_char,
-        value: 0.,
-        valid: 0,
-    },
-];
-#[no_mangle]
-pub static mut fo_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
-#[no_mangle]
-pub static mut fd_tree: *mut avl_table = ::core::ptr::null::<avl_table>() as *mut avl_table;
+
 unsafe fn comp_fo_entry(
     mut pa: *const ::core::ffi::c_void,
     mut pb: *const ::core::ffi::c_void,
@@ -263,27 +176,38 @@ unsafe fn new_cw_entry() -> *mut cw_entry {
     return cw;
 }
 unsafe fn preset_fontmetrics(mut fd: *mut fd_entry, mut f: internalfontnumber) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     (*fd).font_dim[ITALIC_ANGLE_CODE as usize].val = zdividescaled(
         (-libm::atan(zgetslant(f) as ::core::ffi::c_double / 65536.0f64)
             * (180 as ::core::ffi::c_int as ::core::ffi::c_double
                 / 3.14159265358979323846264338327950288f64)) as scaled,
-        *pdffontsize.offset(f as isize),
+        *(*__tekai_state_generated_pdftexextra)
+            .pdffontsize
+            .offset(f as isize),
         3 as ::core::ffi::c_int,
     ) as ::core::ffi::c_int;
     (*fd).font_dim[ASCENT_CODE as usize].val = zdividescaled(
         zgetcharheight(f, 'h' as i32 as eightbits),
-        *pdffontsize.offset(f as isize),
+        *(*__tekai_state_generated_pdftexextra)
+            .pdffontsize
+            .offset(f as isize),
         3 as ::core::ffi::c_int,
     ) as ::core::ffi::c_int;
     (*fd).font_dim[CAPHEIGHT_CODE as usize].val = zdividescaled(
         zgetcharheight(f, 'H' as i32 as eightbits),
-        *pdffontsize.offset(f as isize),
+        *(*__tekai_state_generated_pdftexextra)
+            .pdffontsize
+            .offset(f as isize),
         3 as ::core::ffi::c_int,
     ) as ::core::ffi::c_int;
     i = -zdividescaled(
         zgetchardepth(f, 'y' as i32 as eightbits),
-        *pdffontsize.offset(f as isize),
+        *(*__tekai_state_generated_pdftexextra)
+            .pdffontsize
+            .offset(f as isize),
         3 as ::core::ffi::c_int,
     ) as ::core::ffi::c_int;
     (*fd).font_dim[DESCENT_CODE as usize].val = if i < 0 as ::core::ffi::c_int {
@@ -293,19 +217,25 @@ unsafe fn preset_fontmetrics(mut fd: *mut fd_entry, mut f: internalfontnumber) {
     };
     (*fd).font_dim[STEMV_CODE as usize].val = zdividescaled(
         zgetcharwidth(f, '.' as i32 as eightbits) as ::core::ffi::c_int / 3 as ::core::ffi::c_int,
-        *pdffontsize.offset(f as isize),
+        *(*__tekai_state_generated_pdftexextra)
+            .pdffontsize
+            .offset(f as isize),
         3 as ::core::ffi::c_int,
     ) as ::core::ffi::c_int;
     (*fd).font_dim[XHEIGHT_CODE as usize].val = zdividescaled(
         zgetxheight(f),
-        *pdffontsize.offset(f as isize),
+        *(*__tekai_state_generated_pdftexextra)
+            .pdffontsize
+            .offset(f as isize),
         3 as ::core::ffi::c_int,
     ) as ::core::ffi::c_int;
     (*fd).font_dim[FONTBBOX1_CODE as usize].val = 0 as ::core::ffi::c_int;
     (*fd).font_dim[FONTBBOX2_CODE as usize].val = (*fd).font_dim[DESCENT_CODE as usize].val;
     (*fd).font_dim[FONTBBOX3_CODE as usize].val = zdividescaled(
         zgetquad(f),
-        *pdffontsize.offset(f as isize),
+        *(*__tekai_state_generated_pdftexextra)
+            .pdffontsize
+            .offset(f as isize),
         3 as ::core::ffi::c_int,
     ) as ::core::ffi::c_int;
     (*fd).font_dim[FONTBBOX4_CODE as usize].val =
@@ -347,6 +277,8 @@ unsafe fn fix_fontmetrics(mut fd: *mut fd_entry) {
     }
 }
 unsafe fn write_fontmetrics(mut fd: *mut fd_entry) {
+    let __tekai_state_generated_backend_writefont: *mut crate::generated::backend::writefont::State = unsafe { crate::generated::backend::writefont::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     fix_fontmetrics(fd);
     if (*fd).font_dim[FONTBBOX1_CODE as usize].set != 0
@@ -357,7 +289,10 @@ unsafe fn write_fontmetrics(mut fd: *mut fd_entry) {
         crate::utils::pdf_printf_args(
             b"/%s [%i %i %i %i]\n\0" as *const u8 as *const ::core::ffi::c_char,
             &[
-                crate::utils::PrintfArg::from(font_key[FONTBBOX1_CODE as usize].pdfname),
+                crate::utils::PrintfArg::from(
+                    (*__tekai_state_generated_backend_writefont).font_key[FONTBBOX1_CODE as usize]
+                        .pdfname,
+                ),
                 crate::utils::PrintfArg::from((*fd).font_dim[FONTBBOX1_CODE as usize].val),
                 crate::utils::PrintfArg::from((*fd).font_dim[FONTBBOX2_CODE as usize].val),
                 crate::utils::PrintfArg::from((*fd).font_dim[FONTBBOX3_CODE as usize].val),
@@ -371,7 +306,9 @@ unsafe fn write_fontmetrics(mut fd: *mut fd_entry) {
             crate::utils::pdf_printf_args(
                 b"/%s %i\n\0" as *const u8 as *const ::core::ffi::c_char,
                 &[
-                    crate::utils::PrintfArg::from(font_key[i as usize].pdfname),
+                    crate::utils::PrintfArg::from(
+                        (*__tekai_state_generated_backend_writefont).font_key[i as usize].pdfname,
+                    ),
                     crate::utils::PrintfArg::from((*fd).font_dim[i as usize].val),
                 ],
             );
@@ -437,6 +374,10 @@ pub unsafe fn lookup_fd_entry(
     mut slant: integer,
     mut extend: integer,
 ) -> *mut fd_entry {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_writefont: *mut crate::generated::backend::writefont::State = unsafe { crate::generated::backend::writefont::state() };
+
     let mut fd: fd_entry = fd_entry_ {
         fd_objnum: 0,
         fontname: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -482,8 +423,11 @@ pub unsafe fn lookup_fd_entry(
     fm.slant = slant;
     fm.extend = extend;
     fd.fm = &raw mut fm;
-    if fd_tree.is_null() {
-        fd_tree = avl_create(
+    if (*__tekai_state_generated_backend_writefont)
+        .fd_tree
+        .is_null()
+    {
+        (*__tekai_state_generated_backend_writefont).fd_tree = avl_create(
             Some(
                 comp_fd_entry
                     as unsafe fn(
@@ -493,9 +437,13 @@ pub unsafe fn lookup_fd_entry(
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if fd_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+        if (*__tekai_state_generated_backend_writefont)
+            .fd_tree
+            .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+            != 0
+        {
             __assert_rtn(
                 b"lookup_fd_entry\0" as *const u8 as *const ::core::ffi::c_char,
                 b"writefont.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -505,7 +453,10 @@ pub unsafe fn lookup_fd_entry(
         } else {
         };
     }
-    return avl_find(fd_tree, &raw mut fd as *const ::core::ffi::c_void) as *mut fd_entry;
+    return avl_find(
+        (*__tekai_state_generated_backend_writefont).fd_tree,
+        &raw mut fd as *const ::core::ffi::c_void,
+    ) as *mut fd_entry;
 }
 unsafe fn lookup_fontdescriptor(mut fo: *mut fo_entry) -> *mut fd_entry {
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
@@ -538,9 +489,16 @@ unsafe fn lookup_fontdescriptor(mut fo: *mut fo_entry) -> *mut fd_entry {
     return lookup_fd_entry((*(*fo).fm).ff_name, (*(*fo).fm).slant, (*(*fo).fm).extend);
 }
 pub unsafe fn register_fd_entry(mut fd: *mut fd_entry) {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_writefont: *mut crate::generated::backend::writefont::State = unsafe { crate::generated::backend::writefont::state() };
+
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    if fd_tree.is_null() {
-        fd_tree = avl_create(
+    if (*__tekai_state_generated_backend_writefont)
+        .fd_tree
+        .is_null()
+    {
+        (*__tekai_state_generated_backend_writefont).fd_tree = avl_create(
             Some(
                 comp_fd_entry
                     as unsafe fn(
@@ -550,9 +508,13 @@ pub unsafe fn register_fd_entry(mut fd: *mut fd_entry) {
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if fd_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+        if (*__tekai_state_generated_backend_writefont)
+            .fd_tree
+            .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+            != 0
+        {
             __assert_rtn(
                 b"register_fd_entry\0" as *const u8 as *const ::core::ffi::c_char,
                 b"writefont.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -588,7 +550,10 @@ pub unsafe fn register_fd_entry(mut fd: *mut fd_entry) {
         );
     } else {
     };
-    aa = avl_probe(fd_tree, fd as *mut ::core::ffi::c_void);
+    aa = avl_probe(
+        (*__tekai_state_generated_backend_writefont).fd_tree,
+        fd as *mut ::core::ffi::c_void,
+    );
     if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"register_fd_entry\0" as *const u8 as *const ::core::ffi::c_char,
@@ -600,6 +565,9 @@ pub unsafe fn register_fd_entry(mut fd: *mut fd_entry) {
     };
 }
 unsafe fn create_fontdescriptor(mut fo: *mut fo_entry, mut f: internalfontnumber) {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"create_fontdescriptor\0" as *const u8 as *const ::core::ffi::c_char,
@@ -642,7 +610,7 @@ unsafe fn create_fontdescriptor(mut fo: *mut fo_entry, mut f: internalfontnumber
                 ) -> ::core::ffi::c_int,
         ),
         NULL,
-        &raw mut avl_xallocator,
+        &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
     );
     if (*(*fo).fd).gl_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -655,6 +623,11 @@ unsafe fn create_fontdescriptor(mut fo: *mut fo_entry, mut f: internalfontnumber
     };
 }
 unsafe fn mark_reenc_glyphs(mut fo: *mut fo_entry, mut f: internalfontnumber) {
+    let __tekai_state_generated_backend_writettf: *mut crate::generated::backend::writettf::State =
+        unsafe { crate::generated::backend::writettf::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     let mut g: *mut *mut ::core::ffi::c_char = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
@@ -683,11 +656,15 @@ unsafe fn mark_reenc_glyphs(mut fo: *mut fo_entry, mut f: internalfontnumber) {
         g = (*(*fo).fe).glyph_names;
         i = (*fo).first_char as ::core::ffi::c_int;
         while i <= (*fo).last_char {
-            if (*pdfcharused.offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
+            if (*(*__tekai_state_generated_pdftexextra)
+                .pdfcharused
+                .offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
                 as ::core::ffi::c_int
                 & (1 as ::core::ffi::c_int) << i % 8 as ::core::ffi::c_int
                 != 0
-                && *g.offset(i as isize) != &raw mut notdef as *mut ::core::ffi::c_char
+                && *g.offset(i as isize)
+                    != &raw mut (*__tekai_state_generated_backend_writettf).notdef
+                        as *mut ::core::ffi::c_char
                 && (avl_find(
                     (*(*fo).fd).gl_tree,
                     *g.offset(i as isize) as *const ::core::ffi::c_void,
@@ -717,6 +694,11 @@ unsafe fn mark_chars(
     mut tx_tree: *mut avl_table,
     mut f: internalfontnumber,
 ) -> *mut avl_table {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     let mut j: *mut ::core::ffi::c_int = ::core::ptr::null_mut::<::core::ffi::c_int>();
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
@@ -731,7 +713,7 @@ unsafe fn mark_chars(
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
         if tx_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
             __assert_rtn(
@@ -745,7 +727,9 @@ unsafe fn mark_chars(
     }
     i = (*fo).first_char as ::core::ffi::c_int;
     while i <= (*fo).last_char {
-        if (*pdfcharused.offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
+        if (*(*__tekai_state_generated_pdftexextra)
+            .pdfcharused
+            .offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
             as ::core::ffi::c_int
             & (1 as ::core::ffi::c_int) << i % 8 as ::core::ffi::c_int
             != 0
@@ -773,6 +757,9 @@ unsafe fn mark_chars(
     return tx_tree;
 }
 unsafe fn get_char_range(mut fo: *mut fo_entry, mut f: internalfontnumber) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -783,9 +770,17 @@ unsafe fn get_char_range(mut fo: *mut fo_entry, mut f: internalfontnumber) {
         );
     } else {
     };
-    i = *fontbc.offset(f as isize) as ::core::ffi::c_int;
-    while i <= *fontec.offset(f as isize) as ::core::ffi::c_int {
-        if (*pdfcharused.offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
+    i = *(*__tekai_state_generated_pdftexextra)
+        .fontbc
+        .offset(f as isize) as ::core::ffi::c_int;
+    while i
+        <= *(*__tekai_state_generated_pdftexextra)
+            .fontec
+            .offset(f as isize) as ::core::ffi::c_int
+    {
+        if (*(*__tekai_state_generated_pdftexextra)
+            .pdfcharused
+            .offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
             as ::core::ffi::c_int
             & (1 as ::core::ffi::c_int) << i % 8 as ::core::ffi::c_int
             != 0
@@ -795,9 +790,17 @@ unsafe fn get_char_range(mut fo: *mut fo_entry, mut f: internalfontnumber) {
         i += 1;
     }
     (*fo).first_char = i as integer;
-    i = *fontec.offset(f as isize) as ::core::ffi::c_int;
-    while i >= *fontbc.offset(f as isize) as ::core::ffi::c_int {
-        if (*pdfcharused.offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
+    i = *(*__tekai_state_generated_pdftexextra)
+        .fontec
+        .offset(f as isize) as ::core::ffi::c_int;
+    while i
+        >= *(*__tekai_state_generated_pdftexextra)
+            .fontbc
+            .offset(f as isize) as ::core::ffi::c_int
+    {
+        if (*(*__tekai_state_generated_pdftexextra)
+            .pdfcharused
+            .offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
             as ::core::ffi::c_int
             & (1 as ::core::ffi::c_int) << i % 8 as ::core::ffi::c_int
             != 0
@@ -808,7 +811,9 @@ unsafe fn get_char_range(mut fo: *mut fo_entry, mut f: internalfontnumber) {
     }
     (*fo).last_char = i as integer;
     if (*fo).first_char > (*fo).last_char
-        || (*pdfcharused.offset(f as isize))
+        || (*(*__tekai_state_generated_pdftexextra)
+            .pdfcharused
+            .offset(f as isize))
             [((*fo).first_char as ::core::ffi::c_int / 8 as ::core::ffi::c_int) as usize]
             as ::core::ffi::c_int
             & (1 as ::core::ffi::c_int)
@@ -821,6 +826,9 @@ unsafe fn get_char_range(mut fo: *mut fo_entry, mut f: internalfontnumber) {
     }
 }
 unsafe fn create_charwidth_array(mut fo: *mut fo_entry, mut f: internalfontnumber) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
@@ -853,7 +861,9 @@ unsafe fn create_charwidth_array(mut fo: *mut fo_entry, mut f: internalfontnumbe
     while i <= (*fo).last_char {
         *(*(*fo).cw).width.offset(i as isize) = zdividescaled(
             zgetcharwidth(f, i as eightbits),
-            *pdffontsize.offset(f as isize),
+            *(*__tekai_state_generated_pdftexextra)
+                .pdffontsize
+                .offset(f as isize),
             4 as ::core::ffi::c_int,
         ) as integer;
         i += 1;
@@ -915,6 +925,10 @@ unsafe fn write_charwidth_array(mut fo: *mut fo_entry) {
     pdfendobj();
 }
 unsafe fn lookup_fo_entry(mut s: *mut ::core::ffi::c_char) -> *mut fo_entry {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_writefont: *mut crate::generated::backend::writefont::State = unsafe { crate::generated::backend::writefont::state() };
+
     let mut fo: fo_entry = fo_entry_ {
         fo_objnum: 0,
         tex_font: 0,
@@ -953,8 +967,11 @@ unsafe fn lookup_fo_entry(mut s: *mut ::core::ffi::c_char) -> *mut fo_entry {
     };
     fm.tfm_name = s;
     fo.fm = &raw mut fm;
-    if fo_tree.is_null() {
-        fo_tree = avl_create(
+    if (*__tekai_state_generated_backend_writefont)
+        .fo_tree
+        .is_null()
+    {
+        (*__tekai_state_generated_backend_writefont).fo_tree = avl_create(
             Some(
                 comp_fo_entry
                     as unsafe fn(
@@ -964,9 +981,13 @@ unsafe fn lookup_fo_entry(mut s: *mut ::core::ffi::c_char) -> *mut fo_entry {
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if fo_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+        if (*__tekai_state_generated_backend_writefont)
+            .fo_tree
+            .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+            != 0
+        {
             __assert_rtn(
                 b"lookup_fo_entry\0" as *const u8 as *const ::core::ffi::c_char,
                 b"writefont.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -976,12 +997,22 @@ unsafe fn lookup_fo_entry(mut s: *mut ::core::ffi::c_char) -> *mut fo_entry {
         } else {
         };
     }
-    return avl_find(fo_tree, &raw mut fo as *const ::core::ffi::c_void) as *mut fo_entry;
+    return avl_find(
+        (*__tekai_state_generated_backend_writefont).fo_tree,
+        &raw mut fo as *const ::core::ffi::c_void,
+    ) as *mut fo_entry;
 }
 unsafe fn register_fo_entry(mut fo: *mut fo_entry) {
+    let __tekai_state_generated_backend_avlstuff: *mut crate::generated::backend::avlstuff::State =
+        unsafe { crate::generated::backend::avlstuff::state() };
+    let __tekai_state_generated_backend_writefont: *mut crate::generated::backend::writefont::State = unsafe { crate::generated::backend::writefont::state() };
+
     let mut aa: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    if fo_tree.is_null() {
-        fo_tree = avl_create(
+    if (*__tekai_state_generated_backend_writefont)
+        .fo_tree
+        .is_null()
+    {
+        (*__tekai_state_generated_backend_writefont).fo_tree = avl_create(
             Some(
                 comp_fo_entry
                     as unsafe fn(
@@ -991,9 +1022,13 @@ unsafe fn register_fo_entry(mut fo: *mut fo_entry) {
                     ) -> ::core::ffi::c_int,
             ),
             NULL,
-            &raw mut avl_xallocator,
+            &raw mut (*__tekai_state_generated_backend_avlstuff).avl_xallocator,
         );
-        if fo_tree.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
+        if (*__tekai_state_generated_backend_writefont)
+            .fo_tree
+            .is_null() as ::core::ffi::c_int as ::core::ffi::c_long
+            != 0
+        {
             __assert_rtn(
                 b"register_fo_entry\0" as *const u8 as *const ::core::ffi::c_char,
                 b"writefont.c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1042,7 +1077,10 @@ unsafe fn register_fo_entry(mut fo: *mut fo_entry) {
         );
     } else {
     };
-    aa = avl_probe(fo_tree, fo as *mut ::core::ffi::c_void);
+    aa = avl_probe(
+        (*__tekai_state_generated_backend_writefont).fo_tree,
+        fo as *mut ::core::ffi::c_void,
+    );
     if aa.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"register_fo_entry\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1054,6 +1092,11 @@ unsafe fn register_fo_entry(mut fo: *mut fo_entry) {
     };
 }
 unsafe fn write_fontfile(mut fd: *mut fd_entry) {
+    let __tekai_state_generated_backend_writet1: *mut crate::generated::backend::writet1::State =
+        unsafe { crate::generated::backend::writet1::state() };
+    let __tekai_state_generated_backend_writettf: *mut crate::generated::backend::writettf::State =
+        unsafe { crate::generated::backend::writettf::state() };
+
     if !((*(*fd).fm).type_0 as ::core::ffi::c_int & 0x1 as ::core::ffi::c_int
         != 0 as ::core::ffi::c_int) as ::core::ffi::c_int as ::core::ffi::c_long
         != 0
@@ -1103,15 +1146,23 @@ unsafe fn write_fontfile(mut fd: *mut fd_entry) {
         crate::utils::pdf_printf_args(
             b"/Length1 %i\n/Length2 %i\n/Length3 %i\n\0" as *const u8 as *const ::core::ffi::c_char,
             &[
-                crate::utils::PrintfArg::from(t1_length1),
-                crate::utils::PrintfArg::from(t1_length2),
-                crate::utils::PrintfArg::from(t1_length3),
+                crate::utils::PrintfArg::from(
+                    (*__tekai_state_generated_backend_writet1).t1_length1,
+                ),
+                crate::utils::PrintfArg::from(
+                    (*__tekai_state_generated_backend_writet1).t1_length2,
+                ),
+                crate::utils::PrintfArg::from(
+                    (*__tekai_state_generated_backend_writet1).t1_length3,
+                ),
             ],
         );
     } else if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_TRUETYPE != 0 as ::core::ffi::c_int {
         crate::utils::pdf_printf_args(
             b"/Length1 %i\n\0" as *const u8 as *const ::core::ffi::c_char,
-            &[crate::utils::PrintfArg::from(ttf_length)],
+            &[crate::utils::PrintfArg::from(
+                (*__tekai_state_generated_backend_writettf).ttf_length,
+            )],
         );
     } else if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_OTF != 0 as ::core::ffi::c_int {
         pdf_puts(b"/Subtype /Type1C\n\0" as *const u8 as *const ::core::ffi::c_char);
@@ -1131,45 +1182,8 @@ unsafe fn write_fontfile(mut fd: *mut fd_entry) {
     pdfendstream();
 }
 unsafe fn write_fontdescriptor(mut fd: *mut fd_entry) {
-    static mut std_flags: [::core::ffi::c_int; 14] = [
-        1 as ::core::ffi::c_int
-            + 2 as ::core::ffi::c_int
-            + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int),
-        1 as ::core::ffi::c_int
-            + 2 as ::core::ffi::c_int
-            + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
-        1 as ::core::ffi::c_int
-            + 2 as ::core::ffi::c_int
-            + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int),
-        1 as ::core::ffi::c_int
-            + 2 as ::core::ffi::c_int
-            + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
-        (1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int,
-        ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
-        ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int),
-        ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
-        4 as ::core::ffi::c_int,
-        2 as ::core::ffi::c_int + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int),
-        2 as ::core::ffi::c_int
-            + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
-        2 as ::core::ffi::c_int
-            + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int),
-        2 as ::core::ffi::c_int
-            + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int)
-            + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
-        4 as ::core::ffi::c_int,
-    ];
+    let __tekai_state_generated_backend_writefont: *mut crate::generated::backend::writefont::State = unsafe { crate::generated::backend::writefont::state() };
+
     let mut glyph: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
@@ -1205,12 +1219,14 @@ unsafe fn write_fontdescriptor(mut fd: *mut fd_entry) {
     } else if (*fd).ff_found != 0 {
         fd_flags = FD_FLAGS_DEFAULT_EMBED;
     } else {
-        fd_flags =
-            if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_STDT1FONT != 0 as ::core::ffi::c_int {
-                std_flags[check_std_t1font((*(*fd).fm).ps_name) as usize]
-            } else {
-                FD_FLAGS_DEFAULT_NON_EMBED
-            };
+        fd_flags = if (*(*fd).fm).type_0 as ::core::ffi::c_int & F_STDT1FONT
+            != 0 as ::core::ffi::c_int
+        {
+            (*__tekai_state_generated_backend_writefont).local_write_fontdescriptor_1134_std_flags
+                [check_std_t1font((*(*fd).fm).ps_name) as usize]
+        } else {
+            FD_FLAGS_DEFAULT_NON_EMBED
+        };
         crate::utils::pdftex_warn_args(b"No flags specified for non-embedded font `%s' (%s) (I'm using %i): fix your map entry.\0"
                 as *const u8 as *const ::core::ffi::c_char, &[crate::utils::PrintfArg::from(if !(*(*fd).fm).ps_name.is_null() {
                 (*(*fd).fm).ps_name as *const ::core::ffi::c_char
@@ -1279,6 +1295,8 @@ unsafe fn write_fontdescriptor(mut fd: *mut fd_entry) {
     pdfenddict();
 }
 unsafe fn write_fontdescriptors() {
+    let __tekai_state_generated_backend_writefont: *mut crate::generated::backend::writefont::State = unsafe { crate::generated::backend::writefont::state() };
+
     let mut fd: *mut fd_entry = ::core::ptr::null_mut::<fd_entry>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
@@ -1287,17 +1305,29 @@ unsafe fn write_fontdescriptors() {
         avl_height: 0,
         avl_generation: 0,
     };
-    if fd_tree.is_null() {
+    if (*__tekai_state_generated_backend_writefont)
+        .fd_tree
+        .is_null()
+    {
         return;
     }
-    avl_t_init(&raw mut t, fd_tree);
-    fd = avl_t_first(&raw mut t, fd_tree) as *mut fd_entry;
+    avl_t_init(
+        &raw mut t,
+        (*__tekai_state_generated_backend_writefont).fd_tree,
+    );
+    fd = avl_t_first(
+        &raw mut t,
+        (*__tekai_state_generated_backend_writefont).fd_tree,
+    ) as *mut fd_entry;
     while !fd.is_null() {
         write_fontdescriptor(fd);
         fd = avl_t_next(&raw mut t) as *mut fd_entry;
     }
 }
 unsafe fn write_fontdictionary(mut fo: *mut fo_entry) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     if fo.is_null() as ::core::ffi::c_int as ::core::ffi::c_long != 0 {
         __assert_rtn(
             b"write_fontdictionary\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1338,9 +1368,12 @@ unsafe fn write_fontdictionary(mut fo: *mut fo_entry) {
         );
     } else {
     };
-    if fixedgentounicode > 0 as ::core::ffi::c_int
+    if (*__tekai_state_generated_pdftexextra).fixedgentounicode > 0 as ::core::ffi::c_int
         && !(*fo).fd.is_null()
-        && *pdffontnobuiltintounicode.offset((*fo).tex_font as isize) == 0
+        && *(*__tekai_state_generated_pdftexextra)
+            .pdffontnobuiltintounicode
+            .offset((*fo).tex_font as isize)
+            == 0
         || (!(*fo).fd.is_null()
             && !(*(*fo).fm).tfm_name.is_null()
             && strcmp(
@@ -1459,13 +1492,23 @@ unsafe fn write_fontdictionary(mut fo: *mut fo_entry) {
             &[crate::utils::PrintfArg::from((*fo).tounicode_objnum)],
         );
     }
-    if *pdffontattr.offset((*fo).tex_font as isize) != getnullstr() {
-        zpdfprint(*pdffontattr.offset((*fo).tex_font as isize));
+    if *(*__tekai_state_generated_pdftexextra)
+        .pdffontattr
+        .offset((*fo).tex_font as isize)
+        != getnullstr()
+    {
+        zpdfprint(
+            *(*__tekai_state_generated_pdftexextra)
+                .pdffontattr
+                .offset((*fo).tex_font as isize),
+        );
         pdf_puts(b"\n\0" as *const u8 as *const ::core::ffi::c_char);
     }
     pdfenddict();
 }
 unsafe fn write_fontdictionaries() {
+    let __tekai_state_generated_backend_writefont: *mut crate::generated::backend::writefont::State = unsafe { crate::generated::backend::writefont::state() };
+
     let mut fo: *mut fo_entry = ::core::ptr::null_mut::<fo_entry>();
     let mut t: avl_traverser = avl_traverser {
         avl_table: ::core::ptr::null_mut::<avl_table>(),
@@ -1474,11 +1517,20 @@ unsafe fn write_fontdictionaries() {
         avl_height: 0,
         avl_generation: 0,
     };
-    if fo_tree.is_null() {
+    if (*__tekai_state_generated_backend_writefont)
+        .fo_tree
+        .is_null()
+    {
         return;
     }
-    avl_t_init(&raw mut t, fo_tree);
-    fo = avl_t_first(&raw mut t, fo_tree) as *mut fo_entry;
+    avl_t_init(
+        &raw mut t,
+        (*__tekai_state_generated_backend_writefont).fo_tree,
+    );
+    fo = avl_t_first(
+        &raw mut t,
+        (*__tekai_state_generated_backend_writefont).fo_tree,
+    ) as *mut fo_entry;
     while !fo.is_null() {
         write_fontdictionary(fo);
         fo = avl_t_next(&raw mut t) as *mut fo_entry;
@@ -1574,11 +1626,22 @@ unsafe fn create_fontdictionary(
     };
 }
 unsafe fn font_is_used(mut f: internalfontnumber) -> ::core::ffi::c_int {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut i: ::core::ffi::c_int = 0;
     let mut s: ::core::ffi::c_int = 0;
-    i = *fontbc.offset(f as isize) as ::core::ffi::c_int;
-    while i <= *fontec.offset(f as isize) as ::core::ffi::c_int {
-        if (*pdfcharused.offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
+    i = *(*__tekai_state_generated_pdftexextra)
+        .fontbc
+        .offset(f as isize) as ::core::ffi::c_int;
+    while i
+        <= *(*__tekai_state_generated_pdftexextra)
+            .fontec
+            .offset(f as isize) as ::core::ffi::c_int
+    {
+        if (*(*__tekai_state_generated_pdftexextra)
+            .pdfcharused
+            .offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
             as ::core::ffi::c_int
             & (1 as ::core::ffi::c_int) << i % 8 as ::core::ffi::c_int
             != 0
@@ -1588,9 +1651,17 @@ unsafe fn font_is_used(mut f: internalfontnumber) -> ::core::ffi::c_int {
         i += 1;
     }
     s = i;
-    i = *fontec.offset(f as isize) as ::core::ffi::c_int;
-    while i >= *fontbc.offset(f as isize) as ::core::ffi::c_int {
-        if (*pdfcharused.offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
+    i = *(*__tekai_state_generated_pdftexextra)
+        .fontec
+        .offset(f as isize) as ::core::ffi::c_int;
+    while i
+        >= *(*__tekai_state_generated_pdftexextra)
+            .fontbc
+            .offset(f as isize) as ::core::ffi::c_int
+    {
+        if (*(*__tekai_state_generated_pdftexextra)
+            .pdfcharused
+            .offset(f as isize))[(i / 8 as ::core::ffi::c_int) as usize]
             as ::core::ffi::c_int
             & (1 as ::core::ffi::c_int) << i % 8 as ::core::ffi::c_int
             != 0
@@ -1606,12 +1677,17 @@ unsafe fn font_is_used(mut f: internalfontnumber) -> ::core::ffi::c_int {
     };
 }
 pub unsafe fn dopdffont(mut font_objnum: integer, mut f: internalfontnumber) {
+    let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
+        unsafe { crate::generated::pdftexextra::state() };
+
     let mut fm: *mut fm_entry = ::core::ptr::null_mut::<fm_entry>();
     if font_is_used(f) == 0 {
         return;
     }
     fm = if hasfmentry(f) != 0 {
-        *pdffontmap.offset(f as isize) as *mut fm_entry
+        *(*__tekai_state_generated_pdftexextra)
+            .pdffontmap
+            .offset(f as isize) as *mut fm_entry
     } else {
         ::core::ptr::null_mut::<fm_entry>()
     };
@@ -1622,3 +1698,310 @@ pub unsafe fn dopdffont(mut font_objnum: integer, mut f: internalfontnumber) {
     };
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
+
+pub(crate) struct State {
+    font_key: [key_entry; 11],
+    fo_tree: *mut avl_table,
+    fd_tree: *mut avl_table,
+    local_write_fontdescriptor_1134_std_flags: [::core::ffi::c_int; 14],
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 4],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[3] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).local_write_fontdescriptor_1134_std_flags
+                ));
+            }
+            if self.initialized[2] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).fd_tree));
+            }
+            if self.initialized[1] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).fo_tree));
+            }
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).font_key));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 4],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!((11) == 11);
+        }
+        __tekai_require_copy::<key_entry>();
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[0]).write(key_entry {
+            pdfname: b"Ascent\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"Ascender\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0.,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[1]).write(key_entry {
+            pdfname: b"CapHeight\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"CapHeight\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0.,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[2]).write(key_entry {
+            pdfname: b"Descent\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"Descender\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0.,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[3]).write(key_entry {
+            pdfname: b"ItalicAngle\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"ItalicAngle\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0.,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[4]).write(key_entry {
+            pdfname: b"StemV\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"StdVW\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0.,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[5]).write(key_entry {
+            pdfname: b"XHeight\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"XHeight\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0.,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[6]).write(key_entry {
+            pdfname: b"FontBBox\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"FontBBox\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0.,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[7]).write(key_entry {
+            pdfname: b"\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0 as ::core::ffi::c_int as ::core::ffi::c_float,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[8]).write(key_entry {
+            pdfname: b"\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0 as ::core::ffi::c_int as ::core::ffi::c_float,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[9]).write(key_entry {
+            pdfname: b"\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0 as ::core::ffi::c_int as ::core::ffi::c_float,
+            valid: 0,
+        });
+        const {
+            assert!(core::mem::size_of::<key_entry>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).font_key[10]).write(key_entry {
+            pdfname: b"FontName\0" as *const u8 as *const ::core::ffi::c_char,
+            t1name: b"FontName\0" as *const u8 as *const ::core::ffi::c_char,
+            value: 0.,
+            valid: 0,
+        });
+        self.initialized[0] = true;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).fo_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[1] = true;
+        const {
+            assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).fd_tree)
+            .write(::core::ptr::null::<avl_table>() as *mut avl_table);
+        self.initialized[2] = true;
+        const {
+            assert!((14) == 14);
+        }
+        __tekai_require_copy::<::core::ffi::c_int>();
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[0]).write(
+            1 as ::core::ffi::c_int
+                + 2 as ::core::ffi::c_int
+                + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int),
+        );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[1]).write(
+            1 as ::core::ffi::c_int
+                + 2 as ::core::ffi::c_int
+                + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
+                + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
+        );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[2]).write(
+            1 as ::core::ffi::c_int
+                + 2 as ::core::ffi::c_int
+                + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
+                + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int),
+        );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[3]).write(
+            1 as ::core::ffi::c_int
+                + 2 as ::core::ffi::c_int
+                + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
+                + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int)
+                + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
+        );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[4])
+            .write((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[5]).write(
+            ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
+                + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
+        );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[6]).write(
+            ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
+                + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int),
+        );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[7]).write(
+            ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
+                + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int)
+                + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
+        );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[8])
+            .write(4 as ::core::ffi::c_int);
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[9]).write(
+            2 as ::core::ffi::c_int + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int),
+        );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[10])
+            .write(
+                2 as ::core::ffi::c_int
+                    + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
+                    + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
+            );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[11])
+            .write(
+                2 as ::core::ffi::c_int
+                    + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
+                    + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int),
+            );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[12])
+            .write(
+                2 as ::core::ffi::c_int
+                    + ((1 as ::core::ffi::c_int) << 5 as ::core::ffi::c_int)
+                    + ((1 as ::core::ffi::c_int) << 6 as ::core::ffi::c_int)
+                    + ((1 as ::core::ffi::c_int) << 18 as ::core::ffi::c_int),
+            );
+        const {
+            assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).local_write_fontdescriptor_1134_std_flags[13])
+            .write(4 as ::core::ffi::c_int);
+        self.initialized[3] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).generated_backend_writefont
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
+}

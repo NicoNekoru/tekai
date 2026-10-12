@@ -79,51 +79,6 @@ const ZERO_FORMAT_INFO: kpse_format_info_type = kpse_format_info_type {
     binmode: 0,
 };
 
-#[no_mangle]
-pub static mut kpathsea_version_string: *const c_char =
-    b"kpathsea version 6.4.3/dev\0" as *const u8 as *const c_char;
-
-#[no_mangle]
-pub static mut kpse_def_inst: kpathsea_instance = kpathsea_instance {
-    record_input: None as p_record_input,
-    record_output: None as p_record_output,
-    cnf_hash: ZERO_HASH,
-    doing_cnf_init: 0,
-    db: ZERO_HASH,
-    alias_db: ZERO_HASH,
-    db_dir_list: ZERO_STR_LIST,
-    debug: 0,
-    link_table: ZERO_HASH,
-    the_cache: ptr::null_mut::<cache_entry>(),
-    cache_length: 0,
-    map: ZERO_HASH,
-    map_path: ptr::null(),
-    debug_hash_lookup_int: 0,
-    elt: ptr::null_mut(),
-    elt_alloc: 0,
-    path: ptr::null(),
-    followup_search: 0,
-    log_file: ptr::null_mut::<FILE>(),
-    log_opened: 0,
-    invocation_name: ptr::null_mut(),
-    invocation_short_name: ptr::null_mut(),
-    program_name: ptr::null_mut(),
-    ll_verbose: 0,
-    fallback_font: ptr::null(),
-    fallback_resolutions_string: ptr::null(),
-    fallback_resolutions: ptr::null_mut(),
-    format_info: [ZERO_FORMAT_INFO; 59],
-    make_tex_discard_errors: 0,
-    missfont: ptr::null_mut::<FILE>(),
-    expansions: ptr::null_mut::<expansion_type>(),
-    expansion_len: 0,
-    saved_env: ptr::null_mut(),
-    saved_count: 0,
-};
-
-#[no_mangle]
-pub static mut kpse_def: kpathsea = ptr::null_mut();
-
 pub use crate::kpathsea_types::KpseGlyphFileType;
 
 pub(crate) struct IndexSession {
@@ -285,9 +240,11 @@ impl Iterator for IndexedPaths<'_> {
 }
 
 unsafe fn ensure_instance() {
+    let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
+
     unsafe {
-        if kpse_def.is_null() {
-            kpse_def = &raw mut kpse_def_inst;
+        if (*__tekai_state_kpathsea).kpse_def.is_null() {
+            (*__tekai_state_kpathsea).kpse_def = &raw mut (*__tekai_state_kpathsea).kpse_def_inst;
         }
     }
 }
@@ -297,6 +254,19 @@ fn c_str_to_string(s: const_string) -> Option<String> {
         return None;
     }
     Some(unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned())
+}
+
+fn c_filename_to_string(s: const_string) -> Option<String> {
+    if s.is_null() {
+        return None;
+    }
+    match unsafe { CStr::from_ptr(s) }.to_str() {
+        Ok(name) => Some(name.to_owned()),
+        Err(_) => {
+            eprintln!("tekai: kpathsea filename search requires valid UTF-8");
+            None
+        }
+    }
 }
 
 unsafe fn alloc_bytes(bytes: &[u8]) -> string {
@@ -397,10 +367,11 @@ fn check_format_path(path: &Path) -> Option<PathBuf> {
     let path = crate::working_directory::resolve(path).ok()?;
     if path.extension() == Some(OsStr::new("fmt")) {
         if let Ok(raw) = format_cache::materialize_file(&path, &embedded_engine_cache_root()) {
-            if raw != path {
+            if raw != path && crate::invocation_state::is_active() {
                 // The immutable raw entry remains readable after a source
-                // replacement. Keep the original format in the recorder so
-                // build-cache freshness still follows that source.
+                // replacement. During engine entry, keep the original format
+                // in the recorder so build-cache freshness follows that
+                // source. Stateless lookup utilities have no recorder owner.
                 if let Ok(source) = CString::new(path.as_os_str().as_bytes()) {
                     unsafe { crate::openclose::recorder_record_input(source.as_ptr()) };
                 }
@@ -836,6 +807,7 @@ fn locate_in_session(
     candidate: &str,
     extension: &str,
 ) -> io::Result<Option<InputLocation>> {
+    let doc_dir = crate::working_directory::resolve(doc_dir)?;
     crate::runtime::texmf_root()?;
     let requested = Path::new(candidate);
     if requested.is_absolute() || candidate.starts_with("./") || candidate.starts_with("../") {
@@ -846,57 +818,69 @@ fn locate_in_session(
         }));
     }
     Ok(search_input(
-        doc_dir,
+        &doc_dir,
         candidate,
         input_format(extension),
         input_search_paths(extension),
     ))
 }
 
-pub unsafe fn kpse_set_program_name(argv0: const_string, progname: const_string) {
+pub(crate) unsafe fn kpse_set_program_name(argv0: const_string, progname: const_string) {
+    let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
+
     unsafe {
         ensure_instance();
         let invocation = c_str_to_string(argv0).unwrap_or_else(|| "tekai-engine".to_owned());
         let short = basename(&invocation).to_owned();
         let program = c_str_to_string(progname).unwrap_or_else(|| short.clone());
-        kpse_def_inst.invocation_name = alloc_string(&short);
-        kpse_def_inst.invocation_short_name = alloc_string(&short);
-        kpse_def_inst.program_name = alloc_string(&program);
+        (*__tekai_state_kpathsea).kpse_def_inst.invocation_name = alloc_string(&short);
+        (*__tekai_state_kpathsea)
+            .kpse_def_inst
+            .invocation_short_name = alloc_string(&short);
+        (*__tekai_state_kpathsea).kpse_def_inst.program_name = alloc_string(&program);
     }
 }
 
-pub unsafe fn kpse_reset_program_name(progname: const_string) {
+pub(crate) unsafe fn kpse_reset_program_name(progname: const_string) {
+    let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
+
     unsafe {
         ensure_instance();
         if let Some(program) = c_str_to_string(progname) {
-            kpse_def_inst.program_name = alloc_string(&program);
+            (*__tekai_state_kpathsea).kpse_def_inst.program_name = alloc_string(&program);
         }
     }
 }
 
-pub unsafe fn kpse_init_prog(_: const_string, _: c_uint, _: const_string, _: const_string) {
+pub(crate) unsafe fn kpse_init_prog(_: const_string, _: c_uint, _: const_string, _: const_string) {
     unsafe {
         ensure_instance();
     }
 }
 
-pub unsafe fn kpse_set_program_enabled(
+pub(crate) unsafe fn kpse_set_program_enabled(
     fmt: kpse_file_format_type,
     value: c_int,
     level: kpse_src_type,
 ) {
+    let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
+
     unsafe {
         ensure_instance();
-        if let Some(info) = kpse_def_inst.format_info.get_mut(fmt as usize) {
+        if let Some(info) = (*__tekai_state_kpathsea)
+            .kpse_def_inst
+            .format_info
+            .get_mut(fmt as usize)
+        {
             info.program_enabled_p = value;
             info.program_enable_level = level;
         }
     }
 }
 
-pub unsafe fn kpse_maketex_option(_: const_string, _: c_int) {}
+pub(crate) unsafe fn kpse_maketex_option(_: const_string, _: c_int) {}
 
-pub unsafe fn kpathsea_cnf_line_env_progname(_: kpathsea, line: string) {
+pub(crate) unsafe fn kpathsea_cnf_line_env_progname(_: kpathsea, line: string) {
     if line.is_null() {
         return;
     }
@@ -911,7 +895,7 @@ pub unsafe fn kpathsea_cnf_line_env_progname(_: kpathsea, line: string) {
     }
 }
 
-pub unsafe fn kpse_var_value(var: const_string) -> string {
+pub(crate) unsafe fn kpse_var_value(var: const_string) -> string {
     if var.is_null() {
         return ptr::null_mut();
     }
@@ -960,7 +944,7 @@ pub unsafe fn kpse_var_value(var: const_string) -> string {
     fallback.map_or(ptr::null_mut(), |value| unsafe { alloc_string(value) })
 }
 
-pub unsafe fn kpse_absolute_p(filename: const_string, relative_ok: c_int) -> c_int {
+pub(crate) unsafe fn kpse_absolute_p(filename: const_string, relative_ok: c_int) -> c_int {
     if filename.is_null() {
         return FALSE;
     }
@@ -974,15 +958,15 @@ pub unsafe fn kpse_absolute_p(filename: const_string, relative_ok: c_int) -> c_i
     FALSE
 }
 
-pub unsafe fn kpse_in_name_ok(_: const_string) -> c_int {
+pub(crate) unsafe fn kpse_in_name_ok(_: const_string) -> c_int {
     TRUE
 }
 
-pub unsafe fn kpse_out_name_ok(_: const_string) -> c_int {
+pub(crate) unsafe fn kpse_out_name_ok(_: const_string) -> c_int {
     TRUE
 }
 
-pub unsafe fn kpse_readable_file(name: string) -> string {
+pub(crate) unsafe fn kpse_readable_file(name: string) -> string {
     if name.is_null() {
         return ptr::null_mut();
     }
@@ -993,30 +977,32 @@ pub unsafe fn kpse_readable_file(name: string) -> string {
     ptr::null_mut()
 }
 
-pub unsafe fn kpse_find_file(
+/// Filename search currently uses UTF-8 search expressions. Invalid UTF-8
+/// requests return no match rather than searching a replacement spelling.
+/// Direct file/decoder interfaces preserve byte paths independently.
+pub(crate) unsafe fn kpse_find_file(
     name: const_string,
     format: kpse_file_format_type,
     _: c_int,
 ) -> string {
-    let Some(name) = c_str_to_string(name) else {
+    let Some(name) = c_filename_to_string(name) else {
         return ptr::null_mut();
     };
     match find_file_path(&name, format) {
-        Some(path) => {
-            let value = path.to_string_lossy();
-            unsafe { alloc_string(&value) }
-        }
+        Some(path) => unsafe { alloc_bytes(path.as_os_str().as_bytes()) },
         None => ptr::null_mut(),
     }
 }
 
-pub unsafe fn kpse_find_glyph(
+/// Glyph filename search has the same UTF-8 request limitation as
+/// `kpse_find_file`. A matched filesystem path is returned byte-for-byte.
+pub(crate) unsafe fn kpse_find_glyph(
     font_name: const_string,
     dpi: c_uint,
     format: kpse_file_format_type,
     glyph_file: *mut KpseGlyphFileType,
 ) -> string {
-    let Some(name) = c_str_to_string(font_name) else {
+    let Some(name) = c_filename_to_string(font_name) else {
         return ptr::null_mut();
     };
     let candidates = if format == KPSE_GF_FORMAT {
@@ -1026,8 +1012,7 @@ pub unsafe fn kpse_find_glyph(
     };
     for candidate in candidates {
         if let Some(path) = find_file_path(&candidate, format) {
-            let value = path.to_string_lossy().into_owned();
-            let out = unsafe { alloc_string(&value) };
+            let out = unsafe { alloc_bytes(path.as_os_str().as_bytes()) };
             if !glyph_file.is_null() {
                 unsafe {
                     (*glyph_file).name = font_name;
@@ -1042,17 +1027,143 @@ pub unsafe fn kpse_find_glyph(
     ptr::null_mut()
 }
 
-pub unsafe fn kpse_bitmap_tolerance(actual: c_double, expected: c_double) -> c_int {
+pub(crate) unsafe fn kpse_bitmap_tolerance(actual: c_double, expected: c_double) -> c_int {
     ((actual - expected).abs() <= 1.0) as c_int
 }
 
-pub unsafe fn kpse_magstep_fix(dpi: c_uint, _: c_uint, _: *mut c_int) -> c_uint {
+pub(crate) unsafe fn kpse_magstep_fix(dpi: c_uint, _: c_uint, _: *mut c_int) -> c_uint {
     dpi
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_utf8_search_requests_do_not_select_replacement_spelling_files() {
+        let fixture = std::env::temp_dir().join(format!(
+            "tekai-byte-search-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&fixture).unwrap();
+        let raw = fixture.join(OsStr::from_bytes(b"input-\xff.tex"));
+        let replacement = fixture.join("input-\u{fffd}.tex");
+        std::fs::write(&replacement, b"must not select this file").unwrap();
+        let request = CString::new(raw.as_os_str().as_bytes()).unwrap();
+        assert!(unsafe { kpse_find_file(request.as_ptr(), KPSE_TEX_FORMAT, TRUE) }.is_null());
+        let raw_font = fixture.join(OsStr::from_bytes(b"font-\xff"));
+        let replacement_font = fixture.join("font-\u{fffd}.72pk");
+        std::fs::write(&replacement_font, b"must not select this font").unwrap();
+        let request = CString::new(raw_font.as_os_str().as_bytes()).unwrap();
+        assert!(
+            unsafe { kpse_find_glyph(request.as_ptr(), 72, KPSE_PK_FORMAT, ptr::null_mut()) }
+                .is_null()
+        );
+        assert_eq!(
+            std::fs::read(replacement).unwrap(),
+            b"must not select this file"
+        );
+        assert_eq!(
+            std::fs::read(replacement_font).unwrap(),
+            b"must not select this font"
+        );
+        assert!(!crate::invocation_state::is_active());
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn relative_direct_input_utilities_use_owned_directory() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let parent = std::env::current_dir().unwrap();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let fixture = std::env::temp_dir().join(format!(
+            "tekai-owned-direct-input-{}-{nonce}",
+            std::process::id()
+        ));
+        let cache = fixture.join("cache");
+        let bundle = cache.join(format!("texmf-{}", crate::runtime::BUNDLE_ID.trim()));
+        std::fs::create_dir_all(bundle.join("texmf-dist")).unwrap();
+        std::fs::write(bundle.join(".complete"), crate::runtime::BUNDLE_ID).unwrap();
+        std::fs::write(bundle.join("texmf-dist/ls-R"), b"").unwrap();
+        std::fs::create_dir(fixture.join("sub")).unwrap();
+        let input = fixture.join("unique-é.tex");
+        std::fs::write(&input, b"owned input").unwrap();
+        let mut directory =
+            crate::working_directory::WorkingDirectory::new(Some(fixture.clone())).unwrap();
+        let mut environment = crate::environment::EnvironmentSession::new().unwrap();
+        crate::environment::EnvironmentSession::scope(environment.as_mut(), || {
+            crate::environment::set(OsStr::new("TEKAI_ENGINE_CACHE"), cache.as_os_str()).unwrap();
+            crate::environment::set(OsStr::new("TEKAI_TEXMF_MODE"), OsStr::new("bundled")).unwrap();
+            directory
+                .as_mut()
+                .scope(|| {
+                    crate::lookup::with_lookup_session(|| {
+                        let located = locate_input(Path::new("."), "./unique-é.tex", "tex")
+                            .unwrap()
+                            .unwrap();
+                        assert_eq!(located.source, "direct");
+                        assert_eq!(located.path, fixture.join("./unique-é.tex"));
+                        let resolved = resolve_input(Path::new("sub"), "../unique-é.tex", "tex")
+                            .unwrap()
+                            .unwrap();
+                        assert_eq!(std::fs::read(resolved).unwrap(), b"owned input");
+                        assert_eq!(std::env::current_dir().unwrap(), parent);
+                        assert!(!crate::invocation_state::is_active());
+                    });
+                })
+                .unwrap();
+        })
+        .unwrap();
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn compressed_format_materialization_does_not_require_core_state() {
+        use std::io::Write;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        assert!(!crate::invocation_state::is_active());
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let fixture = std::env::temp_dir().join(format!(
+            "tekai-stateless-format-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&fixture).unwrap();
+        let source = fixture.join("utility.fmt");
+        let cache = fixture.join("cache");
+        let bytes = b"stateless compressed format contents";
+        let mut encoder = flate2::write::GzEncoder::new(
+            std::fs::File::create(&source).unwrap(),
+            flate2::Compression::fast(),
+        );
+        encoder.write_all(bytes).unwrap();
+        encoder.finish().unwrap();
+
+        let mut environment = crate::environment::EnvironmentSession::new().unwrap();
+        crate::environment::EnvironmentSession::scope(environment.as_mut(), || {
+            crate::environment::set(OsStr::new("TEKAI_ENGINE_CACHE"), cache.as_os_str()).unwrap();
+            let materialized = check_format_path(&source).unwrap();
+            assert_ne!(materialized, source);
+            assert!(materialized.starts_with(cache.canonicalize().unwrap()));
+            assert_eq!(std::fs::read(&materialized).unwrap(), bytes);
+            assert_eq!(check_format_path(&source), Some(materialized));
+            assert!(!crate::invocation_state::is_active());
+        })
+        .unwrap();
+        assert!(!crate::invocation_state::is_active());
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
 
     #[test]
     fn invocation_indices_follow_current_cache_roots_and_restore_nested_owners() {
@@ -1186,4 +1297,130 @@ mod tests {
             .collect::<String>();
         assert_eq!(source_id, crate::runtime::FORMAT_ID.trim());
     }
+}
+
+pub(crate) struct State {
+    pub(crate) kpathsea_version_string: *const c_char,
+    pub(crate) kpse_def_inst: kpathsea_instance,
+    pub(crate) kpse_def: kpathsea,
+}
+
+#[inline(always)]
+fn __tekai_require_copy<T: Copy>() {}
+
+pub(crate) struct StateInitialization {
+    destination: *mut State,
+    initialized: [bool; 3],
+}
+#[inline]
+unsafe fn drop_initialized<T>(pointer: *mut T) {
+    if core::mem::needs_drop::<T>() {
+        unsafe { core::ptr::drop_in_place(pointer) };
+    }
+}
+
+impl Drop for StateInitialization {
+    fn drop(&mut self) {
+        unsafe {
+            if self.initialized[2] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).kpse_def));
+            }
+            if self.initialized[1] {
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).kpse_def_inst));
+            }
+            if self.initialized[0] {
+                drop_initialized(core::ptr::addr_of_mut!(
+                    (*self.destination).kpathsea_version_string
+                ));
+            }
+        }
+    }
+}
+impl StateInitialization {
+    pub(crate) unsafe fn begin(destination: *mut State) -> Self {
+        Self {
+            destination,
+            initialized: [false; 3],
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.initialized.fill(false);
+    }
+    pub(crate) unsafe fn initialize_fields(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+        const {
+            assert!(core::mem::size_of::<*const c_char>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).kpathsea_version_string)
+            .write(b"kpathsea version 6.4.3/dev\0" as *const u8 as *const c_char);
+        self.initialized[0] = true;
+        const {
+            assert!(core::mem::size_of::<kpathsea_instance>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).kpse_def_inst).write(kpathsea_instance {
+            record_input: None as p_record_input,
+            record_output: None as p_record_output,
+            cnf_hash: ZERO_HASH,
+            doing_cnf_init: 0,
+            db: ZERO_HASH,
+            alias_db: ZERO_HASH,
+            db_dir_list: ZERO_STR_LIST,
+            debug: 0,
+            link_table: ZERO_HASH,
+            the_cache: ptr::null_mut::<cache_entry>(),
+            cache_length: 0,
+            map: ZERO_HASH,
+            map_path: ptr::null(),
+            debug_hash_lookup_int: 0,
+            elt: ptr::null_mut(),
+            elt_alloc: 0,
+            path: ptr::null(),
+            followup_search: 0,
+            log_file: ptr::null_mut::<FILE>(),
+            log_opened: 0,
+            invocation_name: ptr::null_mut(),
+            invocation_short_name: ptr::null_mut(),
+            program_name: ptr::null_mut(),
+            ll_verbose: 0,
+            fallback_font: ptr::null(),
+            fallback_resolutions_string: ptr::null(),
+            fallback_resolutions: ptr::null_mut(),
+            format_info: [ZERO_FORMAT_INFO; 59],
+            make_tex_discard_errors: 0,
+            missfont: ptr::null_mut::<FILE>(),
+            expansions: ptr::null_mut::<expansion_type>(),
+            expansion_len: 0,
+            saved_env: ptr::null_mut(),
+            saved_count: 0,
+        });
+        self.initialized[1] = true;
+        const {
+            assert!(core::mem::size_of::<kpathsea>() <= 16 * 1024);
+        }
+        core::ptr::addr_of_mut!((*destination).kpse_def).write(ptr::null_mut());
+        self.initialized[2] = true;
+    }
+    pub(crate) unsafe fn initialize_fixups(
+        &mut self,
+        invocation: *const crate::invocation_state::Storage,
+    ) {
+        let destination = self.destination;
+        let _ = invocation;
+    }
+}
+pub(crate) unsafe fn state() -> *mut State {
+    core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+        (*crate::invocation_state::current()).kpathsea
+    ))
+}
+#[cfg(test)]
+pub(crate) unsafe fn check_state_construction(phase: u8) {
+    let invocation = crate::invocation_state::current();
+    let destination = state();
+    assert!(!destination.is_null());
+    let _ = (invocation, phase);
 }

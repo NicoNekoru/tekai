@@ -171,6 +171,62 @@ pub(crate) fn seconds_and_micros() -> Result<(i64, i32), TimeError> {
     seconds_and_micros_at(SystemTime::now())
 }
 
+/// A local PDF-date formatter with owned environment and directory snapshots.
+/// Rules are parsed lazily once, including a cached failure. This utility uses
+/// no engine TimeSession, process-wide timezone cache, or SOURCE_DATE_EPOCH
+/// policy. The caller supplies the instant being formatted.
+#[derive(Clone, Debug)]
+pub struct LocalPdfDateFormatter {
+    tz: Option<OsString>,
+    tzdir: Option<OsString>,
+    directory: Result<PathBuf, String>,
+    zone: Option<Result<TimeZone, TimeError>>,
+}
+
+impl Default for LocalPdfDateFormatter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LocalPdfDateFormatter {
+    pub fn new() -> Self {
+        Self {
+            tz: crate::environment::var_os("TZ"),
+            tzdir: crate::environment::var_os("TZDIR"),
+            directory: crate::working_directory::current().map_err(|error| error.to_string()),
+            zone: None,
+        }
+    }
+
+    pub fn format(&mut self, instant: SystemTime) -> io::Result<String> {
+        self.format_inner(instant).map_err(io::Error::other)
+    }
+
+    fn format_inner(&mut self, instant: SystemTime) -> Result<String, TimeError> {
+        let seconds = seconds_and_micros_at(instant)?.0;
+        if self.zone.is_none() {
+            let resolve = |path: &Path| {
+                if path.is_absolute() {
+                    Ok(path.to_path_buf())
+                } else {
+                    self.directory.as_ref().map(|directory| directory.join(path))
+                        .map_err(|error| TimeError::Configuration(format!("cannot resolve relative timezone path from the captured working directory: {error}")))
+                }
+            };
+            self.zone = Some(resolve_zone_with(
+                self.tz.as_deref(),
+                self.tzdir.as_deref(),
+                &resolve,
+            ));
+        }
+        let zone = self.zone.as_ref().unwrap().as_ref().map_err(Clone::clone)?;
+        let date = pdf_date(seconds, zone)?;
+        // pdf_date writes only fixed ASCII punctuation and decimal digits.
+        Ok(String::from_utf8(date.as_bytes().to_vec()).expect("PDF dates are ASCII"))
+    }
+}
+
 struct TimeState {
     tz: Option<OsString>,
     tzdir: Option<OsString>,
@@ -379,9 +435,7 @@ pub(crate) fn pool_end(start: i32, capacity: i32, len: usize) -> Option<i32> {
 }
 
 fn read_tzif(path: &Path) -> Result<Vec<u8>, TimeError> {
-    let path = crate::working_directory::resolve(path)
-        .map_err(|error| TimeError::Configuration(error.to_string()))?;
-    let file = std::fs::File::open(&path).map_err(|error| {
+    let file = std::fs::File::open(path).map_err(|error| {
         TimeError::Configuration(format!("cannot read {}: {error}", path.display()))
     })?;
     if !file
@@ -486,14 +540,17 @@ fn zone_roots(tzdir: Option<&OsStr>) -> Vec<PathBuf> {
     .to_vec()
 }
 
-fn find_zone_file(name: &OsStr, roots: &[PathBuf]) -> Result<Option<Vec<u8>>, TimeError> {
+fn find_zone_file(
+    name: &OsStr,
+    roots: &[PathBuf],
+    resolve: &impl Fn(&Path) -> Result<PathBuf, TimeError>,
+) -> Result<Option<Vec<u8>>, TimeError> {
     let path = Path::new(name);
     if path.is_absolute() {
-        return read_tzif(path).map(Some);
+        return read_tzif(&resolve(path)?).map(Some);
     }
     for root in roots {
-        let path = crate::working_directory::resolve(&root.join(path))
-            .map_err(|error| TimeError::Configuration(error.to_string()))?;
+        let path = resolve(&root.join(path))?;
         match std::fs::metadata(&path) {
             Ok(_) => return read_tzif(&path).map(Some),
             Err(error) if error.kind() == io::ErrorKind::NotFound => (),
@@ -641,13 +698,24 @@ fn compatible_posixrules(
 }
 
 fn resolve_zone(tz: Option<&OsStr>, tzdir: Option<&OsStr>) -> Result<TimeZone, TimeError> {
+    resolve_zone_with(tz, tzdir, &|path| {
+        crate::working_directory::resolve(path)
+            .map_err(|error| TimeError::Configuration(error.to_string()))
+    })
+}
+
+fn resolve_zone_with(
+    tz: Option<&OsStr>,
+    tzdir: Option<&OsStr>,
+    resolve: &impl Fn(&Path) -> Result<PathBuf, TimeError>,
+) -> Result<TimeZone, TimeError> {
     if tzdir.is_some_and(|directory| directory.as_bytes().len() > MAX_TZ_STRING_BYTES) {
         return Err(TimeError::Configuration(
             "TZDIR exceeds the 4096-byte limit".into(),
         ));
     }
     let Some(tz) = tz else {
-        return zone_from_bytes(&read_tzif(Path::new("/etc/localtime"))?);
+        return zone_from_bytes(&read_tzif(&resolve(Path::new("/etc/localtime"))?)?);
     };
     let mut bytes = tz.as_bytes();
     if bytes.is_empty() {
@@ -663,7 +731,7 @@ fn resolve_zone(tz: Option<&OsStr>, tzdir: Option<&OsStr>) -> Result<TimeZone, T
         bytes = &bytes[1..];
     }
     let roots = zone_roots(tzdir);
-    if let Some(data) = find_zone_file(OsStr::from_bytes(bytes), &roots)? {
+    if let Some(data) = find_zone_file(OsStr::from_bytes(bytes), &roots, resolve)? {
         return zone_from_bytes(&data);
     }
     if file_only {
@@ -678,7 +746,7 @@ fn resolve_zone(tz: Option<&OsStr>, tzdir: Option<&OsStr>) -> Result<TimeZone, T
         return Ok(zone);
     }
     if let Some(offsets) = implicit_offsets(text) {
-        if let Some(data) = find_zone_file(OsStr::new("posixrules"), &roots)? {
+        if let Some(data) = find_zone_file(OsStr::new("posixrules"), &roots, resolve)? {
             if let Some(zone) = compatible_posixrules(data, offsets)? {
                 return Ok(zone);
             }
@@ -882,6 +950,96 @@ mod tests {
         });
         assert_eq!(std::env::var_os("TZ"), parent_tz);
         assert_eq!(std::env::var_os("SOURCE_DATE_EPOCH"), parent_epoch);
+    }
+
+    #[test]
+    fn public_local_formatter_owns_relative_zone_directory_and_ignores_native_force_flags() {
+        let directory = Directory::new();
+        std::fs::create_dir(directory.0.join("zones")).unwrap();
+        std::fs::write(directory.0.join("zones/owned"), fixed_tzif(-1800, false)).unwrap();
+        environment_scope(|| {
+            environment::set(OsStr::new("TZ"), OsStr::new(":owned")).unwrap();
+            environment::set(OsStr::new("TZDIR"), OsStr::new("zones")).unwrap();
+            environment::set(OsStr::new("SOURCE_DATE_EPOCH"), OsStr::new("0")).unwrap();
+            environment::set(OsStr::new("FORCE_SOURCE_DATE"), OsStr::new("1")).unwrap();
+            let mut working =
+                crate::working_directory::WorkingDirectory::new(Some(directory.0.clone())).unwrap();
+            let mut formatter = working.as_mut().scope(LocalPdfDateFormatter::new).unwrap();
+            assert!(formatter.zone.is_none());
+            // Neither the ended directory scope nor later environment changes
+            // can reinterpret a relative rule path captured by this owner.
+            environment::set(OsStr::new("TZ"), OsStr::new("UTC0")).unwrap();
+            environment::set(
+                OsStr::new("TZDIR"),
+                OsStr::new("/nonexistent/tekai-zoneinfo"),
+            )
+            .unwrap();
+            assert_eq!(
+                formatter.format(UNIX_EPOCH).unwrap(),
+                "D:19691231233000-00'30'"
+            );
+            let mut cloned = formatter.clone();
+            std::fs::write(directory.0.join("zones/owned"), fixed_tzif(0, false)).unwrap();
+            assert_eq!(
+                formatter.format(UNIX_EPOCH).unwrap(),
+                "D:19691231233000-00'30'"
+            );
+            assert_eq!(
+                cloned.format(UNIX_EPOCH).unwrap(),
+                "D:19691231233000-00'30'"
+            );
+        });
+    }
+
+    #[test]
+    fn public_local_formatter_caches_failures_without_requiring_a_time_scope() {
+        let directory = Directory::new();
+        let mut formatter = LocalPdfDateFormatter {
+            tz: Some(OsString::from(":missing")),
+            tzdir: Some(directory.0.clone().into_os_string()),
+            directory: Ok(directory.0.clone()),
+            zone: None,
+        };
+        let first = formatter.format(UNIX_EPOCH).unwrap_err().to_string();
+        std::fs::write(directory.0.join("missing"), fixed_tzif(0, false)).unwrap();
+        assert_eq!(formatter.format(UNIX_EPOCH).unwrap_err().to_string(), first);
+        assert!(matches!(formatter.zone, Some(Err(_))));
+        let mut cloned = formatter.clone();
+        assert_eq!(cloned.format(UNIX_EPOCH).unwrap_err().to_string(), first);
+    }
+
+    #[test]
+    fn public_local_formatter_has_independent_calendar_boundaries_and_late_directory_errors() {
+        let mut formatter = LocalPdfDateFormatter {
+            tz: Some(OsString::from("UTC0")),
+            tzdir: None,
+            directory: Err("saved directory is unavailable".into()),
+            zone: None,
+        };
+        // Absolute default search roots and a POSIX rule do not need cwd.
+        assert_eq!(formatter.format(UNIX_EPOCH).unwrap(), "D:19700101000000Z");
+        assert_eq!(
+            formatter
+                .format(UNIX_EPOCH - std::time::Duration::from_nanos(1))
+                .unwrap(),
+            "D:19691231235959Z"
+        );
+        assert!(formatter
+            .format(UNIX_EPOCH + std::time::Duration::from_secs(253_433_923_200))
+            .unwrap_err()
+            .to_string()
+            .contains("supported calendar range"));
+        let mut relative = LocalPdfDateFormatter {
+            tz: Some(OsString::from(":owned")),
+            tzdir: Some(OsString::from("zones")),
+            directory: Err("saved directory is unavailable".into()),
+            zone: None,
+        };
+        assert!(relative
+            .format(UNIX_EPOCH)
+            .unwrap_err()
+            .to_string()
+            .contains("captured working directory"));
     }
 
     #[test]

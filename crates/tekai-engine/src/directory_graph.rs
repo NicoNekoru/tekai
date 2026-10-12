@@ -778,7 +778,7 @@ fn root_hops(root: &Path) -> Option<usize> {
     let absolute = if root.is_absolute() {
         root.to_path_buf()
     } else {
-        std::env::current_dir().ok()?.join(root)
+        crate::working_directory::current().ok()?.join(root)
     };
     resolve_hops(Path::new("/"), &absolute)
 }
@@ -875,6 +875,27 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn relative_root_hops_use_owned_directory_without_chdir() {
+        let fixture = Fixture::new();
+        fixture.directory("target");
+        std::os::unix::fs::symlink("target", fixture.0.join("alias")).unwrap();
+        let parent = std::env::current_dir().unwrap();
+        let mut directory =
+            crate::working_directory::WorkingDirectory::new(Some(fixture.0.clone())).unwrap();
+        directory
+            .as_mut()
+            .scope(|| {
+                assert_eq!(root_hops(Path::new("alias")), hop_limit().map(|_| 1));
+                assert_eq!(
+                    root_hops(Path::new("alias")),
+                    root_hops(&fixture.0.join("alias"))
+                );
+                assert_eq!(std::env::current_dir().unwrap(), parent);
+            })
+            .unwrap();
     }
 
     #[test]

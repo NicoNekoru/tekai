@@ -17,47 +17,51 @@ pub fn run(
     options: &[String],
     quiet: bool,
 ) -> Result<()> {
-    let mut engine = BibtexEngine::default();
-    let mut args = options.iter();
-    while let Some(arg) = args.next() {
-        let value = arg
-            .strip_prefix("-min-crossrefs=")
-            .or_else(|| arg.strip_prefix("--min-crossrefs="))
-            .or_else(|| {
-                matches!(arg.as_str(), "-min-crossrefs" | "--min-crossrefs")
-                    .then(|| args.next().map(String::as_str))
-                    .flatten()
-            });
-        if let Some(value) = value {
-            engine.min_crossrefs(value.parse().context("invalid BibTeX min-crossrefs")?);
-        } else if !matches!(arg.as_str(), "-terse" | "--terse") {
-            bail!("unsupported option for built-in BibTeX: {arg}");
+    // Worker threads do not inherit the parent's scoped lookup context. Own a
+    // complete one here so bundled styles/indexes are not rebuilt per input.
+    tekai_engine::lookup::with_lookup_session(|| {
+        let mut engine = BibtexEngine::default();
+        let mut args = options.iter();
+        while let Some(arg) = args.next() {
+            let value = arg
+                .strip_prefix("-min-crossrefs=")
+                .or_else(|| arg.strip_prefix("--min-crossrefs="))
+                .or_else(|| {
+                    matches!(arg.as_str(), "-min-crossrefs" | "--min-crossrefs")
+                        .then(|| args.next().map(String::as_str))
+                        .flatten()
+                });
+            if let Some(value) = value {
+                engine.min_crossrefs(value.parse().context("invalid BibTeX min-crossrefs")?);
+            } else if !matches!(arg.as_str(), "-terse" | "--terse") {
+                bail!("unsupported option for built-in BibTeX: {arg}");
+            }
         }
-    }
-    let mut driver = MinimalDriver::new(BibIo {
-        doc_dir,
-        out_dir,
-        quiet,
-    });
-    let mut status = NoopStatusBackend {};
-    let mut launcher = CoreBridgeLauncher::new(&mut driver, &mut status);
-    let aux = if aux.ends_with(".aux") {
-        aux.to_string()
-    } else {
-        format!("{aux}.aux")
-    };
-    let outcome = engine
-        .process(&mut launcher, &aux)
-        .context("built-in BibTeX failed")?;
-    if outcome == BibtexOutcome::Errors {
-        bail!(
-            "built-in BibTeX reported errors; see {}",
-            out_dir
-                .join(Path::new(&aux).with_extension("blg"))
-                .display()
-        );
-    }
-    Ok(())
+        let mut driver = MinimalDriver::new(BibIo {
+            doc_dir,
+            out_dir,
+            quiet,
+        });
+        let mut status = NoopStatusBackend {};
+        let mut launcher = CoreBridgeLauncher::new(&mut driver, &mut status);
+        let aux = if aux.ends_with(".aux") {
+            aux.to_string()
+        } else {
+            format!("{aux}.aux")
+        };
+        let outcome = engine
+            .process(&mut launcher, &aux)
+            .context("built-in BibTeX failed")?;
+        if outcome == BibtexOutcome::Errors {
+            bail!(
+                "built-in BibTeX reported errors; see {}",
+                out_dir
+                    .join(Path::new(&aux).with_extension("blg"))
+                    .display()
+            );
+        }
+        Ok(())
+    })
 }
 
 struct BibIo<'a> {

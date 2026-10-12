@@ -7,6 +7,7 @@
 #![warn(clippy::all)]
 
 use flate2::{read::MultiGzDecoder, write::GzEncoder, Compression};
+use rustix::process::{Pid, Signal};
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::ffi::{c_char, c_int, c_long, c_void, CStr, OsStr};
 use std::fs::{File, Metadata, OpenOptions};
@@ -15,9 +16,9 @@ use std::marker::{PhantomData, PhantomPinned};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::pin::Pin;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::ptr::{self, NonNull};
 use std::rc::Rc;
 
@@ -28,13 +29,28 @@ const MAX_BUFFER_SIZE: usize = 64 * 1024;
 // eight leaves a small explicit allowance without unbounded retained storage.
 const MAX_PUSHBACK: usize = 8;
 
+/// Ownership of pipe commands launched during an engine invocation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PipeProcessPolicy {
+    /// Isolate each command in a group owned by this invocation. Abandonment
+    /// stops the group before reaping its leader. Host callers must not reap
+    /// these children independently or ignore SIGCHLD.
+    #[default]
+    InvocationOwned,
+    /// Inherit the engine worker's process group. An external supervisor must
+    /// own that isolated worker group and stop its descendants before reaping
+    /// the worker, including cancellation and worker faults. Local abandonment
+    /// stops and reaps only the direct pipe child, never the inherited group.
+    SupervisedProcess,
+}
+
 enum Backing {
     File(File),
     Stdin(io::Stdin),
     Stdout(io::Stdout),
     Stderr(io::Stderr),
-    ReadPipe(Child, ChildStdout),
-    WritePipe(Child, ChildStdin),
+    ReadPipe(PipeChild, ChildStdout),
+    WritePipe(PipeChild, ChildStdin),
     GzipRead(MultiGzDecoder<File>),
     GzipWrite(File, Compression),
     GzipEncoder(GzEncoder<File>),
@@ -43,6 +59,92 @@ enum Backing {
     TestReader(Box<dyn Read>),
     #[cfg(test)]
     TestWriter(Box<dyn Write>),
+}
+
+/// Own a pipe command and, in InvocationOwned mode, its process group until its
+/// direct child is reaped. The host must not reap it or ignore SIGCHLD.
+struct PipeChild {
+    child: Child,
+    group: Option<Pid>,
+    owned: bool,
+}
+
+impl PipeChild {
+    fn spawn(command: &mut Command, policy: PipeProcessPolicy) -> io::Result<Self> {
+        if policy == PipeProcessPolicy::InvocationOwned {
+            command.process_group(0);
+        }
+        let child = command.spawn()?;
+        let raw = i32::try_from(child.id()).expect("Unix child PID fits in i32");
+        let group = Pid::from_raw(raw)
+            .filter(|pid| *pid != Pid::INIT)
+            .expect("spawned child has a positive non-init PID");
+        Ok(Self {
+            child,
+            group: (policy == PipeProcessPolicy::InvocationOwned).then_some(group),
+            owned: true,
+        })
+    }
+
+    fn wait(mut self, terminate: bool) -> io::Result<ExitStatus> {
+        if terminate {
+            self.terminate_and_reap()
+        } else {
+            // Explicit pclose preserves POSIX shell/background semantics. A
+            // successful normal wait relinquishes ownership without signalling
+            // descendants deliberately left behind by the shell command.
+            self.reap()
+        }
+    }
+
+    fn terminate_and_reap(&mut self) -> io::Result<ExitStatus> {
+        // The unreaped leader protects its process/group ID from reuse. Stop
+        // descendants before releasing that authority, even if it has exited.
+        let group_error = self
+            .group
+            .and_then(|group| crate::process_group::signal_owned_group(group, Signal::KILL).err());
+        // Also stop the direct child if the command changed its own group.
+        // Child::kill accepts a child that has already exited.
+        let child_error = self.child.kill().err();
+        let status = self.reap();
+        // Always attempt the reap, including after a signalling error. A
+        // remaining owner retries cleanup from Drop after other wait failures.
+        if let Some(error) = group_error.or(child_error) {
+            Err(error)
+        } else {
+            status
+        }
+    }
+
+    fn reap(&mut self) -> io::Result<ExitStatus> {
+        let status = loop {
+            match self.child.wait() {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                result => break result,
+            }
+        };
+        if status.is_ok()
+            || status.as_ref().is_err_and(|error| {
+                error.raw_os_error() == Some(rustix::io::Errno::CHILD.raw_os_error())
+            })
+        {
+            self.owned = false;
+        }
+        status
+    }
+
+    #[cfg(test)]
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
+}
+
+impl Drop for PipeChild {
+    fn drop(&mut self) {
+        if self.owned {
+            let _ = self.terminate_and_reap();
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -91,6 +193,7 @@ struct Console {
 pub(crate) struct StreamSession {
     streams: RefCell<Vec<NonNull<Stream>>>,
     console: Console,
+    pipe_policy: PipeProcessPolicy,
     next_temp: Cell<u64>,
     temp_nonce: u128,
     _thread_confined: PhantomData<Rc<()>>,
@@ -99,6 +202,10 @@ pub(crate) struct StreamSession {
 
 impl StreamSession {
     pub(crate) fn new() -> Pin<Box<Self>> {
+        Self::new_with_pipe_policy(PipeProcessPolicy::default())
+    }
+
+    pub(crate) fn new_with_pipe_policy(policy: PipeProcessPolicy) -> Pin<Box<Self>> {
         Box::pin(Self {
             streams: RefCell::new(Vec::new()),
             console: Console {
@@ -124,6 +231,7 @@ impl StreamSession {
                     Buffering::None,
                 )),
             },
+            pipe_policy: policy,
             next_temp: Cell::new(0),
             temp_nonce: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -149,8 +257,10 @@ impl StreamSession {
     }
 
     /// Flush and close residual files and reap residual pipe children. Explicit
-    /// pclose still waits for the child's normal status. Teardown terminates a
-    /// child that would otherwise outlive its invocation or block it forever.
+    /// pclose still flushes and waits for the child's normal status. Teardown
+    /// discards abandoned pipe output and reaps its direct child. The selected
+    /// policy determines whether this owner or the external worker supervisor
+    /// stops the command's descendants.
     pub(crate) fn finish(self: Pin<&mut Self>) -> io::Result<()> {
         let session = self.as_ref().get_ref();
         let mut first_error = None;
@@ -555,7 +665,11 @@ impl Stream {
     }
 
     fn close_impl(&mut self, terminate_pipe: bool) -> io::Result<c_int> {
-        let flushed = if matches!(
+        let flushed = if terminate_pipe && matches!(self.backing, Backing::WritePipe(..)) {
+            // Abandoned output must not block on a child that never reads.
+            // Explicit fflush/fclose/pclose retain their normal flush rules.
+            Ok(())
+        } else if matches!(
             self.backing,
             Backing::GzipWrite(..) | Backing::GzipEncoder(_)
         ) {
@@ -572,21 +686,13 @@ impl Stream {
         self.pushback.clear();
         self.output.clear();
         let status = match backing {
-            Backing::ReadPipe(mut child, output) => {
+            Backing::ReadPipe(child, output) => {
                 drop(output);
-                if terminate_pipe && child.try_wait()?.is_none() {
-                    child.kill()?;
-                }
-                use std::os::unix::process::ExitStatusExt;
-                child.wait()?.into_raw()
+                child.wait(terminate_pipe)?.into_raw()
             }
-            Backing::WritePipe(mut child, input) => {
+            Backing::WritePipe(child, input) => {
                 drop(input);
-                if terminate_pipe && child.try_wait()?.is_none() {
-                    child.kill()?;
-                }
-                use std::os::unix::process::ExitStatusExt;
-                child.wait()?.into_raw()
+                child.wait(terminate_pipe)?.into_raw()
             }
             Backing::GzipEncoder(encoder) => {
                 encoder.finish()?.flush()?;
@@ -1085,13 +1191,14 @@ pub(crate) unsafe fn popen(command: *const c_char, mode: *const c_char) -> *mut 
     } else {
         builder.stdin(Stdio::piped());
     }
-    match builder.spawn() {
+    let policy = with_session(|session| session.pipe_policy);
+    match PipeChild::spawn(&mut builder, policy) {
         Ok(mut child) => {
             let backing = if kind == b'r' {
-                let output = child.stdout.take().unwrap();
+                let output = child.child.stdout.take().unwrap();
                 Backing::ReadPipe(child, output)
             } else {
-                let input = child.stdin.take().unwrap();
+                let input = child.child.stdin.take().unwrap();
                 Backing::WritePipe(child, input)
             };
             Stream::new(backing, kind == b'r', kind == b'w', false, Buffering::Full).into_handle()
@@ -1106,6 +1213,8 @@ pub(crate) unsafe fn popen(command: *const c_char, mode: *const c_char) -> *mut 
 /// # Safety
 /// A non-null command must point to a terminated C string. Child environment
 /// values are copied from the active invocation, never written to the parent.
+/// Normal shell background commands remain caller-managed side effects, as do
+/// descendants deliberately left by an explicitly closed pipe command.
 pub(crate) unsafe fn system(command: *const c_char) -> c_int {
     if command.is_null() {
         return i32::from(std::path::Path::new("/bin/sh").is_file());
@@ -1306,12 +1415,31 @@ pub(crate) unsafe fn gzclose(stream: *mut Stream) -> c_int {
 }
 
 pub(crate) unsafe fn flush_all() -> c_int {
+    unsafe { flush_outputs(true) }
+}
+
+/// Flush ordinary files and consoles before an invocation exits. Pipe output
+/// belongs to explicit fflush/pclose only, so implicit cleanup cannot wait for
+/// an abandoned command to consume buffered bytes.
+pub(crate) unsafe fn flush_for_exit() -> c_int {
+    unsafe { flush_outputs(false) }
+}
+
+unsafe fn flush_outputs(include_pipes: bool) -> c_int {
     let mut result = 0;
     with_session(|session| {
         for pointer in session.streams.borrow().iter() {
             // SAFETY FILE adapters and this sweep use the same into_raw
             // provenance. No parent Box reborrow invalidates a retained FILE.
             let stream = unsafe { &mut *pointer.as_ptr() };
+            if !include_pipes
+                && matches!(
+                    stream.backing,
+                    Backing::ReadPipe(..) | Backing::WritePipe(..)
+                )
+            {
+                continue;
+            }
             // fflush(NULL) flushes pending output, not read-ahead buffers.
             if let Err(error) = stream.flush_output() {
                 stream.record_error(error);
@@ -1329,7 +1457,7 @@ pub(crate) unsafe fn flush_all() -> c_int {
 
 pub(crate) fn exit(status: c_int) -> ! {
     unsafe {
-        flush_all();
+        flush_for_exit();
     }
     crate::termination::exit(status)
 }
@@ -1338,6 +1466,7 @@ pub(crate) fn exit(status: c_int) -> ! {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use rustix::process::kill_process_group;
     use std::os::fd::FromRawFd;
     use std::rc::Rc;
 
@@ -1490,6 +1619,265 @@ mod tests {
             io::Error::last_os_error().raw_os_error(),
             Some(libc::ECHILD)
         );
+    }
+
+    fn supervised_pipe_test(operation: impl FnOnce(std::sync::mpsc::Sender<Pid>) + Send + 'static) {
+        use std::sync::mpsc::{channel, RecvTimeoutError};
+        use std::time::Duration;
+
+        let (group_sender, group_receiver) = channel();
+        let (done_sender, done_receiver) = channel();
+        let worker = std::thread::spawn(move || {
+            operation(group_sender);
+            let _ = done_sender.send(());
+        });
+        let group = group_receiver.recv_timeout(Duration::from_secs(10));
+        if let Ok(group) = group {
+            let completion = done_receiver.recv_timeout(Duration::from_secs(10));
+            if matches!(completion, Err(RecvTimeoutError::Timeout)) {
+                // A regression may be stuck flushing to a full pipe. Its
+                // unreaped leader still reserves this group ID. Stop it so the
+                // failing test does not leave a child or blocked worker behind.
+                let _ = kill_process_group(group, Signal::KILL);
+            }
+            worker.join().unwrap();
+            assert!(completion.is_ok(), "owned pipe teardown did not complete");
+        } else {
+            worker.join().unwrap();
+            panic!("pipe worker did not register its child group");
+        }
+    }
+
+    fn assert_pipe_child_reaped(process: u32) {
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(process as i32, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
+
+    fn pipe_process_state(process: Pid) -> String {
+        let snapshot = Command::new("/bin/ps")
+            .args(["-o", "stat=", "-p", &process.as_raw_pid().to_string()])
+            .output()
+            .unwrap();
+        String::from_utf8(snapshot.stdout).unwrap()
+    }
+
+    fn assert_pipe_process_stopped(process: Pid) {
+        use std::time::{Duration, Instant};
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let state = pipe_process_state(process);
+            if state.trim().is_empty() || state.trim().starts_with('Z') {
+                return;
+            }
+            if Instant::now() >= deadline {
+                // The test is responsible for its deliberately launched
+                // descendant even when the production cleanup regresses.
+                let _ = rustix::process::kill_process(process, Signal::KILL);
+                panic!("abandoned pipe descendant is still running: {state}");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn abandoned_full_write_pipe_skips_implicit_flush_and_releases_child() {
+        supervised_pipe_test(|group_sender| {
+            let mut session = StreamSession::new();
+            let process = session.as_mut().scope(|| unsafe {
+                let handle = popen(c"exec sleep 600".as_ptr(), c"w".as_ptr());
+                assert!(!handle.is_null());
+                let Backing::WritePipe(child, input) = &mut (*handle).backing else {
+                    panic!()
+                };
+                let process = child.id();
+                group_sender.send(child.group.unwrap()).unwrap();
+                let descriptor = input.as_raw_fd();
+                let flags = libc::fcntl(descriptor, libc::F_GETFL);
+                assert!(flags >= 0);
+                assert_eq!(
+                    libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK),
+                    0
+                );
+                let mut full = false;
+                for _ in 0..4096 {
+                    match input.write(&[b'x'; 4096]) {
+                        Ok(count) => assert!(count > 0),
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            full = true;
+                            break;
+                        }
+                        Err(error) => panic!("cannot fill test pipe: {error}"),
+                    }
+                }
+                assert!(full, "test pipe did not reach its bounded capacity");
+                assert_eq!(libc::fcntl(descriptor, libc::F_SETFL, flags), 0);
+                (*handle).output.extend_from_slice(b"pending pipe output");
+
+                let file = tmpfile();
+                assert_eq!(fwrite(c"ordinary".as_ptr().cast(), 1, 8, file), 8);
+                assert_eq!(flush_for_exit(), 0);
+                assert_eq!((*file).metadata().unwrap().len(), 8);
+                assert_eq!((*handle).output, b"pending pipe output");
+                process
+            });
+            session.as_mut().finish().unwrap();
+            assert_pipe_child_reaped(process);
+        });
+    }
+
+    #[test]
+    fn abandoned_shell_pipe_stops_background_descendants_on_unwind() {
+        supervised_pipe_test(|group_sender| {
+            let mut process = 0;
+            let mut descendant = None;
+            let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut session = StreamSession::new();
+                session.as_mut().scope(|| unsafe {
+                    let handle = popen(
+                        c"sleep 600 & printf '%s\\n' \"$!\"; wait".as_ptr(),
+                        c"r".as_ptr(),
+                    );
+                    assert!(!handle.is_null());
+                    let Backing::ReadPipe(child, _) = &(*handle).backing else {
+                        panic!()
+                    };
+                    process = child.id();
+                    group_sender.send(child.group.unwrap()).unwrap();
+                    let mut line = [0 as c_char; 32];
+                    assert!(!fgets(line.as_mut_ptr(), line.len() as c_int, handle).is_null());
+                    let raw = CStr::from_ptr(line.as_ptr())
+                        .to_str()
+                        .unwrap()
+                        .trim()
+                        .parse()
+                        .unwrap();
+                    descendant = Pid::from_raw(raw);
+                    assert!(descendant.is_some());
+                    panic!("abandon the open pipe during engine unwinding");
+                });
+            }));
+            assert!(failure.is_err());
+            assert_pipe_child_reaped(process);
+            assert_pipe_process_stopped(descendant.unwrap());
+        });
+    }
+
+    #[test]
+    fn explicit_pclose_preserves_background_commands_and_shell_exit_status() {
+        supervised_pipe_test(|group_sender| {
+            let mut session = StreamSession::new();
+            let descendant = session.as_mut().scope(|| unsafe {
+                let handle = popen(
+                    c"sleep 600 & printf '%s\\n' \"$!\"; exit 7".as_ptr(),
+                    c"r".as_ptr(),
+                );
+                assert!(!handle.is_null());
+                let Backing::ReadPipe(child, _) = &(*handle).backing else {
+                    panic!()
+                };
+                let process = child.id();
+                group_sender.send(child.group.unwrap()).unwrap();
+                let mut line = [0 as c_char; 32];
+                assert!(!fgets(line.as_mut_ptr(), line.len() as c_int, handle).is_null());
+                let raw = CStr::from_ptr(line.as_ptr())
+                    .to_str()
+                    .unwrap()
+                    .trim()
+                    .parse()
+                    .unwrap();
+                let descendant = Pid::from_raw(raw).unwrap();
+                let result = pclose(handle);
+                // Explicitly closed/background commands are caller-managed.
+                // Stop this test's descendant before checking assertions.
+                let state = pipe_process_state(descendant);
+                let running = !state.trim().is_empty() && !state.trim().starts_with('Z');
+                let _ = rustix::process::kill_process(descendant, Signal::KILL);
+                assert_eq!(result, 7 << 8);
+                assert!(running, "explicit pclose killed its background command");
+                assert_pipe_child_reaped(process);
+                descendant
+            });
+            session.as_mut().finish().unwrap();
+            assert_pipe_process_stopped(descendant);
+        });
+    }
+
+    #[test]
+    #[ignore = "isolated worker launched by the supervised pipe policy test"]
+    fn supervised_process_pipe_fixture() {
+        assert_eq!(
+            std::env::var("TEKAI_SUPERVISED_PIPE_FIXTURE").as_deref(),
+            Ok("1")
+        );
+        // The test parent owns this worker's group. Killing it locally would
+        // also kill this fixture, so test that cleanup reaches the assertion.
+        let mut session = StreamSession::new_with_pipe_policy(PipeProcessPolicy::SupervisedProcess);
+        let process = session.as_mut().scope(|| unsafe {
+            let handle = popen(c"exec sleep 600".as_ptr(), c"w".as_ptr());
+            assert!(!handle.is_null());
+            let Backing::WritePipe(child, _) = &(*handle).backing else {
+                panic!()
+            };
+            assert!(child.group.is_none());
+            let process = Pid::from_raw(child.id() as i32).unwrap();
+            assert_eq!(
+                rustix::process::getpgid(Some(process)).unwrap(),
+                rustix::process::getpgrp()
+            );
+            child.id()
+        });
+        session.as_mut().finish().unwrap();
+        assert_pipe_child_reaped(process);
+        assert_eq!(
+            rustix::process::getpgrp().as_raw_pid(),
+            std::process::id() as i32
+        );
+    }
+
+    #[test]
+    fn supervised_pipe_policy_never_signals_its_inherited_worker_group() {
+        use rustix::process::{waitid, WaitId, WaitIdOptions};
+        use std::time::{Duration, Instant};
+
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--ignored",
+                "--exact",
+                "stdio::tests::supervised_process_pipe_fixture",
+            ])
+            .env("TEKAI_SUPERVISED_PIPE_FIXTURE", "1")
+            .stdout(Stdio::null());
+        let worker = PipeChild::spawn(&mut command, PipeProcessPolicy::InvocationOwned).unwrap();
+        let group = worker.group.unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let completed = loop {
+            match waitid(
+                WaitId::Pid(group),
+                WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG,
+            ) {
+                Ok(Some(_)) => break true,
+                Ok(None) | Err(rustix::io::Errno::INTR) => {}
+                Err(error) => panic!("cannot supervise pipe fixture: {error}"),
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // Kill before reap, including timeout, so a failing fixture cannot
+        // leave descendants and its reserved process-group ID cannot be reused.
+        let status = worker.wait(true).unwrap();
+        assert!(completed, "supervised pipe fixture did not finish");
+        assert!(status.success(), "supervised pipe fixture failed: {status}");
     }
 
     // Native FILE objects are an oracle only. They never cross the production

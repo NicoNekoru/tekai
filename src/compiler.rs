@@ -122,6 +122,7 @@ pub enum Engine {
 
 pub const EMBEDDED_ENGINE_RUNNER_ENV: &str = "TEKAI_EMBEDDED_ENGINE_RUNNER";
 pub const EMBEDDED_ENGINE_SUBCOMMAND: &str = "__tekai-engine";
+pub const EMBEDDED_ENGINE_WORKER_SUBCOMMAND: &str = "__tekai-engine-worker";
 
 fn is_tekai_pdftex_engine(engine: Engine) -> bool {
     matches!(engine, Engine::TekaiPdftex | Engine::TekaiPdftexCertified)
@@ -11826,6 +11827,10 @@ fn line_may_contain_rerun_reason_with_unusual_case(line: &str) -> bool {
 }
 
 fn configure_output(command: &mut Command, options: &BuildOptions) {
+    // Scheduled TeX/auxiliary jobs are noninteractive and may run concurrently.
+    // Their private process groups must not inherit the user's terminal input.
+    // Direct engine invocation has its own foreground-terminal supervisor.
+    command.stdin(Stdio::null());
     if options.quiet && !options.print_command {
         command.stdout(Stdio::null()).stderr(Stdio::null());
     }
@@ -13732,7 +13737,9 @@ fn tex_engine_command(engine: Engine) -> Command {
         && let Some(runner) = std::env::var_os(EMBEDDED_ENGINE_RUNNER_ENV)
     {
         let mut command = Command::new(runner);
-        command.arg(EMBEDDED_ENGINE_SUBCOMMAND);
+        // process_runner owns this worker's isolated group. Pipe commands must
+        // inherit it so cancellation also reaches blocked IO and descendants.
+        command.arg(EMBEDDED_ENGINE_WORKER_SUBCOMMAND);
         return command;
     }
     Command::new(engine_program_path(engine))
@@ -13919,6 +13926,29 @@ mod tests {
     use super::*;
 
     static TEXINPUTS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[cfg(unix)]
+    #[test]
+    fn scheduled_commands_have_null_input_in_every_output_mode() {
+        for (quiet, print_command) in [(false, false), (true, false), (true, true)] {
+            let mut options = BuildOptions::for_main("main.tex");
+            options.quiet = quiet;
+            options.print_command = print_command;
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "if IFS= read -r line; then exit 7; else exit 0; fi"]);
+            // Even an explicitly supplied input file is not interactive input
+            // for an automatically scheduled build job. No parent TTY changes.
+            command.stdin(
+                std::fs::File::open(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).unwrap(),
+            );
+            configure_output(&mut command, &options);
+            assert!(
+                crate::process_runner::status(&mut command)
+                    .unwrap()
+                    .success()
+            );
+        }
+    }
 
     struct ChunkedHashReader<'a> {
         bytes: &'a [u8],
