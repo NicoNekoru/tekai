@@ -1,8 +1,9 @@
 //! Rust allocation for the remaining translated raw-pointer buffers.
 //!
 //! Every buffer consumed here must also be produced here. A header stores its
-//! layout beside the buffer, so releasing a buffer needs no pointer registry or
-//! lock. The payload starts at a 16-byte boundary, matching the fundamental
+//! layout and invocation-owner links beside the buffer, so releasing a buffer
+//! needs no pointer registry or lock. The payload starts at a 16-byte boundary,
+//! matching the fundamental
 //! alignment required by the translated engine's types. This header is private
 //! allocation metadata and never enters a TeX format, image or PDF.
 //!
@@ -24,17 +25,146 @@
 #![warn(clippy::all)]
 
 use std::alloc::{alloc, dealloc, realloc as realloc_block, Layout};
+use std::cell::{Cell, UnsafeCell};
 use std::ffi::c_void;
+use std::marker::{PhantomData, PhantomPinned};
 use std::mem::{align_of, size_of};
+use std::pin::Pin;
 use std::ptr;
+use std::rc::Rc;
 
 #[repr(C, align(16))]
 struct Header {
     payload_size: usize,
+    owner: *const AllocationArena,
+    previous: *mut Header,
+    next: *mut Header,
 }
 
 const ALIGNMENT: usize = align_of::<Header>();
 const HEADER_SIZE: usize = size_of::<Header>();
+
+thread_local! {
+    // A scoped routing pointer, not an owner. Engine state must discard every
+    // alias before dropping the arena. Each thread can route to its own arena.
+    static ACTIVE_ARENA: Cell<*const AllocationArena> = const { Cell::new(ptr::null()) };
+}
+
+#[derive(Default)]
+struct ArenaState {
+    head: *mut Header,
+    allocations: usize,
+    bytes: usize,
+}
+
+/// Invocation-owned storage for translated buffers without individual owners.
+///
+/// The intrusive list gives allocation, resize and explicit release constant
+/// bookkeeping work. Dropping an arena releases every remaining payload, even
+/// after a Rust unwind. This does not drop objects stored in the raw payloads.
+/// Such objects must keep their own typed owners and never allocate here.
+///
+/// A boxed arena has a stable address while buffers retain its routing pointer.
+/// It is thread-confined and cannot be moved or shared across threads.
+pub(crate) struct AllocationArena {
+    state: UnsafeCell<ArenaState>,
+    _thread_confined: PhantomData<Rc<()>>,
+    _pinned: PhantomPinned,
+}
+
+impl AllocationArena {
+    pub(crate) fn new() -> Pin<Box<Self>> {
+        Box::pin(Self {
+            state: UnsafeCell::new(ArenaState::default()),
+            _thread_confined: PhantomData,
+            _pinned: PhantomPinned,
+        })
+    }
+
+    /// Route newly allocated buffers to this owner for the closure's duration.
+    /// Nested scopes are rejected before replacing the active routing pointer.
+    /// Buffers allocated earlier retain their original owner when resized.
+    pub(crate) fn scope<T>(self: Pin<&mut Self>, operation: impl FnOnce() -> T) -> T {
+        struct RoutingGuard;
+        impl Drop for RoutingGuard {
+            fn drop(&mut self) {
+                ACTIVE_ARENA.with(|active| active.set(ptr::null()));
+            }
+        }
+
+        ACTIVE_ARENA.with(|active| {
+            assert!(active.get().is_null(), "nested allocation arena scope");
+            active.set(self.as_ref().get_ref());
+        });
+        let _routing = RoutingGuard;
+        operation()
+    }
+
+    pub(crate) fn live_allocations(&self) -> usize {
+        // No operation mutates the list concurrently. The arena is !Send/!Sync
+        // and allocation functions do not retain a reference into this state.
+        unsafe { (*self.state.get()).allocations }
+    }
+
+    pub(crate) fn live_bytes(&self) -> usize {
+        unsafe { (*self.state.get()).bytes }
+    }
+}
+
+impl Drop for AllocationArena {
+    fn drop(&mut self) {
+        let state = self.state.get_mut();
+        while !state.head.is_null() {
+            // SAFETY: the list contains only live allocations created here.
+            // An explicit free unlinks first. A successful realloc replaces
+            // its entry before returning. Payloads contain no Rust drop glue.
+            unsafe {
+                let header = state.head;
+                state.head = (*header).next;
+                let layout = allocation_layout((*header).payload_size).unwrap_unchecked();
+                dealloc(header.cast(), layout);
+            }
+        }
+        state.allocations = 0;
+        state.bytes = 0;
+    }
+}
+
+unsafe fn register(header: *mut Header, owner: *const AllocationArena) {
+    if owner.is_null() {
+        return;
+    }
+    unsafe {
+        let state = &mut *(*owner).state.get();
+        (*header).next = state.head;
+        if !state.head.is_null() {
+            (*state.head).previous = header;
+        }
+        state.head = header;
+        state.allocations += 1;
+        state.bytes += (*header).payload_size;
+    }
+}
+
+unsafe fn unlink(header: *mut Header) {
+    unsafe {
+        let owner = (*header).owner;
+        if owner.is_null() {
+            return;
+        }
+        let state = &mut *(*owner).state.get();
+        if (*header).previous.is_null() {
+            state.head = (*header).next;
+        } else {
+            (*(*header).previous).next = (*header).next;
+        }
+        if !(*header).next.is_null() {
+            (*(*header).next).previous = (*header).previous;
+        }
+        state.allocations -= 1;
+        state.bytes -= (*header).payload_size;
+    }
+}
 
 fn allocation_layout(size: usize) -> Option<Layout> {
     let total = size.max(1).checked_add(HEADER_SIZE)?;
@@ -47,10 +177,22 @@ fn allocation_layout(size: usize) -> Option<Layout> {
 /// # Safety
 /// The caller must initialize bytes before reading them and release the returned
 /// pointer through this module. The payload supports alignments up to 16 bytes.
+/// When allocated in an arena scope, all accesses must end before that arena is
+/// dropped. An explicit release must happen before dropping the arena, or the
+/// arena will release it instead.
 pub(crate) unsafe fn malloc(size: usize) -> *mut c_void {
     let Some(layout) = allocation_layout(size) else {
         return ptr::null_mut();
     };
+    let owner = ACTIVE_ARENA.with(Cell::get);
+    if !owner.is_null() {
+        let state = unsafe { &*(*owner).state.get() };
+        if state.allocations.checked_add(1).is_none()
+            || state.bytes.checked_add(size.max(1)).is_none()
+        {
+            return ptr::null_mut();
+        }
+    }
     let base = unsafe { alloc(layout) };
     if base.is_null() {
         return ptr::null_mut();
@@ -58,7 +200,11 @@ pub(crate) unsafe fn malloc(size: usize) -> *mut c_void {
     unsafe {
         base.cast::<Header>().write(Header {
             payload_size: size.max(1),
+            owner,
+            previous: ptr::null_mut(),
+            next: ptr::null_mut(),
         });
+        register(base.cast(), owner);
         base.add(HEADER_SIZE).cast()
     }
 }
@@ -80,16 +226,42 @@ pub(crate) unsafe fn realloc(payload: *mut c_void, size: usize) -> *mut c_void {
     };
     unsafe {
         let base = payload.cast::<u8>().sub(HEADER_SIZE);
-        let old_size = (*base.cast::<Header>()).payload_size;
+        let header = base.cast::<Header>();
+        let old_size = (*header).payload_size;
+        let owner = (*header).owner;
+        let previous = (*header).previous;
+        let next = (*header).next;
+        if !owner.is_null() {
+            let bytes = (*(*owner).state.get()).bytes;
+            if (bytes - old_size).checked_add(size.max(1)).is_none() {
+                return ptr::null_mut();
+            }
+        }
         // The header was written only after this exact layout was validated.
         let old_layout = allocation_layout(old_size).unwrap_unchecked();
         let new_base = realloc_block(base, old_layout, new_layout.size());
         if new_base.is_null() {
             return ptr::null_mut();
         }
-        new_base.cast::<Header>().write(Header {
+        let new_header = new_base.cast::<Header>();
+        new_header.write(Header {
             payload_size: size.max(1),
+            owner,
+            previous,
+            next,
         });
+        if !owner.is_null() {
+            let state = &mut *(*owner).state.get();
+            if previous.is_null() {
+                state.head = new_header;
+            } else {
+                (*previous).next = new_header;
+            }
+            if !next.is_null() {
+                (*next).previous = new_header;
+            }
+            state.bytes = state.bytes - old_size + size.max(1);
+        }
         new_base.add(HEADER_SIZE).cast()
     }
 }
@@ -108,6 +280,7 @@ pub(crate) unsafe fn free(payload: *mut c_void) {
         let base = payload.cast::<u8>().sub(HEADER_SIZE);
         let size = (*base.cast::<Header>()).payload_size;
         let layout = allocation_layout(size).unwrap_unchecked();
+        unlink(base.cast());
         dealloc(base, layout);
     }
 }
@@ -178,7 +351,135 @@ mod tests {
         }
     }
 
+    #[test]
+    fn arena_owns_unreleased_buffers_and_resizes_outside_its_scope() {
+        let mut arena = AllocationArena::new();
+        let (first, middle, last) = arena
+            .as_mut()
+            .scope(|| unsafe { (malloc(17), malloc(29), malloc(41)) });
+        assert_eq!(arena.live_allocations(), 3);
+        assert_eq!(arena.live_bytes(), 87);
+        unsafe { free(middle) };
+        assert_eq!(arena.live_allocations(), 2);
+        assert_eq!(arena.live_bytes(), 58);
+        let first = unsafe { realloc(first, 8192) };
+        assert!(!first.is_null());
+        assert_eq!(arena.live_bytes(), 8233);
+        unsafe { free(last) };
+        assert_eq!(arena.live_allocations(), 1);
+        assert_eq!(arena.live_bytes(), 8192);
+        assert!(unsafe { realloc(first, usize::MAX) }.is_null());
+        assert_eq!(arena.live_bytes(), 8192);
+        // This intentionally leaves one buffer for the arena to release.
+        drop(arena);
+        assert!(ACTIVE_ARENA.with(Cell::get).is_null());
+    }
+
+    #[test]
+    fn resize_keeps_original_owner_in_a_different_scope() {
+        let mut first = AllocationArena::new();
+        let mut second = AllocationArena::new();
+        let buffer = first.as_mut().scope(|| unsafe { malloc(8) });
+        let resized = second.as_mut().scope(|| unsafe { realloc(buffer, 32) });
+        assert!(!resized.is_null());
+        assert_eq!(first.live_allocations(), 1);
+        assert_eq!(first.live_bytes(), 32);
+        assert_eq!(second.live_allocations(), 0);
+        unsafe { free(resized) };
+        assert_eq!(first.live_allocations(), 0);
+        assert_eq!(first.live_bytes(), 0);
+    }
+
+    #[test]
+    fn unwinding_restores_routing_and_preserves_existing_owner() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let mut first = AllocationArena::new();
+        let mut second = AllocationArena::new();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            first.as_mut().scope(|| {
+                assert!(!unsafe { malloc(64) }.is_null());
+                let rejected = catch_unwind(AssertUnwindSafe(|| {
+                    second.as_mut().scope(|| unreachable!());
+                }));
+                assert!(rejected.is_err());
+                assert!(!unsafe { malloc(32) }.is_null());
+                panic!("test scope unwinding");
+            });
+        }));
+        assert!(result.is_err());
+        assert!(ACTIVE_ARENA.with(Cell::get).is_null());
+        assert_eq!(first.live_allocations(), 2);
+        assert_eq!(first.live_bytes(), 96);
+        assert_eq!(second.live_allocations(), 0);
+        second.as_mut().scope(|| {
+            let buffer = unsafe { malloc(8) };
+            assert!(!buffer.is_null());
+            unsafe { free(buffer) };
+        });
+        assert_eq!(second.live_allocations(), 0);
+    }
+
+    #[test]
+    fn different_threads_have_independent_routing() {
+        let start = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let threads = (0..8)
+            .map(|index| {
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    let mut arena = AllocationArena::new();
+                    arena.as_mut().scope(|| {
+                        start.wait();
+                        assert!(!unsafe { malloc(16 + index) }.is_null());
+                    });
+                    assert_eq!(arena.live_allocations(), 1);
+                    assert_eq!(arena.live_bytes(), 16 + index);
+                })
+            })
+            .collect::<Vec<_>>();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+    }
+
     proptest! {
+        #[test]
+        fn arena_tracks_random_release_and_resize_orders(
+            operations in prop::collection::vec((0usize..16, 0usize..8193, any::<bool>()), 1..128),
+        ) {
+            let mut arena = AllocationArena::new();
+            let mut slots = [(ptr::null_mut(), 0usize); 16];
+            let mut expected_count = 0;
+            let mut expected_bytes = 0;
+            for (index, size, release) in operations {
+                let (buffer, old_size) = slots[index];
+                if release {
+                    unsafe { free(buffer) };
+                    if !buffer.is_null() {
+                        expected_count -= 1;
+                        expected_bytes -= old_size;
+                    }
+                    slots[index] = (ptr::null_mut(), 0);
+                } else {
+                    let resized = arena.as_mut().scope(|| unsafe { realloc(buffer, size) });
+                    prop_assert!(!resized.is_null());
+                    if buffer.is_null() {
+                        expected_count += 1;
+                    }
+                    expected_bytes = expected_bytes - old_size + size.max(1);
+                    slots[index] = (resized, size.max(1));
+                }
+                prop_assert_eq!(arena.live_allocations(), expected_count);
+                prop_assert_eq!(arena.live_bytes(), expected_bytes);
+            }
+            // Free in slot order, not allocation order, exercising both links.
+            for (buffer, _) in slots {
+                unsafe { free(buffer) };
+            }
+            prop_assert_eq!(arena.live_allocations(), 0);
+            prop_assert_eq!(arena.live_bytes(), 0);
+        }
+
         #[test]
         fn resize_sequences_preserve_initialized_prefixes(
             operations in prop::collection::vec((0usize..8193, any::<u8>(), any::<bool>()), 1..64),
