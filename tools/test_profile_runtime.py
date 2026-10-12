@@ -70,6 +70,109 @@ def phase_line(data=None):
     return 'TEKAI_PROFILE ' + json.dumps(phase_record() if data is None else data) + '\n'
 
 
+def engine_record():
+    return {'schema_version': 1, 'producer': 'tekai-engine-rust', 'scope': 'engine_invocation',
+            'source': 'opt_in_rust_instrumentation', 'untrusted': True, 'status': 'success',
+            'elapsed_ns': 50, 'completed_spans_only': True, 'phases_overlap': True,
+            'lifecycle_partition_on_success': True,
+            'worker_preparation': {'scope': 'cli_worker_before_invocation', 'elapsed_ns': 200},
+            'phases': [{'name': name, 'status': 'available', 'calls': 1, 'failed_calls': 0,
+                        'elapsed_ns': (5, 5, 35, 3, 2, 20, 10)[index]}
+                       for index, name in enumerate(profile.ENGINE_PHASE_NAMES)],
+            'counters': [{'name': name, 'unit': unit, 'value': 1}
+                         for name, unit in profile.ENGINE_COUNTER_UNITS.items()]}
+
+
+def engine_line(data=None):
+    return 'TEKAI_ENGINE_PROFILE ' + json.dumps(engine_record() if data is None else data) + '\n'
+
+
+class EnginePhaseTests(unittest.TestCase):
+    def test_nested_phases_and_worker_preparation_stay_separate(self):
+        result = profile.parse_engine_phases(phase_line() + engine_line())
+        self.assertEqual(result['status'], 'reported')
+        self.assertTrue(result['untrusted'])
+        self.assertFalse(result['used_for_gate'])
+        data = result['data']
+        self.assertGreater(sum(phase['elapsed_ns'] for phase in data['phases']), data['elapsed_ns'])
+        self.assertGreater(data['worker_preparation']['elapsed_ns'], data['elapsed_ns'])
+        self.assertEqual(profile.parse_phases(engine_line())['status'], 'unavailable')
+        self.assertEqual(profile.parse_engine_phases(phase_line())['status'], 'unavailable')
+
+    def test_setup_failures_and_unobserved_codec_phases_are_not_invented(self):
+        data = engine_record()
+        data.update(status='setup_error', worker_preparation=None)
+        for phase in data['phases']:
+            phase.update(status='unavailable', calls=0, failed_calls=0, elapsed_ns=None)
+        data['phases'][0].update(status='available', calls=1, failed_calls=1, elapsed_ns=10)
+        for counter in data['counters']:
+            counter['value'] = 0
+        self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'reported')
+        data['status'] = 'success'
+        self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+
+    def test_exact_protocol_and_fixed_inventories(self):
+        mutations = (
+            lambda data: data.update(schema_version=True),
+            lambda data: data.update(producer='tekai-rust'),
+            lambda data: data.update(scope='cli_process'),
+            lambda data: data.update(untrusted=False),
+            lambda data: data.update(completed_spans_only=False),
+            lambda data: data.update(phases_overlap=False),
+            lambda data: data.update(lifecycle_partition_on_success=False),
+            lambda data: data.update(status='pass'),
+            lambda data: data.update(unexpected=1),
+            lambda data: data['phases'].pop(),
+            lambda data: data['phases'].__setitem__(0, data['phases'][1]),
+            lambda data: data['phases'][0].update(name=[]),
+            lambda data: data['counters'].pop(),
+            lambda data: data['counters'].__setitem__(0, data['counters'][1]),
+            lambda data: data['counters'][0].update(name=[]),
+            lambda data: data['counters'][0].update(unit='bytes'),
+            lambda data: data['worker_preparation'].update(scope='engine_invocation'),
+        )
+        for index, mutate in enumerate(mutations):
+            with self.subTest(mutation=index):
+                data = engine_record()
+                mutate(data)
+                self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+
+    def test_numeric_bounds_nulls_and_call_consistency(self):
+        mutations = (
+            lambda data, value: data.update(elapsed_ns=value),
+            lambda data, value: data['phases'][0].update(elapsed_ns=value),
+            lambda data, value: data['phases'][0].update(calls=value),
+            lambda data, value: data['phases'][0].update(failed_calls=value),
+            lambda data, value: data['counters'][0].update(value=value),
+            lambda data, value: data['worker_preparation'].update(elapsed_ns=value),
+        )
+        for index, mutate in enumerate(mutations):
+            for value in (True, None, -1, 1.5, float('nan'), float('inf'), profile.MAX_COUNTER + 1):
+                with self.subTest(mutation=index, value=value):
+                    data = engine_record()
+                    mutate(data, value)
+                    self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+        for mutate in (
+                lambda data: data['phases'][0].update(failed_calls=2),
+                lambda data: data['phases'][0].update(elapsed_ns=101),
+                lambda data: data['phases'][0].update(elapsed_ns=0),
+                lambda data: data['phases'][0].update(status='unavailable'),
+                lambda data: data['phases'][0].update(calls=0),
+                lambda data: data['counters'][0].update(value=2)):
+            data = engine_record()
+            mutate(data)
+            self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+
+    def test_duplicate_truncated_and_oversized_captures_are_invalid(self):
+        for text, truncated in ((engine_line() + engine_line(), False), (engine_line(), True),
+                                (engine_line().replace('"schema_version": 1', '"schema_version": 1, "schema_version": 1'), False),
+                                ('TEKAI_ENGINE_PROFILE {}\n', False),
+                                ('TEKAI_ENGINE_PROFILE ' + '[' * 5000, False),
+                                ('TEKAI_ENGINE_PROFILE ' + '[]' * 2500, False)):
+            with self.subTest(text=text[:100], truncated=truncated):
+                self.assertEqual(profile.parse_engine_phases(text, truncated)['status'], 'invalid')
+
+
 class ResourceTests(unittest.TestCase):
     def test_units_and_scope(self):
         gnu = profile.parse_resources(GNU, 'gnu')
@@ -180,6 +283,22 @@ class VolatilitySummaryTests(unittest.TestCase):
         self.assertEqual(summary['cohorts'][0]['counter_observations']['metadata_checks']['status'], 'unavailable')
         self.assertIsNone(summary['cohorts'][0]['counter_observations']['metadata_checks']['constant_observed'])
         self.assertEqual(profile.describe([None, float('nan')], 'seconds')['status'], 'unavailable')
+
+    def test_engine_library_worker_preparation_and_nested_codec_durations_stay_separate(self):
+        candidate = self.row(.01, 1)
+        candidate['engine_phases'] = profile.parse_engine_phases(engine_line())
+        baseline = self.row(.01, 1, label='baseline')
+        baseline['engine_phases'] = profile.parse_engine_phases('')
+        cohorts = profile.volatility_summary([candidate, baseline])['cohorts']
+        observed = next(row for row in cohorts if row['label'] == 'candidate')
+        absent = next(row for row in cohorts if row['label'] == 'baseline')
+        self.assertEqual(observed['engine_elapsed']['median'], 50)
+        self.assertEqual(observed['worker_preparation']['median'], 200)
+        self.assertEqual(observed['engine_phase_observations']['png_decode']['elapsed']['median'], 20)
+        self.assertEqual(observed['engine_counter_observations']['decode_calls']['distinct_values'], [1])
+        self.assertEqual(absent['engine_elapsed']['status'], 'unavailable')
+        self.assertEqual(absent['engine_phase_observations']['png_decode']['elapsed']['samples'], 0)
+        self.assertEqual(absent['engine_counter_observations']['decode_calls']['status'], 'unavailable')
 
 
 class PhaseTests(unittest.TestCase):
@@ -574,7 +693,8 @@ class BindingTests(FixtureFiles):
 
 class DriverTests(FixtureFiles):
     def run_model(self, *, fail_at=None, interrupt=False, mutation=None, copy_mismatch=False,
-                  timer_available=True, missing_verifier=False):
+                  timer_available=True, missing_verifier=False, image_route_controls=False,
+                  route_error=False, route_mutation=None):
         commands, hosts = [], []
         original_primary = self.primary_path.read_bytes()
         real_copy = profile.shutil.copy2
@@ -583,8 +703,20 @@ class DriverTests(FixtureFiles):
             project = root / 'project'
             project.mkdir(parents=True)
             (project / 'main.tex').write_text('fixture ' + case)
-            return {'root': root, 'project': project, 'env': {'FIXTURE': '1'},
-                    'command': [binary, case], 'input_sha256': benchmark.fixture_sha256(project)}
+            fixture = {'root': root, 'project': project, 'env': {'FIXTURE': '1'},
+                       'command': [binary, case], 'input_sha256': benchmark.fixture_sha256(project)}
+            if image_route_controls and case == 'image-compile':
+                out = root / 'out'
+                out.mkdir()
+                fixture['out'] = out
+                fixture['command'] = [binary, profile.PUBLIC_ENGINE_ROUTE, '-interaction=nonstopmode',
+                                      '-halt-on-error', '-no-shell-escape', f'-output-directory={out}', 'main.tex']
+                for kind in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX'):
+                    path = root / ('cache-' + kind.lower())
+                    path.mkdir()
+                    fixture['env']['TEKAI_' + kind + '_CACHE'] = str(path)
+                (root / 'cache-engine/complete-fixture').write_bytes(b'immutable model cache')
+            return fixture
 
         def timer(supervisor, env):
             supervisor.kind = 'gnu' if timer_available else None
@@ -594,18 +726,28 @@ class DriverTests(FixtureFiles):
             supervisor.counter += 1
             commands.append((list(map(str, command)), dict(env)))
             active = supervisor.active is not None and str(command[0]) != self.verifiers['pdftotext']
+            raw = active and supervisor.active.get('unwrapped_route_control') is True
+            if profile.PRIVATE_ENGINE_ROUTE in command and supervisor.active['label'] == 'baseline':
+                raise AssertionError('The baseline has no private worker route')
             return {'command_id': supervisor.counter, 'seconds': .01, 'parent_timing': [10, 10.001, 10.01],
                     'command_timing': [10, 10, 10.0001, 10.0002, 10.0008, 10.0009,
                                        10.001, 10.0011, 10.0012, 10.01, 10.0101, 10.0102],
-                    'stderr_tail': (GNU if timer_available and active else '') +
+                    'stderr_tail': (GNU if timer_available and active and not raw else '') +
                                    (phase_line() if active and supervisor.active['label'] == 'candidate'
                                     and supervisor.active['case'] == 'warm-build-cache'
-                                    and supervisor.active['phase'] != 'launch_only_control' else ''), 'stdout': '{}'}
+                                    and supervisor.active['phase'] != 'launch_only_control' else '') +
+                                   (engine_line() if active and not raw and supervisor.active['label'] == 'candidate'
+                                    and supervisor.active['case'] == 'image-compile' else ''), 'stdout': '{}'}
 
         def fixture_run(supervisor, fixture, case, initializing=False):
             if case == 'cli-startup':
                 self.assertEqual(fixture['expected_version'], self.metadata[fixture['label']]['expected_version'])
             result = supervisor.execute(fixture['command'], fixture['project'], fixture['env'])
+            if supervisor.active and supervisor.active.get('unwrapped_route_control'):
+                if route_mutation:
+                    route_mutation(supervisor, fixture)
+                if route_error and supervisor.active['route'] == 'worker':
+                    raise benchmark.BenchmarkError('Candidate private worker route is unsupported')
             if mutation:
                 mutation(supervisor, fixture)
             if fail_at is not None and len(commands) == fail_at:
@@ -641,7 +783,7 @@ class DriverTests(FixtureFiles):
                 mock.patch.object(benchmark, 'execute_fixture', side_effect=fixture_run), \
                 mock.patch.object(profile, 'execute_profile_fixture', side_effect=fixture_run), \
                 mock.patch.object(profile, 'host_snapshot', side_effect=host):
-            code = profile.main(self.argv())
+            code = profile.main(self.argv(*(['--image-route-controls'] if image_route_controls else [])))
         self.assertEqual(self.primary_path.read_bytes(), original_primary)
         return code, profile.read_json(self.output), commands, hosts
 
@@ -766,9 +908,185 @@ class DriverTests(FixtureFiles):
                 self.assertTrue(any(not row['unchanged'] for row in report['executables']))
                 self.assertTrue(any('copy changed or disappeared' in error for error in report['errors']))
 
+    def test_image_controls_are_opt_in_candidate_only_unwrapped_and_balanced(self):
+        code, report, commands, hosts = self.run_model(image_route_controls=True)
+        self.assertEqual(code, 0)
+        control = report['image_route_controls']
+        self.assertEqual(control['status'], 'complete')
+        self.assertFalse(control['used_for_gate'])
+        self.assertEqual(control['candidate_revision'], self.metadata['candidate']['revision'])
+        self.assertEqual(control['binary_sha256'], self.metadata['candidate']['artifact_sha256'])
+        self.assertEqual(control['completion']['complete_pairs'], 16)
+        self.assertTrue(control['completion']['equal_completed_balance'])
+        self.assertEqual(control['completion']['completed_route_counts'],
+                         {'s0': {'public': 8, 'worker': 8}, 's1': {'public': 8, 'worker': 8}})
+        self.assertEqual(control['completion']['first_route_counts'],
+                         {'s0': {'public': 4, 'worker': 4}, 's1': {'public': 4, 'worker': 4}})
+        self.assertEqual(control['completion']['replica_ordinal_counts'],
+                         {'s0': {'0': 4, '1': 4}, 's1': {'0': 4, '1': 4}})
+        rows = [row for row in report['commands'] if row.get('unwrapped_route_control')]
+        self.assertEqual(len(rows), 32)
+        self.assertEqual(len(hosts), 72)
+        self.assertEqual(report['primary']['status'], 'inconclusive')
+        self.assertTrue(report['primary']['unchanged'])
+        for row in rows:
+            self.assertEqual(row['label'], 'candidate')
+            self.assertEqual(row['source_sha256_before'], control['binary_sha256'])
+            self.assertEqual(row['source_sha256_after'], control['binary_sha256'])
+            self.assertEqual(row['binary_sha256_before'], row['binary_sha256_after'])
+            self.assertEqual(row['fixture_sha256_before'], row['fixture_sha256_after'])
+            self.assertEqual(row['cache_before'], row['cache_after'])
+            self.assertFalse(row['cleanup_used_for_measurement'])
+            self.assertIn('before owned-process cleanup', row['parent_timing_scope'])
+            self.assertEqual(row['resources']['status'], 'unavailable')
+            self.assertEqual(row['engine_phases']['status'], 'unavailable')
+            self.assertTrue(row['output_validation']['text_verified'])
+            self.assertNotIn('ratio', row)
+        raw_commands = [(command, env) for command, env in commands
+                        if len(command) > 1 and command[1] in (profile.PUBLIC_ENGINE_ROUTE, profile.PRIVATE_ENGINE_ROUTE)]
+        self.assertEqual(len(raw_commands), 32)
+        for command, env in raw_commands:
+            self.assertEqual(Path(command[0]).name, 'tekai')
+            self.assertNotIn('TEKAI_DIAGNOSTIC_PROFILE', env)
+            self.assertNotIn('TEKAI_ENGINE_PROFILE', env)
+            self.assertIn('-no-shell-escape', command)
+        ordinary = [row for row in report['commands'] if row['case'] == 'image-compile'
+                    and not row.get('unwrapped_route_control')]
+        self.assertTrue(all(row['engine_phases']['status'] == ('reported' if row['label'] == 'candidate' else 'unavailable')
+                            for row in ordinary))
+
+    def test_unsupported_candidate_worker_is_partial_without_baseline_worker_or_fallback(self):
+        code, report, commands, _ = self.run_model(image_route_controls=True, route_error=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(report['image_route_controls']['status'], 'error')
+        completion = report['image_route_controls']['completion']
+        self.assertFalse(completion['complete'])
+        self.assertFalse(completion['equal_completed_balance'])
+        self.assertEqual(completion['complete_pairs'], 0)
+        self.assertEqual(completion['completed_route_counts']['s0'], {'public': 1, 'worker': 0})
+        rows = [row for row in report['commands'] if row.get('unwrapped_route_control')]
+        self.assertEqual([row['route'] for row in rows], ['public', 'worker'])
+        self.assertEqual([row['status'] for row in rows], ['verified', 'error'])
+        self.assertIsNone(rows[1]['output_validation'])
+        self.assertIn('unsupported', rows[1]['error'])
+        self.assertEqual(report['primary']['status'], 'inconclusive')
+        self.assertTrue(report['primary']['unchanged'])
+
+    def test_image_controls_fail_closed_on_cache_fixture_binary_or_source_corruption(self):
+        def change_cache(_supervisor, fixture):
+            (Path(fixture['env']['TEKAI_ENGINE_CACHE']) / 'complete-fixture').write_bytes(b'changed')
+
+        def change_fixture(_supervisor, fixture):
+            (fixture['project'] / 'main.tex').write_text('changed')
+
+        def change_binary(_supervisor, fixture):
+            Path(fixture['command'][0]).write_bytes(b'changed')
+
+        def change_source(_supervisor, _fixture):
+            self.sources['candidate'].write_bytes(b'changed')
+
+        for mutate in (change_cache, change_fixture, change_binary, change_source):
+            with self.subTest(mutation=mutate.__name__):
+                original = self.sources['candidate'].read_bytes()
+                code, report, _, _ = self.run_model(image_route_controls=True, route_mutation=mutate)
+                self.sources['candidate'].write_bytes(original)
+                self.assertEqual(code, 1)
+                self.assertFalse(report['image_route_controls']['completion']['equal_completed_balance'])
+                rows = [row for row in report['commands'] if row.get('unwrapped_route_control')]
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['status'], 'error')
+                self.assertIn('changed after command', rows[0]['error'])
+                self.assertEqual(report['primary']['status'], 'inconclusive')
+
+
+class ImageRouteInventoryTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.fixture = {'root': self.root, 'env': {}}
+        for kind in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX'):
+            path = self.root / ('cache-' + kind.lower())
+            path.mkdir()
+            self.fixture['env']['TEKAI_' + kind + '_CACHE'] = str(path)
+        self.file = self.root / 'cache-engine/immutable'
+        self.file.write_bytes(b'cache data')
+        self.supervisor = mock.Mock()
+
+    def test_native_inventory_is_stable_for_reads_and_detects_preserved_mtime_replacement(self):
+        first = profile.image_cache_snapshot(self.supervisor, self.fixture)
+        self.assertEqual(first, profile.image_cache_snapshot(self.supervisor, self.fixture))
+        self.assertEqual(first['entries'], 5)
+        self.assertFalse(first['used_for_gate'])
+        self.assertIn('Not cache-content hashes', first['scope'])
+        info = self.file.stat()
+        replacement = self.root / 'replacement'
+        replacement.write_bytes(self.file.read_bytes())
+        os.utime(replacement, ns=(info.st_atime_ns, info.st_mtime_ns))
+        replacement.replace(self.file)
+        self.assertNotEqual(first, profile.image_cache_snapshot(self.supervisor, self.fixture))
+
+    def test_symlinks_external_roots_special_files_and_finite_limits_fail_closed(self):
+        link = self.root / 'cache-engine/link'
+        link.symlink_to(self.file)
+        with self.assertRaises(ValueError):
+            profile.image_cache_snapshot(self.supervisor, self.fixture)
+        link.unlink()
+        self.fixture['env']['TEKAI_ENGINE_CACHE'] = str(self.root)
+        with self.assertRaises(ValueError):
+            profile.image_cache_snapshot(self.supervisor, self.fixture)
+        self.fixture['env']['TEKAI_ENGINE_CACHE'] = str(self.root / 'cache-engine')
+        for name, limit in (('MAX_CACHE_ENTRIES', 2), ('MAX_CACHE_BYTES', 1)):
+            with mock.patch.object(profile, name, limit), self.assertRaises(ValueError):
+                profile.image_cache_snapshot(self.supervisor, self.fixture)
+        fifo = self.root / 'cache-engine/fifo'
+        os.mkfifo(fifo)
+        with self.assertRaises(ValueError):
+            profile.image_cache_snapshot(self.supervisor, self.fixture)
+
+    def test_bounded_inventory_obeys_existing_whole_run_deadline(self):
+        self.supervisor.remaining.side_effect = benchmark.BenchmarkError('Whole-run deadline exceeded')
+        with self.assertRaisesRegex(benchmark.BenchmarkError, 'deadline'):
+            profile.image_cache_snapshot(self.supervisor, self.fixture)
+
+    def test_workflow_opt_in_and_rust_route_constants_match(self):
+        root = Path(__file__).resolve().parent.parent
+        source = (root / 'src/compiler.rs').read_text()
+        self.assertIn(f'EMBEDDED_ENGINE_SUBCOMMAND: &str = "{profile.PUBLIC_ENGINE_ROUTE}"', source)
+        self.assertIn(f'EMBEDDED_ENGINE_WORKER_SUBCOMMAND: &str = "{profile.PRIVATE_ENGINE_ROUTE}"', source)
+        workflow = (root / '.github/workflows/performance.yml').read_text()
+        diagnostic = workflow.split('id: profiling', 1)[1].split('- name:', 1)[0]
+        self.assertIn('tools/profile_runtime.py', diagnostic)
+        self.assertIn('--image-route-controls', diagnostic)
+        primary = workflow.split('id: comparison', 1)[1].split('- name:', 1)[0]
+        self.assertNotIn('--image-route-controls', primary)
+
 
 @unittest.skipUnless(os.name == 'posix', 'Owned POSIX process groups')
 class SupervisorTests(unittest.TestCase):
+    def test_unwrapped_control_uses_owned_waiter_without_timer_or_profile_opt_in(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            supervisor = profile.ProfileSupervisor(root, 2, time.monotonic() + 10)
+            supervisor.kind = 'darwin' if sys.platform == 'darwin' else 'gnu'
+            command = [sys.executable, '-B', '-c',
+                       'import os; assert "TEKAI_ENGINE_PROFILE" not in os.environ; '
+                       'assert "TEKAI_DIAGNOSTIC_PROFILE" not in os.environ; print("owned raw control")']
+            row = {'command': command, 'unwrapped_route_control': True}
+            supervisor.active = row
+            try:
+                result = supervisor.execute(command, root, {})
+                self.assertEqual(result['stdout'], 'owned raw control\n')
+                self.assertEqual(result['stderr_tail'], '')
+                self.assertEqual(len(result['command_timing']), len(benchmark.TIMING_METADATA['command_timing_fields']))
+                self.assertEqual(row['resources']['status'], 'unavailable')
+                self.assertEqual(row['engine_phases']['status'], 'unavailable')
+                self.assertIn('No resource wrapper or profiling opt-in', row['parent_timing_scope'])
+                self.assertGreaterEqual(row['cleanup_seconds'], 0)
+                self.assertEqual(supervisor.owned, {})
+            finally:
+                supervisor.close()
+
     def test_real_system_timer_probe_with_tiny_python_child(self):
         with tempfile.TemporaryDirectory() as temporary:
             supervisor = profile.ProfileSupervisor(Path(temporary), 2, time.monotonic() + 5)

@@ -556,7 +556,7 @@ The finer routes separate state reading from cache parsing, metadata checks
 from content/effective-source hashing, memo work, lookup-session resets,
 mode-key generation and report serialization. Their scopes overlap, so their
 durations must not be summed into a total. Dedicated exact-engine children skip
-the parent CLI profiler and do not currently emit the phase record. Normal
+the parent CLI profiler. Normal
 engine completion and fatal diagnostics return typed results to the child
 runner. Parent cache/build commands can report
 argument/configuration setup, state loading, freshness checks and TeX subprocess
@@ -565,7 +565,39 @@ Phase protocol version 3 names these unavailable observations as child-process
 internals rather than claiming that normal Rust engine entry never returns.
 Protocol 4 identifies build-state parsing as JSON. The reader still validates
 versions 1 through 3 using their original labels and reasons, including TOML
-parsing in versions 2 and 3. No version supplies measured child-internal durations.
+parsing in versions 2 and 3. These parent protocols do not supply measured
+child-internal durations.
+
+The `tekai` CLI's engine workers use a separate exact-one
+`TEKAI_ENGINE_PROFILE=1` opt-in.
+The library's `run_profiled_with_options` creates a fresh invocation-owned
+collector and returns its immutable snapshot after complete owner destruction.
+Default entry does not create the collector or start profiling clocks. The
+worker emits one best-effort `TEKAI_ENGINE_PROFILE ` protocol-1 JSON line within
+4096 bytes. The supervisor parent emits no engine record. Unexpected Rust
+panics retain normal propagation and produce no completed record.
+
+The five lifecycle segments are owner construction, invocation setup, engine
+body, cleanup and owner destruction. Shared boundaries partition the completed
+successful library lifecycle. Cleanup includes flushing, stream completion and
+scope removal. Nested PNG decoding and actual PDF codec calls overlap engine
+execution and must not be added to the lifecycle total. Fixed counters record
+decode attempts, bounded-cache hits, decoded bytes, compression calls and actual
+consumed/produced compression bytes. Failed calls remain visible. Unreached
+phases have null durations. CLI preparation has a separate timer outside the
+library elapsed time. Format loading remains part of the broad engine-body
+segment rather than a separately measured phase.
+
+Full CI also records a bounded, candidate-only image-route control. The public
+engine command and private engine worker use the same executable copy and the
+original image fixture in each of two replicas. Eight pairs per replica balance
+both launch orders. These commands have no resource wrapper or profiling opt-in.
+Every output must pass the original image oracles. Binary and input hashes,
+native cache metadata inventories, actual completion and balance remain
+recorded. Observer work and owned-group cleanup stay outside completion clocks.
+The control can distinguish a same-binary route difference on that runner.
+It cannot identify an engine phase as the cause or replace public-command
+samples in the strict gate. Partial controls remain explicit errors.
 
 ```sh
 python3 -B tools/profile_runtime.py --candidate target/release/tekai \
@@ -573,7 +605,7 @@ python3 -B tools/profile_runtime.py --candidate target/release/tekai \
   --metadata /path/to/comparison-metadata.json \
   --primary-report /path/to/comparison.json \
   --output target/runtime-performance/profiling/profile.json \
-  --repeats 8 --timeout 30 --budget 600
+  --repeats 8 --timeout 30 --budget 600 --image-route-controls
 ```
 
 Profiling and startup controls are separate artifacts. Neither can

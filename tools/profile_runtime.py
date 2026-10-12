@@ -7,6 +7,7 @@ Their observations cannot be used as replacement samples or speedup evidence.
 
 import argparse
 import gc
+import hashlib
 import json
 import math
 import os
@@ -16,6 +17,7 @@ import re
 import resource
 import shutil
 import signal
+import stat
 import statistics
 import subprocess
 import sys
@@ -29,6 +31,11 @@ MAX_PROFILE_BYTES = 16 * 1024 * 1024
 MAX_TEXT_BYTES = 32768
 MAX_PHASE_BYTES = 16384
 MAX_COUNTER = (1 << 63) - 1
+IMAGE_ROUTE_PAIRS = 8
+MAX_CACHE_ENTRIES = 32768
+MAX_CACHE_BYTES = 512 * 1024 * 1024
+PUBLIC_ENGINE_ROUTE = '__tekai-engine'
+PRIVATE_ENGINE_ROUTE = '__tekai-engine-worker'
 RESOURCE_MARKER = '__TEKAI_PROFILE_RESOURCE__'
 RESOURCE_FIELDS = ('user_cpu_seconds', 'system_cpu_seconds', 'peak_rss_bytes', 'major_faults',
                    'minor_faults', 'voluntary_context_switches', 'involuntary_context_switches',
@@ -79,10 +86,25 @@ CHILD_REASONS = {
     'embedded_engine_entry': 'engine_child_process_outside_parent_instrumentation',
     'format_initialization': 'not_separately_instrumented_inside_engine_child',
 }
+ENGINE_PHASE_NAMES = ('owner_construction', 'invocation_setup', 'engine_body', 'cleanup',
+                      'owner_drop', 'png_decode', 'pdf_compression')
+ENGINE_COUNTER_UNITS = {'decode_calls': 'calls', 'cache_hits': 'hits', 'decoded_bytes': 'bytes',
+                        'compression_calls': 'calls', 'compression_input_bytes': 'bytes',
+                        'compression_output_bytes': 'bytes'}
+MAX_ENGINE_PHASE_BYTES = 4096
 
 
 def reject_constant(value):
     raise ValueError('Nonfinite JSON constant ' + value)
+
+
+def unique_object(items):
+    result = {}
+    for name, value in items:
+        if name in result:
+            raise ValueError('Duplicate JSON member ' + name)
+        result[name] = value
+    return result
 
 
 def read_json(path):
@@ -256,6 +278,85 @@ def parse_phases(stderr, truncated=False):
     return result
 
 
+def parse_engine_phases(stderr, truncated=False):
+    """Parse one invocation record, independently of parent CLI observations."""
+    result = {'status': 'unavailable', 'untrusted': True, 'used_for_gate': False, 'data': None}
+    prefix = 'TEKAI_ENGINE_PROFILE '
+    if truncated:
+        result.update(status='invalid', reason='Engine phase capture is truncated')
+        return result
+    lines = [line[len(prefix):] for line in stderr.splitlines() if line.startswith(prefix)]
+    if not lines:
+        result['reason'] = 'Selected binary emitted no opt-in engine record'
+        return result
+    if len(lines) != 1 or len(lines[0].encode('utf-8')) + len(prefix) + 1 > MAX_ENGINE_PHASE_BYTES:
+        result.update(status='invalid', reason='Engine record is duplicated or exceeds its finite limit')
+        return result
+    try:
+        data = json.loads(lines[0], parse_constant=reject_constant, object_pairs_hook=unique_object)
+        keys = {'schema_version', 'producer', 'scope', 'source', 'untrusted', 'status', 'elapsed_ns',
+                'completed_spans_only', 'phases_overlap', 'lifecycle_partition_on_success',
+                'worker_preparation', 'phases', 'counters'}
+        if not isinstance(data, dict) or set(data) != keys \
+                or type(data.get('schema_version')) is not int or data['schema_version'] != 1 \
+                or data.get('producer') != 'tekai-engine-rust' \
+                or data.get('scope') != 'engine_invocation' \
+                or data.get('source') != 'opt_in_rust_instrumentation' \
+                or any(data.get(key) is not True for key in ('untrusted', 'completed_spans_only',
+                                                           'phases_overlap', 'lifecycle_partition_on_success')) \
+                or data.get('status') not in ('success', 'warnings', 'errors', 'setup_error', 'teardown_error') \
+                or not finite_number(data.get('elapsed_ns'), integer=True):
+            raise ValueError('Unsupported opt-in engine protocol')
+        preparation = data['worker_preparation']
+        if preparation is not None and (not isinstance(preparation, dict)
+                or set(preparation) != {'scope', 'elapsed_ns'}
+                or preparation.get('scope') != 'cli_worker_before_invocation'
+                or not finite_number(preparation.get('elapsed_ns'), integer=True)):
+            raise ValueError('Invalid separate worker preparation observation')
+        phases = data['phases']
+        if not isinstance(phases, list) or len(phases) != len(ENGINE_PHASE_NAMES) \
+                or any(not isinstance(phase, dict) or type(phase.get('name')) is not str for phase in phases) \
+                or {phase['name'] for phase in phases} != set(ENGINE_PHASE_NAMES):
+            raise ValueError('Missing or duplicated fixed engine phase inventory')
+        for phase in phases:
+            if set(phase) != {'name', 'status', 'calls', 'failed_calls', 'elapsed_ns'} \
+                    or phase.get('status') not in ('available', 'unavailable') \
+                    or any(not finite_number(phase.get(key), integer=True) for key in ('calls', 'failed_calls')) \
+                    or phase['failed_calls'] > phase['calls']:
+                raise ValueError('Invalid engine phase status or call count')
+            if phase['status'] == 'available':
+                if phase['calls'] == 0 or not finite_number(phase['elapsed_ns'], integer=True):
+                    raise ValueError('Available engine phase requires completed calls and duration')
+            elif phase['calls'] != 0 or phase['failed_calls'] != 0 or phase['elapsed_ns'] is not None:
+                raise ValueError('Unavailable engine phase requires zero calls and null duration')
+        lifecycle = [phase for phase in phases if phase['name'] in ENGINE_PHASE_NAMES[:5]]
+        if sum(phase['elapsed_ns'] or 0 for phase in lifecycle) > data['elapsed_ns']:
+            raise ValueError('Engine lifecycle durations exceed invocation time')
+        if data['status'] in ('success', 'warnings'):
+            if any(phase['calls'] != 1 or phase['failed_calls'] != 0 for phase in lifecycle) \
+                    or sum(phase['elapsed_ns'] for phase in lifecycle) != data['elapsed_ns']:
+                raise ValueError('Successful engine invocation requires a complete partitioned lifecycle')
+        counters = data['counters']
+        if not isinstance(counters, list) or len(counters) != len(ENGINE_COUNTER_UNITS) \
+                or any(not isinstance(counter, dict) or type(counter.get('name')) is not str for counter in counters) \
+                or {counter['name'] for counter in counters} != set(ENGINE_COUNTER_UNITS):
+            raise ValueError('Missing or duplicated fixed engine counter inventory')
+        for counter in counters:
+            if set(counter) != {'name', 'value', 'unit'} \
+                    or counter.get('unit') != ENGINE_COUNTER_UNITS[counter['name']] \
+                    or not finite_number(counter.get('value'), integer=True):
+                raise ValueError('Invalid engine counter value or unit')
+        counts = {counter['name']: counter['value'] for counter in counters}
+        calls = {phase['name']: phase['calls'] for phase in phases}
+        if counts['decode_calls'] != calls['png_decode'] \
+                or counts['compression_calls'] != calls['pdf_compression']:
+            raise ValueError('Engine codec counters disagree with completed phase calls')
+        result.update(status='reported', data=data)
+    except (ValueError, RecursionError, OverflowError) as error:
+        result.update(status='invalid', reason=str(error))
+    return result
+
+
 def parse_vm_stat(text):
     match = re.search(r'page size of (\d+) bytes', text)
     if not match or not finite_number(int(match[1]), integer=True) or int(match[1]) == 0:
@@ -386,17 +487,21 @@ class ProfileSupervisor(benchmark.Supervisor):
                    popen_latency_unavailable_reason='Pure Popen call latency is not separately timed',
                    popen_latency_scope=benchmark.TIMING_METADATA['popen_scope'],
                    launch_setup_seconds=None, command_id=self.counter + 1)
-        selected_env = dict(env, LC_ALL='C', TEKAI_DIAGNOSTIC_PROFILE='1')
+        raw_control = row.get('unwrapped_route_control') is True
+        selected_env = dict(env) if raw_control else dict(
+            env, LC_ALL='C', TEKAI_DIAGNOSTIC_PROFILE='1', TEKAI_ENGINE_PROFILE='1')
+        wrapped = [] if raw_control else timer_command(self.kind)
+        resource_kind = None if raw_control else self.kind
         stderr, truncated = '', False
         try:
-            result = super().execute([*timer_command(self.kind), *command], cwd, selected_env)
+            result = super().execute([*wrapped, *command], cwd, selected_env)
             stderr = result['stderr_tail']
             timing = result.get('parent_timing')
             row.update(status='command_completed', parent_seconds=result['seconds'], parent_timing=timing,
                        command_timing=result.get('command_timing'),
                        command_timing_boundaries=benchmark.TIMING_METADATA['command_timing_fields'],
-                       parent_timing_scope='Start before capture setup; launch end after Popen returns; blocking-wait completion. '
-                                           'All monotonic seconds. Includes the resource wrapper.',
+                       parent_timing_scope='Capture setup through blocking WNOWAIT exit observation, before owned-process cleanup. '
+                                           + ('No resource wrapper or profiling opt-in.' if raw_control else 'Includes the resource wrapper.'),
                        launch_setup_scope='Capture-file setup plus Popen, not pure Popen or loader time')
             if isinstance(timing, list) and len(timing) == 3 and all(finite_number(value) for value in timing) \
                     and timing[0] <= timing[1] <= timing[2]:
@@ -430,15 +535,186 @@ class ProfileSupervisor(benchmark.Supervisor):
         finally:
             row.update(finish_unix_ns=time.time_ns(), finish_monotonic_ns=time.monotonic_ns(),
                        parent_after=parent_snapshot(),
-                       resources=parse_resources(stderr, self.kind, truncated),
-                       phases=parse_phases(stderr, truncated), stderr_tail=stderr)
+                       resources=parse_resources(stderr, resource_kind, truncated),
+                       phases=parse_phases(stderr, truncated),
+                       engine_phases=parse_engine_phases(stderr, truncated), stderr_tail=stderr)
             before, after = row['parent_before'], row['parent_after']
             row['parent_resource_delta'] = {name: after[name] - before[name] for name in
                 ('user_cpu_seconds', 'system_cpu_seconds', 'minor_faults', 'major_faults',
                  'voluntary_context_switches', 'involuntary_context_switches') if name in before and name in after}
             row['parent_resource_delta_scope'] = 'Observer work plus command supervision between parent snapshots; not child CPU accounting.'
-            if self.kind is None:
+            if raw_control:
+                row['resources']['reason'] = 'Unwrapped route control has no system resource timer'
+            elif self.kind is None:
                 row['resources']['reason'] = self.timer_reason
+
+
+def image_route_plan():
+    """Fixed candidate-only pairs balance route and replica launch order."""
+    pairs = []
+    for repetition in range(IMAGE_ROUTE_PAIRS):
+        slots = benchmark.SLOTS if repetition % 2 == 0 else tuple(reversed(benchmark.SLOTS))
+        for ordinal, slot in enumerate(slots):
+            routes = ('public', 'worker') if (repetition + benchmark.SLOTS.index(slot)) % 2 == 0 else ('worker', 'public')
+            pairs.append({'repetition': repetition, 'slot': slot, 'replica_ordinal': ordinal, 'routes': list(routes)})
+    return pairs
+
+
+def image_cache_snapshot(supervisor, fixture):
+    """Complete bounded native metadata inventory, outside command clocks."""
+    rows, files, size = [], 0, 0
+    root = fixture['root'].resolve()
+    for kind in ('ENGINE', 'FORMAT', 'AUX', 'BIBTEX'):
+        path = Path(fixture['env']['TEKAI_' + kind + '_CACHE'])
+        if not path.is_absolute() or path.is_symlink() or not path.is_dir() \
+                or path.resolve() != root / ('cache-' + kind.lower()):
+            raise ValueError('Image control cache is outside its owned fixture root')
+        pending = [(path, 0)]
+        while pending:
+            current, depth = pending.pop()
+            if len(rows) >= MAX_CACHE_ENTRIES or depth > 64:
+                raise ValueError('Image cache inventory exceeds its finite entry/depth bound')
+            if len(rows) % 256 == 0:
+                supervisor.remaining()
+            info = current.lstat()
+            directory = stat.S_ISDIR(info.st_mode)
+            if not directory and not stat.S_ISREG(info.st_mode):
+                raise ValueError('Image cache inventory contains a symlink or special file')
+            relative = current.relative_to(root).as_posix()
+            if len(relative.encode('utf-8')) > 4096:
+                raise ValueError('Image cache inventory path exceeds its finite bound')
+            rows.append([relative, stat.S_IMODE(info.st_mode), directory, info.st_size,
+                         info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns])
+            if directory:
+                # Bound pending work before allocating a complete listing.
+                with os.scandir(current) as children:
+                    for child in children:
+                        if len(rows) + len(pending) >= MAX_CACHE_ENTRIES:
+                            raise ValueError('Image cache inventory exceeds its finite entry bound')
+                        pending.append((Path(child.path), depth + 1))
+            else:
+                files += 1
+                size += info.st_size
+                if size > MAX_CACHE_BYTES:
+                    raise ValueError('Image cache inventory exceeds its finite byte bound')
+    rows.sort()
+    digest = hashlib.sha256(json.dumps(rows, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    return {'inventory_sha256': digest, 'entries': len(rows), 'files': files, 'file_bytes': size,
+            'used_for_gate': False,
+            'scope': 'All four owned cache roots, complete paths/kinds/modes/native inode/change-time/mtime/size metadata. '
+                     'Not cache-content hashes. Observed outside command clocks.'}
+
+
+def image_route_completion(report):
+    control = report['image_route_controls']
+    units = [unit for unit in report['units'] if unit.get('phase') == 'image_route_control']
+    counts = {slot: {route: 0 for route in ('public', 'worker')} for slot in benchmark.SLOTS}
+    first = {slot: {route: 0 for route in ('public', 'worker')} for slot in benchmark.SLOTS}
+    replicas = {slot: {0: 0, 1: 0} for slot in benchmark.SLOTS}
+    for unit in units:
+        if not unit.get('complete'):
+            continue
+        first[unit['slot']][unit['routes'][0]] += 1
+        replicas[unit['slot']][unit['replica_ordinal']] += 1
+    rows = [row for row in report['commands'] if row.get('unwrapped_route_control')]
+    for row in rows:
+        if row['status'] == 'verified':
+            counts[row['slot']][row['route']] += 1
+    complete = len(units) == len(image_route_plan()) and all(unit.get('complete') for unit in units)
+    balance = complete and all(set(values.values()) == {IMAGE_ROUTE_PAIRS} for values in counts.values()) \
+        and all(set(values.values()) == {IMAGE_ROUTE_PAIRS // 2} for values in (*first.values(), *replicas.values()))
+    control['completion'] = {'planned_pairs': len(image_route_plan()), 'started_pairs': len(units),
+        'complete_pairs': sum(unit.get('complete', False) for unit in units), 'complete': complete,
+        'completed_route_counts': counts, 'first_route_counts': first, 'replica_ordinal_counts': replicas,
+        'equal_completed_balance': balance, 'used_for_gate': False}
+    control['observations'] = [{
+        'slot': slot, 'route': route, 'used_for_gate': False,
+        'seconds': describe([row.get('parent_seconds') for row in rows if row['slot'] == slot and row['route'] == route
+                             and row['status'] == 'verified'], 'seconds'),
+        'cleanup_seconds_unscored': describe([row.get('cleanup_seconds') for row in rows
+                                              if row['slot'] == slot and row['route'] == route
+                                              and row['status'] == 'verified'], 'seconds')}
+        for slot in benchmark.SLOTS for route in ('public', 'worker')]
+
+
+def run_image_route_controls(report, supervisor, fixtures, metadata, source, source_hash, output):
+    control = report['image_route_controls']
+    control.update(status='incomplete', candidate_revision=metadata['candidate']['revision'],
+                   source_path=str(source), binary_sha256=source_hash, planned_pairs=image_route_plan())
+    snapshots = {}
+    selected = {}
+    try:
+        for slot in benchmark.SLOTS:
+            fixture = fixtures[(slot, 'candidate')]
+            command = list(map(str, fixture['command']))
+            if fixture['label'] != 'candidate' or len(command) < 3 or command[1] != PUBLIC_ENGINE_ROUTE \
+                    or '-no-shell-escape' not in command:
+                raise ValueError('Image route controls require the original trusted public image command')
+            selected[slot] = fixture
+            snapshots[slot] = image_cache_snapshot(supervisor, fixture)
+            if not snapshots[slot]['files']:
+                raise ValueError('Image route controls require initialized disk caches')
+        control['prepared_cache_snapshots'] = snapshots
+        for pair in image_route_plan():
+            fixture = selected[pair['slot']]
+            unit = {**pair, 'case': 'image-compile', 'phase': 'image_route_control',
+                    'unit_id': len(report['units']) + 1, 'command_indexes': [], 'complete': False}
+            report['units'].append(unit)
+            try:
+                for route in pair['routes']:
+                    command = list(fixture['command'])
+                    command[1] = PUBLIC_ENGINE_ROUTE if route == 'public' else PRIVATE_ENGINE_ROUTE
+                    row = {key: fixture[key] for key in ('label', 'slot', 'replica')}
+                    row.update(case='image-compile', phase='image_route_' + route + '_control', route=route,
+                        repetition=pair['repetition'], unit_id=unit['unit_id'], sequence_index=len(report['commands']),
+                        command=list(map(str, command)), input_sha256=fixture['input_sha256'], status='not_started',
+                        output_validation=None, unwrapped_route_control=True,
+                        candidate_revision=metadata['candidate']['revision'], same_artifact_sha256=source_hash,
+                        phase_opt_in_note='Original environment without profiling opt-in. Engine phases are not required.',
+                        cleanup_scope=benchmark.TIMING_METADATA['cleanup_scope'], cleanup_used_for_measurement=False)
+                    report['commands'].append(row)
+                    unit['command_indexes'].append(len(report['commands']) - 1)
+                    supervisor.active = row
+                    try:
+                        row['source_sha256_before'] = benchmark.executable_sha256(source)
+                        row['binary_sha256_before'] = benchmark.executable_sha256(Path(command[0]))
+                        row['fixture_sha256_before'] = benchmark.fixture_sha256(fixture['project'])
+                        row['cache_before'] = image_cache_snapshot(supervisor, fixture)
+                        if row['source_sha256_before'] != source_hash or row['binary_sha256_before'] != source_hash \
+                                or row['fixture_sha256_before'] != fixture['input_sha256'] \
+                                or row['cache_before'] != snapshots[pair['slot']]:
+                            raise ValueError('Image route source/binary/fixture/cache changed before command')
+                        result = execute_profile_fixture(supervisor, {**fixture, 'command': command}, 'image-compile')
+                        row['output_validation'] = result['output_validation']
+                        row['source_sha256_after'] = benchmark.executable_sha256(source)
+                        row['binary_sha256_after'] = benchmark.executable_sha256(Path(command[0]))
+                        row['fixture_sha256_after'] = benchmark.fixture_sha256(fixture['project'])
+                        row['cache_after'] = image_cache_snapshot(supervisor, fixture)
+                        if row['source_sha256_after'] != source_hash or row['binary_sha256_after'] != source_hash \
+                                or row['fixture_sha256_after'] != fixture['input_sha256'] \
+                                or row['cache_after'] != snapshots[pair['slot']]:
+                            raise ValueError('Image route source/binary/fixture/cache changed after command')
+                        row['status'] = 'verified'
+                    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+                        row.update(status='error', error=f'{type(error).__name__}: {error}'[-8192:])
+                        raise
+                    finally:
+                        supervisor.active = None
+                        image_route_completion(report)
+                        persist(report, output)
+                unit['complete'] = True
+            finally:
+                image_route_completion(report)
+                persist(report, output)
+        if not control['completion']['equal_completed_balance']:
+            raise ValueError('Image route controls did not complete their fixed balanced plan')
+        control['status'] = 'complete'
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt):
+        control['status'] = 'error'
+        raise
+    finally:
+        image_route_completion(report)
+        persist(report, output)
 
 
 def parent_snapshot():
@@ -649,6 +925,27 @@ def volatility_summary(commands):
             result['counter_observations'][name] = {'status': 'observed' if values else 'unavailable',
                 'samples': len(values), 'unit': unit, 'distinct_values': sorted(set(values)),
                 'constant_observed': len(set(values)) == 1 if values else None}
+        engines = [row['engine_phases']['data'] for row in rows
+                   if row.get('engine_phases', {}).get('status') == 'reported']
+        result['engine_phase_protocol_statuses'] = {
+            status: sum(row.get('engine_phases', {}).get('status') == status for row in rows)
+            for status in ('reported', 'unavailable', 'invalid')}
+        result['engine_elapsed'] = describe([engine['elapsed_ns'] for engine in engines], 'nanoseconds')
+        result['worker_preparation'] = describe([engine['worker_preparation']['elapsed_ns'] for engine in engines
+                                                if engine['worker_preparation'] is not None], 'nanoseconds')
+        result['engine_phase_observations'] = {}
+        for name in ENGINE_PHASE_NAMES:
+            phases = [phase for engine in engines for phase in engine['phases'] if phase['name'] == name]
+            result['engine_phase_observations'][name] = {
+                'elapsed': describe([phase['elapsed_ns'] for phase in phases if phase['status'] == 'available'], 'nanoseconds'),
+                'calls_observed': sorted({phase['calls'] for phase in phases}),
+                'failed_calls_observed': sorted({phase['failed_calls'] for phase in phases}),
+                'unavailable_samples': sum(phase['status'] == 'unavailable' for phase in phases)}
+        result['engine_counter_observations'] = {}
+        for name, unit in ENGINE_COUNTER_UNITS.items():
+            values = [counter['value'] for engine in engines for counter in engine['counters'] if counter['name'] == name]
+            result['engine_counter_observations'][name] = {'status': 'observed' if values else 'unavailable',
+                'samples': len(values), 'unit': unit, 'distinct_values': sorted(set(values))}
         result['parent_resource_chronology'] = [
             {'command_id': row.get('command_id'), 'repetition': row.get('repetition'),
              'before_unix_ns': row.get('parent_before', {}).get('unix_ns'),
@@ -680,7 +977,7 @@ def persist(report, output):
     benchmark.atomic_text(output, payload)
     lines = ['# Separate runtime diagnostics', '', 'Diagnostic status `' + report['status'] + '`.', '',
              'Primary outcome `' + str(report.get('primary', {}).get('status', 'unavailable')) + '` remains unchanged.', '',
-             'Wrappers and opt-in logs change command timing. No ratios, performance verdicts or speedup conclusions are computed.', '',
+             'Wrappers and opt-in logs change instrumented timing. Unwrapped controls are identified separately. No ratios, performance verdicts or speedup conclusions are computed.', '',
              '| Case | Phase | Slot | Artifact | Command status | Parent seconds | Resource status | Phase status |',
              '| --- | --- | --- | --- | --- | ---: | --- | --- |']
     for row in report['commands']:
@@ -748,6 +1045,42 @@ def persist(report, output):
         blocks = '/'.join(str(item['after_allocated_blocks']) for item in (first, last))
         lines.append(f"| {row['case']} | {row['phase']} | {row['slot']} | {row['label']} | {memory} | {current} | {blocks} |")
     lines.extend(['', report['volatility']['phase_scope'], '', report['volatility']['memory_scope'], ''])
+    lines.extend(['## Separate invocation-owned engine phases', '',
+        'Opt-in engine records are untrusted diagnostics. Library timing excludes worker preparation. PNG and compression phases are nested, not additive lifecycle costs.',
+        'Absent baseline records stay unavailable. This section cannot change a primary verdict.', '',
+        '| Case | Phase | Replica | Artifact | Engine stage | Samples | Median ms | Calls | Failed calls |',
+        '| --- | --- | --- | --- | --- | ---: | ---: | --- | --- |'])
+    for cohort in report['volatility']['cohorts']:
+        if not cohort['engine_phase_protocol_statuses']['reported']:
+            continue
+        stages = {'library_elapsed': {'elapsed': cohort['engine_elapsed'], 'calls_observed': [], 'failed_calls_observed': []},
+                  'worker_preparation_excluded': {'elapsed': cohort['worker_preparation'], 'calls_observed': [], 'failed_calls_observed': []},
+                  **cohort['engine_phase_observations']}
+        for name, stage in stages.items():
+            value = stage['elapsed']
+            center = f"{value['median'] / 1_000_000:.4f}" if value['status'] == 'observed' else 'unavailable'
+            calls = ','.join(map(str, stage['calls_observed'])) or 'unavailable'
+            failed = ','.join(map(str, stage['failed_calls_observed'])) or 'unavailable'
+            lines.append(f"| {cohort['case']} | {cohort['phase']} | {cohort['slot']} | {cohort['label']} | {name} | {value['samples']} | {center} | {calls} | {failed} |")
+    lines.append('')
+    controls = report.get('image_route_controls', {})
+    if controls.get('enabled'):
+        lines.extend(['## Same-binary image engine routes', '',
+            'Diagnostic status `' + controls.get('status', 'incomplete') + '`. Candidate-only, original eight-image fixture, no timing wrapper or profiling opt-in.',
+            'The measured clock ends at WNOWAIT exit observation. Owned-process cleanup and all cache/hash/output oracles are outside it.',
+            'A route difference includes process launch, scheduling and public CLI supervision. It cannot isolate engine internals or establish a hosted cause.', '',
+            'Candidate revision `' + str(controls.get('candidate_revision', 'unavailable')) + '`.',
+            'Binary SHA-256 `' + str(controls.get('binary_sha256', 'unavailable')) + '`.',
+            'Equal completed balance `' + str(controls.get('completion', {}).get('equal_completed_balance', False)) + '`.', '',
+            '| Replica | Route | Verified commands | Median ms | Min/max ms | Unscored cleanup median ms |',
+            '| --- | --- | ---: | ---: | --- | ---: |'])
+        for row in controls.get('observations', []):
+            value, cleanup = row['seconds'], row['cleanup_seconds_unscored']
+            center = f"{value['median'] * 1000:.3f}" if value['status'] == 'observed' else 'unavailable'
+            bounds = f"{value['minimum'] * 1000:.3f}/{value['maximum'] * 1000:.3f}" if value['status'] == 'observed' else 'unavailable'
+            cost = f"{cleanup['median'] * 1000:.3f}" if cleanup['status'] == 'observed' else 'unavailable'
+            lines.append(f"| {row['slot']} | {row['route']} | {value['samples']} | {center} | {bounds} | {cost} |")
+        lines.append('')
     lines.extend('- ' + error.replace('\n', ' ') for error in report['errors'])
     benchmark.atomic_text(output.with_suffix('.md'), '\n'.join(lines) + '\n')
 
@@ -759,6 +1092,8 @@ def parser():
     result.add_argument('--repeats', type=int, default=8, help='Fixed chronological diagnostic repetitions, 1 to 16')
     result.add_argument('--timeout', type=float, default=30, help='Per-command bound, (0, 30] seconds')
     result.add_argument('--budget', type=float, default=600, help='Whole diagnostic bound, (0, 600] seconds')
+    result.add_argument('--image-route-controls', action='store_true',
+                        help='Candidate-only unwrapped public/private image route controls, eight fixed pairs per replica')
     return result
 
 
@@ -798,14 +1133,20 @@ def main(argv=None):
             if output == path or output.exists() and path.exists() and output.samefile(path):
                 argument_parser.error('Diagnostic output cannot overwrite a source, primary or metadata alias')
     started = time.monotonic()
-    report = {'schema_version': 2, 'status': 'incomplete', 'diagnostic_only': True, 'used_for_gate': False,
+    report = {'schema_version': 3, 'status': 'incomplete', 'diagnostic_only': True, 'used_for_gate': False,
               'primary': {'path': str(args.primary_report), 'status': 'unavailable'}, 'executables': [],
               'policy': {'repeats': args.repeats, 'timeout_seconds': args.timeout, 'budget_seconds': args.budget,
-                         'phase_opt_in': 'TEKAI_DIAGNOSTIC_PROFILE=1',
+                         'phase_opt_in': 'TEKAI_DIAGNOSTIC_PROFILE=1 and TEKAI_ENGINE_PROFILE=1 for instrumented commands only',
                          'sampling': 'Fixed chronological repetitions. No adaptive retries, outlier removal or result selection.',
                          'launch_only_control': 'Same copied artifact --version immediately before each measured warm-cache command.',
                          'same_artifact_cache_control': 'Each artifact has two content-equivalent independently initialized fixture replicas, one per slot.',
-                         'comparison': 'None. Instrumented commands cannot rescore the primary gate.'},
+                         'comparison': 'None. Diagnostic commands cannot rescore the primary gate.'},
+              'image_route_controls': {'enabled': args.image_route_controls, 'used_for_gate': False,
+                  'status': 'not_started' if args.image_route_controls else 'not_requested',
+                  'pairs_per_replica': IMAGE_ROUTE_PAIRS,
+                  'baseline_private_route': 'Not attempted. The baseline may not implement the private worker.',
+                  'scope': 'Candidate-only descriptive observations, original image fixture and unchanged command tail. '
+                           'No replacement gate samples, ratios or causal engine-internal conclusions.'},
               'machine': {'system': platform.system(), 'architecture': platform.machine(),
                           'logical_cpu_count': os.cpu_count(), 'python': platform.python_version()},
               'units': [], 'commands': [], 'errors': []}
@@ -926,7 +1267,7 @@ def main(argv=None):
                                        'command': list(map(str, fixture['command'])), 'input_sha256': fixture['input_sha256'],
                                        'status': 'not_started', 'output_validation': None}
                                 row['phase_opt_in_note'] = 'Clap --version exits before Rust diagnostic emission; absent phases are expected.' \
-                                    if case == 'cli-startup' else 'Engine child entry bypasses Rust CLI instrumentation; absent phases are expected.' \
+                                    if case == 'cli-startup' else 'Engine entry bypasses parent TEKAI_PROFILE instrumentation. Separate TEKAI_ENGINE_PROFILE is requested; the baseline may lack that protocol.' \
                                     if case in ('nested-lookup', 'image-compile') else \
                                     'Warm-build instrumentation is opt-in; selected baseline may have an older or absent protocol.'
                                 if case == 'warm-build-cache' and repetition >= 0:
@@ -957,6 +1298,9 @@ def main(argv=None):
                                 'unavailable': {'host': 'Unit incomplete; no further observer commands launched'}}
                             unit['after'].update(unit_id=unit['unit_id'], position='after')
                             persist(report, args.output)
+                    if case == 'image-compile' and args.image_route_controls:
+                        run_image_route_controls(report, supervisor, fixtures, metadata, sources['candidate'],
+                                                 source_hashes['candidate'], args.output)
                     for fixture in fixtures.values():
                         if benchmark.fixture_sha256(fixture['project']) != fixture['input_sha256']:
                             raise ValueError('Diagnostic compiler changed fixture inputs')
@@ -995,6 +1339,8 @@ def main(argv=None):
             if current != expected:
                 report['errors'].append('Protected primary/metadata/source/verifier changed or disappeared: ' + str(path))
         signal.signal(signal.SIGTERM, previous_handler)
+        if args.image_route_controls and report['image_route_controls']['status'] != 'complete':
+            report['errors'].append('Requested image route controls did not complete their fixed balanced plan')
         report['status'] = 'error' if report['errors'] else 'complete'
         report['elapsed_seconds'] = time.monotonic() - started
         report['exit_code'] = int(bool(report['errors']))
