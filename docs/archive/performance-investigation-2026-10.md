@@ -1304,3 +1304,39 @@ Intel seed passed all 128 cases in 59.48 seconds, with the complete cache
 inventory unchanged. The four fixed tests, strict targeted Clippy and Rust
 1.89 compilation also passed. This test-only change does not address the
 production image regression.
+
+## Image diagnostics and native test failures, 12 October 2026
+
+[Run 38310450449](https://github.com/NicoNekoru/tekai/actions/runs/38310450449)
+tested `2646918d99f14484a5395b507ce854513f878461` with the same actual-main
+baseline. Rust 1.89 and the Linux Python 3.13 suite passed. Linux Python 3.10
+failed the stopped-descendant cleanup-marker assertion. Its timer explicitly
+observed the CLI child stopped before exiting. The owner's 1.5-second TERM
+grace completed, but the test discarded the child log, so this result cannot
+identify whether the handler ran or where it failed. Both macOS performance
+jobs were skipped by the failed prerequisite. There are no hosted image-route
+control results for this candidate.
+
+ARM's required bundled PNG/profile case, other pre-TeX checks and actual
+BasicTeX lookup passed. Its engine unit target then failed the normal-pclose
+PTY fixture's two-second exit bound after the fixture printed `RESTORED`.
+The parent stopped draining the PTY after that marker, despite libtest still
+writing its final output. The follow-up drains through process exit and failure
+cleanup, retains the original deadlines and assertions, and includes captured
+output with a non-reaping stopped/exit observation on timeout. A separate
+48-KiB post-restoration output case checks this route. This fixes a test
+liveness defect, but does not prove the cause of the hosted timeout.
+
+The Python follow-up retains bounded child-output tails and timestamped fixture
+stages on failure. It reads with `pread`, preserving inherited log offsets,
+and adds no signals, reaps, grace extensions or relaxed assertions. All 423
+Python tests passed locally in 42.423 seconds. These logs improve diagnosis,
+not evidence that the Linux cleanup failure is resolved.
+
+The next production optimization bypasses the 8-KiB staging buffer only for
+large raw-file reads after existing input and pushback are drained. Decoder,
+pipe, console and unbuffered routes retain their previous behavior. Focused
+stdio checks passed 53 cases, and two explicit 1,024-case properties passed
+with the earlier Intel seed. Caller-buffer addresses and backing-call counts
+verify the avoided copy and refill work. These deterministic checks do not
+establish a hosted image speedup.

@@ -227,6 +227,18 @@ fn fixture() {
     let group = getpgrp();
     let mask = mask_snapshot();
     assert_eq!(tcgetpgrp(io::stdin()).unwrap(), group);
+    if mode == "exit-output" {
+        println!("RESTORED");
+        io::stdout().flush().unwrap();
+        let mut acknowledgment = [0; 7];
+        io::stdin().read_exact(&mut acknowledgment).unwrap();
+        assert_eq!(&acknowledgment, b"finish\n");
+        // A final output burst larger than the PTY queue still has to drain
+        // after the restoration marker, within the unchanged exit deadline.
+        io::stdout().write_all(&[b'x'; 48 * 1024]).unwrap();
+        io::stdout().flush().unwrap();
+        return;
+    }
     if mode == "drop" {
         let marker = Marker::new("drop");
         let command = CString::new(format!("(/bin/sleep 2; printf fallback > {}; kill -KILL 0) >/dev/null 2>&1 & exec /bin/sleep 8", marker.quoted())).unwrap();
@@ -393,6 +405,7 @@ struct PtyChild {
     group: Pid,
     master: File,
     output: String,
+    post_restoration_ack: bool,
 }
 
 impl PtyChild {
@@ -451,27 +464,55 @@ impl PtyChild {
             group,
             master,
             output: String::new(),
+            post_restoration_ack: mode == "exit-output",
         }
     }
 
-    fn collect(&mut self) {
+    fn collect_available(&mut self) -> io::Result<()> {
         let mut bytes = [0; 4096];
         loop {
             match self.master.read(&mut bytes) {
-                Ok(0) => return,
+                Ok(0) => return Ok(()),
                 Ok(count) => {
-                    assert!(self.output.len() + count <= 64 * 1024, "PTY output bound");
-                    self.output
-                        .push_str(&String::from_utf8_lossy(&bytes[..count]));
+                    let text = String::from_utf8_lossy(&bytes[..count]);
+                    if self.output.len() + text.len() > 64 * 1024 {
+                        return Err(io::Error::other("PTY output bound"));
+                    }
+                    self.output.push_str(&text);
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error)
                     if error.kind() == io::ErrorKind::WouldBlock
                         || error.raw_os_error() == Some(libc::EIO) =>
                 {
-                    return
+                    return Ok(())
                 }
-                Err(error) => panic!("PTY read failed {error}"),
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn collect(&mut self) {
+        if let Err(error) = self.collect_available() {
+            panic!("PTY read failed {error}, {}", self.output);
+        }
+    }
+
+    fn diagnostic_observation(&self) -> String {
+        // Preserve the child reservation, including when it is stopped. This
+        // query neither consumes an exit nor changes signalling authority.
+        loop {
+            match waitid(
+                WaitId::Pid(self.group),
+                WaitIdOptions::EXITED
+                    | WaitIdOptions::STOPPED
+                    | WaitIdOptions::CONTINUED
+                    | WaitIdOptions::NOWAIT
+                    | WaitIdOptions::NOHANG,
+            ) {
+                Ok(status) => return format!("{status:?}"),
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(error) => return format!("observation error {error}"),
             }
         }
     }
@@ -512,6 +553,11 @@ impl PtyChild {
 
     fn finish(mut self, diagnostic: Option<&str>) {
         self.wait_for("RESTORED");
+        if self.post_restoration_ack {
+            // The output-burst fixture starts only after wait_for returns.
+            // Its writes cannot be consumed by the earlier marker wait.
+            self.master.write_all(b"finish\n").unwrap();
+        }
         if let Some(signal) = diagnostic {
             assert!(
                 self.output
@@ -521,10 +567,23 @@ impl PtyChild {
             );
         }
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !self.exited() {
-            assert!(Instant::now() < deadline, "PTY fixture exit bound");
+        loop {
+            // RESTORED marks engine cleanup, not the end of libtest output.
+            // Drain until exit so a full PTY cannot block the fixture's final
+            // writes while the parent waits for that same process to exit.
+            self.collect();
+            if self.exited() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "PTY fixture exit bound, observation={}, output={}",
+                self.diagnostic_observation(),
+                self.output
+            );
             thread::sleep(Duration::from_millis(5));
         }
+        self.collect();
         let _ = kill_process_group(self.group, Signal::KILL);
         let status = self.child.take().unwrap().wait().unwrap();
         assert!(status.success(), "PTY fixture failed, {}", self.output);
@@ -538,17 +597,27 @@ impl Drop for PtyChild {
             // First allow them to wake blocked IO and run scoped cleanup.
             let deadline = Instant::now() + Duration::from_secs(4);
             while Instant::now() < deadline && !self.exited() {
+                let _ = self.collect_available();
                 thread::sleep(Duration::from_millis(5));
             }
             let _ = kill_process(self.group, Signal::CONT);
             let _ = kill_process_group(self.group, Signal::KILL);
             let deadline = Instant::now() + Duration::from_secs(2);
             while Instant::now() < deadline {
+                let _ = self.collect_available();
                 if self.exited() {
                     let _ = child.wait();
                     break;
                 }
                 thread::sleep(Duration::from_millis(5));
+            }
+            let _ = self.collect_available();
+            if thread::panicking() {
+                let _ = writeln!(
+                    io::stderr().lock(),
+                    "PTY fixture failure cleanup output, {}",
+                    self.output
+                );
             }
         }
     }
@@ -582,6 +651,11 @@ fn closed_standard_input_does_not_hide_the_controlling_terminal() {
 #[test]
 fn monitored_normal_pclose_preserves_intentional_background_work() {
     PtyChild::spawn("background").finish(None);
+}
+
+#[test]
+fn fixture_exit_drains_output_after_restoration() {
+    PtyChild::spawn("exit-output").finish(None);
 }
 
 #[test]
