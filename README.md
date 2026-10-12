@@ -262,7 +262,7 @@ Release preparation also requires rendered paper/image parity and the strict
 paired gate on both macOS architectures. Its 10% regression boundary, complete
 sample/integrity checks and duration/order/uncertainty guards remain blocking.
 Raw duration volatility is diagnostic, not proof of independent timing samples.
-See [release verification status](docs/performance-audit.md) for revision-scoped
+See [verification policy and evidence](docs/performance-audit.md) for revision-scoped
 evidence rather than treating older checkpoint results as a new release pass.
 
 ## Support and security

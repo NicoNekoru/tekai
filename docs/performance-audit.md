@@ -1,11 +1,17 @@
-# Release verification status
+# Verification policy and scoped guarantees
 
-This is the 12 October 2026 evidence snapshot for release preparation. The
-pushed core checkpoint is `4329103`, followed by private-terminal handling in
+Final publication evidence belongs to the [GitHub release notes](https://github.com/NicoNekoru/tekai/releases).
+This page records dated preparation measurements and the required release
+checks. It is not a rolling publication status.
+
+The 12 October 2026 preparation snapshot includes core checkpoint `4329103`,
+followed by private-terminal handling in
 `1d3c7b9`, harness ownership in `411daa3` and the stream probe in `dead5ab`.
+Protected-system-command cleanup fixes are `7c99359` and `8a7b166`.
 The lint rewrite is `a86f394` and CI-profile fix is `0764e7b`. Local results span
-checkpoints rather than one final frozen release candidate. Final
-migrated-candidate remote gates remain pending. No release or tag is recorded.
+checkpoints through versioned production code at `e19c6e7`. The final migrated
+hosted gates had not run when this snapshot was recorded. These measurements
+alone do not establish a completed release verification.
 Supported commands and measurement policy live in
 [development instructions](development.md). Historical reproductions, native
 utility and one-shot ownership checkpoints, and older timing comparisons remain
@@ -28,27 +34,27 @@ not be counted as exercised compatibility workflows.
 
 ## Local migrated-candidate evidence
 
-These gates ran on local working-tree checkpoints. A final frozen revision is
-still pending, so these counts do not establish final remote release evidence.
+These gates ran on local checkpoints. They do not establish final remote
+release evidence.
 
 | Gate | Observed local result |
 | --- | --- |
-| Workspace units | 960 passed, four intentional child helpers ignored |
-| Fresh engine tests | 468 passed, three intentional child helpers ignored |
+| Workspace units | 964 passed, four intentional child helpers ignored |
+| Engine units | 472 passed, three intentional child helpers ignored |
 | Architecture checks | Six passed |
-| In-process invocation checkpoint | Five passed in 65.51 seconds |
+| In-process invocation checkpoint | Five passed |
 | PDFtex tests | 212 passed |
-| Rust 1.89 workspace compile check | Versioned 0.6.0, all targets and features passed in 5.59 seconds |
-| Strict workspace Clippy | Versioned 0.6.0, all targets and features passed in 6.26 seconds |
+| Rust 1.89 workspace compile check | Versioned 0.6.0, all targets and features passed |
+| Strict workspace Clippy | Versioned 0.6.0, all targets and features passed |
 | CLI help | Versioned 0.6.0, every command passed the long-help/example gate |
 | CLI cancellation | Four passed in 19.41 seconds after the nested PGF fixture guard correction |
-| CLI supervisor, including PTY handling | Nine passed, one child helper ignored |
-| Private-pipe stdio, including eight PTY cases | 40 passed, two child helpers ignored |
+| CLI supervisor, including PTY handling | Ten passed, one child helper ignored |
+| Private-pipe stdio, including eight PTY cases | 41 passed, two child helpers ignored |
 | Actual standalone CLI routing | Two passed, no failures or skips |
 | Bundled CLI gate with ignored cases included | All 19 passed, including both large papers |
-| Python harness suite | 402 passed |
+| Python harness suite | 408 passed |
 | Lint/format at `a86f394` | 46 unit/property and 38 CLI/integration tests passed |
-| Selected release runtime/image checks | 136 passed, zero failures or skips |
+| Full versioned release runtime gate at `e19c6e7` | All 170 passed, zero failures, skips or timeouts |
 | Local pinned-reference PDF comparison | All 99 pages matched pixels and extracted text |
 
 The engine now uses shared Rust record types and Rust internal calls. Rust
@@ -81,7 +87,16 @@ reaping. A shared non-reaping exit-observation owner now retains the leader
 until group cleanup and observer publication, resumes stopped owned jobs, and
 allows a full TERM grace for nested CLI cleanup before forceful termination.
 Native regressions cover lost authority, residual children, stopped supervisors
-and escaped output descriptors. The final versioned hosted gates remain pending.
+and escaped output descriptors.
+
+The first versioned full runtime check stopped after 18 passing cases because
+Darwin denied metadata for a completed setuid-root `/bin/ps` child. Its failed
+report remains intact. The fixes use fresh non-reaping exit proof for the exact
+reserved leader, while other members still require complete zombie metadata and
+two matching bounded group lists. Native helper, supervisor and abandoned-pipe
+regressions passed. The subsequent full gate passed all 170 checks with unchanged
+source and executable hashes. Concurrent workspace tests make its elapsed time
+correctness evidence only, not a performance comparison.
 
 The lint/format rewrite replaces repeated coordinate and escape-prefix scans
 with per-pass indexes and forward cursors, applies edits in one forward build,
