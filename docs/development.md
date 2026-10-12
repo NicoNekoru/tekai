@@ -214,10 +214,14 @@ Whole-document cache publication requires evidence that every dependency was
 stable during compilation. Files generated and consumed within a build do not
 yet have consumed-byte receipts, so those documents rebuild even when their
 outputs settle. This includes custom stage files and auxiliary-tool scripts
-such as generated MetaPost input. Auxiliary caches can still reuse unchanged
-figures and tool output. Generated-input classification runs after all TeX,
-auxiliary-tool and format dependencies have been collected. A file's location
-under the output directory alone never makes it a trusted generated artifact.
+such as generated MetaPost input. Scheduler-managed PGF list-and-make jobs also
+rebuild the parent until figure-child reads and generated recipe inputs have
+complete provenance. Generated figures remain reusable through `make`. Recipe
+hashes alone do not establish all dependencies of those children. Auxiliary
+caches can still reuse unchanged figures and tool output. The compiler
+classifies generated inputs after collecting TeX, auxiliary-tool and format
+dependencies. A file's location under the output directory alone never makes it
+a trusted generated artifact.
 
 Retained data has explicit admission and eviction rules.
 

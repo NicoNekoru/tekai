@@ -15,7 +15,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use glob::{MatchOptions, glob_with};
 use serde::{Deserialize, Serialize};
 
-const BUILD_STATE_VERSION: u32 = 44;
+// Version 44 could publish warm PGF figures without their child dependencies.
+// Reject those local states and shared artifacts before the early cache hit.
+const BUILD_STATE_VERSION: u32 = 45;
 const BIB_STATE_VERSION: u32 = 12;
 const INDEX_STATE_VERSION: u32 = 11;
 const SPLIT_INDEX_STATE_VERSION: u32 = 1;
@@ -12240,6 +12242,26 @@ fn append_external_tool_inputs(
     for job in gnuplottex_jobs_from_latest_run(doc_dir, out_dir, job_name)? {
         append_external_tool_state_inputs(inputs, &job.state_path)?;
     }
+    if let Some(job) = pgf_external_job_from_latest_run(out_dir, job_name)? {
+        for path in [
+            job.makefile_path,
+            out_dir.join(format!("{job_name}.figlist")),
+        ] {
+            let mut input = fingerprint_path_reusing(&path, None)?.with_context(|| {
+                format!(
+                    "PGF recipe disappeared after compilation: {}",
+                    path.display()
+                )
+            })?;
+            // make reads these generated recipes even when TeX only records
+            // them as outputs. Warm .md5 files and scheduler-owned figures
+            // cannot prove the .dep and figure-child-only inputs. Keep the
+            // recipes as explicit provenance blockers until those reads have
+            // receipts, including when no figure needs regeneration.
+            input.metadata = None;
+            inputs.push(input);
+        }
+    }
     if let Some(job) = bib2gls_job_from_latest_run(doc_dir, out_dir, job_name)? {
         append_external_tool_state_inputs(inputs, &job.state_path)?;
     }
@@ -14115,6 +14137,100 @@ mod tests {
                 &generation,
             )
             .expect_err("unproven generated inputs must not hide an edited user source");
+            assert!(error.to_string().contains("changed during compilation"));
+            assert!(!state.exists());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn warm_pgf_recipes_without_child_read_provenance_decline_publication() {
+        for recipe_record in ["OUTPUT ", "INPUT ", ""] {
+            let root = unique_temp_dir("tekai-warm-pgf-provenance");
+            let out_dir = root.join("out");
+            fs::create_dir_all(&out_dir).unwrap();
+            let root = root.canonicalize().unwrap();
+            let out_dir = root.join("out");
+            let main = root.join("main.tex");
+            let user_input = out_dir.join("user.tex");
+            fs::write(&main, "main source").unwrap();
+            fs::write(&user_input, "user source").unwrap();
+            fs::write(out_dir.join("main.makefile"), "all: main-figure0.pdf\n").unwrap();
+            fs::write(out_dir.join("main.figlist"), "main-figure0\n").unwrap();
+            fs::write(out_dir.join("main-figure0.pdf"), "generated figure").unwrap();
+            fs::write(out_dir.join("main-figure0.md5"), "unchanged picture hash").unwrap();
+            let generation = BuildGeneration {
+                started_ns: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                lookup_inputs: Some(Vec::new()),
+                owned_format_directories: Vec::new(),
+            };
+            let recorder = format!(
+                "INPUT {}\nINPUT {}\nINPUT {}\nINPUT {}\n{}",
+                main.display(),
+                user_input.display(),
+                out_dir.join("main-figure0.pdf").display(),
+                out_dir.join("main-figure0.md5").display(),
+                if !recipe_record.is_empty() {
+                    format!(
+                        "{recipe_record}{}\n{recipe_record}{}\n",
+                        out_dir.join("main.makefile").display(),
+                        out_dir.join("main.figlist").display(),
+                    )
+                } else {
+                    String::new()
+                },
+            );
+            fs::write(out_dir.join("main.fls"), recorder).unwrap();
+            // A warm picture's .md5 is read but not rewritten. Output-only
+            // recipes may also be absent from the final pass's recorder.
+            let session = AuxToolSessionCache::default();
+            let options = BuildOptions {
+                out_dir: out_dir.clone(),
+                external_tools: true,
+                ..BuildOptions::for_main(&main)
+            };
+            let direct = DirectContext {
+                doc_dir: &root,
+                out_dir: &out_dir,
+                job_name: "main",
+                main: &main,
+                options: &options,
+                aux_session_cache: &session,
+            };
+            let state = out_dir.join(".tekai-main.state.json");
+            assert!(
+                write_build_state(
+                    &state,
+                    "mode",
+                    &out_dir.join("main.pdf"),
+                    direct,
+                    None,
+                    &[],
+                    &generation,
+                )
+                .unwrap()
+                .is_none(),
+                "PGF figure ownership does not prove its child dependencies",
+            );
+            assert!(!state.exists());
+
+            // Declining publication must still detect edits to real sources,
+            // including ordinary sources stored alongside generated outputs.
+            fs::write(&user_input, "edited user source").unwrap();
+            let error = write_build_state(
+                &state,
+                "mode",
+                &out_dir.join("main.pdf"),
+                direct,
+                None,
+                &[],
+                &generation,
+            )
+            .expect_err("an unproven PGF job must not hide a concurrent source edit");
             assert!(error.to_string().contains("changed during compilation"));
             assert!(!state.exists());
             fs::remove_dir_all(root).unwrap();

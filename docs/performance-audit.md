@@ -31,6 +31,7 @@ required assertion, with no known-failure exemption.
 | Textual end markers hide active bytes | Hash complete source bytes rather than guessing execution from textual markers. |
 | Replaced compressed formats reuse stale raw companions | Materialize into a private content-addressed cache, retain source dependencies and recover corrupt cache entries. Never write adjacent installation companions. |
 | Parent cancellation leaves child processes running | Own subprocess groups, forward CLI cancellation, escalate stubborn groups and reap direct children. |
+| Warm scheduler-managed PGF externalization publishes state without figure-child dependencies | Include generated recipes as unproven inputs, rebuild the parent while reusing figures through `make`, and invalidate previously published states. |
 
 Auxiliary commands share an eight-child ceiling. Its CI fixture checks completed
 outputs and maximum overlap, rather than treating completion as a scaling claim.
