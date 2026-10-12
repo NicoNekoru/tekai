@@ -8901,6 +8901,9 @@ pub unsafe fn storefmtfile() {
     gzclose((*__tekai_state_generated_pdftexextra).fmtfile as gzFile);
 }
 pub unsafe fn loadfmtfile() -> boolean {
+    // Inclusive format restoration, including allocation, reads, validation
+    // and byte swapping. This is nested within the engine-body observation.
+    let mut format_profile = crate::engine_profile::span(crate::engine_profile::Phase::FormatLoad);
     let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
         unsafe { crate::generated::pdftexextra::state() };
     let __tekai_state_kpathsea: *mut crate::kpathsea::State = unsafe { crate::kpathsea::state() };
@@ -11304,6 +11307,7 @@ pub unsafe fn loadfmtfile() -> boolean {
                                                                                                                                                                                                                                         .u
                                                                                                                                                                                                                                         .CINT;
                                                                                                                                                                                                                                     Result = true_0 as boolean;
+                                                                                                                                                                                                                                    format_profile.success();
                                                                                                                                                                                                                                     return Result;
                                                                                                                                                                                                                                 }
                                                                                                                                                                                                                             }

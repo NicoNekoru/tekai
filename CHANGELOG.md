@@ -69,7 +69,8 @@ versioning.
   intervals. Raw absolute MAD is diagnostic. Failed or inconclusive gates still
   block CI, and historical verdicts are not rescored.
 - Add opt-in invocation-owned engine timings for initialization, execution,
-  cleanup and destruction, with separate nested PNG/codec observations. Keep
+  cleanup and destruction, with nested format-loading, PNG-writing, decode
+  and codec observations. Keep
   same-binary public/worker route controls separate from strict gate samples.
 
 ## 0.5.0 - 2026-10-07

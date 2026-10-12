@@ -576,20 +576,25 @@ The `tekai` CLI's engine workers use a separate exact-one
 The library's `run_profiled_with_options` creates a fresh invocation-owned
 collector and returns its immutable snapshot after complete owner destruction.
 Default entry does not create the collector or start profiling clocks. The
-worker emits one best-effort `TEKAI_ENGINE_PROFILE ` protocol-1 JSON line within
+worker emits one best-effort `TEKAI_ENGINE_PROFILE ` protocol-2 JSON line within
 4096 bytes. The supervisor parent emits no engine record. Unexpected Rust
 panics retain normal propagation and produce no completed record.
 
 The five lifecycle segments are owner construction, invocation setup, engine
 body, cleanup and owner destruction. Shared boundaries partition the completed
 successful library lifecycle. Cleanup includes flushing, stream completion and
-scope removal. Nested PNG decoding and actual PDF codec calls overlap engine
-execution and must not be added to the lifecycle total. Fixed counters record
+scope removal. Nested format loading, PNG writing, PNG decoding and actual PDF
+codec calls overlap engine execution and must not be added to the lifecycle
+total. Format loading includes allocation, reads, validation and byte swapping.
+PNG writing includes image packing, PDF buffer writes and nested decode and
+codec work. Its duration must not be added to those nested observations.
+Fixed counters record
 decode attempts, bounded-cache hits, decoded bytes, compression calls and actual
 consumed/produced compression bytes. Failed calls remain visible. Unreached
 phases have null durations. CLI preparation has a separate timer outside the
-library elapsed time. Format loading remains part of the broad engine-body
-segment rather than a separately measured phase.
+library elapsed time. The reader retains the original seven-phase inventory
+for protocol 1 and requires all nine phases for protocol 2. The additional
+phases do not replace samples or change the primary timing gate.
 
 That post-failure profiling pass also records a bounded, candidate-only
 image-route control. The public

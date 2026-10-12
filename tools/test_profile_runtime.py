@@ -70,15 +70,16 @@ def phase_line(data=None):
     return 'TEKAI_PROFILE ' + json.dumps(phase_record() if data is None else data) + '\n'
 
 
-def engine_record():
-    return {'schema_version': 1, 'producer': 'tekai-engine-rust', 'scope': 'engine_invocation',
+def engine_record(version=1):
+    names = profile.ENGINE_PHASE_NAMES_BY_VERSION[version]
+    return {'schema_version': version, 'producer': 'tekai-engine-rust', 'scope': 'engine_invocation',
             'source': 'opt_in_rust_instrumentation', 'untrusted': True, 'status': 'success',
             'elapsed_ns': 50, 'completed_spans_only': True, 'phases_overlap': True,
             'lifecycle_partition_on_success': True,
             'worker_preparation': {'scope': 'cli_worker_before_invocation', 'elapsed_ns': 200},
             'phases': [{'name': name, 'status': 'available', 'calls': 1, 'failed_calls': 0,
-                        'elapsed_ns': (5, 5, 35, 3, 2, 20, 10)[index]}
-                       for index, name in enumerate(profile.ENGINE_PHASE_NAMES)],
+                        'elapsed_ns': (5, 5, 35, 3, 2, 20, 10, 30, 35)[index]}
+                       for index, name in enumerate(names)],
             'counters': [{'name': name, 'unit': unit, 'value': 1}
                          for name, unit in profile.ENGINE_COUNTER_UNITS.items()]}
 
@@ -88,28 +89,57 @@ def engine_line(data=None):
 
 
 class EnginePhaseTests(unittest.TestCase):
+    def test_legacy_and_current_engine_inventories_keep_their_versions(self):
+        for version, names in ((1, profile.ENGINE_PHASE_NAMES_V1), (2, profile.ENGINE_PHASE_NAMES_V2)):
+            with self.subTest(version=version):
+                data = engine_record(version)
+                result = profile.parse_engine_phases(engine_line(data))
+                self.assertEqual(result['status'], 'reported')
+                self.assertEqual(result['data'], data)
+                self.assertEqual(tuple(phase['name'] for phase in result['data']['phases']), names)
+                self.assertEqual(result['compatibility'], {
+                    'schema_version': version,
+                    'missing_phase_names': ['format_load', 'png_write'] if version == 1 else []})
+                self.assertEqual(len(result['data']['counters']), 6)
+                self.assertTrue(result['untrusted'])
+                self.assertFalse(result['used_for_gate'])
+
+    def test_engine_inventory_cannot_be_relabelled_as_another_version(self):
+        for source_version, claimed_version in ((1, 2), (2, 1), (1, 0), (2, 3), (2, True), (1, False)):
+            with self.subTest(source_version=source_version, claimed_version=claimed_version):
+                data = engine_record(source_version)
+                data['schema_version'] = claimed_version
+                self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+
     def test_nested_phases_and_worker_preparation_stay_separate(self):
-        result = profile.parse_engine_phases(phase_line() + engine_line())
-        self.assertEqual(result['status'], 'reported')
-        self.assertTrue(result['untrusted'])
-        self.assertFalse(result['used_for_gate'])
-        data = result['data']
-        self.assertGreater(sum(phase['elapsed_ns'] for phase in data['phases']), data['elapsed_ns'])
-        self.assertGreater(data['worker_preparation']['elapsed_ns'], data['elapsed_ns'])
-        self.assertEqual(profile.parse_phases(engine_line())['status'], 'unavailable')
-        self.assertEqual(profile.parse_engine_phases(phase_line())['status'], 'unavailable')
+        for version in (1, 2):
+            with self.subTest(version=version):
+                line = engine_line(engine_record(version))
+                result = profile.parse_engine_phases(phase_line() + line)
+                self.assertEqual(result['status'], 'reported')
+                self.assertTrue(result['untrusted'])
+                self.assertFalse(result['used_for_gate'])
+                data = result['data']
+                self.assertGreater(sum(phase['elapsed_ns'] for phase in data['phases']), data['elapsed_ns'])
+                self.assertGreater(data['worker_preparation']['elapsed_ns'], data['elapsed_ns'])
+                self.assertEqual(profile.parse_phases(line)['status'], 'unavailable')
+                data['elapsed_ns'] = sum(phase['elapsed_ns'] for phase in data['phases'])
+                self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+                self.assertEqual(profile.parse_engine_phases(phase_line())['status'], 'unavailable')
 
     def test_setup_failures_and_unobserved_codec_phases_are_not_invented(self):
-        data = engine_record()
-        data.update(status='setup_error', worker_preparation=None)
-        for phase in data['phases']:
-            phase.update(status='unavailable', calls=0, failed_calls=0, elapsed_ns=None)
-        data['phases'][0].update(status='available', calls=1, failed_calls=1, elapsed_ns=10)
-        for counter in data['counters']:
-            counter['value'] = 0
-        self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'reported')
-        data['status'] = 'success'
-        self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+        for version in (1, 2):
+            with self.subTest(version=version):
+                data = engine_record(version)
+                data.update(status='setup_error', worker_preparation=None)
+                for phase in data['phases']:
+                    phase.update(status='unavailable', calls=0, failed_calls=0, elapsed_ns=None)
+                data['phases'][0].update(status='available', calls=1, failed_calls=1, elapsed_ns=10)
+                for counter in data['counters']:
+                    counter['value'] = 0
+                self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'reported')
+                data['status'] = 'success'
+                self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
 
     def test_exact_protocol_and_fixed_inventories(self):
         mutations = (
@@ -125,17 +155,19 @@ class EnginePhaseTests(unittest.TestCase):
             lambda data: data['phases'].pop(),
             lambda data: data['phases'].__setitem__(0, data['phases'][1]),
             lambda data: data['phases'][0].update(name=[]),
+            lambda data: data['phases'][-1].update(name='unknown_phase'),
             lambda data: data['counters'].pop(),
             lambda data: data['counters'].__setitem__(0, data['counters'][1]),
             lambda data: data['counters'][0].update(name=[]),
             lambda data: data['counters'][0].update(unit='bytes'),
             lambda data: data['worker_preparation'].update(scope='engine_invocation'),
         )
-        for index, mutate in enumerate(mutations):
-            with self.subTest(mutation=index):
-                data = engine_record()
-                mutate(data)
-                self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+        for version in (1, 2):
+            for index, mutate in enumerate(mutations):
+                with self.subTest(version=version, mutation=index):
+                    data = engine_record(version)
+                    mutate(data)
+                    self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
 
     def test_numeric_bounds_nulls_and_call_consistency(self):
         mutations = (
@@ -146,31 +178,66 @@ class EnginePhaseTests(unittest.TestCase):
             lambda data, value: data['counters'][0].update(value=value),
             lambda data, value: data['worker_preparation'].update(elapsed_ns=value),
         )
-        for index, mutate in enumerate(mutations):
-            for value in (True, None, -1, 1.5, float('nan'), float('inf'), profile.MAX_COUNTER + 1):
-                with self.subTest(mutation=index, value=value):
-                    data = engine_record()
-                    mutate(data, value)
+        for version in (1, 2):
+            for index, mutate in enumerate(mutations):
+                for value in (True, None, -1, 1.5, float('nan'), float('inf'), profile.MAX_COUNTER + 1):
+                    with self.subTest(version=version, mutation=index, value=value):
+                        data = engine_record(version)
+                        mutate(data, value)
+                        self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+            for index, mutate in enumerate((
+                    lambda data: data['phases'][0].update(failed_calls=2),
+                    lambda data: data['phases'][0].update(elapsed_ns=101),
+                    lambda data: data['phases'][0].update(elapsed_ns=0),
+                    lambda data: data['phases'][0].update(status='unavailable'),
+                    lambda data: data['phases'][0].update(calls=0),
+                    lambda data: data['counters'][0].update(value=2),
+                    lambda data: data['counters'][3].update(value=2))):
+                with self.subTest(version=version, mutation=index):
+                    data = engine_record(version)
+                    mutate(data)
                     self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
-        for mutate in (
-                lambda data: data['phases'][0].update(failed_calls=2),
-                lambda data: data['phases'][0].update(elapsed_ns=101),
-                lambda data: data['phases'][0].update(elapsed_ns=0),
-                lambda data: data['phases'][0].update(status='unavailable'),
-                lambda data: data['phases'][0].update(calls=0),
-                lambda data: data['counters'][0].update(value=2)):
-            data = engine_record()
-            mutate(data)
-            self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+
+    def test_new_inclusive_phases_have_the_same_value_contract(self):
+        for name in ('format_load', 'png_write'):
+            for key in ('elapsed_ns', 'calls', 'failed_calls'):
+                for value in (True, None, -1, 1.5, float('nan'), float('inf'), profile.MAX_COUNTER + 1):
+                    with self.subTest(name=name, key=key, value=value):
+                        data = engine_record(2)
+                        entry = next(phase for phase in data['phases'] if phase['name'] == name)
+                        entry[key] = value
+                        self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], 'invalid')
+            for update, expected in (({'status':'unavailable'}, 'invalid'),
+                                     ({'failed_calls':2}, 'invalid'),
+                                     ({'calls':0}, 'invalid'),
+                                     ({'status':'unavailable', 'elapsed_ns':None, 'calls':0, 'failed_calls':0}, 'reported')):
+                with self.subTest(name=name, update=update):
+                    data = engine_record(2)
+                    entry = next(phase for phase in data['phases'] if phase['name'] == name)
+                    entry.update(update)
+                    self.assertEqual(profile.parse_engine_phases(engine_line(data))['status'], expected)
+
+    def test_both_versions_keep_the_exact_four_kib_capture_limit(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                line = engine_line(engine_record(version))
+                self.assertLess(len(line.encode('utf-8')), profile.MAX_ENGINE_PHASE_BYTES)
+                padded = line[:-1] + ' ' * (profile.MAX_ENGINE_PHASE_BYTES - len(line.encode('utf-8'))) + '\n'
+                self.assertEqual(len(padded.encode('utf-8')), profile.MAX_ENGINE_PHASE_BYTES)
+                self.assertEqual(profile.parse_engine_phases(padded)['status'], 'reported')
+                self.assertEqual(profile.parse_engine_phases(padded[:-1] + ' \n')['status'], 'invalid')
 
     def test_duplicate_truncated_and_oversized_captures_are_invalid(self):
-        for text, truncated in ((engine_line() + engine_line(), False), (engine_line(), True),
-                                (engine_line().replace('"schema_version": 1', '"schema_version": 1, "schema_version": 1'), False),
-                                ('TEKAI_ENGINE_PROFILE {}\n', False),
-                                ('TEKAI_ENGINE_PROFILE ' + '[' * 5000, False),
-                                ('TEKAI_ENGINE_PROFILE ' + '[]' * 2500, False)):
-            with self.subTest(text=text[:100], truncated=truncated):
-                self.assertEqual(profile.parse_engine_phases(text, truncated)['status'], 'invalid')
+        for version in (1, 2):
+            line = engine_line(engine_record(version))
+            version_field = f'"schema_version": {version}'
+            for text, truncated in ((line + line, False), (line, True),
+                                    (line.replace(version_field, version_field + ', ' + version_field), False),
+                                    ('TEKAI_ENGINE_PROFILE {}\n', False),
+                                    ('TEKAI_ENGINE_PROFILE ' + '[' * 5000, False),
+                                    ('TEKAI_ENGINE_PROFILE ' + '[]' * 2500, False)):
+                with self.subTest(version=version, text=text[:100], truncated=truncated):
+                    self.assertEqual(profile.parse_engine_phases(text, truncated)['status'], 'invalid')
 
 
 class ResourceTests(unittest.TestCase):
@@ -299,6 +366,61 @@ class VolatilitySummaryTests(unittest.TestCase):
         self.assertEqual(absent['engine_elapsed']['status'], 'unavailable')
         self.assertEqual(absent['engine_phase_observations']['png_decode']['elapsed']['samples'], 0)
         self.assertEqual(absent['engine_counter_observations']['decode_calls']['status'], 'unavailable')
+
+    def test_engine_legacy_and_current_cohorts_do_not_invent_missing_spans(self):
+        legacy, current = self.row(.01, 1), self.row(.02, 2)
+        current['slot'] = 's1'
+        legacy['engine_phases'] = profile.parse_engine_phases(engine_line(engine_record(1)))
+        current['engine_phases'] = profile.parse_engine_phases(engine_line(engine_record(2)))
+        old, new = profile.volatility_summary([legacy, current])['cohorts']
+        self.assertEqual(old['engine_phase_schema_versions_observed'], [1])
+        self.assertEqual(new['engine_phase_schema_versions_observed'], [2])
+        for name, duration in (('format_load', 30), ('png_write', 35)):
+            with self.subTest(name=name):
+                missing = old['engine_phase_observations'][name]
+                present = new['engine_phase_observations'][name]
+                self.assertEqual(missing['elapsed']['status'], 'unavailable')
+                self.assertEqual(missing['elapsed']['samples'], 0)
+                self.assertEqual(missing['calls_observed'], [])
+                self.assertEqual(missing['failed_calls_observed'], [])
+                self.assertEqual(missing['unavailable_samples'], 1)
+                self.assertEqual(missing['missing_protocol_samples'], 1)
+                self.assertEqual(present['elapsed']['median'], duration)
+                self.assertEqual(present['calls_observed'], [1])
+                self.assertEqual(present['missing_protocol_samples'], 0)
+        self.assertEqual(old['engine_elapsed']['median'], 50)
+        self.assertEqual(new['engine_elapsed']['median'], 50)
+
+    def test_mixed_engine_schema_cohort_reports_only_observed_new_spans(self):
+        legacy, current = self.row(.01, 1), self.row(.02, 2)
+        legacy['engine_phases'] = profile.parse_engine_phases(engine_line(engine_record(1)))
+        current['engine_phases'] = profile.parse_engine_phases(engine_line(engine_record(2)))
+        cohort = profile.volatility_summary([legacy, current])['cohorts'][0]
+        self.assertEqual(cohort['engine_phase_schema_versions_observed'], [1, 2])
+        self.assertEqual(cohort['engine_phase_protocol_statuses']['reported'], 2)
+        self.assertEqual(cohort['engine_elapsed']['samples'], 2)
+        self.assertEqual(cohort['engine_phase_observations']['png_decode']['elapsed']['samples'], 2)
+        for name in ('format_load', 'png_write'):
+            self.assertEqual(cohort['engine_phase_observations'][name]['elapsed']['samples'], 1)
+            self.assertEqual(cohort['engine_phase_observations'][name]['missing_protocol_samples'], 1)
+            self.assertEqual(cohort['engine_phase_observations'][name]['unavailable_samples'], 1)
+        self.assertEqual(cohort['engine_counter_observations']['decode_calls']['samples'], 2)
+        self.assertFalse(cohort['used_for_gate'])
+
+    def test_rendering_legacy_engine_spans_stays_unavailable(self):
+        legacy, current = self.row(.01, 1), self.row(.02, 2)
+        current['slot'] = 's1'
+        legacy['engine_phases'] = profile.parse_engine_phases(engine_line(engine_record(1)))
+        current['engine_phases'] = profile.parse_engine_phases(engine_line(engine_record(2)))
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'profile.json'
+            report = {'status':'complete', 'commands':[legacy, current], 'errors':[]}
+            profile.persist(report, output)
+            rendered = output.with_suffix('.md').read_text()
+            for name in ('format_load', 'png_write'):
+                self.assertIn(f'| s0 | candidate | {name} | 0 | unavailable | unavailable | unavailable |', rendered)
+                self.assertIn(f'| s1 | candidate | {name} | 1 | 0.0000 | 1 | 0 |', rendered)
+            self.assertIn('inclusive nested phases and cannot be added to lifecycle costs', rendered)
 
 
 class PhaseTests(unittest.TestCase):

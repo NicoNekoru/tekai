@@ -1340,3 +1340,52 @@ stdio checks passed 53 cases, and two explicit 1,024-case properties passed
 with the earlier Intel seed. Caller-buffer addresses and backing-call counts
 verify the avoided copy and refill work. These deterministic checks do not
 establish a hosted image speedup.
+
+## Owned-engine image comparison, 12 October 2026
+
+[Run 38314381750](https://github.com/NicoNekoru/tekai/actions/runs/38314381750)
+tested `51b9a1dcc4a89ad2a2d3c693cd3fdda234320d44` against actual main
+`0b6e92e1a33c219965cddac9e00393c6a451d5a5`. Both architectures passed core
+correctness, real BasicTeX lookup, the standalone CLI cases, all 170 release
+runtime checks without skips and all 99 reference pages with unchanged pixels
+and extracted text. Rust 1.89 and both Linux Python suites passed. The earlier
+PTY and stopped-descendant tests passed, but this does not identify the causes
+of their prior failures.
+
+| Strict paired case | ARM ratio and interval | Intel ratio and interval | Outcome |
+| --- | --- | --- | --- |
+| CLI startup | 0.9719, 0.9409 to 0.9997 | 0.9275, 0.9101 to 0.9435 | Both passed |
+| Nested lookup | 0.1821, 0.1691 to 0.1884 | 0.2187, 0.2108 to 0.2230 | Both passed |
+| Image compilation | 1.1181, 1.0959 to 1.1576 | 1.3212, 1.3125 to 1.3424 | ARM inconclusive, Intel failed |
+| Warm build cache | 0.9543, 0.9348 to 0.9749 | 0.8650, 0.8513 to 0.8825 | Both passed |
+
+Each case completed all 128 pairs and 32 balanced crossover units. Neither
+report has command errors or partial batches. All required duration and order
+checks passed. ARM exited 2 because its image interval crosses the unchanged
+1.10 boundary. Intel exited 1 with the whole image interval above that boundary.
+The raw-file read optimization did not resolve the hosted image regression.
+Neither result was discarded, rescored or overridden. Release remained blocked.
+
+ARM's separate profiling completed all 208 diagnostic commands and emitted
+36 valid invocation-owned engine records. Image measurements reported eight
+decodes, no decoded-cache hits and 33,554,432 decoded bytes in every repetition.
+Construction medians were 0.279 and 0.223 milliseconds across replicas, with
+owner destruction at 1.718 and 1.392 milliseconds. Most time remained inside
+the engine body. Decode and codec spans did not account for the entire body.
+These instrumented observations are separate from primary gate samples and
+cannot establish a baseline phase regression or leak freedom.
+
+All 16 same-binary public/worker pairs completed with equal copy, order and
+replica balance. The two replicas' public/worker medians were 124.006/128.749
+and 112.629/109.275 milliseconds. Their directions differ, so this control does
+not show a consistent public-supervision penalty. Binary and input hashes,
+native cache metadata and original image oracles remained unchanged. The
+primary report and raw journal retained their hashes through profiling.
+
+The next opt-in protocol adds inclusive format restoration and PNG writing
+spans. Format restoration includes allocation, reads, validation and byte
+swapping, but excludes format discovery and opening. PNG writing includes
+packing, PDF writes and nested decode/codec work. These durations overlap the
+engine body and must not be added to separate nested observations. The reader
+preserves the exact protocol-1 inventory and requires the expanded inventory
+for protocol 2. These diagnostics do not weaken the strict gate.

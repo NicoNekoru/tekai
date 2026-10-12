@@ -3324,6 +3324,9 @@ unsafe fn write_additional_png_objects() {
     }
 }
 pub unsafe fn write_png(mut img: integer) {
+    // Inclusive PNG writing. Decode and PDF codec spans are nested within
+    // this duration, so the observations must not be added together.
+    let mut png_profile = crate::engine_profile::span(crate::engine_profile::Phase::PngWrite);
     let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
         unsafe { crate::generated::backend::writeimg::state() };
     let __tekai_state_generated_backend_writepng: *mut crate::generated::backend::writepng::State =
@@ -4162,6 +4165,7 @@ pub unsafe fn write_png(mut img: integer) {
     }
     pdfflush();
     write_additional_png_objects();
+    png_profile.success();
 }
 pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
 

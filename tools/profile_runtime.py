@@ -86,8 +86,11 @@ CHILD_REASONS = {
     'embedded_engine_entry': 'engine_child_process_outside_parent_instrumentation',
     'format_initialization': 'not_separately_instrumented_inside_engine_child',
 }
-ENGINE_PHASE_NAMES = ('owner_construction', 'invocation_setup', 'engine_body', 'cleanup',
-                      'owner_drop', 'png_decode', 'pdf_compression')
+ENGINE_PHASE_NAMES_V1 = ('owner_construction', 'invocation_setup', 'engine_body', 'cleanup',
+                         'owner_drop', 'png_decode', 'pdf_compression')
+ENGINE_PHASE_NAMES_V2 = (*ENGINE_PHASE_NAMES_V1, 'format_load', 'png_write')
+ENGINE_PHASE_NAMES_BY_VERSION = {1: ENGINE_PHASE_NAMES_V1, 2: ENGINE_PHASE_NAMES_V2}
+ENGINE_PHASE_NAMES = ENGINE_PHASE_NAMES_V2
 ENGINE_COUNTER_UNITS = {'decode_calls': 'calls', 'cache_hits': 'hits', 'decoded_bytes': 'bytes',
                         'compression_calls': 'calls', 'compression_input_bytes': 'bytes',
                         'compression_output_bytes': 'bytes'}
@@ -298,7 +301,7 @@ def parse_engine_phases(stderr, truncated=False):
                 'completed_spans_only', 'phases_overlap', 'lifecycle_partition_on_success',
                 'worker_preparation', 'phases', 'counters'}
         if not isinstance(data, dict) or set(data) != keys \
-                or type(data.get('schema_version')) is not int or data['schema_version'] != 1 \
+                or type(data.get('schema_version')) is not int or data['schema_version'] not in ENGINE_PHASE_NAMES_BY_VERSION \
                 or data.get('producer') != 'tekai-engine-rust' \
                 or data.get('scope') != 'engine_invocation' \
                 or data.get('source') != 'opt_in_rust_instrumentation' \
@@ -313,10 +316,11 @@ def parse_engine_phases(stderr, truncated=False):
                 or preparation.get('scope') != 'cli_worker_before_invocation'
                 or not finite_number(preparation.get('elapsed_ns'), integer=True)):
             raise ValueError('Invalid separate worker preparation observation')
+        phase_names = ENGINE_PHASE_NAMES_BY_VERSION[data['schema_version']]
         phases = data['phases']
-        if not isinstance(phases, list) or len(phases) != len(ENGINE_PHASE_NAMES) \
+        if not isinstance(phases, list) or len(phases) != len(phase_names) \
                 or any(not isinstance(phase, dict) or type(phase.get('name')) is not str for phase in phases) \
-                or {phase['name'] for phase in phases} != set(ENGINE_PHASE_NAMES):
+                or {phase['name'] for phase in phases} != set(phase_names):
             raise ValueError('Missing or duplicated fixed engine phase inventory')
         for phase in phases:
             if set(phase) != {'name', 'status', 'calls', 'failed_calls', 'elapsed_ns'} \
@@ -329,7 +333,7 @@ def parse_engine_phases(stderr, truncated=False):
                     raise ValueError('Available engine phase requires completed calls and duration')
             elif phase['calls'] != 0 or phase['failed_calls'] != 0 or phase['elapsed_ns'] is not None:
                 raise ValueError('Unavailable engine phase requires zero calls and null duration')
-        lifecycle = [phase for phase in phases if phase['name'] in ENGINE_PHASE_NAMES[:5]]
+        lifecycle = [phase for phase in phases if phase['name'] in ENGINE_PHASE_NAMES_V1[:5]]
         if sum(phase['elapsed_ns'] or 0 for phase in lifecycle) > data['elapsed_ns']:
             raise ValueError('Engine lifecycle durations exceed invocation time')
         if data['status'] in ('success', 'warnings'):
@@ -351,7 +355,9 @@ def parse_engine_phases(stderr, truncated=False):
         if counts['decode_calls'] != calls['png_decode'] \
                 or counts['compression_calls'] != calls['pdf_compression']:
             raise ValueError('Engine codec counters disagree with completed phase calls')
-        result.update(status='reported', data=data)
+        result.update(status='reported', data=data,
+                      compatibility={'schema_version': data['schema_version'],
+                                     'missing_phase_names': [name for name in ENGINE_PHASE_NAMES if name not in phase_names]})
     except (ValueError, RecursionError, OverflowError) as error:
         result.update(status='invalid', reason=str(error))
     return result
@@ -930,17 +936,20 @@ def volatility_summary(commands):
         result['engine_phase_protocol_statuses'] = {
             status: sum(row.get('engine_phases', {}).get('status') == status for row in rows)
             for status in ('reported', 'unavailable', 'invalid')}
+        result['engine_phase_schema_versions_observed'] = sorted({engine['schema_version'] for engine in engines})
         result['engine_elapsed'] = describe([engine['elapsed_ns'] for engine in engines], 'nanoseconds')
         result['worker_preparation'] = describe([engine['worker_preparation']['elapsed_ns'] for engine in engines
                                                 if engine['worker_preparation'] is not None], 'nanoseconds')
         result['engine_phase_observations'] = {}
         for name in ENGINE_PHASE_NAMES:
             phases = [phase for engine in engines for phase in engine['phases'] if phase['name'] == name]
+            missing = len(engines) - len(phases)
             result['engine_phase_observations'][name] = {
                 'elapsed': describe([phase['elapsed_ns'] for phase in phases if phase['status'] == 'available'], 'nanoseconds'),
                 'calls_observed': sorted({phase['calls'] for phase in phases}),
                 'failed_calls_observed': sorted({phase['failed_calls'] for phase in phases}),
-                'unavailable_samples': sum(phase['status'] == 'unavailable' for phase in phases)}
+                'unavailable_samples': missing + sum(phase['status'] == 'unavailable' for phase in phases),
+                'missing_protocol_samples': missing}
         result['engine_counter_observations'] = {}
         for name, unit in ENGINE_COUNTER_UNITS.items():
             values = [counter['value'] for engine in engines for counter in engine['counters'] if counter['name'] == name]
@@ -1046,7 +1055,7 @@ def persist(report, output):
         lines.append(f"| {row['case']} | {row['phase']} | {row['slot']} | {row['label']} | {memory} | {current} | {blocks} |")
     lines.extend(['', report['volatility']['phase_scope'], '', report['volatility']['memory_scope'], ''])
     lines.extend(['## Separate invocation-owned engine phases', '',
-        'Opt-in engine records are untrusted diagnostics. Library timing excludes worker preparation. PNG and compression phases are nested, not additive lifecycle costs.',
+        'Opt-in engine records are untrusted diagnostics. Library timing excludes worker preparation. Format loading, PNG writing, PNG decoding and compression are inclusive nested phases and cannot be added to lifecycle costs.',
         'Absent baseline records stay unavailable. This section cannot change a primary verdict.', '',
         '| Case | Phase | Replica | Artifact | Engine stage | Samples | Median ms | Calls | Failed calls |',
         '| --- | --- | --- | --- | --- | ---: | ---: | --- | --- |'])

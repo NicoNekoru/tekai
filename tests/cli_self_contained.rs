@@ -1404,11 +1404,17 @@ fn bundled_engine_profiles_valid_png_and_rejects_oversized_metadata() {
         if let Some(record) = records.first() {
             assert!(record.len() + "TEKAI_ENGINE_PROFILE ".len() < 4096);
             let record: Value = serde_json::from_str(record).unwrap();
-            assert_eq!(record["schema_version"], 1);
+            assert_eq!(record["schema_version"], 2);
             assert_eq!(record["scope"], "engine_invocation");
             assert_eq!(record["status"], "success");
             let phases = record["phases"].as_array().unwrap();
-            assert_eq!(phases.len(), 7);
+            assert_eq!(phases.len(), 9);
+            for name in ["format_load", "png_write"] {
+                let phase = phases.iter().find(|phase| phase["name"] == name).unwrap();
+                assert_eq!(phase["calls"], 1);
+                assert_eq!(phase["failed_calls"], 0);
+                assert!(phase["elapsed_ns"].as_u64().is_some());
+            }
             let lifecycle = &phases[..5];
             assert!(
                 lifecycle
@@ -1472,6 +1478,46 @@ fn bundled_engine_profiles_valid_png_and_rejects_oversized_metadata() {
         serde_json::from_str::<Value>(records[0]).unwrap()["status"],
         "errors"
     );
+
+    // A failed restoration must remain a failed observation, rather than a
+    // successful duration or an invented zero for an unreached PNG writer.
+    project.write("profile-bad.fmt", "bad format header\n");
+    let bad_format = project.0.join("profile-bad.fmt");
+    let format_arg = format!("-fmt={}", bad_format.display());
+    let failed = project.run_with_env(
+        &[
+            "__tekai-engine",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            &format_arg,
+            "profile-fatal.tex",
+        ],
+        &[("TEKAI_ENGINE_PROFILE", "1")],
+    );
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
+    let stderr = String::from_utf8(failed.stderr).unwrap();
+    let records = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("TEKAI_ENGINE_PROFILE "))
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 1, "{stderr}");
+    let record: Value = serde_json::from_str(records[0]).unwrap();
+    assert_eq!(record["status"], "errors");
+    let phases = record["phases"].as_array().unwrap();
+    let restored = phases
+        .iter()
+        .find(|phase| phase["name"] == "format_load")
+        .unwrap();
+    assert_eq!(restored["calls"], 1);
+    assert_eq!(restored["failed_calls"], 1);
+    assert!(restored["elapsed_ns"].as_u64().is_some());
+    let png = phases
+        .iter()
+        .find(|phase| phase["name"] == "png_write")
+        .unwrap();
+    assert_eq!(png["calls"], 0);
+    assert_eq!(png["status"], "unavailable");
+    assert!(png["elapsed_ns"].is_null());
 
     for (typ, length, expected) in [
         (b"PLTE", 0u32, "invalid PNG PLTE length"),

@@ -23,9 +23,11 @@ pub(crate) enum Phase {
     OwnerDrop,
     PngDecode,
     PdfCompression,
+    FormatLoad,
+    PngWrite,
 }
 
-const PHASES: [(Phase, &str); 7] = [
+const PHASES: [(Phase, &str); 9] = [
     (Phase::OwnerConstruction, "owner_construction"),
     (Phase::InvocationSetup, "invocation_setup"),
     (Phase::EngineBody, "engine_body"),
@@ -33,6 +35,8 @@ const PHASES: [(Phase, &str); 7] = [
     (Phase::OwnerDrop, "owner_drop"),
     (Phase::PngDecode, "png_decode"),
     (Phase::PdfCompression, "pdf_compression"),
+    (Phase::FormatLoad, "format_load"),
+    (Phase::PngWrite, "png_write"),
 ];
 
 #[derive(Clone, Copy)]
@@ -94,7 +98,7 @@ pub struct EngineProfile {
     status: &'static str,
     /// Library invocation only. CLI preparation is outside this measurement.
     elapsed_ns: u64,
-    phases: [PhaseObservation; 7],
+    phases: [PhaseObservation; 9],
     counters: [CounterObservation; 6],
 }
 
@@ -103,7 +107,7 @@ pub(crate) struct Collector {
     boundary: Cell<Instant>,
     lifecycle: Cell<Option<Phase>>,
     finished: Cell<Option<Instant>>,
-    totals: [Cell<Total>; 7],
+    totals: [Cell<Total>; 9],
     counters: [Cell<u64>; 6],
 }
 
@@ -269,7 +273,7 @@ impl EngineProfile {
         self.elapsed_ns
     }
 
-    pub fn phases(&self) -> &[PhaseObservation; 7] {
+    pub fn phases(&self) -> &[PhaseObservation; 9] {
         &self.phases
     }
 
@@ -289,7 +293,7 @@ impl EngineProfile {
             data: [0; RECORD_BYTES],
             length: 0,
         };
-        write!(record, "TEKAI_ENGINE_PROFILE {{\"schema_version\":1,\"producer\":\"tekai-engine-rust\",\"scope\":\"engine_invocation\",\"source\":\"opt_in_rust_instrumentation\",\"untrusted\":true,\"status\":\"{}\",\"elapsed_ns\":{},\"completed_spans_only\":true,\"phases_overlap\":true,\"lifecycle_partition_on_success\":true,\"worker_preparation\":", self.status, self.elapsed_ns)?;
+        write!(record, "TEKAI_ENGINE_PROFILE {{\"schema_version\":2,\"producer\":\"tekai-engine-rust\",\"scope\":\"engine_invocation\",\"source\":\"opt_in_rust_instrumentation\",\"untrusted\":true,\"status\":\"{}\",\"elapsed_ns\":{},\"completed_spans_only\":true,\"phases_overlap\":true,\"lifecycle_partition_on_success\":true,\"worker_preparation\":", self.status, self.elapsed_ns)?;
         if let Some(preparation) = worker_preparation {
             write!(
                 record,
@@ -396,5 +400,35 @@ mod tests {
         assert!(std::str::from_utf8(&bytes)
             .unwrap()
             .contains("\"elapsed_ns\":2000000"));
+    }
+
+    #[test]
+    fn expanded_inventory_fits_the_record_bound_at_maximum_values() {
+        let report = EngineProfile {
+            status: "teardown_error",
+            elapsed_ns: LIMIT,
+            phases: PHASES.map(|(_, name)| PhaseObservation {
+                name,
+                calls: LIMIT,
+                failed_calls: LIMIT,
+                elapsed_ns: Some(LIMIT),
+            }),
+            counters: COUNTERS.map(|(_, name, unit)| CounterObservation {
+                name,
+                value: LIMIT,
+                unit,
+            }),
+        };
+        let mut bytes = Vec::new();
+        report
+            .write_record(&mut bytes, Some(Duration::MAX))
+            .unwrap();
+        assert!(bytes.len() <= RECORD_BYTES);
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(text.contains("\"schema_version\":2"));
+        for (_, name) in PHASES {
+            assert_eq!(text.matches(&format!("\"name\":\"{name}\"")).count(), 1);
+        }
+        assert_eq!(bytes.iter().filter(|&&byte| byte == b'\n').count(), 1);
     }
 }
