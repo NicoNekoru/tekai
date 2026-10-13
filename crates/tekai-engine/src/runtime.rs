@@ -163,7 +163,10 @@ fn bundle_is_complete(root: &Path) -> bool {
 
 fn unpack_bundle(bytes: &[u8], destination: &Path) -> io::Result<()> {
     let decoder = flate2::read::GzDecoder::new(bytes);
-    let mut archive = tar::Archive::new(decoder);
+    // Tar reads headers and padding in tiny pieces. Buffer decoded bytes so
+    // these reads do not each re-enter the inflater. Keep the outer reader
+    // through the final drain, including buffered bytes and gzip validation.
+    let mut archive = tar::Archive::new(io::BufReader::with_capacity(64 * 1024, decoder));
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?;
@@ -199,6 +202,89 @@ pub(crate) fn installed_bundle_root() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct UnpackFixture(PathBuf);
+
+    impl UnpackFixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "tekai-unpack-buffer-{}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir(&root).unwrap();
+            Self(root)
+        }
+    }
+
+    impl Drop for UnpackFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn compressed_files(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut archive = tar::Builder::new(Vec::new());
+        for &(name, bytes) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            archive.append_data(&mut header, name, bytes).unwrap();
+        }
+        let tar = archive.into_inner().unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&tar).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn decoded_buffer_preserves_nested_files_across_header_and_buffer_boundaries() {
+        let fixture = UnpackFixture::new();
+        let sizes = [
+            0, 1, 2, 3, 7, 511, 512, 513, 8191, 8192, 8193, 65535, 65536, 65537,
+        ];
+        let files: Vec<_> = sizes
+            .into_iter()
+            .enumerate()
+            .map(|(index, size)| {
+                let name = format!("texmf-dist/nested{index}/file{index}");
+                let bytes: Vec<_> = (0..size)
+                    .map(|offset| (offset * 37 + index * 19) as u8)
+                    .collect();
+                (name, bytes)
+            })
+            .collect();
+        let borrowed: Vec<_> = files
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+            .collect();
+        unpack_bundle(&compressed_files(&borrowed), &fixture.0).unwrap();
+        for (name, bytes) in files {
+            assert_eq!(fs::read(fixture.0.join(name)).unwrap(), bytes);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn decoded_buffer_preserves_arbitrary_regular_file_bytes(payload in prop::collection::vec(any::<u8>(), 0..4097)) {
+            let fixture = UnpackFixture::new();
+            let files = [("texmf-dist/empty", &[][..]), ("texmf-dist/nested/payload", payload.as_slice()),
+                         ("texmf-dist/last", &b"last"[..])];
+            unpack_bundle(&compressed_files(&files), &fixture.0).unwrap();
+            for (name, bytes) in files {
+                prop_assert_eq!(fs::read(fixture.0.join(name)).unwrap(), bytes);
+            }
+        }
+    }
 
     #[test]
     fn scoped_roots_restore_after_nesting_and_unwind_without_retaining_paths() {
@@ -290,16 +376,19 @@ mod tests {
 
     #[test]
     fn corrupt_gzip_footer_is_rejected() {
-        use std::io::Write;
         let root =
             std::env::temp_dir().join(format!("tekai-corrupt-bundle-{}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(&[0; 1024]).unwrap();
-        let mut bytes = encoder.finish().unwrap();
-        let crc_offset = bytes.len() - 8;
-        bytes[crc_offset] ^= 1;
-        assert!(unpack_bundle(&bytes, &root).is_err());
+        let bytes = encoder.finish().unwrap();
+        for offset in [8, 4] {
+            let mut corrupt = bytes.clone();
+            let index = corrupt.len() - offset;
+            corrupt[index] ^= 1;
+            assert!(unpack_bundle(&corrupt, &root).is_err());
+        }
+        assert!(unpack_bundle(&bytes[..bytes.len() - 1], &root).is_err());
         fs::remove_dir(root).unwrap();
     }
 
