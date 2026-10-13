@@ -470,16 +470,21 @@ class Supervisor(PerformanceCI):
         deadline_reason = 'Whole-run deadline exceeded' if remaining <= self.timeout else 'Command deadline exceeded'
         started = time.monotonic()
         process = self.start(command, cwd, env)
-        launch_end = time.monotonic()
-        process.observe = False
-        process.started_at = started
-        completed, observation = threading.Event(), {}
-        process.reap_barrier = completed.wait
-
-        dispatch = time.monotonic()
-        self._wait_jobs.put_nowait((process, completed, observation))
+        completed = None
         failure = None
+        primary_error = None
         try:
+            launch_end = time.monotonic()
+            process.observe = False
+            process.started_at = started
+            completed, observation = threading.Event(), {}
+            dispatch = time.monotonic()
+            self._wait_jobs.put_nowait((process, completed, observation))
+            # Attach only after dispatch succeeds. If dispatch is interrupted
+            # after acceptance, finish drains active native observers under
+            # its routing lock. A late job then reads the saved reaped status,
+            # never waitid on a recycled PID.
+            process.reap_barrier = completed.wait
             while not completed.wait(min(0.05, max(0.001, process.started_at + allowance - time.monotonic()))):
                 if any(path.stat().st_size > MAX_CAPTURE_BYTES for path in process.capture_paths):
                     failure = 'Command capture exceeded the finite output limit'
@@ -487,15 +492,27 @@ class Supervisor(PerformanceCI):
                 if time.monotonic() >= process.started_at + allowance:
                     failure = deadline_reason
                     break
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
             # Cleanup retains the unreaped leader through group termination,
-            # and waits for this observer's publication before the final reap.
-            cleanup_start = time.monotonic()
+            # and an attached barrier publishes before the final reap.
             try:
-                self.stop(process)
-            finally:
-                finished = completed.wait(timeout=5)
-                cleanup_end = time.monotonic()
+                cleanup_start = time.monotonic()
+                try:
+                    self.stop(process)
+                finally:
+                    # An unsuccessful dispatch can have no publication. Any
+                    # accepted late job is safe without this extra wait.
+                    finished = completed is not None and (
+                        completed.wait(timeout=5) if process.reap_barrier is not None
+                        else completed.is_set())
+                    cleanup_end = time.monotonic()
+            except BaseException as cleanup_error:
+                if primary_error is not None:
+                    raise primary_error from cleanup_error
+                raise
         if not finished:
             raise BenchmarkError('Process waiter did not finish after owned-group cleanup')
         if 'error' in observation:

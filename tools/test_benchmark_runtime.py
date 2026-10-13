@@ -631,6 +631,139 @@ class SupervisionTests(unittest.TestCase):
         self.runner.execute([sys.executable, '-c', 'pass'], self.work, os.environ.copy())
         self.assertTrue(self.runner._waiter.is_alive())
 
+    def assert_handoff_failure(self, stage, primary_error, cleanup_error=None):
+        from owned_process import OwnedProcess
+
+        release, entered = bench.threading.Event(), bench.threading.Event()
+        processes, jobs, native_waits, reaps, cleanup_failures = [], [], [], [], []
+        original_wait = self.runner._wait
+        original_start = self.runner.start
+        original_stop = self.runner.stop
+        original_put = self.runner._wait_jobs.put_nowait
+        original_waitid = os.waitid
+
+        def held_waiter():
+            if not release.wait(5):
+                raise RuntimeError('Controlled observer was not released')
+            original_wait()
+
+        def waitid(*args):
+            if bench.threading.current_thread() is self.runner._waiter:
+                native_waits.append(args)
+                entered.set()
+            return original_waitid(*args)
+
+        def start(*args):
+            process = original_start(*args)
+            processes.append(process)
+            original_reap = process._process.wait
+
+            def reap(*args, **kwargs):
+                self.assertEqual(process._active_observers, 0)
+                reaps.append(process.pid)
+                return original_reap(*args, **kwargs)
+
+            process._process.wait = reap
+            return process
+
+        def put(job):
+            jobs.append(job)
+            if stage != 'before_acceptance':
+                original_put(job)
+            if stage == 'active_observer':
+                release.set()
+                self.assertTrue(entered.wait(2), 'Native observer did not enter waitid')
+            if stage != 'barrier_attachment':
+                raise primary_error
+
+        def stop(process):
+            if cleanup_error is not None and not cleanup_failures:
+                cleanup_failures.append(cleanup_error)
+                raise cleanup_error
+            original_stop(process)
+
+        class RejectBarrier(OwnedProcess):
+            def __setattr__(self, name, value):
+                if stage == 'barrier_attachment' and name == 'reap_barrier' and value is not None:
+                    raise primary_error
+                super().__setattr__(name, value)
+
+        try:
+            with patch.object(self.runner, '_wait', side_effect=held_waiter), \
+                    patch.object(self.runner, 'start', side_effect=start), \
+                    patch.object(self.runner, 'stop', side_effect=stop), \
+                    patch.object(self.runner._wait_jobs, 'put_nowait', side_effect=put), \
+                    patch('performance_ci.OwnedProcess', RejectBarrier), \
+                    patch('owned_process.os.waitid', side_effect=waitid):
+                with self.assertRaises(type(primary_error)) as caught:
+                    self.runner.execute([sys.executable, '-c', 'import time; time.sleep(10)'],
+                                        self.work, os.environ.copy())
+                self.assertIs(caught.exception, primary_error)
+                if cleanup_error is not None:
+                    self.assertIs(primary_error.__cause__, cleanup_error)
+                self.assertEqual(len(processes), 1)
+                if cleanup_error is not None:
+                    self.assertIs(self.runner.owned.get(processes[0].pid), processes[0])
+                    self.assertFalse(processes[0]._reaped)
+                    self.assertEqual(reaps, [])
+                    self.runner.stop(processes[0])
+                self.assertEqual(reaps, [processes[0].pid])
+                self.assertTrue(processes[0]._reaped)
+                self.assertIsNone(processes[0].reap_barrier)
+                self.assertFalse(self.runner.owned)
+                # An accepted job can still be queued at the sole reap. Its
+                # subsequent wait must use the saved status, never native PID
+                # observation after the reservation has been released.
+                release.set()
+                self.runner.close()
+                if stage == 'active_observer':
+                    self.assertTrue(native_waits)
+                else:
+                    self.assertEqual(native_waits, [])
+                if stage != 'before_acceptance':
+                    self.assertTrue(jobs[0][1].is_set())
+                    self.assertEqual(jobs[0][2]['code'], processes[0].returncode)
+        finally:
+            release.set()
+
+    def test_queue_failure_before_acceptance_reaps_without_a_missing_observer_barrier(self):
+        self.assert_handoff_failure('before_acceptance', bench.queue.Full('controlled queue failure'))
+
+    def test_interruption_after_acceptance_cannot_observe_a_reaped_native_pid(self):
+        self.assert_handoff_failure('after_acceptance', KeyboardInterrupt('controlled accepted dispatch'))
+
+    def test_interruption_with_active_native_observer_drains_before_reap(self):
+        self.assert_handoff_failure('active_observer', KeyboardInterrupt('controlled active dispatch'))
+
+    def test_barrier_attachment_allocation_failure_keeps_accepted_job_safe(self):
+        self.assert_handoff_failure('barrier_attachment', MemoryError('controlled barrier attachment'))
+
+    def test_first_dispatch_exception_survives_cleanup_failure(self):
+        self.assert_handoff_failure('after_acceptance', KeyboardInterrupt('controlled primary failure'),
+                                    RuntimeError('controlled cleanup failure'))
+
+    def test_event_allocation_failure_after_launch_still_reaps_the_owned_child(self):
+        self.runner._ensure_waiter()
+        processes = []
+        original_start = self.runner.start
+
+        def start(*args):
+            process = original_start(*args)
+            processes.append(process)
+            return process
+
+        failure = MemoryError('controlled observer event allocation')
+        with patch.object(self.runner, 'start', side_effect=start), \
+                patch.object(bench.threading, 'Event', side_effect=failure):
+            with self.assertRaises(MemoryError) as caught:
+                self.runner.execute([sys.executable, '-c', 'import time; time.sleep(10)'],
+                                    self.work, os.environ.copy())
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(len(processes), 1)
+        self.assertTrue(processes[0]._reaped)
+        self.assertIsNone(processes[0].reap_barrier)
+        self.assertFalse(self.runner.owned)
+
     def test_error_and_output_overflow_are_not_usable_samples(self):
         for code in ('raise SystemExit(7)', f'print("x" * {bench.MAX_CAPTURE_BYTES + 1})'):
             with self.subTest(code=code), self.assertRaises(bench.BenchmarkError):
