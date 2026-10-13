@@ -1144,8 +1144,39 @@ unsafe fn write_png_gray_alpha(mut img: integer) {
     let mut smask_objnum: integer = 0 as integer;
     let mut smask: png_bytep = ::core::ptr::null_mut::<png_byte>();
     let mut smask_ptr: integer = 0 as integer;
-    let mut smask_size: integer = 0 as integer;
     let mut bitdepth: ::core::ffi::c_int = 0;
+    let smask_size: integer = crate::pngshim::checked_png_mask_size(
+        png_get_rowbytes(
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .png
+            .png_ptr as png_const_structrp,
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+        ),
+        2,
+        png_get_image_height(
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .png
+            .png_ptr as png_const_structrp,
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+        ) as usize,
+    )
+    .unwrap_or_else(|error| png_copy_fail(error));
     if (*(*__tekai_state_generated_backend_writeimg)
         .image_array
         .offset(img as isize))
@@ -1170,38 +1201,7 @@ unsafe fn write_png_gray_alpha(mut img: integer) {
         b"/SMask %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
         &[crate::utils::PrintfArg::from(smask_objnum)],
     );
-    smask_size = png_get_rowbytes(
-        (*(*__tekai_state_generated_backend_writeimg)
-            .image_array
-            .offset(img as isize))
-        .image_struct
-        .png
-        .png_ptr as png_const_structrp,
-        (*(*__tekai_state_generated_backend_writeimg)
-            .image_array
-            .offset(img as isize))
-        .image_struct
-        .png
-        .info_ptr as png_const_inforp,
-    )
-    .wrapping_div(2 as size_t)
-    .wrapping_mul(png_get_image_height(
-        (*(*__tekai_state_generated_backend_writeimg)
-            .image_array
-            .offset(img as isize))
-        .image_struct
-        .png
-        .png_ptr as png_const_structrp,
-        (*(*__tekai_state_generated_backend_writeimg)
-            .image_array
-            .offset(img as isize))
-        .image_struct
-        .png
-        .info_ptr as png_const_inforp,
-    ) as size_t) as integer;
-    smask =
-        xmalloc((smask_size as size_t).wrapping_mul(::core::mem::size_of::<png_byte>() as size_t))
-            as *mut png_byte as png_bytep;
+    smask = xmalloc(smask_size as size_t) as *mut png_byte as png_bytep;
     pdfbeginstream();
     if png_get_interlace_type(
         (*(*__tekai_state_generated_backend_writeimg)
@@ -2435,9 +2435,40 @@ unsafe fn write_png_rgb_alpha(mut img: integer) {
     let mut smask_objnum: integer = 0 as integer;
     let mut smask: png_bytep = ::core::ptr::null_mut::<png_byte>();
     let mut smask_ptr: integer = 0 as integer;
-    let mut smask_size: integer = 0 as integer;
     let mut bitdepth: ::core::ffi::c_int = 0;
     let mut opaque_rgb_alpha_fast: boolean = false_0 as boolean;
+    let smask_size: integer = crate::pngshim::checked_png_mask_size(
+        png_get_rowbytes(
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .png
+            .png_ptr as png_const_structrp,
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+        ),
+        4,
+        png_get_image_height(
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .png
+            .png_ptr as png_const_structrp,
+            (*(*__tekai_state_generated_backend_writeimg)
+                .image_array
+                .offset(img as isize))
+            .image_struct
+            .png
+            .info_ptr as png_const_inforp,
+        ) as usize,
+    )
+    .unwrap_or_else(|error| png_copy_fail(error));
     if (*(*__tekai_state_generated_backend_writeimg)
         .image_array
         .offset(img as isize))
@@ -2462,40 +2493,9 @@ unsafe fn write_png_rgb_alpha(mut img: integer) {
         b"/SMask %i 0 R\n\0" as *const u8 as *const ::core::ffi::c_char,
         &[crate::utils::PrintfArg::from(smask_objnum)],
     );
-    smask_size = png_get_rowbytes(
-        (*(*__tekai_state_generated_backend_writeimg)
-            .image_array
-            .offset(img as isize))
-        .image_struct
-        .png
-        .png_ptr as png_const_structrp,
-        (*(*__tekai_state_generated_backend_writeimg)
-            .image_array
-            .offset(img as isize))
-        .image_struct
-        .png
-        .info_ptr as png_const_inforp,
-    )
-    .wrapping_div(4 as size_t)
-    .wrapping_mul(png_get_image_height(
-        (*(*__tekai_state_generated_backend_writeimg)
-            .image_array
-            .offset(img as isize))
-        .image_struct
-        .png
-        .png_ptr as png_const_structrp,
-        (*(*__tekai_state_generated_backend_writeimg)
-            .image_array
-            .offset(img as isize))
-        .image_struct
-        .png
-        .info_ptr as png_const_inforp,
-    ) as size_t) as integer;
     opaque_rgb_alpha_fast = try_write_opaque_png_rgb_alpha_8_fast(img);
     if opaque_rgb_alpha_fast == 0 {
-        smask = xmalloc(
-            (smask_size as size_t).wrapping_mul(::core::mem::size_of::<png_byte>() as size_t),
-        ) as *mut png_byte as png_bytep;
+        smask = xmalloc(smask_size as size_t) as *mut png_byte as png_bytep;
         pdfbeginstream();
         let fast_rgb_alpha = png_get_bit_depth(
             (*(*__tekai_state_generated_backend_writeimg)

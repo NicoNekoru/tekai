@@ -861,6 +861,22 @@ pub(crate) fn checked_png_chunk_length(length: u32) -> Result<usize, &'static st
     usize::try_from(length).map_err(|_| "invalid PNG chunk length")
 }
 
+/// The mask writers index bytes with signed engine integers. Keep their
+/// established rowbytes/channel division for both 8- and 16-bit samples.
+pub(crate) fn checked_png_mask_size(
+    rowbytes: usize,
+    channels: usize,
+    height: usize,
+) -> Result<c_int, &'static str> {
+    let mask_rowbytes = rowbytes
+        .checked_div(channels)
+        .ok_or("invalid PNG soft mask channel count")?;
+    let bytes = mask_rowbytes
+        .checked_mul(height)
+        .ok_or("PNG soft mask byte length overflow")?;
+    c_int::try_from(bytes).map_err(|_| "PNG soft mask exceeds engine byte-count limit")
+}
+
 pub(crate) fn checked_png_chunk_end(
     header_offset: u64,
     length: usize,
@@ -1238,6 +1254,68 @@ mod tests {
             checked_png_chunk_end(u64::MAX - 7, 0, u64::MAX),
             Err("PNG chunk exceeds file extent")
         );
+    }
+
+    #[test]
+    fn mask_byte_counts_preserve_sample_width_and_reject_signed_wrap() {
+        let maximum = c_int::MAX as usize;
+        for channels in [2usize, 4] {
+            for bytes_per_sample in [1usize, 2] {
+                assert_eq!(
+                    checked_png_mask_size(channels * 17 * bytes_per_sample, channels, 31),
+                    Ok((17 * 31 * bytes_per_sample) as c_int)
+                );
+            }
+            assert_eq!(
+                checked_png_mask_size(channels, channels, maximum),
+                Ok(c_int::MAX)
+            );
+            assert_eq!(
+                checked_png_mask_size(channels, channels, maximum + 1),
+                Err("PNG soft mask exceeds engine byte-count limit")
+            );
+            for height in [65536usize, 65537] {
+                let expected = if usize::BITS > 32 {
+                    "PNG soft mask exceeds engine byte-count limit"
+                } else {
+                    "PNG soft mask byte length overflow"
+                };
+                assert_eq!(
+                    checked_png_mask_size(channels * 65536, channels, height),
+                    Err(expected)
+                );
+            }
+            assert_eq!(
+                checked_png_mask_size(usize::MAX, channels, usize::MAX),
+                Err("PNG soft mask byte length overflow")
+            );
+            assert_eq!(checked_png_mask_size(0, channels, usize::MAX), Ok(0));
+            assert_eq!(checked_png_mask_size(usize::MAX, channels, 0), Ok(0));
+        }
+        assert_eq!(
+            checked_png_mask_size(4, 0, 1),
+            Err("invalid PNG soft mask channel count")
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn mask_byte_counts_match_wide_arithmetic_without_allocations(
+            rowbytes in proptest::prelude::any::<usize>(),
+            height in proptest::prelude::any::<usize>(),
+        ) {
+            for channels in [2usize, 4] {
+                let bytes = (rowbytes as u128 / channels as u128) * height as u128;
+                let expected = if bytes > usize::MAX as u128 {
+                    Err("PNG soft mask byte length overflow")
+                } else if bytes > c_int::MAX as u128 {
+                    Err("PNG soft mask exceeds engine byte-count limit")
+                } else {
+                    Ok(bytes as c_int)
+                };
+                proptest::prop_assert_eq!(checked_png_mask_size(rowbytes, channels, height), expected);
+            }
+        }
     }
 
     #[test]
