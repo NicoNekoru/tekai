@@ -43,6 +43,11 @@ versioning.
 - Read large raw-file requests directly into their destination after draining
   buffered input and pushback. Retain decoder validation, pipe job control and
   configured read-ahead for small requests.
+- Vendor the pinned Rust PNG decoder dependency with bounded prefix copying for
+  short-distance matches. Fix Adler-32 accounting when queued matches drain
+  across partial output buffers. Preserve the configured checksum policy.
+- Resolve invocation-owned console and interrupt handles at their actual call
+  sites instead of hoisting unused TLS lookups onto token-reader entry.
 - Store dependency state as compact JSON. Validate complete source bytes,
   compilation generations and lookup identities before atomic publication.
   Old TOML states rebuild once. Comments or textual end markers no longer hide
@@ -75,6 +80,9 @@ versioning.
   cleanup and destruction, with nested format-loading, PNG-writing, decode
   and codec observations. Keep
   same-binary public/worker route controls separate from strict gate samples.
+- Protect benchmark observer handoff against interrupted dispatch and allocation
+  failures. Keep native-child ownership through cleanup and preserve the first
+  exception when cleanup also fails. Successful timing boundaries are unchanged.
 
 ## 0.5.0 - 2026-10-07
 

@@ -1389,3 +1389,70 @@ packing, PDF writes and nested decode/codec work. These durations overlap the
 engine body and must not be added to separate nested observations. The reader
 preserves the exact protocol-1 inventory and requires the expanded inventory
 for protocol 2. These diagnostics do not weaken the strict gate.
+
+## Local decoder and token-routing follow-up, 12 October 2026
+
+A fixed local ARM helper completed 32 repeated public library invocations of
+the original eight-image fixture. All outputs passed the original Poppler
+oracles. One native sample captured 755 main-thread observations, including
+749 under the library entry. Inclusive decode, compression and token-reader
+stacks overlap and cannot be added. Earlier short-process attempts produced
+empty call graphs and remain unsuccessful sampling observations.
+
+Two sampled decoder addresses belong to the pinned `fdeflate 0.3.7`
+short-distance match loop. At distance four, the existing kernel publishes
+258 bytes using 65 overlapping 16-byte copies. The local replacement publishes
+exactly 258 bytes using eight prefix copies. Exhaustive tests compare every
+distance from two through fifteen and every length from three through 258
+against bytewise and original-kernel references, including history and tail
+guards. Both full-output-room dispatches retain their admission checks.
+
+Independently encoded fragmented-stream properties also found an upstream
+Adler-32 defect. Partial queued-match returns skipped published bytes during
+checksum accounting. The shrunk alternating 512-byte stream reproduced the
+failure with unchanged registry `fdeflate 0.3.7`. The patch accounts those bytes
+only when checksum checking is enabled and retains the failing seed. It does
+not change the PNG reader's checksum configuration.
+
+Keeping the invocation-owned interrupt and stdout getters out of line reduced
+the compiled ARM token-reader entry from three TLS lookups to one. Actual
+interrupt polls and EOF flushes remain at their existing branches. Reviewed
+token/macro helpers gained no extra Core lookups or stack spills. Assembly
+placement alone is not a speedup measurement.
+
+A separate, fixed local incremental control compared the frozen protocol-2
+migration executable with the candidate containing format validation, decoder
+and getter changes. Neither role is actual main, and these are cached local
+builds rather than matched canonical CI builds. All 16 raw pairs and eight
+separate profiled pairs completed with equal role, slot and first-order balance.
+All 52 engine commands and 156 Poppler commands plus one timer probe completed
+in 62.567 seconds. Every PDF passed all-pixel checks. Source/copy/input hashes,
+warm native-cache metadata and all six image work counters remained unchanged.
+
+Raw parent medians were 70.230 and 69.888 milliseconds for the old copies,
+and 56.685 and 56.882 milliseconds for the new copies. Separate instrumented
+decode medians were 17.062 and 17.054 milliseconds before the patch, and 5.382
+and 5.334 milliseconds afterward. Those instrumented spans overlap PNG writing
+and engine execution. The changes were measured together, so this control does
+not attribute the entire difference to one implementation change.
+
+The complete local report SHA-256 is
+`52206ee0417fba6c47a2a3ae352fae2215190d040676c081bc1c594bcacd6322`.
+Unrelated desktop work remained running. No quiet-host, Intel, actual-main,
+hosted-cause or release-gate conclusion follows from this diagnostic.
+
+Pre-run review found an interrupted observer-handoff gap in the benchmark
+supervisor. Observer dispatch and barrier attachment now share cleanup
+protection, and the barrier is attached only after accepted dispatch. A late
+observer returns the owner's saved reaped status without observing a recycled
+native PID. Six new native tests cover failed dispatch, late/active observers,
+allocation failures and primary-exception preservation when cleanup fails.
+Successful scored-clock boundaries, commands and gates remain unchanged.
+Historical completed CI measurements are not discarded or rescored.
+
+The complete local Python discovery passed 436 tests. Rust 1.89 compiled every
+workspace target with all features, and the vendored decoder passed all 21
+tests with zero ignores. Its verbose property receipt confirms 128 new cases
+using seed `1883090737666153676`, plus the retained regression replay. Strict
+workspace all-target/all-feature Clippy also passed with C and C++ compiler
+commands disabled. These local checks do not substitute for final hosted CI.

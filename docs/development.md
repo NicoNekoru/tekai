@@ -344,6 +344,24 @@ per invocation. Investigate
 heap-tool warnings by ownership and repeated live measurements rather than
 treating every at-exit allocation as a growing leak.
 
+The pinned Rust decoder in `vendor/fdeflate` retains upstream attribution,
+MIT/Apache-2.0 licenses and regression fixtures. Its local short-distance match
+copying uses already-produced prefixes with bounded work and no unsafe code.
+Both full-room dispatches keep their original admission checks. Independent
+bytewise and upstream references cover every admitted short distance and length.
+Streaming properties use separately encoded miniz data and retain failing seeds.
+An upstream Adler-32 defect, reproduced in unchanged registry `fdeflate 0.3.7`,
+required accounting for bytes published before partial queued-match returns.
+The PNG checksum configuration remains unchanged. See the dependency's
+[`SOURCE.md`](../vendor/fdeflate/SOURCE.md) for exact import and patch provenance.
+
+Console and interrupt getters remain invocation-owned. Keeping these two
+getters out of line prevents their TLS lookups from moving onto unused
+token-reader entry paths. Actual polling, atomic consume-once behavior and
+console selection remain unchanged. Sampling and candidate-only local image
+controls guided these changes. They do not establish a hosted regression cause
+or replace the unchanged strict gates against actual main on both architectures.
+
 ### Paired performance gate
 
 CI keeps deterministic scan counts and retention budgets separate from timing.
