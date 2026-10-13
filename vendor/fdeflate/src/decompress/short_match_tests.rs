@@ -3,9 +3,25 @@
 //! is compared. The optimized kernel must leave history and padding untouched.
 
 use super::{
-    copy_short_distance_match, decompress_to_vec, DecompressionError, Decompressor, State,
+    copy_short_distance_match, decompress_to_vec, dispatch_short_distance_match,
+    DecompressionError, Decompressor, PeriodicFourCopyWork, ShortMatchDispatchWork, State,
 };
 use proptest::prelude::*;
+
+fn assert_periodic_work(work: &PeriodicFourCopyWork) {
+    assert_eq!(
+        work,
+        &PeriodicFourCopyWork {
+            history_bytes: 4,
+            pattern_bytes: 16,
+            block_copies: 16,
+            block_bytes: 256,
+            scalar_writes: 2,
+            scalar_bytes: 2,
+        },
+    );
+    assert_eq!(work.block_bytes + work.scalar_bytes, 258);
+}
 
 fn logical_match(output: &mut [u8], output_index: usize, length: usize, distance: usize) {
     for index in 0..length {
@@ -45,39 +61,133 @@ fn prefix_byte(index: usize, variant: usize) -> u8 {
 fn every_short_distance_and_length_matches_both_references_with_exact_work() {
     for distance in 2..16 {
         for length in 3..=258 {
-            for prefix_padding in [0, 1, 7, 16, 31] {
-                for variant in 0..5 {
-                    let output_index = distance + prefix_padding;
-                    let mut original = vec![0xD3; output_index + length + 15 + 11];
-                    for (index, byte) in original[..output_index].iter_mut().enumerate() {
-                        *byte = prefix_byte(index, variant);
-                    }
-                    let mut expected = original.clone();
-                    logical_match(&mut expected, output_index, length, distance);
-                    let mut upstream = original.clone();
-                    let old_copies =
-                        original_full_room_match(&mut upstream, output_index, length, distance);
-                    let mut actual = original.clone();
-                    let work =
-                        copy_short_distance_match(&mut actual, output_index, length, distance);
+            for alignment in [0, 1, 3, 7, 15, 31] {
+                for prefix_padding in [0, 1, 7, 16, 31] {
+                    for variant in 0..5 {
+                        let begin = 32 + alignment;
+                        let output_index = distance + prefix_padding;
+                        let mut original = vec![0xD3; begin + output_index + length + 15 + 11];
+                        for (index, byte) in
+                            original[begin..][..output_index].iter_mut().enumerate()
+                        {
+                            *byte = prefix_byte(index, variant);
+                        }
+                        let mut expected = original.clone();
+                        logical_match(&mut expected[begin..], output_index, length, distance);
+                        let mut upstream = original.clone();
+                        let old_copies = original_full_room_match(
+                            &mut upstream[begin..],
+                            output_index,
+                            length,
+                            distance,
+                        );
+                        // Retain the original prefix helper's work bounds for every
+                        // case, independently of the new dispatcher's specialization.
+                        let mut prefix = original.clone();
+                        let prefix_work = copy_short_distance_match(
+                            &mut prefix[begin..],
+                            output_index,
+                            length,
+                            distance,
+                        );
+                        assert_eq!(prefix, expected);
+                        assert_eq!(prefix_work.bytes, length);
+                        assert!(prefix_work.copies <= 9, "{prefix_work:?}");
+                        assert!(
+                            prefix_work.copies <= old_copies,
+                            "{prefix_work:?}, old={old_copies}"
+                        );
+                        let mut actual = original.clone();
+                        let work = dispatch_short_distance_match(
+                            &mut actual[begin..],
+                            output_index,
+                            length,
+                            distance,
+                        );
 
-                    assert_eq!(actual, expected, "distance={distance}, length={length}, prefix={output_index}, variant={variant}");
-                    assert_eq!(
-                        actual[..output_index + length],
-                        upstream[..output_index + length]
-                    );
-                    assert_eq!(actual[..output_index], original[..output_index]);
-                    assert_eq!(
-                        actual[output_index + length..],
-                        original[output_index + length..]
-                    );
-                    assert_eq!(work.bytes, length);
-                    assert!(work.copies <= 9, "{work:?}");
-                    assert!(work.copies <= old_copies, "{work:?}, old={old_copies}");
+                        assert_eq!(actual, expected, "distance={distance}, length={length}, alignment={alignment}, prefix={output_index}, variant={variant}");
+                        assert_eq!(
+                            actual[..begin + output_index + length],
+                            upstream[..begin + output_index + length]
+                        );
+                        assert_eq!(
+                            actual[..begin + output_index],
+                            original[..begin + output_index]
+                        );
+                        assert_eq!(
+                            actual[begin + output_index + length..],
+                            original[begin + output_index + length..]
+                        );
+                        match work {
+                            ShortMatchDispatchWork::PeriodicFourMaximum(work) => {
+                                assert_eq!((distance, length), (4, 258));
+                                assert_periodic_work(&work);
+                            }
+                            ShortMatchDispatchWork::PrefixDoubling(work) => {
+                                assert_ne!((distance, length), (4, 258));
+                                assert_eq!(work, prefix_work);
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/// Encode the fixed RFC 1951 codes directly, independently of fdeflate's
+/// compressor and lookup tables. The bytewise model also supplies Adler32.
+fn fixed_maximum_match_stream(seed: [u8; 4], distances: &[usize]) -> (Vec<u8>, Vec<u8>) {
+    fn bits(output: &mut Vec<u8>, position: &mut usize, value: u16, count: usize) {
+        for index in 0..count {
+            if (*position & 7) == 0 {
+                output.push(0);
+            }
+            *output.last_mut().unwrap() |= (((value >> index) & 1) as u8) << (*position & 7);
+            *position += 1;
+        }
+    }
+    fn symbol(output: &mut Vec<u8>, position: &mut usize, symbol: u16) {
+        let (code, width): (u16, usize) = match symbol {
+            0..=143 => (0x30 + symbol, 8),
+            144..=255 => (0x190 + symbol - 144, 9),
+            256..=279 => (symbol - 256, 7),
+            280..=287 => (0xc0 + symbol - 280, 8),
+            _ => panic!("invalid fixed symbol"),
+        };
+        bits(output, position, code.reverse_bits() >> (16 - width), width);
+    }
+    let mut body = Vec::new();
+    let mut position = 0;
+    bits(&mut body, &mut position, 0b011, 3);
+    for byte in seed {
+        symbol(&mut body, &mut position, u16::from(byte));
+    }
+    let mut payload = seed.to_vec();
+    for &distance in distances {
+        assert!(distance == 3 || distance == 4);
+        symbol(&mut body, &mut position, 285);
+        bits(
+            &mut body,
+            &mut position,
+            ((distance - 1) as u16).reverse_bits() >> 11,
+            5,
+        );
+        let output_index = payload.len();
+        payload.resize(output_index + 258, 0);
+        logical_match(&mut payload, output_index, 258, distance);
+    }
+    symbol(&mut body, &mut position, 256);
+    let mut s1 = 1_u32;
+    let mut s2 = 0_u32;
+    for &byte in &payload {
+        s1 = (s1 + u32::from(byte)) % 65521;
+        s2 = (s2 + s1) % 65521;
+    }
+    let mut compressed = vec![0x78, 0x01];
+    compressed.extend_from_slice(&body);
+    compressed.extend_from_slice(&((s2 << 16) | s1).to_be_bytes());
+    (compressed, payload)
 }
 
 #[test]
@@ -333,36 +443,116 @@ fn partial_queued_rle_accounts_for_every_published_checksum_byte() {
 
 #[test]
 fn full_input_decode_exercises_both_actual_short_match_dispatch_sites() {
-    let mut payload = [0x90_u8, 0x14, 0xAB, 0xFF].repeat(2048);
-    let mut separator_state = 0x735A_2D91_u32;
-    for _ in 0..1024 {
-        separator_state ^= separator_state << 13;
-        separator_state ^= separator_state >> 17;
-        separator_state ^= separator_state << 5;
-        payload.push(separator_state as u8);
+    for repetitions in [1, 32] {
+        let (compressed, payload) =
+            fixed_maximum_match_stream([0x90, 0x14, 0xAB, 0xFF], &[4, 3].repeat(repetitions));
+        assert_eq!(
+            miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).unwrap(),
+            payload,
+        );
+        let mut decoder = Decompressor::new();
+        // The short stream has fewer than 16 input bytes, forcing both matches
+        // through the careful site. The long stream admits both in the fast site.
+        let mut output = vec![0xD3; payload.len() + 15];
+        let (consumed, produced) = decoder.read(&compressed, &mut output, 0, true).unwrap();
+        assert!(decoder.is_done());
+        assert_eq!(consumed, compressed.len());
+        assert_eq!(produced, payload.len());
+        assert_eq!(output[..produced], payload);
+        assert_eq!(output[produced..], [0xD3; 15]);
+        let site = usize::from(repetitions == 1);
+        let receipts = decoder.short_match_dispatches[site];
+        assert!(
+            receipts.periodic_four_maximum > 0,
+            "site={site}, {receipts:?}"
+        );
+        assert!(receipts.prefix_doubling > 0, "site={site}, {receipts:?}");
+        if repetitions == 1 {
+            assert!(compressed.len() < 16);
+            assert_eq!(receipts.periodic_four_maximum, 1);
+            assert_eq!(receipts.prefix_doubling, 1);
+            assert_eq!(decoder.short_match_dispatches[0].periodic_four_maximum, 0);
+            assert_eq!(decoder.short_match_dispatches[0].prefix_doubling, 0);
+        }
     }
-    payload.extend_from_slice(&[0x02_u8, 0x80, 0x11].repeat(1024));
-    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&payload, 3);
-    assert_eq!(
-        miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).unwrap(),
-        payload,
-    );
-    let mut decoder = Decompressor::new();
-    // Include exactly the unchanged full-room branch's 15-byte padding.
-    let mut output = vec![0xD3; payload.len() + 15];
-    let (consumed, produced) = decoder.read(&compressed, &mut output, 0, true).unwrap();
-    assert!(decoder.is_done());
-    assert_eq!(consumed, compressed.len());
-    assert_eq!(produced, payload.len());
-    assert_eq!(output[..produced], payload);
-    assert!(
-        decoder.short_match_dispatches[0] > 0,
-        "fast-loop dispatch was not exercised"
-    );
-    assert!(
-        decoder.short_match_dispatches[1] > 0,
-        "careful-loop dispatch was not exercised"
-    );
+}
+
+#[test]
+fn maximum_periodic_matches_preserve_near_end_and_queued_checksum_routes() {
+    let (compressed, payload) = fixed_maximum_match_stream([0x90, 0x14, 0xAB, 0xFF], &[4]);
+    for padding in [0, 1, 14, 15] {
+        let mut decoder = Decompressor::new();
+        let mut output = vec![0xD3; payload.len() + padding];
+        let (consumed, produced) = decoder.read(&compressed, &mut output, 0, true).unwrap();
+        assert!(decoder.is_done());
+        assert_eq!((consumed, produced), (compressed.len(), payload.len()));
+        assert_eq!(output[..produced], payload);
+        assert!(output[produced..].iter().all(|&byte| byte == 0xD3));
+        assert_eq!(decoder.short_match_dispatches[0].periodic_four_maximum, 0);
+        assert_eq!(
+            decoder.short_match_dispatches[1].periodic_four_maximum,
+            usize::from(padding == 15)
+        );
+        assert_eq!(decoder.short_match_dispatches[0].prefix_doubling, 0);
+        assert_eq!(decoder.short_match_dispatches[1].prefix_doubling, 0);
+    }
+
+    let (valid, payload) = fixed_maximum_match_stream([0x90, 0x14, 0xAB, 0xFF], &[4, 4]);
+    for corrupt in [false, true] {
+        let mut input = valid.clone();
+        if corrupt {
+            *input.last_mut().unwrap() ^= 1;
+        }
+        let limit = input.len() - 1;
+        let mut decoder = Decompressor::new();
+        // The first match has the original 15-byte room; the second has only
+        // 15 writable bytes and must queue the remaining 243 bytes unchanged.
+        let mut output = vec![0xD3; 4 + 258 + 15];
+        let (mut consumed, produced) = decoder
+            .read(&input[..limit], &mut output, 0, false)
+            .unwrap();
+        assert_eq!(produced, output.len());
+        assert_eq!(decoder.queued_backref, Some((4, 243)));
+        assert_eq!(decoder.short_match_dispatches[1].periodic_four_maximum, 1);
+        assert_eq!(decoder.short_match_dispatches[1].prefix_doubling, 0);
+        let checksum = decoder.checksum.finish();
+        let receipts = decoder.short_match_dispatches;
+        let before = output.clone();
+        assert_eq!(
+            decoder
+                .read(&input[consumed..limit], &mut output, produced, false)
+                .unwrap(),
+            (0, 0)
+        );
+        assert_eq!(output, before);
+        assert_eq!(decoder.queued_backref, Some((4, 243)));
+        assert_eq!(decoder.checksum.finish(), checksum);
+        assert_eq!(decoder.short_match_dispatches, receipts);
+        output.resize(payload.len() + 15, 0xD3);
+        let progress = decoder
+            .read(&input[consumed..limit], &mut output, produced, false)
+            .unwrap();
+        consumed += progress.0;
+        assert_eq!(progress.1, 243);
+        assert_eq!(consumed, limit);
+        assert_eq!(decoder.state, State::Checksum);
+        assert!(decoder.queued_backref.is_none());
+        assert_eq!(output[..payload.len()], payload);
+        assert_eq!(output[payload.len()..], [0xD3; 15]);
+        assert_eq!(decoder.short_match_dispatches, receipts);
+        let result = decoder.read(
+            &input[limit..],
+            &mut output[..payload.len()],
+            payload.len(),
+            true,
+        );
+        if corrupt {
+            assert_eq!(result, Err(DecompressionError::WrongChecksum));
+        } else {
+            assert_eq!(result.unwrap(), (1, 0));
+            assert!(decoder.is_done());
+        }
+    }
 }
 
 proptest! {

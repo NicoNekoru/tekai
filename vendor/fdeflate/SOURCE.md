@@ -17,9 +17,21 @@ files, README, licenses and the three existing `.zz` regression assets
 byte-for-byte. It omits the upstream lockfile and Cargo-generated metadata.
 
 Local production changes in `src/decompress.rs` replace overlapping 16-byte
-copies for short-distance matches with bounds-checked prefix doubling. Both
-full-output-room branches retain their original admission checks. Distance-one
-filling, longer distances and end-buffer copying remain unchanged.
+copies for short-distance matches with bounds-checked prefix doubling. The
+prefix helper is retained unchanged as the fallback for every short match except
+distance four with length 258. That one specialization snapshots exactly four
+initialized history bytes, constructs a 16-byte periodic pattern, admits exactly
+258 destination bytes, and writes sixteen exact 16-byte blocks followed by two
+scalar bytes. It never reads the destination or writes its following padding.
+Both full-output-room branches retain their original admission checks, including
+the 15-byte room requirement. Distance-one filling, longer distances, near-end
+copying and queued-match drains remain unchanged. The library continues to
+forbid unsafe code and uses APIs available in Rust 1.67.
+
+Test-only specialization work records distinguish the four-byte history
+snapshot, 16-byte pattern construction, sixteen block copies totaling 256 bytes,
+and two scalar writes totaling two bytes. These are source-level work counts,
+not machine-load or store counts.
 
 Fragmented-output property tests also exposed an upstream checksum defect.
 Partial queued-match returns skipped their published bytes when updating
@@ -33,7 +45,14 @@ These are checksum-enabled decoder API tests, not a change to PNG checksum polic
 
 The workspace adds a `proptest` development dependency. Exhaustive copy tests
 and bounded, independently encoded streaming properties accompany the changes.
-Work and dispatch counters compile only in tests. Existing upstream tests and
+Work and dispatch counters compile only in tests. The exhaustive oracle varies
+buffer offsets, history-prefix padding and bytes independently. It tests the
+unchanged prefix helper separately and retains its at-most-nine-copy bound,
+then checks the dispatcher and all history and output guards. Independently
+encoded fixed-code streams require both specialized and fallback receipts at
+each real dispatch site. Near-end admission controls and a specialization
+followed by a queued distance-four match cover zero-space reads and valid or
+corrupt withheld checksum bytes. Existing upstream tests and
 their binary regression assets remain enabled. One redundant test iterator
 conversion is removed for the workspace's strict Clippy check. Both licenses
 are unchanged.

@@ -112,6 +112,119 @@ fn copy_short_distance_match(
     }
 }
 
+#[cfg(test)]
+#[derive(Debug, Default, Eq, PartialEq)]
+struct PeriodicFourCopyWork {
+    history_bytes: usize,
+    pattern_bytes: usize,
+    block_copies: usize,
+    block_bytes: usize,
+    scalar_writes: usize,
+    scalar_bytes: usize,
+}
+
+#[cfg(not(test))]
+type PeriodicFourCopyWork = ();
+
+/// Expand only a distance-four, length-258 match from initialized history.
+/// Snapshot exactly four history bytes before admitting the exact destination.
+/// Pattern copies never read the destination or touch its following padding.
+#[inline(always)]
+fn copy_periodic_four_maximum(output: &mut [u8], output_index: usize) -> PeriodicFourCopyWork {
+    let (history, remaining) = output.split_at_mut(output_index);
+    let seed: [u8; 4] = history[history.len() - 4..].try_into().unwrap();
+    let destination = &mut remaining[..258];
+    let pattern = [
+        seed[0], seed[1], seed[2], seed[3], seed[0], seed[1], seed[2], seed[3], seed[0], seed[1],
+        seed[2], seed[3], seed[0], seed[1], seed[2], seed[3],
+    ];
+    #[cfg(test)]
+    let mut work = PeriodicFourCopyWork {
+        history_bytes: 4,
+        pattern_bytes: pattern.len(),
+        ..PeriodicFourCopyWork::default()
+    };
+    for block in destination[..256].chunks_exact_mut(16) {
+        block.copy_from_slice(&pattern);
+        #[cfg(test)]
+        {
+            work.block_copies += 1;
+            work.block_bytes += block.len();
+        }
+    }
+    destination[256] = seed[0];
+    destination[257] = seed[1];
+    #[cfg(test)]
+    {
+        work.scalar_writes = 2;
+        work.scalar_bytes = 2;
+        work
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Eq, PartialEq)]
+enum ShortMatchDispatchWork {
+    PrefixDoubling(ShortMatchCopyWork),
+    PeriodicFourMaximum(PeriodicFourCopyWork),
+}
+
+#[cfg(not(test))]
+type ShortMatchDispatchWork = ();
+
+#[inline]
+fn dispatch_short_distance_match(
+    output: &mut [u8],
+    output_index: usize,
+    length: usize,
+    distance: usize,
+) -> ShortMatchDispatchWork {
+    if distance == 4 && length == 258 {
+        #[cfg(test)]
+        {
+            ShortMatchDispatchWork::PeriodicFourMaximum(copy_periodic_four_maximum(
+                output,
+                output_index,
+            ))
+        }
+        #[cfg(not(test))]
+        {
+            copy_periodic_four_maximum(output, output_index);
+        }
+    } else {
+        #[cfg(test)]
+        {
+            ShortMatchDispatchWork::PrefixDoubling(copy_short_distance_match(
+                output,
+                output_index,
+                length,
+                distance,
+            ))
+        }
+        #[cfg(not(test))]
+        {
+            copy_short_distance_match(output, output_index, length, distance);
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+struct ShortMatchDispatchReceipts {
+    prefix_doubling: usize,
+    periodic_four_maximum: usize,
+}
+
+#[cfg(test)]
+impl ShortMatchDispatchReceipts {
+    fn record(&mut self, work: &ShortMatchDispatchWork) {
+        match work {
+            ShortMatchDispatchWork::PrefixDoubling(_) => self.prefix_doubling += 1,
+            ShortMatchDispatchWork::PeriodicFourMaximum(_) => self.periodic_four_maximum += 1,
+        }
+    }
+}
+
 /// The Decompressor state for a compressed block.
 #[derive(Eq, PartialEq, Debug)]
 struct CompressedBlock {
@@ -159,7 +272,7 @@ pub struct Decompressor {
     checksum: Adler32,
     ignore_adler32: bool,
     #[cfg(test)]
-    short_match_dispatches: [usize; 2],
+    short_match_dispatches: [ShortMatchDispatchReceipts; 2],
 }
 
 impl Default for Decompressor {
@@ -199,7 +312,7 @@ impl Decompressor {
             last_block: false,
             ignore_adler32: false,
             #[cfg(test)]
-            short_match_dispatches: [0; 2],
+            short_match_dispatches: [ShortMatchDispatchReceipts::default(); 2],
             fixed_table: false,
         }
     }
@@ -688,10 +801,18 @@ impl Decompressor {
                 }
             } else if output_index + length + 15 <= output.len() {
                 if (2..16).contains(&dist) {
-                    copy_short_distance_match(output, output_index, length, dist);
                     #[cfg(test)]
                     {
-                        self.short_match_dispatches[0] += 1;
+                        self.short_match_dispatches[0].record(&dispatch_short_distance_match(
+                            output,
+                            output_index,
+                            length,
+                            dist,
+                        ));
+                    }
+                    #[cfg(not(test))]
+                    {
+                        dispatch_short_distance_match(output, output_index, length, dist);
                     }
                 } else {
                     let start = output_index - dist;
@@ -877,10 +998,18 @@ impl Decompressor {
                 }
             } else if output_index + length + 15 <= output.len() {
                 if (2..16).contains(&dist) {
-                    copy_short_distance_match(output, output_index, length, dist);
                     #[cfg(test)]
                     {
-                        self.short_match_dispatches[1] += 1;
+                        self.short_match_dispatches[1].record(&dispatch_short_distance_match(
+                            output,
+                            output_index,
+                            length,
+                            dist,
+                        ));
+                    }
+                    #[cfg(not(test))]
+                    {
+                        dispatch_short_distance_match(output, output_index, length, dist);
                     }
                 } else {
                     let start = output_index - dist;
