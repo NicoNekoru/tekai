@@ -1,4 +1,4 @@
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -27,28 +27,41 @@ use tekai::lint::{
 use tekai::watch::{WatchOptions, watch};
 
 fn main() -> Result<()> {
-    if std::env::args_os().nth(1).as_deref() == Some(OsStr::new(EMBEDDED_ENGINE_SUBCOMMAND)) {
+    let mut arguments = std::env::args_os();
+    let program = arguments.next();
+    let first = arguments.next();
+    if first.as_deref() == Some(OsStr::new(EMBEDDED_ENGINE_SUBCOMMAND)) {
         return run_embedded_engine();
     }
-    if std::env::args_os().nth(1).as_deref() == Some(OsStr::new(EMBEDDED_ENGINE_WORKER_SUBCOMMAND))
-    {
+    if first.as_deref() == Some(OsStr::new(EMBEDDED_ENGINE_WORKER_SUBCOMMAND)) {
         return run_embedded_engine_worker();
     }
+    if arguments.len() == 0
+        && first
+            .as_deref()
+            .is_some_and(|arg| arg == OsStr::new("--version") || arg == OsStr::new("-V"))
+    {
+        // Only the sole default version flags can skip the full command tree.
+        // Clap retains its version formatting, output stream and exit behavior.
+        clap::Command::new("tekai")
+            .version(env!("CARGO_PKG_VERSION"))
+            .get_matches_from(program.into_iter().chain(first));
+        return Ok(());
+    }
     diagnostic_profile::initialize();
-    let result = run_cli();
+    let result = run_cli(program.into_iter().chain(first).chain(arguments));
     tekai::process_runner::finish_cli_cancellation();
     diagnostic_profile::emit(if result.is_ok() { "success" } else { "error" });
     result
 }
 
-fn run_cli() -> Result<()> {
-    enable_embedded_engine_runner()?;
-
+fn run_cli(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
     let parsing = diagnostic_profile::span(Phase::CliParse);
-    let matches = Cli::command().get_matches();
+    let matches = Cli::command().get_matches_from(arguments);
     let build_flag_sources = BuildFlagSources::from_root_matches(&matches);
     let cli = Cli::from_arg_matches(&matches)?;
     drop(parsing);
+    enable_embedded_engine_runner()?;
     tekai::process_runner::enable_cli_cancellation();
     match cli.command {
         Command::Build(args) => run_build(args, build_flag_sources),
