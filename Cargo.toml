@@ -19,6 +19,7 @@ members = [
     "crates/tekai-engine",
     "vendor/tectonic_bridge_core",
     "vendor/tectonic_io_base",
+    "vendor/fdeflate",
 ]
 resolver = "3"
 
@@ -60,5 +61,6 @@ signal-hook = "0.4"
 proptest = { workspace = true }
 
 [patch.crates-io]
+fdeflate = { path = "vendor/fdeflate" }
 tectonic_bridge_core = { path = "vendor/tectonic_bridge_core" }
 tectonic_io_base = { path = "vendor/tectonic_io_base" }
