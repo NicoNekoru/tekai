@@ -2172,6 +2172,7 @@ unsafe fn write_png_rgb(mut img: integer) {
 unsafe fn try_write_png_rgb_alpha_8_fast(
     mut img: integer,
     mut smask: png_bytep,
+    smask_len: usize,
     mut smask_ptr: *mut integer,
 ) -> boolean {
     let __tekai_state_generated_backend_writeimg: *mut crate::generated::backend::writeimg::State =
@@ -2217,6 +2218,18 @@ unsafe fn try_write_png_rgb_alpha_8_fast(
     let Some(expected_len) = source_rowbytes.checked_mul(height) else {
         return false_0 as boolean;
     };
+    let Ok(mask_start) = usize::try_from(*smask_ptr) else {
+        return false_0 as boolean;
+    };
+    let Some(mask_end) = width
+        .checked_mul(height)
+        .and_then(|len| mask_start.checked_add(len))
+    else {
+        return false_0 as boolean;
+    };
+    if mask_end > smask_len || integer::try_from(mask_end).is_err() {
+        return false_0 as boolean;
+    }
 
     let mut decoded_rowbytes: size_t = 0;
     let mut decoded_len: size_t = 0;
@@ -2239,20 +2252,30 @@ unsafe fn try_write_png_rgb_alpha_8_fast(
         return false_0 as boolean;
     }
 
-    let mut mask_offset = *smask_ptr as usize;
+    let packer = crate::image_packing::Rgba8RowPacker::new();
+    let mut mask_offset = mask_start;
     for y in 0..height {
         let source = decoded.add(y * decoded_rowbytes);
-        let mut source_offset = 0usize;
-        let mut rgb_offset = 0usize;
-        for _ in 0..width {
-            *rgb_row.add(rgb_offset) = *source.add(source_offset);
-            *rgb_row.add(rgb_offset + 1) = *source.add(source_offset + 1);
-            *rgb_row.add(rgb_offset + 2) = *source.add(source_offset + 2);
-            *smask.add(mask_offset) = *source.add(source_offset + 3);
-            source_offset += 4;
-            rgb_offset += 3;
-            mask_offset += 1;
+        {
+            // SAFETY Decoded pixels belong to the live PNG state's initialized
+            // Vec. rgb_row is a separate live xmalloc allocation of rgb_rowbytes,
+            // and smask is the caller's separate smask_len-byte xmalloc allocation.
+            // Their logical spans are disjoint. The decoded extent was checked
+            // above, and this alpha row stays within the caller's mask extent.
+            // Output bytes may be uninitialized, so only MaybeUninit slices are
+            // formed. These borrows end before PDF output can read rgb_row.
+            let source_row = std::slice::from_raw_parts(source, source_rowbytes);
+            let rgb_output = std::slice::from_raw_parts_mut(
+                rgb_row.cast::<std::mem::MaybeUninit<u8>>(),
+                rgb_rowbytes,
+            );
+            let alpha_output = std::slice::from_raw_parts_mut(
+                smask.add(mask_offset).cast::<std::mem::MaybeUninit<u8>>(),
+                width,
+            );
+            packer.pack(source_row, rgb_output, alpha_output);
         }
+        mask_offset += width;
         crate::utils::pdf_write_bytes(rgb_row, rgb_rowbytes);
     }
 
@@ -2504,7 +2527,7 @@ unsafe fn write_png_rgb_alpha(mut img: integer) {
                 .info_ptr as png_const_inforp,
             ) as ::core::ffi::c_int
                 == PNG_INTERLACE_NONE
-            && try_write_png_rgb_alpha_8_fast(img, smask, &mut smask_ptr) != 0;
+            && try_write_png_rgb_alpha_8_fast(img, smask, smask_size as usize, &mut smask_ptr) != 0;
         if fast_rgb_alpha {
         } else if png_get_interlace_type(
             (*(*__tekai_state_generated_backend_writeimg)

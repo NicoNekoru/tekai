@@ -70,6 +70,7 @@ pub mod engine_profile;
 mod environment;
 pub mod file_identity;
 mod float_parse;
+mod image_packing;
 mod integer_parse;
 mod invocation;
 mod invocation_state;

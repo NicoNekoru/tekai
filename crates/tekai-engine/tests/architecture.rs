@@ -757,6 +757,29 @@ impl Audit<'_> {
             }
             return;
         }
+        if name == "is_x86_feature_detected" {
+            // Only the packer's fixed CPU query is admitted. Reject executable
+            // macro arguments and feature/query changes rather than skipping
+            // their syntax under a broad macro-name exemption.
+            if self.relative() == "src/image_packing.rs"
+                && mac.path.leading_colon.is_some()
+                && parts.iter().map(String::as_str).eq(["std", name])
+                && mac
+                    .path
+                    .segments
+                    .iter()
+                    .all(|segment| matches!(&segment.arguments, syn::PathArguments::None))
+                && !self.names.iter().any(|names| {
+                    names.namespaces.contains("std") || names.imports.contains_key("std")
+                })
+                && syn::parse2::<syn::LitStr>(mac.tokens.clone())
+                    .is_ok_and(|feature| feature.value() == "ssse3")
+            {
+                return;
+            }
+            self.error("unapproved CPU feature query macro");
+            return;
+        }
         let standard = parts.len() == 1 || parts.first().is_some_and(|p| p == "std" || p == "core");
         if !standard {
             self.error(format!("unapproved production macro {}", parts.join("::")));
@@ -1351,6 +1374,28 @@ fn mutable_owners_foreign_interfaces_and_c_callback_types_are_rejected() {
 
 #[test]
 fn macro_bodies_and_renamed_native_or_host_termination_references_are_checked() {
+    let cpu_query = "fn run() { ::std::is_x86_feature_detected!(\"ssse3\"); }";
+    assert!(snippet("src/image_packing.rs", cpu_query).is_empty());
+    assert!(!snippet("src/example.rs", cpu_query).is_empty());
+    for source in [
+        "fn run() { ::std::is_x86_feature_detected!(\"avx2\"); }",
+        "fn run() { std::is_x86_feature_detected!(\"ssse3\"); }",
+        "fn run() { is_x86_feature_detected!(\"ssse3\"); }",
+        "fn run() { other::is_x86_feature_detected!(\"ssse3\"); }",
+        "fn run() { ::std::is_x86_feature_detected!({ std::process::exit(0); \"ssse3\" }); }",
+        "fn run() { ::std::is_x86_feature_detected!(\"ssse3\", std::process::exit(0)); }",
+        "mod std {} fn run() { ::std::is_x86_feature_detected!(\"ssse3\"); }",
+        "fn run() { use external as std; ::std::is_x86_feature_detected!(\"ssse3\"); }",
+        "mod std { pub use ::std::include as is_x86_feature_detected; } fn run() { std::is_x86_feature_detected!(\"ssse3\"); }",
+    ] {
+        let errors = snippet("src/image_packing.rs", source);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("unapproved CPU feature query macro")),
+            "{source}: {errors:?}"
+        );
+    }
     for source in [
         "use std::process::exit as leave; fn run() { leave(0); }",
         "use std::process as p; fn run() { let stop = p::abort; stop(); }",
