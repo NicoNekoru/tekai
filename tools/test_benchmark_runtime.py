@@ -699,6 +699,7 @@ class SupervisionTests(unittest.TestCase):
                     self.runner.execute([sys.executable, '-c', 'import time; time.sleep(10)'],
                                         self.work, os.environ.copy())
                 self.assertIs(caught.exception, primary_error)
+                self.assertIsNone(getattr(caught.exception, 'failed_command', None))
                 if cleanup_error is not None:
                     self.assertIs(primary_error.__cause__, cleanup_error)
                 self.assertEqual(len(processes), 1)
@@ -765,10 +766,36 @@ class SupervisionTests(unittest.TestCase):
         self.assertFalse(self.runner.owned)
 
     def test_error_and_output_overflow_are_not_usable_samples(self):
-        for code in ('raise SystemExit(7)', f'print("x" * {bench.MAX_CAPTURE_BYTES + 1})'):
-            with self.subTest(code=code), self.assertRaises(bench.BenchmarkError):
-                self.runner.execute([sys.executable, '-c', code], self.work, os.environ.copy())
+        for kind, code, extra in (('nonzero-exit', 'raise SystemExit(7)', []),
+                                 ('capture-limit', f'print("x" * {bench.MAX_CAPTURE_BYTES + 1})', ['\u262f' * 2048] + ['extra'] * 20)):
+            command = [sys.executable, '-c', code, *extra]
+            with self.subTest(kind=kind), self.assertRaises(bench.BenchmarkError) as raised:
+                self.runner.execute(command, self.work, os.environ.copy())
             self.assertFalse(self.runner.owned)
+            receipt = raised.exception.failed_command
+            self.assertEqual(receipt['failure_kind'], kind)
+            self.assertEqual(receipt['command_id'], self.runner.counter)
+            self.assertEqual(receipt['argv'], [arg[:bench.MAX_FAILED_COMMAND_ARG_CHARS]
+                                              for arg in command[:bench.MAX_FAILED_COMMAND_ARGS]])
+            self.assertEqual(receipt['argv_count'], len(command))
+            self.assertEqual(receipt['argv_truncated'], bool(extra))
+            self.assertEqual(receipt['cwd'], str(self.work))
+            self.assertFalse(receipt['cwd_truncated'])
+            self.assertTrue(receipt['owned_leader_reaped'])
+            self.assertFalse(receipt['complete'])
+            self.assertFalse(receipt['used_for_gate'])
+            self.assertEqual(receipt['allowance_seconds'], 1)
+            if kind == 'nonzero-exit':
+                self.assertEqual(receipt['return_code'], 7)
+            for name in ('stdout', 'stderr'):
+                path = self.work / f'command-{receipt["command_id"]:04d}.{name}'
+                data = path.read_bytes()
+                tail = receipt['output'][name]
+                self.assertEqual(tail['status'], 'read')
+                self.assertEqual(tail['bytes'], len(data))
+                self.assertEqual(tail['tail'], data[-bench.MAX_FAILED_COMMAND_TAIL_BYTES:].decode('utf-8', errors='replace'))
+                self.assertEqual(tail['tail_truncated'], len(data) > bench.MAX_FAILED_COMMAND_TAIL_BYTES)
+            self.assertLess(len(json.dumps(receipt, allow_nan=False).encode('utf-8')), 192 * 1024)
 
     def test_timeout_kills_the_owned_process_group(self):
         self.runner.timeout = 0.05
@@ -776,24 +803,51 @@ class SupervisionTests(unittest.TestCase):
         original_stop = self.runner.stop
 
         def stop(process):
-            stopped.append(process.pid)
+            stopped.append(process)
             original_stop(process)
 
+        command = [sys.executable, '-c', 'import time; time.sleep(10)']
+        env = {**os.environ, 'TEKAI_TEST_DIAGNOSTIC_SECRET': 'do-not-record-this-environment-value'}
         with patch.object(self.runner, 'stop', side_effect=stop):
-            with self.assertRaisesRegex(bench.BenchmarkError, 'Command deadline exceeded'):
-                self.runner.execute([sys.executable, '-c', 'import time; time.sleep(10)'], self.work, os.environ.copy())
+            with self.assertRaisesRegex(bench.BenchmarkError, 'Command deadline exceeded') as raised:
+                self.runner.execute(command, self.work, env)
         self.assertEqual(len(stopped), 1)
         self.assertFalse(self.runner.owned)
+        receipt = raised.exception.failed_command
+        self.assertEqual(receipt['argv'], command)
+        self.assertFalse(receipt['argv_truncated'])
+        self.assertEqual(receipt['command_id'], 1)
+        self.assertEqual(receipt['owned_leader_pid'], stopped[0].pid)
+        self.assertTrue(stopped[0]._reaped)
+        self.assertTrue(receipt['owned_leader_reaped'])
+        self.assertEqual(receipt['return_code'], stopped[0].returncode)
+        self.assertEqual(receipt['failure_kind'], 'command-deadline')
+        self.assertEqual(receipt['allowance_seconds'], 0.05)
+        timing = receipt['command_timing']
+        self.assertEqual(len(timing), 12)
+        self.assertEqual(receipt['parent_timing'], [timing[index] for index in (0, 6, 9)])
+        self.assertEqual(receipt['seconds'], timing[9] - timing[0])
+        self.assertGreaterEqual(timing[9], timing[0])
+        self.assertGreaterEqual(timing[11], max(timing[9], timing[10]))
+        self.assertFalse(receipt['used_for_gate'])
+        self.assertNotIn(env['TEKAI_TEST_DIAGNOSTIC_SECRET'], json.dumps(receipt, allow_nan=False))
         with self.assertRaises(ProcessLookupError):
-            os.killpg(stopped[0], 0)
+            os.killpg(stopped[0].pid, 0)
 
     def test_whole_run_limited_command_reports_the_global_deadline(self):
         self.runner.timeout = 5
+        self.runner._ensure_waiter()
         self.runner.deadline = time.monotonic() + 0.05
-        with self.assertRaisesRegex(bench.BenchmarkError, 'Whole-run deadline exceeded'):
+        with self.assertRaisesRegex(bench.BenchmarkError, 'Whole-run deadline exceeded') as raised:
             self.runner.execute([sys.executable, '-c', 'import time; time.sleep(10)'], self.work, os.environ.copy())
         self.assertFalse(self.runner.owned)
         self.assertTrue(self.runner._waiter.is_alive())
+        receipt = raised.exception.failed_command
+        self.assertEqual(receipt['failure_kind'], 'whole-run-deadline')
+        self.assertGreater(receipt['allowance_seconds'], 0)
+        self.assertLessEqual(receipt['allowance_seconds'], 0.05)
+        self.assertTrue(receipt['owned_leader_reaped'])
+        self.assertFalse(receipt['used_for_gate'])
 
     def test_completed_parent_cannot_leave_its_child_group_running(self):
         # The child holds file-backed logs open. It must not delay completion,
@@ -814,12 +868,35 @@ class SupervisionTests(unittest.TestCase):
 
     def test_whole_run_deadline_prevents_launch(self):
         self.runner.deadline = time.monotonic() - 1
-        with patch.object(self.runner, 'start') as start, self.assertRaisesRegex(bench.BenchmarkError, 'Whole-run'):
+        with patch.object(self.runner, 'start') as start, self.assertRaisesRegex(bench.BenchmarkError, 'Whole-run') as raised:
             self.runner.execute([sys.executable, '-c', 'pass'], self.work, os.environ.copy())
         start.assert_not_called()
+        self.assertIsNone(raised.exception.failed_command)
 
 
 class FixtureTests(unittest.TestCase):
+    def test_failed_receipt_extra_capture_errors_keep_bounded_fallbacks(self):
+        captures = [Mock(spec=Path), Mock(spec=Path)]
+        for path in captures:
+            path.open.side_effect = OSError('controlled extra tail read ' + 'x' * 2048)
+        process = Mock(command_id=7, invocation=['/tekai', 'build'], pid=4321,
+                       _reaped=True, capture_paths=captures)
+        runner = bench.Supervisor(Path('/unused'), 30, 5400)
+        captured = ('\u262f' * 10000, 'stderr prefix ' + '\u262f' * 10000 + ' tail')
+        receipt = runner._failed_command_receipt(process, Path('/project'), 30, None,
+            {'code': 7, 'seconds': 1}, [0, 0, 1], [0] * 12, *captured)
+        self.assertEqual(receipt['failure_kind'], 'nonzero-exit')
+        for name, value in zip(('stdout', 'stderr'), captured):
+            stream = receipt['output'][name]
+            self.assertEqual(stream['status'], 'captured-fallback')
+            self.assertEqual(stream['tail'], value.encode('utf-8')[-bench.MAX_FAILED_COMMAND_TAIL_BYTES:]
+                             .decode('utf-8', errors='replace'))
+            self.assertLessEqual(len(stream['tail']), bench.MAX_FAILED_COMMAND_TAIL_BYTES)
+            self.assertLessEqual(len(stream['read_error']), 1024)
+            self.assertNotIn('bytes', stream)
+            self.assertNotIn('tail_truncated', stream)
+        self.assertLess(len(json.dumps(receipt, allow_nan=False).encode('utf-8')), 192 * 1024)
+
     def test_startup_oracle_requires_the_selected_package_version_and_no_pdf(self):
         fixture = {'command': [], 'project': Path('/project'), 'env': {}, 'expected_version': '0.5.0'}
         for stdout, stderr, valid in (('tekai 0.5.0\n', '', True), ('tekai 0.4.0\n', '', False),
@@ -901,6 +978,10 @@ class FixtureTests(unittest.TestCase):
                     self.assertEqual(details['stdout_truncated'], len(stdout) > bench.MAX_ORACLE_DIAGNOSTIC_CHARS)
                     self.assertEqual(details['stderr_truncated'], len(stderr) > bench.MAX_ORACLE_DIAGNOSTIC_CHARS)
                     self.assertLess(len(evidence.encode('utf-8')), 192 * 1024)
+                    self.assertEqual(raised.exception.fixture_context,
+                                     {'case': 'warm-build-cache', 'slot': None, 'label': None, 'replica': None,
+                                      'initializing': True, 'stage': 'output-validation'})
+                    self.assertIsNone(raised.exception.failed_command)
                     pdf.assert_not_called()
 
     def test_state_oracle_generated_dependency_counts_and_mutation_properties(self):
@@ -1451,6 +1532,113 @@ class FixtureTests(unittest.TestCase):
                 self.assertFalse(any(json.loads(line)['batches'][0]['phase'] == 'samples'
                                      for line in journal.read_text().splitlines()))
                 analyze.assert_not_called()
+
+    def test_initialization_timeout_context_and_receipt_precede_error_checkpoint(self):
+        with tempfile.TemporaryDirectory(prefix='test-init-timeout-evidence-') as temporary:
+            work = Path(temporary)
+            source = work / 'binary'
+            source.write_bytes(b'executable fixture')
+            source.chmod(0o700)
+            metadata, output = work / 'metadata.json', work / 'report.json'
+            metadata.write_text(json.dumps({'runner_label': 'test', 'toolchain': 'exact',
+                                 **{label: {'revision': 'a' * 40, 'build_command': 'test', 'expected_version': '0.5.0'}
+                                    for label in bench.LABELS}}), encoding='utf-8')
+            original_checkpoint = bench.checkpoint
+            for stage in ('build-execution', 'output-validation'):
+                counter, failures, checkpoints, executed = 0, [], [], []
+
+                def fixture(root, binary, case):
+                    result = mocked_fixture(root, binary, case)
+                    result['command'] = [binary, '--version'] if case == 'cli-startup' else \
+                        [binary, 'build', result['project'] / 'main.tex', '--config', result['config'],
+                         '--out-dir', result['out'], '--once', '--quiet', '--report-json']
+                    return result
+
+                def execute(_runner, command, cwd, env):
+                    nonlocal counter
+                    counter += 1
+                    argv = list(map(str, command))
+                    executed.append(argv)
+                    if argv[-1] == '--version':
+                        stdout = 'tekai 0.5.0\n'
+                    elif argv[1] == 'build' and stage == 'output-validation':
+                        stdout = json.dumps({'skipped': False, 'tex_runs': 1})
+                    else:
+                        receipt = {'command_id': counter, 'argv': argv, 'owned_leader_pid': 4321,
+                                   'owned_leader_reaped': True, 'return_code': -signal.SIGTERM,
+                                   'failure_kind': 'command-deadline', 'allowance_seconds': 30,
+                                   'complete': False, 'used_for_gate': False}
+                        error = bench.BenchmarkError('Command deadline exceeded; return code -15', failed_command=receipt)
+                        failures.append(error)
+                        raise error
+                    return {'command_id': counter, 'seconds': 0.1, 'parent_timing': [0, 0, 0.1],
+                            'command_timing': [0] * 12, 'stdout': stdout, 'stderr_tail': ''}
+
+                def measured(_runner, _fixture, _case, iterations):
+                    nonlocal counter
+                    commands = [{'command_id': counter + index + 1, 'seconds': 0.1,
+                                 'parent_timing': [0, 0, 0.1], 'command_timing': [0] * 12}
+                                for index in range(iterations)]
+                    counter += iterations
+                    return {'seconds': iterations * 0.1, 'iterations': iterations,
+                            'commands': commands, 'output_validation': {'verified': True}}
+
+                def checkpoint(report, path, phase='progress', case=None, unit_index=None):
+                    if phase == 'bounded-evidence-error':
+                        checkpoints.append(json.loads(json.dumps(report, allow_nan=False)))
+                    return original_checkpoint(report, path, phase, case, unit_index)
+
+                with self.subTest(stage=stage), patch.object(bench, 'CASES', ('cli-startup', 'warm-build-cache')), \
+                        patch('benchmark_runtime.shutil.which', return_value=sys.executable), \
+                        patch.object(bench, 'make_fixture', side_effect=fixture), \
+                        patch.object(bench.Supervisor, 'execute', autospec=True, side_effect=execute), \
+                        patch.object(bench.Supervisor, 'start') as start, \
+                        patch.object(bench, 'batch', side_effect=measured), \
+                        patch.object(bench, 'cache_state_snapshot', return_value={'verified': True}) as state, \
+                        patch.object(bench, 'check_pdf') as pdf, \
+                        patch.object(bench, 'host_snapshot', return_value={'used_for_gate': False}), \
+                        patch.object(bench, 'checkpoint', side_effect=checkpoint), contextlib.redirect_stdout(io.StringIO()):
+                    result = bench.main(['--baseline', str(source), '--candidate', str(source),
+                                         '--metadata', str(metadata), '--output', str(output), '--pairs', '40', '--budget', '5400', '--gate'])
+                self.assertEqual(result, 1)
+                start.assert_not_called()
+                self.assertEqual(len(failures), 1)
+                self.assertEqual(len(checkpoints), 1)
+                error = failures[0]
+                expected_context = {'case': 'warm-build-cache', 'slot': 's0', 'label': 'candidate',
+                                    'replica': 'r1', 'initializing': True, 'stage': stage}
+                self.assertEqual(error.fixture_context, expected_context)
+                report = json.loads(output.read_text())
+                for evidence in (checkpoints[0], report):
+                    self.assertEqual(evidence['failure_diagnostics'],
+                                     [{'failed_command': error.failed_command, 'fixture_context': expected_context,
+                                       'phase': 'initialization', 'used_for_gate': False}])
+                    self.assertEqual(evidence['results'][0]['analysis']['status'], 'pass')
+                    warm = evidence['results'][1]
+                    self.assertEqual(warm['initialization'], {'s0': {}, 's1': {}})
+                    for key in ('warmups', 'calibration_pilots', 'samples', 'unit_timing'):
+                        self.assertEqual(warm[key], [])
+                    self.assertEqual(evidence['partial_batches'], [])
+                    self.assertEqual(evidence['policy']['per_command_deadline_seconds'], 30)
+                    self.assertEqual(evidence['policy']['whole_run_deadline_seconds'], 5400)
+                self.assertEqual((report['status'], report['exit_code']), ('error', 1))
+                if stage == 'build-execution':
+                    self.assertEqual(executed[-1][1], 'build')
+                    state.assert_not_called()
+                    pdf.assert_not_called()
+                else:
+                    self.assertEqual(executed[-1][0], sys.executable)
+                    self.assertEqual(executed[-1][-1], '-')
+                    self.assertTrue(executed[-1][1].endswith('/out/main.pdf'))
+                    state.assert_called_once()
+                    pdf.assert_called_once()
+                journal = Path(report['raw_command_journal']['path'])
+                records = [json.loads(line) for line in journal.read_text().splitlines()]
+                self.assertTrue(records)
+                failed_id = error.failed_command['command_id']
+                self.assertFalse(any(command['command_id'] == failed_id
+                                     for record in records for batch in record['batches'] for command in batch['commands']))
+                self.assertTrue(all(batch['case_index'] == 0 for record in records for batch in record['batches']))
 
     def test_expected_text_rejects_an_empty_successful_pdf(self):
         with tempfile.TemporaryDirectory(prefix='test-paired-output-') as temporary:

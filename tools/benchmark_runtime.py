@@ -43,6 +43,9 @@ REPLICAS = ('r0', 'r1')
 PAIRS_PER_UNIT = 4
 MAX_CAPTURE_BYTES = 1024 * 1024
 MAX_ORACLE_DIAGNOSTIC_CHARS = 4096
+MAX_FAILED_COMMAND_ARGS = 16
+MAX_FAILED_COMMAND_ARG_CHARS = 1024
+MAX_FAILED_COMMAND_TAIL_BYTES = 8192
 MAX_STATE_BYTES = 8 * 1024 * 1024
 MAX_JOURNAL_RECORD_BYTES = 8 * 1024 * 1024
 CACHE_DEPENDENCY_COUNT = 1024
@@ -375,7 +378,9 @@ def comparison_exit(status, gate):
 
 
 class BenchmarkError(RuntimeError):
-    pass
+    def __init__(self, message, *, failed_command=None):
+        super().__init__(message)
+        self.failed_command = failed_command
 
 
 class CalibrationInfeasible(ValueError):
@@ -463,6 +468,47 @@ class Supervisor(PerformanceCI):
         finally:
             self._execute_lock.release()
 
+    def _failed_command_receipt(self, process, cwd, allowance, failure, observation,
+                                parent_timing, command_timing, stdout, stderr):
+        """Bounded, unscored evidence after owned cleanup, never signal authority."""
+        invocation = process.invocation
+        args = invocation[:MAX_FAILED_COMMAND_ARGS]
+        output = {}
+        for name, path, captured in zip(('stdout', 'stderr'), process.capture_paths, (stdout, stderr)):
+            try:
+                with path.open('rb') as handle:
+                    size = os.fstat(handle.fileno()).st_size
+                    handle.seek(max(0, size - MAX_FAILED_COMMAND_TAIL_BYTES))
+                    tail = handle.read(MAX_FAILED_COMMAND_TAIL_BYTES).decode('utf-8', errors='replace')
+                output[name] = {'tail': tail, 'bytes': size,
+                                'tail_truncated': size > MAX_FAILED_COMMAND_TAIL_BYTES, 'status': 'read'}
+            except OSError as error:
+                # Extra diagnostic reads must not replace the command failure.
+                tail = captured[-MAX_FAILED_COMMAND_TAIL_BYTES:].encode('utf-8')[-MAX_FAILED_COMMAND_TAIL_BYTES:]
+                output[name] = {'tail': tail.decode('utf-8', errors='replace'),
+                                'status': 'captured-fallback',
+                                'read_error': f'{type(error).__name__}: {error}'[:1024],
+                                'scope': 'Tail of the previously bounded capture, not necessarily the file tail.'}
+        reason = failure or 'Command failed'
+        return {'command_id': process.command_id,
+                'argv': [arg[:MAX_FAILED_COMMAND_ARG_CHARS] for arg in args],
+                'argv_count': len(invocation),
+                'argv_truncated': len(invocation) > MAX_FAILED_COMMAND_ARGS
+                    or any(len(arg) > MAX_FAILED_COMMAND_ARG_CHARS for arg in args),
+                'cwd': str(cwd)[:MAX_FAILED_COMMAND_ARG_CHARS],
+                'cwd_truncated': len(str(cwd)) > MAX_FAILED_COMMAND_ARG_CHARS,
+                'owned_leader_pid': process.pid, 'owned_leader_reaped': process._reaped,
+                'return_code': observation.get('code'),
+                'failure_kind': {'Command deadline exceeded': 'command-deadline',
+                                 'Whole-run deadline exceeded': 'whole-run-deadline',
+                                 'Command capture exceeded the finite output limit': 'capture-limit'}.get(reason, 'nonzero-exit'),
+                'failure_reason': reason, 'allowance_seconds': allowance,
+                'seconds': observation.get('seconds'), 'parent_timing': parent_timing,
+                'command_timing': command_timing, 'output': output,
+                'cleanup_scope': 'Owned-group cleanup and native observer publication. Capture files remain until fixture teardown.',
+                'complete': False, 'used_for_gate': False,
+                'scope': 'Failed command evidence only. The reaped leader PID is historical, not signal authority.'}
+
     def _execute(self, command, cwd, env):
         self._ensure_waiter()
         remaining = self.remaining()
@@ -523,8 +569,12 @@ class Supervisor(PerformanceCI):
         if truncated or any(path.stat().st_size > MAX_CAPTURE_BYTES for path in process.capture_paths):
             failure = failure or 'Command capture exceeded the finite output limit'
         if failure or observation.get('code') != 0:
+            receipt = self._failed_command_receipt(process, cwd, allowance, failure, observation,
+                [started, launch_end, observation['completion']],
+                [started, *process.launch_timing, launch_end, dispatch,
+                 observation['accepted'], observation['completion'], cleanup_start, cleanup_end], stdout, stderr)
             raise BenchmarkError(f'{failure or "Command failed"}; return code {observation.get("code")}\n'
-                                 + stdout[-8192:] + '\n' + stderr)
+                                 + stdout[-8192:] + '\n' + stderr, failed_command=receipt)
         for path in process.capture_paths:
             path.unlink()
         cleanup_end = time.monotonic()
@@ -786,56 +836,66 @@ def reported_build_timing(report, parent_seconds):
 
 
 def execute_fixture(supervisor, fixture, case, initializing=False, validate_output=True):
-    if case == 'cli-startup':
+    context = {'case': case, **{key: fixture.get(key) for key in ('slot', 'label', 'replica')},
+               'initializing': initializing, 'stage': 'fixture-preparation'}
+    try:
+        if case == 'cli-startup':
+            context['stage'] = 'cli-execution'
+            result = supervisor.execute(fixture['command'], fixture['project'], fixture['env'])
+            context['stage'] = 'output-validation'
+            version = fixture.get('expected_version')
+            if not isinstance(version, str) or len(version) > 128 or VERSION.fullmatch(version) is None:
+                raise BenchmarkError('CLI startup needs an independently recorded package version')
+            expected = f'tekai {version}\n'
+            if result['stdout'] != expected or result['stderr_tail']:
+                raise BenchmarkError('CLI startup output differs from the selected revision package version')
+            result['output_validation'] = {'expected_stdout': expected, 'stdout_verified': True,
+                                           'stderr_empty': True, 'expected_version': version}
+            return result
+        pdf = fixture['out'] / 'main.pdf'
+        if case != 'warm-build-cache':
+            pdf.unlink(missing_ok=True)
+        context['stage'] = 'build-execution' if case == 'warm-build-cache' else 'engine-execution'
         result = supervisor.execute(fixture['command'], fixture['project'], fixture['env'])
-        version = fixture.get('expected_version')
-        if not isinstance(version, str) or len(version) > 128 or VERSION.fullmatch(version) is None:
-            raise BenchmarkError('CLI startup needs an independently recorded package version')
-        expected = f'tekai {version}\n'
-        if result['stdout'] != expected or result['stderr_tail']:
-            raise BenchmarkError('CLI startup output differs from the selected revision package version')
-        result['output_validation'] = {'expected_stdout': expected, 'stdout_verified': True,
-                                       'stderr_empty': True, 'expected_version': version}
-        return result
-    pdf = fixture['out'] / 'main.pdf'
-    if case != 'warm-build-cache':
-        pdf.unlink(missing_ok=True)
-    result = supervisor.execute(fixture['command'], fixture['project'], fixture['env'])
-    if case == 'warm-build-cache':
-        try:
+        context['stage'] = 'output-validation'
+        if case == 'warm-build-cache':
             try:
-                report = json.loads(result['stdout'])
-            except ValueError as error:
-                raise BenchmarkError('Build-cache fixture returned invalid JSON') from error
-            expected_runs = 1 if initializing else 0
-            if not isinstance(report, dict) or report.get('skipped') is not (not initializing) \
-                    or type(report.get('tex_runs')) is not int or report['tex_runs'] != expected_runs:
-                raise BenchmarkError('Build-cache fixture did not take the expected compile/cache-hit path')
-            result['reported_build_timing'] = reported_build_timing(report, result['seconds'])
-            if initializing:
-                result['cache_state'] = cache_state_snapshot(fixture, establish=True)
-        except (OSError, ValueError, RuntimeError) as error:
-            # execute has reaped the successful child and removed its bounded
-            # capture files. A later state oracle must preserve bounded command
-            # evidence even though initialization never reaches the report row.
-            stdout, stderr = result['stdout'], result['stderr_tail']
-            details = {'case': case, 'initializing': initializing, 'child_exit_code': 0,
-                       'command_id': result['command_id'], 'seconds': result['seconds'],
-                       'command': [str(arg)[:1024] for arg in fixture['command'][:16]],
-                       'command_truncated': len(fixture['command']) > 16
-                           or any(len(str(arg)) > 1024 for arg in fixture['command'][:16]),
-                       'stdout_tail': stdout[-MAX_ORACLE_DIAGNOSTIC_CHARS:],
-                       'stderr_tail': stderr[-MAX_ORACLE_DIAGNOSTIC_CHARS:],
-                       'stdout_chars': len(stdout), 'stderr_chars': len(stderr),
-                       'stdout_truncated': len(stdout) > MAX_ORACLE_DIAGNOSTIC_CHARS,
-                       'stderr_truncated': len(stderr) > MAX_ORACLE_DIAGNOSTIC_CHARS,
-                       'used_for_gate': False}
-            raise BenchmarkError(f'{type(error).__name__}: {str(error)[:1024]}\n'
-                                 + 'Completed cache command ' + json.dumps(details, allow_nan=False)) from error
-    check_pdf(pdf)
-    if validate_output:
-        result['output_validation'] = check_fixture_output(supervisor, fixture, case)
-    return result
+                try:
+                    report = json.loads(result['stdout'])
+                except ValueError as error:
+                    raise BenchmarkError('Build-cache fixture returned invalid JSON') from error
+                expected_runs = 1 if initializing else 0
+                if not isinstance(report, dict) or report.get('skipped') is not (not initializing) \
+                        or type(report.get('tex_runs')) is not int or report['tex_runs'] != expected_runs:
+                    raise BenchmarkError('Build-cache fixture did not take the expected compile/cache-hit path')
+                result['reported_build_timing'] = reported_build_timing(report, result['seconds'])
+                if initializing:
+                    result['cache_state'] = cache_state_snapshot(fixture, establish=True)
+            except (OSError, ValueError, RuntimeError) as error:
+                # execute has reaped the successful child and removed its bounded
+                # capture files. A later state oracle must preserve bounded command
+                # evidence even though initialization never reaches the report row.
+                stdout, stderr = result['stdout'], result['stderr_tail']
+                details = {'case': case, 'initializing': initializing, 'child_exit_code': 0,
+                           'command_id': result['command_id'], 'seconds': result['seconds'],
+                           'command': [str(arg)[:1024] for arg in fixture['command'][:16]],
+                           'command_truncated': len(fixture['command']) > 16
+                               or any(len(str(arg)) > 1024 for arg in fixture['command'][:16]),
+                           'stdout_tail': stdout[-MAX_ORACLE_DIAGNOSTIC_CHARS:],
+                           'stderr_tail': stderr[-MAX_ORACLE_DIAGNOSTIC_CHARS:],
+                           'stdout_chars': len(stdout), 'stderr_chars': len(stderr),
+                           'stdout_truncated': len(stdout) > MAX_ORACLE_DIAGNOSTIC_CHARS,
+                           'stderr_truncated': len(stderr) > MAX_ORACLE_DIAGNOSTIC_CHARS,
+                           'used_for_gate': False}
+                raise BenchmarkError(f'{type(error).__name__}: {str(error)[:1024]}\n'
+                                     + 'Completed cache command ' + json.dumps(details, allow_nan=False)) from error
+        check_pdf(pdf)
+        if validate_output:
+            result['output_validation'] = check_fixture_output(supervisor, fixture, case)
+        return result
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+        error.fixture_context = context
+        raise
 
 
 def batch(supervisor, fixture, case, iterations):
@@ -1292,7 +1352,7 @@ def main(argv=None):
                          'artifact-by-copy/cache interactions. Units must be independent with a stable population median. '
                          'Arbitrary additive wall-clock overhead, changing positional effects, nonlinear drift and '
                          'serial dependence can violate these assumptions.'},
-              'executables': [], 'results': [], 'errors': [], 'partial_batches': []}
+              'executables': [], 'results': [], 'errors': [], 'partial_batches': [], 'failure_diagnostics': []}
     previous_handler = signal.getsignal(signal.SIGTERM)
 
     def terminate(_number, _frame):
@@ -1312,6 +1372,11 @@ def main(argv=None):
             binaries = {slot: {} for slot in SLOTS}
 
             def preserve_error_checkpoint(error):
+                failed_command = getattr(error, 'failed_command', None)
+                context = getattr(error, 'fixture_context', None)
+                if failed_command is not None or context is not None:
+                    report['failure_diagnostics'].append({'failed_command': failed_command,
+                        'fixture_context': context, 'phase': active_phase, 'used_for_gate': False})
                 partial = getattr(error, 'partial_batch', None)
                 if partial is not None:
                     report['partial_batches'].append({**partial, 'phase': active_phase})
@@ -1388,6 +1453,7 @@ def main(argv=None):
                         raise BenchmarkError('Per-binary source fixtures do not have equal content')
                     row['initialization'] = {slot: {} for slot in SLOTS}
                     row['initialization_order'] = cell_order(case_index)
+                    active_phase = 'initialization'
                     for cell in row['initialization_order']:
                         slot, label = cell['slot'], cell['label']
                         initial = execute_fixture(supervisor, fixtures[slot][label], case, initializing=True)
