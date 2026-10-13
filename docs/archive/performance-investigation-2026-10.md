@@ -1516,3 +1516,55 @@ C and C++ compiler commands remained disabled for candidate builds.
 The strict gate, commands, clock boundaries, original fixtures, oracles,
 process ownership and actual-main baseline policy are unchanged. Native
 Intel and ARM CI on the exact pushed revision must decide readiness.
+
+## Hosted packing result and remaining initialization error
+
+Run `38418685584` compared exact candidate `5e079287` with actual main
+`0b6e92e`. Both native correctness jobs passed 1,233 tests. ARM completed all
+four strict performance cases. Intel's completed image case passed with ratio
+1.062056 and interval 1.013880 through 1.095428. Startup and nested lookup also
+passed. The original measured image regression is resolved on this run.
+
+The Intel comparison still exited 1 with a command deadline error during the
+first candidate warm-cache initialization. That case has no scored samples.
+Its build command and subsequent `pdftotext` oracle share the same generic
+error path, so the historical artifact cannot identify which command timed
+out. The comparison took 3,844 seconds of its unchanged 5,400-second budget.
+The separate failure-only profile exhausted its 600-second budget before
+reaching warm-cache initialization, during a later image route control.
+
+Failed commands now retain bounded argv, output tails, timing, return code and
+a historical reaped leader PID after owned cleanup. Fixture context identifies
+build execution versus output validation and is persisted before the error
+checkpoint. Failed commands remain unscored and outside completed journals.
+Failure-only profiling freezes its case order from the immutable primary
+report before commands, prioritizing cases needing diagnosis while retaining
+their original crossover indexes. Primary order and all deadlines are intact.
+
+Source review found repeated small decoded reads during archive extraction.
+Tar sends 512-byte headers and shorter padding directly to the inflater.
+A fixed ARM diagnostic over both original archives measured 63,609 decoder
+reads without output buffering and 6,332 with a 64-KiB decoded buffer. All
+names, sizes, content digests and footer drains matched across eight fixed
+AB/BA pairs. Median counted tar iteration plus hashing took 357.134 ms and
+316.477 ms respectively. A separate fixed study removed the per-read counter
+code entirely from timed readers. Its medians were 355.311 ms and 314.423 ms,
+with all 16 content/name/size/footer oracles passing. Absolute batch timestamps
+were not recorded, so overlap with a 1.39-second formatting check cannot be
+excluded. All samples were retained without a rerun. Both studies excluded
+filesystem extraction and cannot locate the Intel timeout. Production now
+uses that fixed buffer, retaining tar's
+path/type checks, `unpack_in`, and the outer reader's gzip-validating drain.
+
+Eight fixed local cold fixtures passed initialization and one verified cache
+hit each. These used fresh executable-copy paths under Rosetta, unlike the
+primary comparison's already-launched copies. They do not reproduce the
+native failure or locate its cause. Complete local diagnostic discovery passed
+444 tests, including native command-timeout ownership checks and mocked
+build-versus-oracle initialization errors. Overall CI remains blocked until
+the warm-cache case completes on the exact next revision. No release was made.
+
+The buffered source passed all 1,234 local workspace tests and 508 Rosetta
+x86 engine tests with 512 property cases. Five workspace and three engine
+helper ignores remained unchanged. Strict native workspace Clippy and actual
+Rust 1.89 all-target/all-feature compilation passed with C/C++ commands disabled.
