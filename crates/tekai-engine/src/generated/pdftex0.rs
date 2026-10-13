@@ -14324,6 +14324,17 @@ pub unsafe fn getnext() {
     let __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State =
         unsafe { crate::generated::pdftexextra::state() };
 
+    unsafe { getnext_with_state(__tekai_state_generated_pdftexextra) };
+}
+
+/// Reuse the caller's current invocation capture without another state lookup.
+///
+/// # Safety
+/// The pointer must be this thread's live pdftexextra state. The caller must
+/// remain inside its owner scope, and the pointer must not escape that scope.
+unsafe fn getnext_with_state(
+    __tekai_state_generated_pdftexextra: *mut crate::generated::pdftexextra::State,
+) {
     let mut current_block: u64;
     let mut mem: *mut memoryword = (*__tekai_state_generated_pdftexextra).zmem;
     let mut eqtb: *mut memoryword = (*__tekai_state_generated_pdftexextra).zeqtb;
@@ -15764,7 +15775,7 @@ pub unsafe fn gettoken() {
         unsafe { crate::generated::pdftexextra::state() };
 
     (*__tekai_state_generated_pdftexextra).nonewcontrolsequence = false_0 as boolean;
-    getnext();
+    getnext_with_state(__tekai_state_generated_pdftexextra);
     (*__tekai_state_generated_pdftexextra).nonewcontrolsequence = true_0 as boolean;
     if (*__tekai_state_generated_pdftexextra).curcs == 0 as ::core::ffi::c_int {
         (*__tekai_state_generated_pdftexextra).curtok =
@@ -17209,7 +17220,7 @@ pub unsafe fn getxtoken() {
         unsafe { crate::generated::pdftexextra::state() };
 
     loop {
-        getnext();
+        getnext_with_state(__tekai_state_generated_pdftexextra);
         if (*__tekai_state_generated_pdftexextra).curcmd as ::core::ffi::c_int
             <= 103 as ::core::ffi::c_int
         {
@@ -17249,7 +17260,7 @@ pub unsafe fn xtoken() {
         > 103 as ::core::ffi::c_int
     {
         expand();
-        getnext();
+        getnext_with_state(__tekai_state_generated_pdftexextra);
     }
     if (*__tekai_state_generated_pdftexextra).curcs == 0 as ::core::ffi::c_int {
         (*__tekai_state_generated_pdftexextra).curtok =
@@ -23097,7 +23108,7 @@ pub unsafe fn zscantoks(mut macrodef: boolean, mut xpand: boolean) -> halfword {
             loop {
                 if xpand != 0 {
                     loop {
-                        getnext();
+                        getnext_with_state(__tekai_state_generated_pdftexextra);
                         if (*__tekai_state_generated_pdftexextra).curcmd as ::core::ffi::c_int
                             >= 114 as ::core::ffi::c_int
                         {
@@ -23417,7 +23428,7 @@ pub unsafe fn passtext() {
     l_0 = 0 as ::core::ffi::c_int as integer;
     (*__tekai_state_generated_pdftexextra).skipline = (*__tekai_state_generated_pdftexextra).line;
     loop {
-        getnext();
+        getnext_with_state(__tekai_state_generated_pdftexextra);
         if (*__tekai_state_generated_pdftexextra).curcmd as ::core::ffi::c_int
             == 109 as ::core::ffi::c_int
         {
@@ -23709,11 +23720,11 @@ pub unsafe fn conditional() {
         12 => {
             savescannerstatus = (*__tekai_state_generated_pdftexextra).scannerstatus as smallnumber;
             (*__tekai_state_generated_pdftexextra).scannerstatus = 0 as ::core::ffi::c_uchar;
-            getnext();
+            getnext_with_state(__tekai_state_generated_pdftexextra);
             n = (*__tekai_state_generated_pdftexextra).curcs as integer;
             p = (*__tekai_state_generated_pdftexextra).curcmd as halfword;
             q = (*__tekai_state_generated_pdftexextra).curchr;
-            getnext();
+            getnext_with_state(__tekai_state_generated_pdftexextra);
             if (*__tekai_state_generated_pdftexextra).curcmd as ::core::ffi::c_int != p {
                 b = false_0 as boolean;
             } else if ((*__tekai_state_generated_pdftexextra).curcmd as ::core::ffi::c_int)
@@ -23777,7 +23788,7 @@ pub unsafe fn conditional() {
         17 => {
             savescannerstatus = (*__tekai_state_generated_pdftexextra).scannerstatus as smallnumber;
             (*__tekai_state_generated_pdftexextra).scannerstatus = 0 as ::core::ffi::c_uchar;
-            getnext();
+            getnext_with_state(__tekai_state_generated_pdftexextra);
             b = ((*__tekai_state_generated_pdftexextra).curcmd as ::core::ffi::c_int
                 != 104 as ::core::ffi::c_int) as ::core::ffi::c_int as boolean;
             (*__tekai_state_generated_pdftexextra).scannerstatus =
@@ -24038,7 +24049,7 @@ pub unsafe fn conditional() {
         21 => {
             savescannerstatus = (*__tekai_state_generated_pdftexextra).scannerstatus as smallnumber;
             (*__tekai_state_generated_pdftexextra).scannerstatus = 0 as ::core::ffi::c_uchar;
-            getnext();
+            getnext_with_state(__tekai_state_generated_pdftexextra);
             (*__tekai_state_generated_pdftexextra).scannerstatus =
                 savescannerstatus as ::core::ffi::c_uchar;
             if (*__tekai_state_generated_pdftexextra).curcs < 514 as ::core::ffi::c_int {
@@ -77976,7 +77987,7 @@ pub unsafe fn maincontrol() {
                         t = (*__tekai_state_generated_pdftexextra).scannerstatus as integer;
                         (*__tekai_state_generated_pdftexextra).scannerstatus =
                             0 as ::core::ffi::c_uchar;
-                        getnext();
+                        getnext_with_state(__tekai_state_generated_pdftexextra);
                         (*__tekai_state_generated_pdftexextra).scannerstatus =
                             t as ::core::ffi::c_uchar;
                         if (*__tekai_state_generated_pdftexextra).curcs < 514 as ::core::ffi::c_int
@@ -79076,7 +79087,7 @@ pub unsafe fn maincontrol() {
                             }
                         }
                         14534660246055082625 => {
-                            getnext();
+                            getnext_with_state(__tekai_state_generated_pdftexextra);
                             if (*__tekai_state_generated_pdftexextra).curcmd as ::core::ffi::c_int
                                 == 11 as ::core::ffi::c_int
                             {

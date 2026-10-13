@@ -488,10 +488,9 @@ unsafe fn t1_check_pfa() {
     }) as boolean;
     ungetc(c, (*__tekai_state_generated_backend_writet1).t1_file);
 }
-unsafe fn t1_getbyte() -> ::core::ffi::c_int {
-    let __tekai_state_generated_backend_writet1: *mut crate::generated::backend::writet1::State =
-        unsafe { crate::generated::backend::writet1::state() };
-
+// Callers pass their invocation-scoped raw pointer. Byte loops do not need to
+// resolve the same owner again, and no whole-State reference is introduced.
+unsafe fn t1_getbyte(__tekai_state_generated_backend_writet1: *mut State) -> ::core::ffi::c_int {
     let mut c: ::core::ffi::c_int = fast_fgetc((*__tekai_state_generated_backend_writet1).t1_file);
     if (*__tekai_state_generated_backend_writet1).t1_pfa != 0 {
         return c;
@@ -541,67 +540,45 @@ unsafe fn hexval(mut c: ::core::ffi::c_int) -> ::core::ffi::c_int {
         return -(1 as ::core::ffi::c_int);
     };
 }
-unsafe fn edecrypt(mut cipher: byte) -> byte {
-    let __tekai_state_generated_backend_writet1: *mut crate::generated::backend::writet1::State =
-        unsafe { crate::generated::backend::writet1::state() };
-
-    let mut plain: byte = 0;
+unsafe fn edecrypt(__tekai_state_generated_backend_writet1: *mut State, mut cipher: byte) -> byte {
     if (*__tekai_state_generated_backend_writet1).t1_pfa != 0 {
         while cipher as ::core::ffi::c_int == 10 as ::core::ffi::c_int
             || cipher as ::core::ffi::c_int == 13 as ::core::ffi::c_int
         {
-            cipher = t1_getbyte() as byte;
+            cipher = t1_getbyte(__tekai_state_generated_backend_writet1) as byte;
         }
         cipher = ((hexval(cipher as ::core::ffi::c_int) << 4 as ::core::ffi::c_int)
-            + hexval(t1_getbyte())) as byte;
+            + hexval(t1_getbyte(__tekai_state_generated_backend_writet1))) as byte;
         (*__tekai_state_generated_backend_writet1).last_hexbyte = cipher as ::core::ffi::c_int;
     }
-    plain = (cipher as ::core::ffi::c_int
-        ^ (*__tekai_state_generated_backend_writet1).t1_dr as ::core::ffi::c_int
-            >> 8 as ::core::ffi::c_int) as byte;
-    (*__tekai_state_generated_backend_writet1).t1_dr = (cipher as ::core::ffi::c_int
-        + (*__tekai_state_generated_backend_writet1).t1_dr as ::core::ffi::c_int)
-        .wrapping_mul((*__tekai_state_generated_backend_writet1).t1_c1 as ::core::ffi::c_int)
-        .wrapping_add((*__tekai_state_generated_backend_writet1).t1_c2 as ::core::ffi::c_int)
-        as ::core::ffi::c_ushort;
-    return plain;
+    cdecrypt(
+        cipher,
+        &raw mut (*__tekai_state_generated_backend_writet1).t1_dr,
+    )
 }
-unsafe fn cdecrypt(mut cipher: byte, mut cr: *mut ::core::ffi::c_ushort) -> byte {
-    let __tekai_state_generated_backend_writet1: *mut crate::generated::backend::writet1::State =
-        unsafe { crate::generated::backend::writet1::state() };
+const TYPE1_CIPHER_MULTIPLIER: ::core::ffi::c_int = 52845;
+const TYPE1_CIPHER_ADDEND: ::core::ffi::c_int = 22719;
 
+unsafe fn cdecrypt(mut cipher: byte, mut cr: *mut ::core::ffi::c_ushort) -> byte {
     let plain: byte = (cipher as ::core::ffi::c_int
         ^ *cr as ::core::ffi::c_int >> 8 as ::core::ffi::c_int) as byte;
     *cr = (cipher as ::core::ffi::c_int + *cr as ::core::ffi::c_int)
-        .wrapping_mul((*__tekai_state_generated_backend_writet1).t1_c1 as ::core::ffi::c_int)
-        .wrapping_add((*__tekai_state_generated_backend_writet1).t1_c2 as ::core::ffi::c_int)
-        as ::core::ffi::c_ushort;
+        .wrapping_mul(TYPE1_CIPHER_MULTIPLIER)
+        .wrapping_add(TYPE1_CIPHER_ADDEND) as ::core::ffi::c_ushort;
     return plain;
 }
-unsafe fn eencrypt(mut plain: byte) -> byte {
-    let __tekai_state_generated_backend_writet1: *mut crate::generated::backend::writet1::State =
-        unsafe { crate::generated::backend::writet1::state() };
-
-    let cipher: byte = (plain as ::core::ffi::c_int
-        ^ (*__tekai_state_generated_backend_writet1).t1_er as ::core::ffi::c_int
-            >> 8 as ::core::ffi::c_int) as byte;
-    (*__tekai_state_generated_backend_writet1).t1_er = (cipher as ::core::ffi::c_int
-        + (*__tekai_state_generated_backend_writet1).t1_er as ::core::ffi::c_int)
-        .wrapping_mul((*__tekai_state_generated_backend_writet1).t1_c1 as ::core::ffi::c_int)
-        .wrapping_add((*__tekai_state_generated_backend_writet1).t1_c2 as ::core::ffi::c_int)
-        as ::core::ffi::c_ushort;
-    return cipher;
+unsafe fn eencrypt(__tekai_state_generated_backend_writet1: *mut State, plain: byte) -> byte {
+    cencrypt(
+        plain,
+        &raw mut (*__tekai_state_generated_backend_writet1).t1_er,
+    )
 }
 unsafe fn cencrypt(mut plain: byte, mut cr: *mut ::core::ffi::c_ushort) -> byte {
-    let __tekai_state_generated_backend_writet1: *mut crate::generated::backend::writet1::State =
-        unsafe { crate::generated::backend::writet1::state() };
-
     let cipher: byte = (plain as ::core::ffi::c_int
         ^ *cr as ::core::ffi::c_int >> 8 as ::core::ffi::c_int) as byte;
     *cr = (cipher as ::core::ffi::c_int + *cr as ::core::ffi::c_int)
-        .wrapping_mul((*__tekai_state_generated_backend_writet1).t1_c1 as ::core::ffi::c_int)
-        .wrapping_add((*__tekai_state_generated_backend_writet1).t1_c2 as ::core::ffi::c_int)
-        as ::core::ffi::c_ushort;
+        .wrapping_mul(TYPE1_CIPHER_MULTIPLIER)
+        .wrapping_add(TYPE1_CIPHER_ADDEND) as ::core::ffi::c_ushort;
     return cipher;
 }
 unsafe fn eol(mut s: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
@@ -761,13 +738,14 @@ unsafe fn t1_getline() {
         }
         (*__tekai_state_generated_backend_writet1).t1_cslen = 0 as ::core::ffi::c_ushort;
         eexec_scan = 0 as ::core::ffi::c_int;
-        c = t1_getbyte();
+        c = t1_getbyte(__tekai_state_generated_backend_writet1);
         if c == EOF {
             break;
         }
         while feof((*__tekai_state_generated_backend_writet1).t1_file) == 0 {
             if (*__tekai_state_generated_backend_writet1).t1_in_eexec == 1 as ::core::ffi::c_int {
-                c = edecrypt(c as byte) as ::core::ffi::c_int;
+                c = edecrypt(__tekai_state_generated_backend_writet1, c as byte)
+                    as ::core::ffi::c_int;
             }
             if (*__tekai_state_generated_backend_writet1)
                 .t1_line_array
@@ -1027,10 +1005,13 @@ unsafe fn t1_getline() {
                         (*__tekai_state_generated_backend_writet1)
                             .t1_line_ptr
                             .offset(1);
-                    *fresh10 = edecrypt(t1_getbyte() as byte) as t1_line_entry;
+                    *fresh10 = edecrypt(
+                        __tekai_state_generated_backend_writet1,
+                        t1_getbyte(__tekai_state_generated_backend_writet1) as byte,
+                    ) as t1_line_entry;
                 }
             }
-            c = t1_getbyte();
+            c = t1_getbyte(__tekai_state_generated_backend_writet1);
         }
         if (*__tekai_state_generated_backend_writet1)
             .t1_line_array
@@ -1258,7 +1239,9 @@ unsafe fn t1_putline() {
         while p < (*__tekai_state_generated_backend_writet1).t1_line_ptr {
             let fresh6 = p;
             p = p.offset(1);
-            fb_putchar(eencrypt(*fresh6 as byte) as eightbits);
+            fb_putchar(
+                eencrypt(__tekai_state_generated_backend_writet1, *fresh6 as byte) as eightbits,
+            );
         }
     } else {
         while p < (*__tekai_state_generated_backend_writet1).t1_line_ptr {
@@ -1352,9 +1335,9 @@ unsafe fn t1_check_block_len(mut decrypt: boolean) {
     if (*__tekai_state_generated_backend_writet1).t1_block_length == 0 as ::core::ffi::c_long {
         return;
     }
-    c = t1_getbyte();
+    c = t1_getbyte(__tekai_state_generated_backend_writet1);
     if decrypt != 0 {
-        c = edecrypt(c as byte) as ::core::ffi::c_int;
+        c = edecrypt(__tekai_state_generated_backend_writet1, c as byte) as ::core::ffi::c_int;
     }
     l = (*__tekai_state_generated_backend_writet1).t1_block_length as ::core::ffi::c_int;
     if !(l == 0 as ::core::ffi::c_int
@@ -1394,7 +1377,10 @@ unsafe fn t1_start_eexec() {
         (*__tekai_state_generated_backend_writet1).t1_line_array;
     i = 0 as ::core::ffi::c_int;
     while i < 4 as ::core::ffi::c_int {
-        edecrypt(t1_getbyte() as byte);
+        edecrypt(
+            __tekai_state_generated_backend_writet1,
+            t1_getbyte(__tekai_state_generated_backend_writet1) as byte,
+        );
         let fresh42 = (*__tekai_state_generated_backend_writet1).t1_line_ptr;
         (*__tekai_state_generated_backend_writet1).t1_line_ptr =
             (*__tekai_state_generated_backend_writet1)
@@ -1431,7 +1417,10 @@ unsafe fn t1_stop_eexec() {
     if (*__tekai_state_generated_backend_writet1).t1_pfa == 0 {
         t1_check_block_len(true_0);
     } else {
-        c = edecrypt(t1_getbyte() as byte) as ::core::ffi::c_int;
+        c = edecrypt(
+            __tekai_state_generated_backend_writet1,
+            t1_getbyte(__tekai_state_generated_backend_writet1) as byte,
+        ) as ::core::ffi::c_int;
         if !(c == 10 as ::core::ffi::c_int || c == 13 as ::core::ffi::c_int) {
             if (*__tekai_state_generated_backend_writet1).last_hexbyte == 0 as ::core::ffi::c_int {
                 t1_puts(b"00\0" as *const u8 as *const ::core::ffi::c_char);
@@ -4838,8 +4827,247 @@ pub const NULL: *mut ::core::ffi::c_void = __DARWIN_NULL;
 
 #[cfg(test)]
 mod tests {
-    use super::{cs_entry, init_cs_entry, release_cs_entries, CS_RELEASE_CALLS};
+    use super::{
+        cdecrypt, cencrypt, cs_entry, init_cs_entry, release_cs_entries, CS_RELEASE_CALLS,
+    };
+    use proptest::prelude::*;
     use std::ptr;
+
+    #[test]
+    fn type1_cipher_golden_sequences_for_charstring_and_eexec_seeds() {
+        let plain = [0u8, 0, 0, 0, 65, 66, 67, 255, 128, 0, 255, 17];
+        let cipher = [0u8, 1, 2, 127, 128, 254, 255, 65, 90, 17, 0, 255];
+        let cases = [
+            (
+                4330u16,
+                [16u8, 191, 49, 112, 179, 183, 173, 218, 194, 131, 112, 62],
+                62206u16,
+                [16u8, 217, 84, 90, 50, 23, 118, 114, 185, 22, 167, 61],
+                12876u16,
+            ),
+            (
+                55665u16,
+                [217u8, 214, 111, 99, 30, 204, 232, 33, 237, 16, 80, 228],
+                6674u16,
+                [217u8, 218, 201, 239, 124, 212, 138, 35, 12, 142, 137, 54],
+                58403u16,
+            ),
+        ];
+
+        // The byte kernels need only a local seed, without invocation storage.
+        assert!(!crate::invocation_state::is_active());
+        for (seed, expected_cipher, encrypted_state, expected_plain, decrypted_state) in cases {
+            let mut state = seed;
+            let encoded = plain.map(|byte| unsafe { cencrypt(byte, &raw mut state) });
+            assert_eq!(encoded, expected_cipher);
+            assert_eq!(state, encrypted_state);
+
+            state = seed;
+            let decoded = cipher.map(|byte| unsafe { cdecrypt(byte, &raw mut state) });
+            assert_eq!(decoded, expected_plain);
+            assert_eq!(state, decrypted_state);
+
+            state = seed;
+            assert_eq!(
+                encoded.map(|byte| unsafe { cdecrypt(byte, &raw mut state) }),
+                plain
+            );
+            assert_eq!(state, encrypted_state);
+        }
+    }
+
+    fn type1_test_stream(bytes: &[u8]) -> *mut crate::stdio::Stream {
+        // An active StreamSession owns this handle even if setup unwinds.
+        let stream = unsafe { crate::stdio::tmpfile() };
+        assert!(!stream.is_null());
+        assert_eq!(
+            unsafe { crate::stdio::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) },
+            bytes.len()
+        );
+        unsafe { crate::stdio::rewind(stream) };
+        assert_eq!(unsafe { crate::stdio::ftello(stream) }, 0);
+        assert_eq!(unsafe { crate::stdio::ferror(stream) }, 0);
+        stream
+    }
+
+    fn append_pfb_test_segment(wire: &mut Vec<u8>, kind: u8, bytes: &[u8]) {
+        wire.extend_from_slice(&[128, kind]);
+        wire.extend_from_slice(
+            &u32::try_from(bytes.len())
+                .expect("bounded PFB test segment")
+                .to_le_bytes(),
+        );
+        wire.extend_from_slice(bytes);
+    }
+
+    // Test callers retain the actual core and stream scopes throughout access.
+    unsafe fn check_type1_wrapped_cipher(
+        state: *mut super::State,
+        cipher: u8,
+        reference_state: &mut u64,
+    ) -> Result<(), proptest::test_runner::TestCaseError> {
+        let expected_plain = cipher ^ ((*reference_state >> 8) as u8);
+        *reference_state = ((u64::from(cipher) + *reference_state) * 52845 + 22719) % 65536;
+        let fetched = unsafe { super::t1_getbyte(state) };
+        prop_assert_ne!(fetched, super::EOF);
+        let plain = unsafe { super::edecrypt(state, fetched as u8) };
+        prop_assert_eq!(plain, expected_plain);
+        prop_assert_eq!(u64::from(unsafe { (*state).t1_dr }), *reference_state);
+        prop_assert_eq!(unsafe { super::eencrypt(state, plain) }, cipher);
+        prop_assert_eq!(u64::from(unsafe { (*state).t1_er }), *reference_state);
+        Ok(())
+    }
+
+    proptest! {
+        #[test]
+        fn type1_cipher_streams_match_modulo_reference(
+            plain in prop::collection::vec(any::<u8>(), 0..2048),
+            additional_seed in any::<u16>(),
+            split in any::<usize>(),
+        ) {
+            for seed in [4330u16, 55665, additional_seed] {
+                let mut state = seed;
+                let mut reference_state = u64::from(seed);
+                let mut encoded = Vec::with_capacity(plain.len());
+                for &byte in &plain {
+                    let expected = byte ^ ((reference_state >> 8) as u8);
+                    // Wider arithmetic and explicit modulo independently check
+                    // the legacy wrapping-i32 calculation and its u16 result.
+                    reference_state = ((u64::from(expected) + reference_state) * 52845 + 22719) % 65536;
+                    let actual = unsafe { cencrypt(byte, &raw mut state) };
+                    prop_assert_eq!(actual, expected);
+                    prop_assert_eq!(u64::from(state), reference_state);
+                    encoded.push(actual);
+                }
+
+                let encrypted_state = state;
+                let split = split % (encoded.len() + 1);
+                let mut state = seed;
+                let mut decoded = Vec::with_capacity(plain.len());
+                for part in [&encoded[..split], &encoded[split..]] {
+                    for &byte in part {
+                        decoded.push(unsafe { cdecrypt(byte, &raw mut state) });
+                    }
+                }
+                prop_assert_eq!(&decoded, &plain);
+                prop_assert_eq!(state, encrypted_state);
+            }
+        }
+
+        #[test]
+        fn type1_decipher_arbitrary_ciphertext_matches_modulo_reference(
+            cipher in prop::collection::vec(any::<u8>(), 0..2048),
+            additional_seed in any::<u16>(),
+        ) {
+            for seed in [4330u16, 55665, additional_seed] {
+                let mut state = seed;
+                let mut reference_state = u64::from(seed);
+                for &byte in &cipher {
+                    let expected = byte ^ ((reference_state >> 8) as u8);
+                    reference_state = ((u64::from(byte) + reference_state) * 52845 + 22719) % 65536;
+                    let actual = unsafe { cdecrypt(byte, &raw mut state) };
+                    prop_assert_eq!(actual, expected);
+                    prop_assert_eq!(u64::from(state), reference_state);
+                }
+            }
+        }
+
+        #[test]
+        fn type1_wrappers_preserve_pfa_hex_and_pfb_segment_streams(
+            tail in prop::collection::vec(any::<u8>(), 0..96),
+            boundary in any::<usize>(),
+        ) {
+            let mut cipher = vec![0xab, 0xcd, 0x12];
+            cipher.extend_from_slice(&tail);
+            let split = boundary % (cipher.len() - 1) + 1;
+            let mut pfa = Vec::new();
+            for (index, &byte) in cipher.iter().enumerate() {
+                // The fixed prefix guarantees letter digits in both cases.
+                let (high, low) = if index % 2 == 0 {
+                    pfa.extend_from_slice(b"\r\n");
+                    (b"0123456789ABCDEF", b"0123456789abcdef")
+                } else {
+                    pfa.extend_from_slice(b"\n\r");
+                    (b"0123456789abcdef", b"0123456789ABCDEF")
+                };
+                pfa.push(high[usize::from(byte >> 4)]);
+                pfa.push(low[usize::from(byte & 15)]);
+            }
+
+            let cleartext = b"%!\n";
+            let mut pfb = Vec::new();
+            append_pfb_test_segment(&mut pfb, 1, cleartext);
+            append_pfb_test_segment(&mut pfb, 2, &cipher[..split]);
+            append_pfb_test_segment(&mut pfb, 2, &cipher[split..]);
+            pfb.extend_from_slice(&[128, 3, 0, 128, 3, 10, 255]);
+
+            let result = crate::invocation_state::with_fixture(|| {
+                let mut streams = crate::stdio::StreamSession::new();
+                let result = streams.as_mut().scope(|| -> Result<(), proptest::test_runner::TestCaseError> {
+                    let state = unsafe { super::state() };
+                    for seed in [4330u16, 55665] {
+                        let stream = type1_test_stream(&pfa);
+                        unsafe {
+                            (*state).t1_file = stream;
+                            (*state).t1_pfa = 1;
+                            (*state).t1_block_length = 0;
+                            (*state).t1_dr = seed;
+                            (*state).t1_er = seed;
+                            (*state).last_hexbyte = -1;
+                        }
+                        let mut reference_state = u64::from(seed);
+                        for (index, &byte) in cipher.iter().enumerate() {
+                            unsafe { check_type1_wrapped_cipher(state, byte, &mut reference_state) }?;
+                            prop_assert_eq!(unsafe { (*state).last_hexbyte }, i32::from(byte));
+                            prop_assert_eq!(unsafe { crate::stdio::ftello(stream) }, ((index + 1) * 4) as i64);
+                        }
+                        prop_assert_eq!(unsafe { super::t1_getbyte(state) }, super::EOF);
+                        prop_assert_eq!(unsafe { crate::stdio::feof(stream) }, 1);
+                        prop_assert_eq!(unsafe { crate::stdio::ferror(stream) }, 0);
+                        unsafe { (*state).t1_file = ptr::null_mut() };
+                        prop_assert_eq!(unsafe { crate::stdio::fclose(stream) }, 0);
+
+                        let stream = type1_test_stream(&pfb);
+                        unsafe {
+                            (*state).t1_file = stream;
+                            (*state).t1_pfa = 0;
+                            (*state).t1_block_length = 0;
+                            (*state).t1_dr = seed;
+                            (*state).t1_er = seed;
+                            (*state).last_hexbyte = -1;
+                        }
+                        for (index, &byte) in cleartext.iter().enumerate() {
+                            prop_assert_eq!(unsafe { super::t1_getbyte(state) }, i32::from(byte));
+                            prop_assert_eq!(unsafe { (*state).t1_block_length }, (cleartext.len() - index - 1) as libc::c_long);
+                        }
+                        prop_assert_eq!(unsafe { (*state).t1_dr }, seed);
+                        prop_assert_eq!(unsafe { (*state).t1_er }, seed);
+                        let mut reference_state = u64::from(seed);
+                        for (index, &byte) in cipher.iter().enumerate() {
+                            unsafe { check_type1_wrapped_cipher(state, byte, &mut reference_state) }?;
+                            let remaining = if index < split { split - index - 1 } else { cipher.len() - index - 1 };
+                            prop_assert_eq!(unsafe { (*state).t1_block_length }, remaining as libc::c_long);
+                            prop_assert_eq!(unsafe { (*state).last_hexbyte }, -1);
+                        }
+                        prop_assert_eq!(unsafe { super::t1_getbyte(state) }, super::EOF);
+                        prop_assert_eq!(unsafe { (*state).t1_block_length }, 0);
+                        prop_assert_eq!(unsafe { crate::stdio::feof(stream) }, 1);
+                        prop_assert_eq!(unsafe { crate::stdio::ftello(stream) }, pfb.len() as i64);
+                        prop_assert_eq!(unsafe { crate::stdio::ferror(stream) }, 0);
+                        unsafe { (*state).t1_file = ptr::null_mut() };
+                        prop_assert_eq!(unsafe { crate::stdio::fclose(stream) }, 0);
+                    }
+                    Ok(())
+                });
+                // On a property failure, finish still owns and closes any
+                // residual handle. No core alias is used after that close.
+                unsafe { (*super::state()).t1_file = ptr::null_mut() };
+                streams.as_mut().finish().expect("close Type1 test streams");
+                result
+            });
+            result?;
+        }
+    }
 
     struct OwnedEntries(Vec<cs_entry>);
 
@@ -5056,8 +5284,6 @@ pub(crate) struct State {
     t1_encoding: C2RustUnnamed_0,
     t1_dr: ::core::ffi::c_ushort,
     t1_er: ::core::ffi::c_ushort,
-    t1_c2: ::core::ffi::c_ushort,
-    t1_c1: ::core::ffi::c_ushort,
     t1_cslen: ::core::ffi::c_ushort,
     t1_lenIV: ::core::ffi::c_short,
     enc_line: [::core::ffi::c_char; 4096],
@@ -5110,7 +5336,7 @@ fn __tekai_require_copy<T: Copy>() {}
 
 pub(crate) struct StateInitialization {
     destination: *mut State,
-    initialized: [bool; 59],
+    initialized: [bool; 57],
 }
 #[inline]
 unsafe fn drop_initialized<T>(pointer: *mut T) {
@@ -5122,162 +5348,156 @@ unsafe fn drop_initialized<T>(pointer: *mut T) {
 impl Drop for StateInitialization {
     fn drop(&mut self) {
         unsafe {
-            if self.initialized[58] {
+            if self.initialized[56] {
                 drop_initialized(core::ptr::addr_of_mut!(
                     (*self.destination).local_create_t1_glyph_tree_3011_gl_tree
                 ));
             }
-            if self.initialized[57] {
+            if self.initialized[55] {
                 drop_initialized(core::ptr::addr_of_mut!(
                     (*self.destination).local_cs_mark_2648_lastargOtherSubr3
                 ));
             }
-            if self.initialized[56] {
+            if self.initialized[54] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).is_cc_init));
             }
-            if self.initialized[55] {
+            if self.initialized[53] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cc_tab));
             }
-            if self.initialized[54] {
+            if self.initialized[52] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cc_stack));
             }
-            if self.initialized[53] {
+            if self.initialized[51] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).stack_ptr));
             }
-            if self.initialized[52] {
+            if self.initialized[50] {
                 drop_initialized(core::ptr::addr_of_mut!(
                     (*self.destination).local_t1_scan_param_1806_lenIV
                 ));
             }
-            if self.initialized[51] {
+            if self.initialized[49] {
                 drop_initialized(core::ptr::addr_of_mut!(
                     (*self.destination).local_t1_getline_996_eexec_len
                 ));
             }
-            if self.initialized[50] {
+            if self.initialized[48] {
                 drop_initialized(core::ptr::addr_of_mut!(
                     (*self.destination).local_t1_getline_993_eexec_str
                 ));
             }
-            if self.initialized[49] {
+            if self.initialized[47] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).enc_file));
             }
-            if self.initialized[48] {
+            if self.initialized[46] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_file));
             }
-            if self.initialized[47] {
+            if self.initialized[45] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).last_hexbyte));
             }
-            if self.initialized[46] {
+            if self.initialized[44] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_block_length));
             }
-            if self.initialized[45] {
+            if self.initialized[43] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_in_eexec));
             }
-            if self.initialized[44] {
+            if self.initialized[42] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_cs));
             }
-            if self.initialized[43] {
+            if self.initialized[41] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_pfa));
             }
-            if self.initialized[42] {
+            if self.initialized[40] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_synthetic));
             }
-            if self.initialized[41] {
+            if self.initialized[39] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_scan));
             }
-            if self.initialized[40] {
+            if self.initialized[38] {
                 drop_initialized(core::ptr::addr_of_mut!(
                     (*self.destination).t1_eexec_encrypt
                 ));
             }
-            if self.initialized[39] {
+            if self.initialized[37] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_token_pair));
             }
-            if self.initialized[38] {
+            if self.initialized[36] {
                 drop_initialized(core::ptr::addr_of_mut!(
                     (*self.destination).cs_token_pairs_list
                 ));
             }
-            if self.initialized[37] {
+            if self.initialized[35] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).subr_size_pos));
             }
-            if self.initialized[36] {
+            if self.initialized[34] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).subr_size));
             }
-            if self.initialized[35] {
+            if self.initialized[33] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).subr_max));
             }
-            if self.initialized[34] {
+            if self.initialized[32] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).subr_array_end));
             }
-            if self.initialized[33] {
+            if self.initialized[31] {
                 drop_initialized(core::ptr::addr_of_mut!(
                     (*self.destination).subr_array_start
                 ));
             }
-            if self.initialized[32] {
+            if self.initialized[30] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).subr_tab));
             }
-            if self.initialized[31] {
+            if self.initialized[29] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_size));
             }
-            if self.initialized[30] {
+            if self.initialized[28] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_size_pos));
             }
-            if self.initialized[29] {
+            if self.initialized[27] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_count));
             }
-            if self.initialized[28] {
+            if self.initialized[26] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_dict_start));
             }
-            if self.initialized[27] {
+            if self.initialized[25] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_dict_end));
             }
-            if self.initialized[26] {
+            if self.initialized[24] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_notdef));
             }
-            if self.initialized[25] {
+            if self.initialized[23] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_ptr));
             }
-            if self.initialized[24] {
+            if self.initialized[22] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_tab));
             }
-            if self.initialized[23] {
+            if self.initialized[21] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).cs_start));
             }
-            if self.initialized[22] {
+            if self.initialized[20] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_buf_limit));
             }
-            if self.initialized[21] {
+            if self.initialized[19] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_buf_array));
             }
-            if self.initialized[20] {
+            if self.initialized[18] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_buf_ptr));
             }
-            if self.initialized[19] {
+            if self.initialized[17] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_line_limit));
             }
-            if self.initialized[18] {
+            if self.initialized[16] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_line_array));
             }
-            if self.initialized[17] {
+            if self.initialized[15] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_line_ptr));
             }
-            if self.initialized[16] {
+            if self.initialized[14] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).enc_line));
             }
-            if self.initialized[15] {
+            if self.initialized[13] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_lenIV));
             }
-            if self.initialized[14] {
-                drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_cslen));
-            }
-            if self.initialized[13] {
-                drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_c1));
-            }
             if self.initialized[12] {
-                drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_c2));
+                drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_cslen));
             }
             if self.initialized[11] {
                 drop_initialized(core::ptr::addr_of_mut!((*self.destination).t1_er));
@@ -5326,7 +5546,7 @@ impl StateInitialization {
     pub(crate) unsafe fn begin(destination: *mut State) -> Self {
         Self {
             destination,
-            initialized: [false; 59],
+            initialized: [false; 57],
         }
     }
     pub(crate) fn disarm(&mut self) {
@@ -5498,23 +5718,13 @@ impl StateInitialization {
         const {
             assert!(core::mem::size_of::<::core::ffi::c_ushort>() <= 16 * 1024);
         }
-        core::ptr::addr_of_mut!((*destination).t1_c2).write(22719 as ::core::ffi::c_ushort);
-        self.initialized[12] = true;
-        const {
-            assert!(core::mem::size_of::<::core::ffi::c_ushort>() <= 16 * 1024);
-        }
-        core::ptr::addr_of_mut!((*destination).t1_c1).write(52845 as ::core::ffi::c_ushort);
-        self.initialized[13] = true;
-        const {
-            assert!(core::mem::size_of::<::core::ffi::c_ushort>() <= 16 * 1024);
-        }
         core::ptr::addr_of_mut!((*destination).t1_cslen).write(0);
-        self.initialized[14] = true;
+        self.initialized[12] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_short>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_lenIV).write(0);
-        self.initialized[15] = true;
+        self.initialized[13] = true;
         const {
             assert!((4096) == (4096));
             assert!(core::mem::size_of::<::core::ffi::c_char>() <= 16 * 1024);
@@ -5527,124 +5737,124 @@ impl StateInitialization {
                     .write(__tekai_repeat_0);
             }
         }
-        self.initialized[16] = true;
+        self.initialized[14] = true;
         const {
             assert!(core::mem::size_of::<*mut t1_line_entry>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_line_ptr)
             .write(::core::ptr::null::<t1_line_entry>() as *mut t1_line_entry);
-        self.initialized[17] = true;
+        self.initialized[15] = true;
         const {
             assert!(core::mem::size_of::<*mut t1_line_entry>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_line_array)
             .write(::core::ptr::null::<t1_line_entry>() as *mut t1_line_entry);
-        self.initialized[18] = true;
+        self.initialized[16] = true;
         const {
             assert!(core::mem::size_of::<size_t>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_line_limit).write(0);
-        self.initialized[19] = true;
+        self.initialized[17] = true;
         const {
             assert!(core::mem::size_of::<*mut t1_buf_entry>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_buf_ptr)
             .write(::core::ptr::null::<t1_buf_entry>() as *mut t1_buf_entry);
-        self.initialized[20] = true;
+        self.initialized[18] = true;
         const {
             assert!(core::mem::size_of::<*mut t1_buf_entry>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_buf_array)
             .write(::core::ptr::null::<t1_buf_entry>() as *mut t1_buf_entry);
-        self.initialized[21] = true;
+        self.initialized[19] = true;
         const {
             assert!(core::mem::size_of::<size_t>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_buf_limit).write(0);
-        self.initialized[22] = true;
+        self.initialized[20] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_start).write(0);
-        self.initialized[23] = true;
+        self.initialized[21] = true;
         const {
             assert!(core::mem::size_of::<*mut cs_entry>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_tab)
             .write(::core::ptr::null::<cs_entry>() as *mut cs_entry);
-        self.initialized[24] = true;
+        self.initialized[22] = true;
         const {
             assert!(core::mem::size_of::<*mut cs_entry>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_ptr)
             .write(::core::ptr::null::<cs_entry>() as *mut cs_entry);
-        self.initialized[25] = true;
+        self.initialized[23] = true;
         const {
             assert!(core::mem::size_of::<*mut cs_entry>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_notdef)
             .write(::core::ptr::null::<cs_entry>() as *mut cs_entry);
-        self.initialized[26] = true;
+        self.initialized[24] = true;
         const {
             assert!(core::mem::size_of::<*mut ::core::ffi::c_char>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_dict_end)
             .write(::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char);
-        self.initialized[27] = true;
+        self.initialized[25] = true;
         const {
             assert!(core::mem::size_of::<*mut ::core::ffi::c_char>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_dict_start)
             .write(::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char);
-        self.initialized[28] = true;
+        self.initialized[26] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_count).write(0);
-        self.initialized[29] = true;
+        self.initialized[27] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_size_pos).write(0);
-        self.initialized[30] = true;
+        self.initialized[28] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_size).write(0);
-        self.initialized[31] = true;
+        self.initialized[29] = true;
         const {
             assert!(core::mem::size_of::<*mut cs_entry>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).subr_tab)
             .write(::core::ptr::null::<cs_entry>() as *mut cs_entry);
-        self.initialized[32] = true;
+        self.initialized[30] = true;
         const {
             assert!(core::mem::size_of::<*mut ::core::ffi::c_char>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).subr_array_start)
             .write(::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char);
-        self.initialized[33] = true;
+        self.initialized[31] = true;
         const {
             assert!(core::mem::size_of::<*mut ::core::ffi::c_char>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).subr_array_end)
             .write(::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char);
-        self.initialized[34] = true;
+        self.initialized[32] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).subr_max).write(0);
-        self.initialized[35] = true;
+        self.initialized[33] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).subr_size).write(0);
-        self.initialized[36] = true;
+        self.initialized[34] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).subr_size_pos).write(0);
-        self.initialized[37] = true;
+        self.initialized[35] = true;
         const {
             assert!((5) == 5);
         }
@@ -5719,85 +5929,85 @@ impl StateInitialization {
         }
         core::ptr::addr_of_mut!((*destination).cs_token_pairs_list[4][1])
             .write(::core::ptr::null::<::core::ffi::c_char>());
-        self.initialized[38] = true;
+        self.initialized[36] = true;
         const {
             assert!(core::mem::size_of::<*mut *const ::core::ffi::c_char>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).cs_token_pair)
             .write(::core::ptr::null::<*const ::core::ffi::c_char>()
                 as *mut *const ::core::ffi::c_char);
-        self.initialized[39] = true;
+        self.initialized[37] = true;
         const {
             assert!(core::mem::size_of::<boolean>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_eexec_encrypt).write(0);
-        self.initialized[40] = true;
+        self.initialized[38] = true;
         const {
             assert!(core::mem::size_of::<boolean>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_scan).write(0);
-        self.initialized[41] = true;
+        self.initialized[39] = true;
         const {
             assert!(core::mem::size_of::<boolean>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_synthetic).write(0);
-        self.initialized[42] = true;
+        self.initialized[40] = true;
         const {
             assert!(core::mem::size_of::<boolean>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_pfa).write(0);
-        self.initialized[43] = true;
+        self.initialized[41] = true;
         const {
             assert!(core::mem::size_of::<boolean>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_cs).write(0);
-        self.initialized[44] = true;
+        self.initialized[42] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_in_eexec).write(0);
-        self.initialized[45] = true;
+        self.initialized[43] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_long>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_block_length).write(0);
-        self.initialized[46] = true;
+        self.initialized[44] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).last_hexbyte).write(0);
-        self.initialized[47] = true;
+        self.initialized[45] = true;
         const {
             assert!(core::mem::size_of::<*mut FILE>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).t1_file)
             .write(::core::ptr::null::<FILE>() as *mut FILE);
-        self.initialized[48] = true;
+        self.initialized[46] = true;
         const {
             assert!(core::mem::size_of::<*mut FILE>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).enc_file)
             .write(::core::ptr::null::<FILE>() as *mut FILE);
-        self.initialized[49] = true;
+        self.initialized[47] = true;
         const {
             assert!(core::mem::size_of::<[::core::ffi::c_char; 18]>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).local_t1_getline_993_eexec_str).write(unsafe {
             ::core::mem::transmute::<[u8; 18], [::core::ffi::c_char; 18]>(*b"currentfile eexec\0")
         });
-        self.initialized[50] = true;
+        self.initialized[48] = true;
         const {
             assert!(core::mem::size_of::<::core::ffi::c_int>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).local_t1_getline_996_eexec_len)
             .write(17 as ::core::ffi::c_int);
-        self.initialized[51] = true;
+        self.initialized[49] = true;
         const {
             assert!(core::mem::size_of::<*const ::core::ffi::c_char>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).local_t1_scan_param_1806_lenIV)
             .write(b"/lenIV\0" as *const u8 as *const ::core::ffi::c_char);
-        self.initialized[52] = true;
+        self.initialized[50] = true;
         const {
             assert!((24) == (24));
             assert!(core::mem::size_of::<integer>() <= 16 * 1024);
@@ -5810,7 +6020,7 @@ impl StateInitialization {
                     .write(__tekai_repeat_0);
             }
         }
-        self.initialized[54] = true;
+        self.initialized[52] = true;
         const {
             assert!((66) == (66));
             assert!(core::mem::size_of::<cc_entry>() <= 16 * 1024);
@@ -5828,24 +6038,24 @@ impl StateInitialization {
                     .write(__tekai_repeat_0);
             }
         }
-        self.initialized[55] = true;
+        self.initialized[53] = true;
         const {
             assert!(core::mem::size_of::<boolean>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).is_cc_init).write(false_0);
-        self.initialized[56] = true;
+        self.initialized[54] = true;
         const {
             assert!(core::mem::size_of::<integer>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).local_cs_mark_2648_lastargOtherSubr3)
             .write(3 as integer);
-        self.initialized[57] = true;
+        self.initialized[55] = true;
         const {
             assert!(core::mem::size_of::<*mut avl_table>() <= 16 * 1024);
         }
         core::ptr::addr_of_mut!((*destination).local_create_t1_glyph_tree_3011_gl_tree)
             .write(::core::ptr::null::<avl_table>() as *mut avl_table);
-        self.initialized[58] = true;
+        self.initialized[56] = true;
     }
     pub(crate) unsafe fn initialize_fixups(
         &mut self,
@@ -7364,7 +7574,7 @@ impl StateInitialization {
         core::ptr::addr_of_mut!((*destination).stack_ptr).write(unsafe {
             &raw const (*__tekai_state_generated_backend_writet1).cc_stack as *mut integer
         });
-        self.initialized[53] = true;
+        self.initialized[51] = true;
     }
 }
 pub(crate) unsafe fn state() -> *mut State {
