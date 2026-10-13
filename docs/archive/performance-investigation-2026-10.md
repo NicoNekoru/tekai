@@ -1456,3 +1456,63 @@ tests with zero ignores. Its verbose property receipt confirms 128 new cases
 using seed `1883090737666153676`, plus the retained regression replay. Strict
 workspace all-target/all-feature Clippy also passed with C and C++ compiler
 commands disabled. These local checks do not substitute for final hosted CI.
+
+## Intel RGBA packing follow-up, 13 October 2026
+
+The completed Intel run `38328829209` failed only the image-compile gate.
+Against actual main `0b6e92e`, its balanced candidate ratio was 1.139931,
+with interval 1.119094 through 1.168625. All 128 pairs completed, both slots
+and all quarters showed the slowdown, and all 1,088 primary PDF oracles
+passed. This was a measured regression, not an exit-code-2 inconclusive run.
+
+The x86 executables showed the same scalar RGBA separation algorithm before
+and after migration. Both processed one pixel per loop. This does not identify
+packing as the original cause. The replacement processes four pixels per
+SSSE3 group, retaining exact 16-byte source loads, eight plus four RGB stores,
+four alpha stores, and scalar tails. Its safe entry checks exact shapes and
+writes `MaybeUninit` outputs without reading them. Separate live allocations
+provide disjoint row borrows, which end before the unchanged PDF row write.
+CPU selection occurs once per image. The macOS x86 target already guarantees
+SSSE3, so the compiler removes detection entirely. Other x86 targets retain
+runtime detection, and other architectures use the portable slice kernel.
+
+A fixed Rosetta kernel diagnostic favored SSSE3 at ratio 0.266471 across
+16 balanced pairs. Whole-command results were smaller. Two separate fixed
+studies each used the original eight-image fixture, 16 pairs, four complete
+crossed units, four commands per batch, independent cache cells, frozen
+executable/input/cache receipts and the original full-pixel oracles.
+
+The frozen candidate from `718d25e` had ratio 1.021140 against actual main.
+Against the earlier GPL candidate `60385b3`, its ratio was 0.974209. All four
+units in that incremental study favored the new candidate. Their complete
+report SHA-256 values are respectively
+`35890c2ca0ef87ef0a99c8d659a2527cdfa0c5b3c417842aa0202789b1946f80`
+and `b47ce5deb69f9760f1cab994a38225899e197f3b0c2355322e38f7ebb35f2d7a`.
+These used an ARM host through Rosetta, separate source paths and a reused
+build target. They are diagnostics, not native Intel gate results.
+
+The separate state-routing commit `35207ec` removes repeated invocation-state
+lookup inside Type1 byte helpers and selected token-reader callers, preserving
+cipher seeds, stream rules and interrupt polls. Its Type1-only whole-command
+trial showed no clear gain. The validated decoder changes remain intact.
+
+Review also found an inherited mask-size defect in both alpha writers.
+Unchecked multiplication and signed conversion could allocate a shorter mask
+than the writer required. Commit `718d25e` checks the product and engine-byte
+limit before allocation or PDF writes. Boundary tests and a widened-arithmetic
+property exercise this without allocating huge images. This does not impose
+a new bound on all decoded-image allocations.
+
+Local workspace tests passed, followed by final-source packing properties
+with 512 cases on ARM and Rosetta x86, the strengthened architecture checks,
+506 x86 engine unit tests and the explicit self-contained large-paper test.
+The local machine has no system TeX installation, so hosted CI still supplies
+that coverage. Explicit Rust 1.89 compiler checks passed for every native
+workspace target and the x86 engine targets. Strict Clippy passed with the
+handwritten packer audited rather than suppressing its warnings. Explicit
+toolchain paths avoid accidentally selecting Homebrew compiler subtools.
+C and C++ compiler commands remained disabled for candidate builds.
+
+The strict gate, commands, clock boundaries, original fixtures, oracles,
+process ownership and actual-main baseline policy are unchanged. Native
+Intel and ARM CI on the exact pushed revision must decide readiness.
