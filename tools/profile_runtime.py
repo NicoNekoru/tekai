@@ -95,6 +95,62 @@ ENGINE_COUNTER_UNITS = {'decode_calls': 'calls', 'cache_hits': 'hits', 'decoded_
                         'compression_calls': 'calls', 'compression_input_bytes': 'bytes',
                         'compression_output_bytes': 'bytes'}
 MAX_ENGINE_PHASE_BYTES = 4096
+CASE_ANALYSIS_STATUSES = ('pass', 'fail', 'inconclusive', 'error', 'incomplete')
+
+
+def record_command_error(row, error):
+    row.update(status='error', error=f'{type(error).__name__}: {error}'[-8192:])
+    for name in ('failed_command', 'fixture_context'):
+        value = getattr(error, name, None)
+        if value is not None:
+            row[name] = value
+
+
+def diagnostic_case_plan(primary):
+    """Freeze an allowlisted plan before any diagnostic command is launched."""
+    evidence = {case: [] for case in benchmark.CASES}
+    results = primary.get('results', [])
+    if not isinstance(results, list) or len(results) > len(benchmark.CASES):
+        raise ValueError('Primary case results are not a bounded allowlisted inventory')
+    seen = set()
+    for row in results:
+        case = row.get('case') if isinstance(row, dict) else None
+        if type(case) is not str or case not in evidence or case in seen:
+            raise ValueError('Primary case results contain an unknown or duplicate case')
+        seen.add(case)
+        analysis = row.get('analysis')
+        status = analysis.get('status') if isinstance(analysis, dict) else 'incomplete' if analysis is None else None
+        if type(status) is not str or status not in CASE_ANALYSIS_STATUSES:
+            raise ValueError('Primary case analysis status is missing or unknown')
+        evidence[case].append({'source': 'results.analysis' if analysis is None else 'results.analysis.status',
+                               'status': status})
+    diagnostics = primary.get('failure_diagnostics', [])
+    if not isinstance(diagnostics, list) or len(diagnostics) > len(benchmark.CASES):
+        raise ValueError('Primary failure diagnostics are not a bounded allowlisted inventory')
+    for row in diagnostics:
+        context = row.get('fixture_context') if isinstance(row, dict) else None
+        if context is None:
+            continue
+        case = context.get('case') if isinstance(context, dict) else None
+        if type(case) is not str or case not in evidence:
+            raise ValueError('Primary failure context contains an unknown case')
+        if primary['status'] in ('error', 'incomplete'):
+            evidence[case].append({'source': 'failure_diagnostics.fixture_context.case',
+                                   'status': primary['status']})
+    entries = []
+    for index, case in enumerate(benchmark.CASES):
+        priority = any(row['status'] != 'pass' for row in evidence[case])
+        entries.append({'case': case, 'original_case_index': index, 'prioritized': priority,
+                        'selection_reason': 'primary_case_requires_diagnosis' if priority else 'remaining_original_order',
+                        'primary_evidence': evidence[case]})
+    ordered = [row for row in entries if row['prioritized']] + [row for row in entries if not row['prioritized']]
+    return {'status': 'fixed', 'diagnostic_only': True, 'used_for_gate': False,
+            'selection_reason': 'primary_case_failure_evidence' if any(row['prioritized'] for row in entries)
+                                else 'original_order_no_case_failure_evidence',
+            'scope': 'Derived once from the hash-bound primary report before diagnostic commands. '
+                     'Only known cases and statuses select priority. Remaining cases keep original order. '
+                     'Original case indexes determine fixture and crossover assignments. No adaptive reordering or retries.',
+            'order': [row['case'] for row in ordered], 'cases': ordered}
 
 
 def reject_constant(value):
@@ -530,7 +586,7 @@ class ProfileSupervisor(benchmark.Supervisor):
                 row['command_timing_unavailable_reason'] = 'Fine command timing is absent or violates its fixed monotonic inventory'
             return result
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
-            row.update(status='error', error=f'{type(error).__name__}: {error}'[-8192:])
+            record_command_error(row, error)
             path = self.work / f'command-{row["command_id"]:04d}.stderr'
             if path.is_file():
                 with path.open('rb') as handle:
@@ -702,7 +758,7 @@ def run_image_route_controls(report, supervisor, fixtures, metadata, source, sou
                             raise ValueError('Image route source/binary/fixture/cache changed after command')
                         row['status'] = 'verified'
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
-                        row.update(status='error', error=f'{type(error).__name__}: {error}'[-8192:])
+                        record_command_error(row, error)
                         raise
                     finally:
                         supervisor.active = None
@@ -997,6 +1053,16 @@ def persist(report, output):
     lines.extend(['', 'System timer accounting is platform-specific and is not a whole-job memory claim.',
                   'Host snapshots occur outside commands. Phase JSON is optional and untrusted.',
                   'Phases overlap and are inclusive completed spans, not a partition to sum.', ''])
+    plan = report.get('case_plan')
+    if plan is not None:
+        lines.extend(['## Fixed diagnostic case order', '', plan['scope'], '',
+                      'Selection reason `' + plan['selection_reason'] + '`.', '',
+                      '| Case | Original index | Priority | Selection reason | Primary evidence |',
+                      '| --- | ---: | --- | --- | --- |'])
+        for row in plan['cases']:
+            evidence = ', '.join(item['source'] + '=' + item['status'] for item in row['primary_evidence']) or 'unavailable'
+            lines.append(f"| {row['case']} | {row['original_case_index']} | {row['prioritized']} | {row['selection_reason']} | {evidence} |")
+        lines.extend(['', 'This order is diagnostic-only and unscored. Repeats and per-case assignments are unchanged.', ''])
     lines.extend(['## Within-cell volatility', '', report['volatility']['scope'], '',
                   '| Case | Phase | Slot | Artifact | Samples | Parent median ms | Parent min/max ms | Parent MAD % | Child RSS min/max MiB |',
                   '| --- | --- | --- | --- | ---: | ---: | --- | ---: | --- |'])
@@ -1147,6 +1213,7 @@ def main(argv=None):
               'policy': {'repeats': args.repeats, 'timeout_seconds': args.timeout, 'budget_seconds': args.budget,
                          'phase_opt_in': 'TEKAI_DIAGNOSTIC_PROFILE=1 and TEKAI_ENGINE_PROFILE=1 for instrumented commands only',
                          'sampling': 'Fixed chronological repetitions. No adaptive retries, outlier removal or result selection.',
+                         'case_order': 'Fixed before commands from allowlisted primary failure evidence, then remaining original order. Original indexes preserve per-case assignments.',
                          'launch_only_control': 'Same copied artifact --version immediately before each measured warm-cache command.',
                          'same_artifact_cache_control': 'Each artifact has two content-equivalent independently initialized fixture replicas, one per slot.',
                          'comparison': 'None. Diagnostic commands cannot rescore the primary gate.'},
@@ -1190,6 +1257,8 @@ def main(argv=None):
         metadata = benchmark.load_metadata(args.metadata)
         report['metadata'] = metadata
         source_hashes = bind_primary(primary, metadata, sources)
+        case_plan = diagnostic_case_plan(primary)
+        report['case_plan'] = case_plan
         protected.update({sources[label]: source_hashes[label] for label in benchmark.LABELS})
         if any(not path.is_file() or not os.access(path, os.X_OK) for path in sources.values()):
             raise ValueError('Selected source executables are unavailable')
@@ -1206,6 +1275,7 @@ def main(argv=None):
         for path in (args.output, args.output.with_suffix('.md')):
             if path in protected or any(path.exists() and source.exists() and path.samefile(source) for source in protected):
                 raise ValueError('Diagnostic output aliases a selected output verifier')
+        persist(report, args.output)
         with tempfile.TemporaryDirectory(prefix='tekai-runtime-profile-') as temporary:
             work = Path(temporary).resolve()
             supervisor = ProfileSupervisor(work, args.timeout, started + args.budget)
@@ -1227,7 +1297,8 @@ def main(argv=None):
                     if row['sha256_start'] != source_hashes[label]:
                         raise ValueError('Diagnostic isolated copy differs from the primary source')
                     binaries[slot][label] = destination
-                for case_index, case in enumerate(benchmark.CASES):
+                for planned_case in case_plan['cases']:
+                    case_index, case = planned_case['original_case_index'], planned_case['case']
                     fixtures = {}
                     for cell in benchmark.cell_order(case_index):
                         label, slot, replica = cell['label'], cell['slot'], cell['replica']
@@ -1239,7 +1310,7 @@ def main(argv=None):
                     if len(hashes) != 1:
                         raise ValueError('Diagnostic cell input content differs')
                     for repetition in range(-1, args.repeats):
-                        unit = {'case': case, 'repetition': repetition,
+                        unit = {'case': case, 'original_case_index': case_index, 'repetition': repetition,
                                 'phase': 'initialization' if repetition < 0 else 'measurement',
                                 'unit_id': len(report['units']) + 1,
                                 'before': host_snapshot(supervisor, host_env), 'command_indexes': []}
@@ -1266,7 +1337,7 @@ def main(argv=None):
                                         control_result = execute_profile_fixture(supervisor, control, 'cli-startup')
                                         control_row.update(status='verified', output_validation=control_result['output_validation'])
                                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
-                                        control_row.update(status='error', error=f'{type(error).__name__}: {error}'[-8192:])
+                                        record_command_error(control_row, error)
                                         raise
                                     finally:
                                         supervisor.active = None
@@ -1295,7 +1366,7 @@ def main(argv=None):
                                         row['cache_state_unchanged'] = None if repetition < 0 else row['cache_state_before'] == row['cache_state_after']
                                         row['cache_state_scope'] = 'Bounded state bytes/hash/input inventory and file identity, outside fixture command clocks.'
                                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
-                                    row.update(status='error', error=f'{type(error).__name__}: {error}'[-8192:])
+                                    record_command_error(row, error)
                                     raise
                                 finally:
                                     supervisor.active = None

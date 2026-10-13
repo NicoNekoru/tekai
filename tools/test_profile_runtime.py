@@ -813,10 +813,70 @@ class BindingTests(FixtureFiles):
             profile.persist(report, self.output)
 
 
+class CasePlanTests(unittest.TestCase):
+    def test_failure_inconclusive_and_incomplete_cases_precede_passes_in_original_order(self):
+        primary = {'status': 'error', 'results': [
+            {'case': 'warm-build-cache'},
+            {'case': 'image-compile', 'analysis': {'status': 'fail'}},
+            {'case': 'cli-startup', 'analysis': {'status': 'pass'}},
+            {'case': 'nested-lookup', 'analysis': {'status': 'inconclusive'}}]}
+        original = copy.deepcopy(primary)
+        plan = profile.diagnostic_case_plan(primary)
+        self.assertEqual(plan['order'], ['nested-lookup', 'image-compile', 'warm-build-cache', 'cli-startup'])
+        self.assertEqual([row['original_case_index'] for row in plan['cases']], [1, 2, 3, 0])
+        self.assertEqual([row['prioritized'] for row in plan['cases']], [True, True, True, False])
+        self.assertEqual([row['primary_evidence'][0]['status'] for row in plan['cases']],
+                         ['inconclusive', 'fail', 'incomplete', 'pass'])
+        self.assertEqual(plan['selection_reason'], 'primary_case_failure_evidence')
+        self.assertTrue(plan['diagnostic_only'])
+        self.assertFalse(plan['used_for_gate'])
+        self.assertEqual(primary, original)
+
+    def test_success_and_legacy_reports_without_case_evidence_keep_original_order(self):
+        for status in ('pass', 'fail', 'inconclusive', 'error', 'incomplete'):
+            for results in (None, [{'case': case, 'analysis': {'status': 'pass'}}
+                                   for case in reversed(benchmark.CASES)]):
+                with self.subTest(status=status, results=results):
+                    primary = {'status': status}
+                    if results is not None:
+                        primary['results'] = results
+                    plan = profile.diagnostic_case_plan(primary)
+                    self.assertEqual(plan['order'], list(benchmark.CASES))
+                    self.assertEqual([row['original_case_index'] for row in plan['cases']], list(range(4)))
+                    self.assertFalse(any(row['prioritized'] for row in plan['cases']))
+                    self.assertEqual(plan['selection_reason'], 'original_order_no_case_failure_evidence')
+
+    def test_failure_context_selects_only_its_known_case_without_copying_commands(self):
+        primary = {'status': 'error', 'results': [
+            {'case': case, 'analysis': {'status': 'pass'}} for case in benchmark.CASES],
+            'failure_diagnostics': [{'fixture_context': {'case': 'warm-build-cache', 'stage': 'output-validation'},
+                                     'failed_command': {'argv': ['ignored-for-ordering']}}]}
+        plan = profile.diagnostic_case_plan(primary)
+        self.assertEqual(plan['order'], ['warm-build-cache', 'cli-startup', 'nested-lookup', 'image-compile'])
+        self.assertEqual(plan['cases'][0]['primary_evidence'][-1],
+                         {'source': 'failure_diagnostics.fixture_context.case', 'status': 'error'})
+        self.assertNotIn('ignored-for-ordering', json.dumps(plan))
+
+    def test_unknown_duplicate_or_malformed_case_evidence_cannot_select_commands(self):
+        for extra in (
+                {'results': [{'case': 'caller-supplied-case', 'analysis': {'status': 'fail'}}]},
+                {'results': [{'case': 'image-compile', 'analysis': {'status': 'retry'}}]},
+                {'results': [{'case': 'image-compile', 'analysis': {'status': ['fail']}}]},
+                {'results': [{'case': ['image-compile']}]},
+                {'results': [{'case': 'image-compile'}, {'case': 'image-compile'}]},
+                {'results': {}},
+                {'results': [{'case': 'image-compile', 'analysis': []}]},
+                {'failure_diagnostics': [{'fixture_context': {'case': 'caller-supplied-case'}}]},
+                {'failure_diagnostics': [{'fixture_context': []}]},
+                {'failure_diagnostics': {}}):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                profile.diagnostic_case_plan({'status': 'error', **extra})
+
+
 class DriverTests(FixtureFiles):
     def run_model(self, *, fail_at=None, interrupt=False, mutation=None, copy_mismatch=False,
                   timer_available=True, missing_verifier=False, image_route_controls=False,
-                  route_error=False, route_mutation=None):
+                  route_error=False, route_mutation=None, command_error_at=None, command_error=None):
         commands, hosts = [], []
         original_primary = self.primary_path.read_bytes()
         real_copy = profile.shutil.copy2
@@ -841,12 +901,15 @@ class DriverTests(FixtureFiles):
             return fixture
 
         def timer(supervisor, env):
+            self.assertEqual(profile.read_json(self.output)['case_plan'], profile.diagnostic_case_plan(self.primary))
             supervisor.kind = 'gnu' if timer_available else None
             supervisor.timer_reason = None if timer_available else 'fixture timer unavailable'
 
         def execute(supervisor, command, cwd, env):
             supervisor.counter += 1
             commands.append((list(map(str, command)), dict(env)))
+            if command_error_at is not None and len(commands) == command_error_at:
+                raise command_error
             active = supervisor.active is not None and str(command[0]) != self.verifiers['pdftotext']
             raw = active and supervisor.active.get('unwrapped_route_control') is True
             if profile.PRIVATE_ENGINE_ROUTE in command and supervisor.active['label'] == 'baseline':
@@ -976,6 +1039,69 @@ class DriverTests(FixtureFiles):
         self.assertEqual(row['resources']['status'], 'reported')
         self.assertIsNone(row['output_validation'])
         self.assertIn('Unit incomplete', report['units'][0]['after']['unavailable']['host'])
+
+    def test_prioritized_case_keeps_original_fixture_and_crossover_assignments(self):
+        self.primary.update(status='error', results=[
+            {'case': case, **({} if case == 'warm-build-cache' else {'analysis': {'status': 'pass'}})}
+            for case in benchmark.CASES])
+        self.primary_path.write_text(json.dumps(self.primary))
+        with mock.patch.object(benchmark, 'cell_order', wraps=benchmark.cell_order) as schedule:
+            code, report, _commands, _hosts = self.run_model()
+        self.assertEqual(code, 0)
+        plan = report['case_plan']
+        self.assertEqual(plan['order'], ['warm-build-cache', 'cli-startup', 'nested-lookup', 'image-compile'])
+        self.assertEqual(report['units'][0]['case'], 'warm-build-cache')
+        self.assertEqual(report['commands'][0]['label'], 'candidate')
+        self.assertEqual(report['commands'][0]['slot'], 's0')
+        self.assertEqual(report['commands'][0]['replica'], 'r1')
+        expected_calls = [mock.call()]
+        for case in plan['order']:
+            original_index = benchmark.CASES.index(case)
+            expected_calls.append(mock.call(original_index))
+            expected_calls.extend(mock.call((original_index + repetition + 1) % 2)
+                                  for repetition in range(-1, 8))
+            units = [unit for unit in report['units'] if unit['case'] == case]
+            self.assertEqual([unit['repetition'] for unit in units], list(range(-1, 8)))
+            for unit in units:
+                self.assertEqual(unit['original_case_index'], original_index)
+                rows = [report['commands'][index] for index in unit['command_indexes']
+                        if report['commands'][index]['phase'] != 'launch_only_control']
+                observed = [{key: row[key] for key in ('slot', 'label', 'replica')} for row in rows]
+                self.assertEqual(observed, benchmark.cell_order((original_index + unit['repetition'] + 1) % 2))
+        self.assertEqual(schedule.call_args_list, expected_calls)
+        self.assertEqual(report['policy']['repeats'], 8)
+        self.assertEqual(report['policy']['timeout_seconds'], 30)
+        self.assertEqual(report['policy']['budget_seconds'], 600)
+        self.assertTrue(report['primary']['unchanged'])
+
+    def test_initialization_build_and_oracle_failures_persist_the_actual_failed_receipt(self):
+        self.primary.update(status='error', results=[{'case': 'warm-build-cache'}])
+        self.primary_path.write_text(json.dumps(self.primary))
+        for stage, command_error_at in (('build-execution', 1), ('output-validation', 2)):
+            with self.subTest(stage=stage):
+                receipt = {'argv': ['failed-build' if command_error_at == 1 else self.verifiers['pdftotext']],
+                           'command_id': command_error_at, 'owned_leader_pid': 123,
+                           'owned_leader_reaped': True, 'return_code': -signal.SIGTERM,
+                           'failure_kind': 'command_deadline', 'allowance_seconds': 30, 'used_for_gate': False}
+                error = benchmark.BenchmarkError('Command deadline exceeded', failed_command=receipt)
+                context = {'case': 'warm-build-cache', 'slot': 's0', 'label': 'candidate', 'replica': 'r1',
+                           'initializing': True, 'stage': stage}
+                error.fixture_context = context
+                code, report, commands, hosts = self.run_model(
+                    command_error_at=command_error_at, command_error=error)
+                self.assertEqual(code, 1)
+                self.assertEqual(len(commands), command_error_at)
+                self.assertEqual(len(hosts), 1)
+                self.assertEqual(len(report['commands']), 1)
+                row = report['commands'][0]
+                self.assertEqual(row['status'], 'error')
+                self.assertEqual(row['phase'], 'initialization')
+                self.assertEqual(row['failed_command'], receipt)
+                self.assertEqual(row['fixture_context'], context)
+                self.assertIsNone(row['output_validation'])
+                self.assertTrue(report['primary']['unchanged'])
+                self.assertFalse(report['used_for_gate'])
+                self.assertIn('Unit incomplete', report['units'][0]['after']['unavailable']['host'])
 
     def test_interrupt_is_not_followed_by_observer_commands(self):
         code, report, commands, hosts = self.run_model(fail_at=1, interrupt=True)
@@ -1310,7 +1436,7 @@ class SupervisorTests(unittest.TestCase):
             supervisor = profile.ProfileSupervisor(Path(temporary), .04, time.monotonic() + 2)
             command = [sys.executable, '-B', '-c', 'import time; time.sleep(2)']
             supervisor.active = {'command': command}
-            with self.assertRaises(benchmark.BenchmarkError):
+            with self.assertRaises(benchmark.BenchmarkError) as caught:
                 supervisor.execute(command, Path(temporary), dict(os.environ))
             row = supervisor.active
             supervisor.close()
@@ -1318,6 +1444,9 @@ class SupervisorTests(unittest.TestCase):
             self.assertGreaterEqual(row['finish_monotonic_ns'], row['launch_monotonic_ns'])
             self.assertEqual(supervisor.owned, {})
             self.assertIsNone(row['resources']['values']['peak_rss_bytes'])
+            self.assertIs(row['failed_command'], caught.exception.failed_command)
+            self.assertEqual(row['failed_command']['argv'], command)
+            self.assertTrue(row['failed_command']['owned_leader_reaped'])
 
 
 if __name__ == '__main__':
