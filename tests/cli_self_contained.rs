@@ -1721,6 +1721,24 @@ fn bundled_cache_observes_shared_database_replacement_with_preserved_mtime() {
 }
 
 #[test]
+fn bundled_engine_version_reports_gpl_and_upstream_provenance() {
+    let project = Project::new();
+    let output = project.run(&["__tekai-engine", "--version"]);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("engine version is UTF-8");
+    assert!(stdout.contains("GNU GPL version 2 or any later version"));
+    assert!(stdout.contains("Includes pdfTeX code"));
+    assert!(stdout.contains("crates/tekai-engine/NOTICE.md"));
+    assert!(stdout.contains("no warranty"));
+    assert!(!stdout.contains("Licensed under the MIT License"));
+}
+
+#[test]
 #[ignore = "large-paper gate; CI runs it explicitly before installing optional TeX tools"]
 fn bundled_runtime_builds_large_papers_without_external_tools() {
     for (fixture, pages) in [("arXiv-2605.26379v1", 48), ("arXiv-2511.08544v3", 50)] {

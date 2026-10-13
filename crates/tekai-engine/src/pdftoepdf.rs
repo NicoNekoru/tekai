@@ -1,3 +1,11 @@
+// Handwritten Rust adaptation with subsequent modifications for Tekai.
+// Upstream TeX Live source revision 52dac44dde13a8310bbb8231e81c58be28cebe20.
+// Origin texk/web2c/pdftexdir/pdftoepdf.cc.
+// GPL-2.0-or-later.
+// Modified for Tekai. Licensing and provenance notice restored 2026-10-13.
+// Original copyrights and license terms are retained in the crate's
+// NOTICE.md and licenses/upstream-notices.txt.
+
 pub use crate::generated::backend::epdf::{
     embed_whole_font, epdf_create_fontdescriptor, epdf_mark_glyphs, get_fd_objnum, get_fn_objnum,
     is_subsetable,

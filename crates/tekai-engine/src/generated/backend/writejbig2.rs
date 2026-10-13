@@ -1,3 +1,11 @@
+// Rust translation and subsequent modifications for Tekai.
+// Upstream TeX Live source revision 52dac44dde13a8310bbb8231e81c58be28cebe20.
+// Origin texk/web2c/pdftexdir/writejbig2.c.
+// GPL-2.0-or-later.
+// Modified for Tekai. Licensing and provenance notice restored 2026-10-13.
+// Original copyrights and license terms are retained in the crate's
+// NOTICE.md and licenses/upstream-notices.txt.
+
 pub use crate::generated::pdftex0::{
     pdfendstream, pdfflush, zpdfbegindict, zpdfcreateobj, zpdfosgetosbuf,
 };

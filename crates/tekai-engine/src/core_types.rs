@@ -1,3 +1,11 @@
+// Upstream-derived records with subsequent Rust modifications for Tekai.
+// Upstream TeX Live source revision 52dac44dde13a8310bbb8231e81c58be28cebe20.
+// Origin TeX record declarations extracted from the translated pdfTeX core.
+// GPL-2.0-or-later.
+// Modified for Tekai. Licensing and provenance notice restored 2026-10-13.
+// Original copyrights and license terms are retained in the crate's
+// NOTICE.md and licenses/upstream-notices.txt.
+
 //! Shared core TeX types used by initialization, execution and state storage.
 //!
 //! Record field order and union views are part of the existing format-file

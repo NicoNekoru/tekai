@@ -3,7 +3,7 @@ name = "tekai-engine"
 version = "0.6.0"
 edition = "2021"
 description = "Self-contained exact TeX engine used by tekai."
-license = "MIT"
+license = "GPL-2.0-or-later"
 repository = "https://github.com/NicoNekoru/tekai"
 publish = false
 

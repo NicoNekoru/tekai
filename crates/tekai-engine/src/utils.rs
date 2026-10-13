@@ -1,3 +1,11 @@
+// Includes adapted upstream algorithms and handwritten Rust replacements.
+// Upstream TeX Live source revision 52dac44dde13a8310bbb8231e81c58be28cebe20.
+// Origin texk/web2c/pdftexdir/utils.c for retained pdfTeX algorithms.
+// GPL-2.0-or-later.
+// Modified for Tekai. Licensing and provenance notice restored 2026-10-13.
+// Original copyrights and license terms are retained in the crate's
+// NOTICE.md and licenses/upstream-notices.txt.
+
 //! Typed printf helpers for generated pdfTeX Rust.
 
 pub use crate::generated::backend::avlstuff::comp_string_entry;

@@ -1,3 +1,11 @@
+// Upstream-derived records with subsequent Rust modifications for Tekai.
+// Upstream TeX Live source revision 52dac44dde13a8310bbb8231e81c58be28cebe20.
+// Origin texk/kpathsea/types.h and related boundary-record headers.
+// LGPL-2.1-or-later upstream records; GPL-2.0-or-later combined crate.
+// Modified for Tekai. Licensing and provenance notice restored 2026-10-13.
+// Original copyrights and license terms are retained in the crate's
+// NOTICE.md and licenses/upstream-notices.txt.
+
 //! Canonical kpathsea boundary records.
 //!
 //! All generated modules and the Rust implementation share these exact types.

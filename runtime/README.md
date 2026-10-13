@@ -15,7 +15,7 @@ textual documentation; PDF manuals and documentation images are omitted.
 Tekai generates the combined `pdftex.map`, its Adobe-to-URW metric-name aliases,
 the filename index, and the regular BBM bitmap fonts described below. Package
 authors retain their copyrights and licenses. These files are not covered by
-the root project's MIT license. See the license notices inside each package
+the program's GPL license. See the license notices inside each package
 and `LICENSE.TeX-Live` for the distribution's copying guidance.
 
 The matching LaTeX format is embedded separately from `formats/pdflatex.fmt`.

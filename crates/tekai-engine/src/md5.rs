@@ -1,3 +1,11 @@
+// Rust implementation with adapted upstream state declarations.
+// Upstream TeX Live source revision 52dac44dde13a8310bbb8231e81c58be28cebe20.
+// Origin texk/web2c/libmd5/md5.h for the adapted state layout.
+// Original permissive notice for the state declarations is retained.
+// Modified for Tekai. Licensing and provenance notice restored 2026-10-13.
+// Original copyrights and license terms are retained in the crate's
+// NOTICE.md and licenses/upstream-notices.txt.
+
 //! Rust implementation of the small `libmd5` ABI used by pdfTeX support code.
 
 use core::ffi::c_int;

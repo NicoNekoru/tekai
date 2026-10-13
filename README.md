@@ -1,7 +1,7 @@
 # tekai
 
 [![CI](https://github.com/NicoNekoru/tekai/actions/workflows/ci.yml/badge.svg)](https://github.com/NicoNekoru/tekai/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
 
 `tekai` is a self-contained typesetting engine and Rust CLI for fast,
 fidelity-preserving LaTeX builds, live previews, dependency-aware caching,
@@ -278,4 +278,13 @@ the process in [SECURITY.md](SECURITY.md), not a public issue.
 
 ## License
 
-Tekai is available under the [MIT License](LICENSE).
+Tekai's CLI and Rust engine crates are available under the GNU General Public
+License, version 2 or any later version. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE.md). The exact engine includes translated and adapted pdfTeX
+code. Its [upstream provenance and notices](crates/tekai-engine/NOTICE.md) remain
+applicable after the Rust migration.
+
+The editor clients, vendored dependencies and bundled TeX packages and fonts
+retain their own licenses. Existing MIT grants for independently authored
+Tekai material remain in [LICENSE-MIT](LICENSE-MIT). They do not grant MIT
+permissions for the GPL-derived engine. Documents retain their own licensing.

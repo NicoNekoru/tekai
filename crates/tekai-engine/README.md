@@ -84,3 +84,12 @@ cargo test --workspace
 Changes that can affect layout or PDF output must also pass the repository's
 fixed-DPI rendered-page comparison on both large paper fixtures. See
 [`docs/development.md`](../../docs/development.md).
+
+## License and source provenance
+
+This crate contains modified Rust translations and adaptations of pdfTeX,
+TeX, e-TeX, and Web2C. It is distributed under `GPL-2.0-or-later`.
+See [source provenance and third-party notices](NOTICE.md) for
+the exact TeX Live import revision, source mappings, original copyright
+notices, and complete license texts. Bundled runtime data and dependencies
+retain their separate licenses.

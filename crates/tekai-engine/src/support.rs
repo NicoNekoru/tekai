@@ -416,7 +416,13 @@ pub unsafe fn printversionandexit(
         crate::stdio::puts((*__tekai_state_kpathsea).kpathsea_version_string);
 
         crate::stdio::puts(c"Copyright 2026 Tekai contributors.".as_ptr());
-        crate::stdio::puts(c"Licensed under the MIT License.".as_ptr());
+        crate::stdio::puts(
+            c"Includes pdfTeX code. See the upstream notices in crates/tekai-engine/NOTICE.md."
+                .as_ptr(),
+        );
+        crate::stdio::puts(c"Licensed under GNU GPL version 2 or any later version.".as_ptr());
+        crate::stdio::puts(c"This is free software, with no warranty.".as_ptr());
+        crate::stdio::puts(c"https://www.gnu.org/licenses/old-licenses/gpl-2.0.html".as_ptr());
         crate::stdio::puts(c"https://github.com/NicoNekoru/tekai".as_ptr());
 
         if !extra_info.is_null() {

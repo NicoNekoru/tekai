@@ -3,10 +3,13 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
-## 0.6.0 - 2026-10-12
+## 0.6.0 - Unreleased
 
 ### Rust engine and embedding
 
+- Correct the CLI and engine distribution to GPL-2.0-or-later. Restore exact
+  upstream pdfTeX provenance and copyright notices, preserve existing MIT
+  grants for independently authored material and keep third-party licenses.
 - Complete the replacement of production C utilities and internal C function
   ABIs with Rust implementations and shared record types. This includes
   allocation, stdio, strings, formatting, numeric scans, option parsing, regex,

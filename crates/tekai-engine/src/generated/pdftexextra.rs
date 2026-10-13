@@ -1,3 +1,11 @@
+// Rust translation and subsequent modifications for Tekai.
+// Upstream TeX Live source revision 52dac44dde13a8310bbb8231e81c58be28cebe20.
+// Origin texk/web2c/pdftexdir/pdftexextra.c, lib/texmfmp.c, and engine headers.
+// GPL-2.0-or-later.
+// Modified for Tekai. Licensing and provenance notice restored 2026-10-13.
+// Original copyrights and license terms are retained in the crate's
+// NOTICE.md and licenses/upstream-notices.txt.
+
 pub(crate) use crate::kpathsea::{
     kpathsea_cnf_line_env_progname, kpse_absolute_p, kpse_find_file, kpse_in_name_ok,
     kpse_maketex_option, kpse_readable_file, kpse_reset_program_name, kpse_set_program_enabled,
