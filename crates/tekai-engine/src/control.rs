@@ -90,6 +90,9 @@ pub(crate) fn profile_collector() -> Option<Rc<crate::engine_profile::Collector>
     })
 }
 
+// Resolve this owner at the actual interrupt poll. Inlining can hoist its TLS
+// lookup onto every token read even when the input/interrupt branch is unused.
+#[inline(never)]
 fn take_request() -> bool {
     ACTIVE.with(|active| {
         let pointer = active.get();

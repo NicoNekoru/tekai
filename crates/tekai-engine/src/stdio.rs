@@ -592,6 +592,9 @@ pub(crate) fn stdin() -> *mut Stream {
     with_session(|session| session.console.input.get())
 }
 
+// Keep cold flush callers from fetching console TLS on their hot entry paths.
+// Every actual call still selects the current invocation's console handle.
+#[inline(never)]
 pub(crate) fn stdout() -> *mut Stream {
     with_session(|session| session.console.output.get())
 }
