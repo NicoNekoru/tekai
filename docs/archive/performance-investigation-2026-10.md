@@ -1652,3 +1652,68 @@ do not establish the native Intel cause or replace its strict gate. No gate,
 fixture, oracle, clock boundary, iteration policy or deadline was weakened.
 Native CI on the next exact pushed revision must decide readiness. No release
 was made.
+
+## Native periodic-decoder results and CLI entry follow-up
+
+Run `38460895720` tested exact `96a91b3` against actual main `0b6e92e`.
+Both native correctness jobs passed 1,236 tests, including explicit large-paper,
+real-TeX and repeated owned-invocation coverage. MSRV and both Linux runner
+suites passed. ARM's complete strict gate passed all four cases, with image
+ratio 0.959691 and interval 0.943916 through 0.982773. All 99 pinned-reference
+pages matched text and pixels.
+
+Intel completed every primary case with 128 pairs and 32 complete units,
+without command failures, partial batches or integrity errors. Nested lookup
+and warm cache passed. Startup had ratio 1.069982 and interval 1.053688 through
+1.102590. Image had ratio 1.063875 and interval 1.017613 through 1.108353.
+Both intervals crossed 1.10, so the strict primary remained inconclusive,
+exit code 2. All output oracles, deterministic assertions, release-library
+tests and the complete 99-page reference comparison passed.
+
+Retained startup command medians were 22.314 and 24.219 ms for baseline and
+candidate. Median launch spans were 13.571 and 15.749 ms; post-launch spans
+were 8.343 and 8.311 ms. The observed difference concentrates in the launch
+boundary, not the latter span. Startup pair medians differed by slot, 1.151104
+and 0.992066. Image's four chronological eight-unit medians were 1.092431,
+1.098961, 1.055400 and 1.019528. These clocks cannot isolate loader, scheduler,
+I/O or engine causes. All outliers remain in the original scores.
+
+The separate failure-priority profile completed startup but failed during the
+fourth image initialization, before any measured image cohort or route control.
+Its bounded receipt identifies baseline s1/r1, engine execution under
+`/usr/bin/time -l`, command 107, a 30.009-second deadline and reaped wrapper
+leader returning -15. This was not warm-cache initialization or `pdftotext`.
+Its empty output does not identify the wrapped engine's internal cause.
+An initial host observer also timed out; that snapshot kept only its error
+string, not the nested structured receipt. None of this rescored the primary.
+
+Commit `5c77c91` removes avoidable CLI entry work. Both hidden dispatches now
+reuse the first argument read. Sole `--version` and `-V` use a minimal Clap
+command before profiling and full-schema setup. Clap still owns formatting,
+output streams and exit behavior. Combined, invalid and subcommand arguments
+retain the canonical full parser. Embedded-runner environment setup follows
+successful parsing and still precedes cancellation/thread setup. Canonical
+parser comparisons cover both flags, profile opt-in, renamed argv0 and twelve
+combined/invalid argument cases. This is a normal informational-command
+optimization, not a benchmark-path or environment special case.
+
+Local workspace verification passed 1,237 tests with 128 property cases.
+Strict Rust 1.99 Clippy, formatting and actual Rust 1.89 all-target/all-feature
+checks passed, with C/C++ build commands disabled. An assembly audit rejected
+a proposed adjacent-state-getter rewrite. Five sampled core, PNG and compressor
+functions already coalesce their two or three module captures into one emitted
+invocation resolver, Storage load and null check. No generated-file rewrite
+was made on that unsupported premise.
+
+Two sequential, fixed Rosetta diagnostics compared frozen `96a91b3` code with
+the CLI entry change. Startup completed 16 pairs, four crossed units and 64
+commands per batch, with median unit ratio 0.992899. Its report SHA-256 is
+`2d1011c5ed65576911755d58d655495ac4ae43deb2a63e4964f4b1c95d27bd02`.
+The image study retained all 16 pairs and four-command batches, with median
+unit ratio 0.980908. One unit was 1.165422, so this small study does not establish
+a clear image improvement. Its report SHA-256 is
+`16d083ebca6f0f3cadacf7feeb1ab8e63de6c693f52608edddc06695b035b191`.
+All original output, binary and input guards passed. These reused local build
+targets and separate paths under Rosetta, not the native strict CI setup.
+Historical failures and uncertainty remain retained. The strict gate and its
+30/5,400-second limits are unchanged. No release was made.
