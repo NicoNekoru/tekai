@@ -52,6 +52,9 @@ versioning.
   and validate selected bibliography inputs before restoring cached outputs.
   Recover malformed owned cache metadata and privately materialize compressed
   formats without trusting adjacent raw companions or writing shared installs.
+  Validate compressed format input before optional-cache fallback, including
+  nonstandard suffixes and output-directory selection. Malformed higher-priority
+  compressed formats fail instead of selecting a lower-priority format.
 
 ### Lint, formatting and verification
 

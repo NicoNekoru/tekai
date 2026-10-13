@@ -240,6 +240,26 @@ pub unsafe fn recorder_record_output(name: *const c_char) {
     unsafe { record_name(c"OUTPUT".as_ptr(), name) }
 }
 
+unsafe fn output_input_name(
+    directory: *const c_char,
+    name: *const c_char,
+    filefmt: c_int,
+) -> std::io::Result<*mut c_char> {
+    let joined = unsafe { concat3_ptr(directory, c"/".as_ptr(), name) };
+    if filefmt != crate::kpathsea::KPSE_FMT_FORMAT as c_int {
+        return Ok(joined);
+    }
+    // Output-directory formats have the same priority as before, but must use
+    // the same validation/materialization policy as ordinary format lookup.
+    let selected = crate::kpathsea::check_format_path(Path::new(OsStr::from_bytes(unsafe {
+        c_bytes(joined)
+    })));
+    unsafe { crate::allocation::free(joined.cast()) };
+    Ok(selected?
+        .map(|path| unsafe { alloc_copy(path.as_os_str().as_bytes()) })
+        .unwrap_or(ptr::null_mut()))
+}
+
 pub(crate) unsafe fn open_input(
     f_ptr: *mut *mut FILE,
     filefmt: c_int,
@@ -259,12 +279,22 @@ pub(crate) unsafe fn open_input(
         if !(*__tekai_state_openclose).output_directory.is_null()
             && kpse_absolute_p(input_name, FALSE) == 0
         {
-            let fname = concat3_ptr(
+            let fname = output_input_name(
                 (*__tekai_state_openclose).output_directory,
-                c"/".as_ptr(),
                 input_name,
-            );
-            *f_ptr = crate::stdio::fopen(fname, fopen_mode);
+                filefmt,
+            )
+            .unwrap_or_else(|error| {
+                use std::io::Write;
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "tekai: cannot load output-directory format: {error}"
+                );
+                crate::termination::exit(1)
+            });
+            if !fname.is_null() {
+                *f_ptr = crate::stdio::fopen(fname, fopen_mode);
+            }
             if !(*f_ptr).is_null() && dir_p(fname) != 0 {
                 crate::stdio::fclose(*f_ptr);
                 *f_ptr = ptr::null_mut();
@@ -508,6 +538,163 @@ mod tests {
     use libc::c_void;
     use proptest::prelude::*;
     use std::ffi::{CStr, CString};
+
+    #[test]
+    fn output_directory_formats_share_validation_and_optional_cache_policy() {
+        use std::io::Write;
+        use std::os::unix::ffi::OsStrExt;
+        let fixture = std::env::temp_dir().join(format!(
+            "tekai-output-format-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&fixture).unwrap();
+        let out = fixture.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let blocked_cache = fixture.join("blocked-cache");
+        std::fs::write(&blocked_cache, b"not a directory").unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(b"format contents").unwrap();
+        let compressed = encoder.finish().unwrap();
+        let source = out.join("chosen.fmt");
+        let directory = CString::new(out.as_os_str().as_encoded_bytes()).unwrap();
+        let mut environment = crate::environment::EnvironmentSession::new().unwrap();
+        crate::environment::EnvironmentSession::scope(environment.as_mut(), || {
+            for cache in [fixture.join("cache"), blocked_cache.clone()] {
+                crate::environment::set(
+                    std::ffi::OsStr::new("TEKAI_ENGINE_CACHE"),
+                    cache.as_os_str(),
+                )
+                .unwrap();
+                std::fs::write(&source, &compressed).unwrap();
+                let name = unsafe {
+                    super::output_input_name(
+                        directory.as_ptr(),
+                        c"chosen.fmt".as_ptr(),
+                        crate::kpathsea::KPSE_FMT_FORMAT as i32,
+                    )
+                }
+                .unwrap();
+                assert!(!name.is_null());
+                let selected = std::path::PathBuf::from(std::ffi::OsStr::from_bytes(unsafe {
+                    CStr::from_ptr(name).to_bytes()
+                }));
+                unsafe { crate::allocation::free(name.cast()) };
+                if cache == blocked_cache {
+                    assert_eq!(selected, source);
+                } else {
+                    assert_ne!(selected, source);
+                    assert_eq!(std::fs::read(selected).unwrap(), b"format contents");
+                }
+                for offset in [8, 4] {
+                    let mut invalid = compressed.clone();
+                    let at = invalid.len() - offset;
+                    invalid[at] ^= 1;
+                    std::fs::write(&source, invalid).unwrap();
+                    let name = unsafe {
+                        super::output_input_name(
+                            directory.as_ptr(),
+                            c"chosen.fmt".as_ptr(),
+                            crate::kpathsea::KPSE_FMT_FORMAT as i32,
+                        )
+                    };
+                    assert!(name.is_err());
+                }
+                // Ordinary inputs retain their direct output-directory path.
+                let name = unsafe {
+                    super::output_input_name(
+                        directory.as_ptr(),
+                        c"chosen.fmt".as_ptr(),
+                        super::KPSE_TEX_FORMAT,
+                    )
+                }
+                .unwrap();
+                assert_eq!(
+                    unsafe { CStr::from_ptr(name) }.to_bytes(),
+                    source.as_os_str().as_bytes()
+                );
+                unsafe { crate::allocation::free(name.cast()) };
+                std::fs::write(&source, b"raw format").unwrap();
+                let name = unsafe {
+                    super::output_input_name(
+                        directory.as_ptr(),
+                        c"chosen.fmt".as_ptr(),
+                        crate::kpathsea::KPSE_FMT_FORMAT as i32,
+                    )
+                }
+                .unwrap();
+                assert!(!name.is_null());
+                unsafe { crate::allocation::free(name.cast()) };
+            }
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(blocked_cache).unwrap(), b"not a directory");
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn invalid_output_format_does_not_open_a_lower_priority_format() {
+        use std::cell::Cell;
+        use std::io::Write;
+        let fixture = std::env::temp_dir().join(format!(
+            "tekai-output-format-priority-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&fixture).unwrap();
+        let out = fixture.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(b"format contents").unwrap();
+        let mut invalid = encoder.finish().unwrap();
+        let crc = invalid.len() - 8;
+        invalid[crc] ^= 1;
+        std::fs::write(out.join("chosen.fmt"), invalid).unwrap();
+        // This file is opened only by the ordinary stream interface, never
+        // interpreted as engine format data, even if the regression returns.
+        std::fs::write(fixture.join("chosen.fmt"), b"lower-priority contents").unwrap();
+        for cache in [fixture.join("cache"), fixture.join("blocked-cache")] {
+            if cache.ends_with("blocked-cache") {
+                std::fs::write(&cache, b"not a directory").unwrap();
+            }
+            let options = crate::InvocationOptions {
+                working_directory: Some(fixture.clone()),
+                environment: vec![("TEKAI_ENGINE_CACHE".into(), Some(cache.into_os_string()))],
+                ..crate::InvocationOptions::default()
+            };
+            let invocation = crate::Invocation::new(vec![b"pdflatex".to_vec()], &options).unwrap();
+            let opened = Cell::new(false);
+            let completion = invocation
+                .run_with_operation(options, |_, _| unsafe {
+                    (*super::state()).output_directory =
+                        super::alloc_copy(out.as_os_str().as_encoded_bytes());
+                    super::set_nameoffile_from_c_str(c"chosen.fmt".as_ptr());
+                    let mut file = std::ptr::null_mut();
+                    opened.set(
+                        super::open_input(
+                            &mut file,
+                            crate::kpathsea::KPSE_FMT_FORMAT as i32,
+                            c"rb".as_ptr(),
+                        ) != 0,
+                    );
+                    if !file.is_null() {
+                        crate::stdio::fclose(file);
+                    }
+                    crate::EngineCompletion::Clean
+                })
+                .unwrap();
+            assert_eq!(completion, crate::EngineCompletion::Errors);
+            assert!(!opened.get());
+            assert!(!crate::invocation_state::is_active());
+        }
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
 
     #[test]
     fn recorder_temporary_creation_retries_only_collisions_and_never_truncates() {

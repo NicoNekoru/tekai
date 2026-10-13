@@ -37,7 +37,7 @@ const KPSE_TFM_FORMAT: c_uint = 3;
 const KPSE_AFM_FORMAT: c_uint = 4;
 const KPSE_BIB_FORMAT: c_uint = 6;
 const KPSE_BST_FORMAT: c_uint = 7;
-const KPSE_FMT_FORMAT: c_uint = 10;
+pub(crate) const KPSE_FMT_FORMAT: c_uint = 10;
 const KPSE_FONTMAP_FORMAT: c_uint = 11;
 const KPSE_TEX_FORMAT: c_uint = 26;
 const KPSE_TEXPOOL_FORMAT: c_uint = 28;
@@ -363,8 +363,11 @@ fn check_direct_path(path: &Path) -> Option<PathBuf> {
     None
 }
 
-fn check_format_path(path: &Path) -> Option<PathBuf> {
-    let path = crate::working_directory::resolve(path).ok()?;
+pub(crate) fn check_format_path(path: &Path) -> io::Result<Option<PathBuf>> {
+    let path = match crate::working_directory::resolve(path) {
+        Ok(path) => path,
+        Err(_) => return Ok(None),
+    };
     if path.extension() == Some(OsStr::new("fmt")) {
         if let Ok(raw) = format_cache::materialize_file(&path, &embedded_engine_cache_root()) {
             if raw != path && crate::invocation_state::is_active() {
@@ -376,10 +379,18 @@ fn check_format_path(path: &Path) -> Option<PathBuf> {
                     unsafe { crate::openclose::recorder_record_input(source.as_ptr()) };
                 }
             }
-            return Some(raw);
+            return Ok(Some(raw));
         }
     }
-    check_direct_path(&path)
+    // Cache creation/publication is optional, source validation is not.
+    // Exact format requests can have other extensions. The streaming engine
+    // reader need not read beyond its last item, so closing it cannot substitute
+    // for checking the gzip footer.
+    if format_cache::validate_file(&path)? {
+        Ok(Some(path))
+    } else {
+        Ok(None)
+    }
 }
 
 fn embedded_pdflatex_format(name: &str) -> Option<PathBuf> {
@@ -634,32 +645,39 @@ fn texlive_tree_rank(path: &str) -> u8 {
     }
 }
 
-fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
+fn find_format_path(name: &str) -> io::Result<Option<PathBuf>> {
     let requested = Path::new(name);
     if requested.is_absolute()
         || name.starts_with("./")
         || name.starts_with("../")
-        || (format == KPSE_FMT_FORMAT && name.contains('/'))
+        || name.contains('/')
     {
-        return with_candidate_names(name, format, |candidate| {
-            let path = Path::new(candidate);
-            if format == KPSE_FMT_FORMAT {
-                check_format_path(path)
-            } else {
-                check_direct_path(path)
-            }
-        });
+        return with_candidate_names(name, KPSE_FMT_FORMAT, |candidate| {
+            check_format_path(Path::new(candidate)).transpose()
+        })
+        .transpose();
     }
 
-    if format == KPSE_FMT_FORMAT {
-        for dir in build_format_search_dirs() {
-            if let Some(found) = with_candidate_names(name, format, |candidate| {
-                check_format_path(&dir.join(candidate))
-            }) {
-                return Some(found);
-            }
+    for dir in build_format_search_dirs() {
+        if let Some(found) = with_candidate_names(name, KPSE_FMT_FORMAT, |candidate| {
+            check_format_path(&dir.join(candidate)).transpose()
+        }) {
+            return found.map(Some);
         }
-        return embedded_pdflatex_format(name);
+    }
+    Ok(embedded_pdflatex_format(name))
+}
+
+fn find_file_path(name: &str, format: c_uint) -> Option<PathBuf> {
+    assert_ne!(
+        format, KPSE_FMT_FORMAT,
+        "format lookup requires typed source errors"
+    );
+    let requested = Path::new(name);
+    if requested.is_absolute() || name.starts_with("./") || name.starts_with("../") {
+        return with_candidate_names(name, format, |candidate| {
+            check_direct_path(Path::new(candidate))
+        });
     }
 
     let base = crate::working_directory::current().ok()?;
@@ -988,7 +1006,22 @@ pub(crate) unsafe fn kpse_find_file(
     let Some(name) = c_filename_to_string(name) else {
         return ptr::null_mut();
     };
-    match find_file_path(&name, format) {
+    let found = if format == KPSE_FMT_FORMAT {
+        match find_format_path(&name) {
+            Ok(found) => found,
+            Err(error) => {
+                use std::io::Write;
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "tekai: cannot read format {name:?}: {error}"
+                );
+                crate::termination::exit(1);
+            }
+        }
+    } else {
+        find_file_path(&name, format)
+    };
+    match found {
         Some(path) => unsafe { alloc_bytes(path.as_os_str().as_bytes()) },
         None => ptr::null_mut(),
     }
@@ -1153,15 +1186,184 @@ mod tests {
         let mut environment = crate::environment::EnvironmentSession::new().unwrap();
         crate::environment::EnvironmentSession::scope(environment.as_mut(), || {
             crate::environment::set(OsStr::new("TEKAI_ENGINE_CACHE"), cache.as_os_str()).unwrap();
-            let materialized = check_format_path(&source).unwrap();
+            let materialized = check_format_path(&source).unwrap().unwrap();
             assert_ne!(materialized, source);
             assert!(materialized.starts_with(cache.canonicalize().unwrap()));
             assert_eq!(std::fs::read(&materialized).unwrap(), bytes);
-            assert_eq!(check_format_path(&source), Some(materialized));
+            assert_eq!(check_format_path(&source).unwrap(), Some(materialized));
             assert!(!crate::invocation_state::is_active());
         })
         .unwrap();
         assert!(!crate::invocation_state::is_active());
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn format_materialization_fallback_requires_valid_readable_source() {
+        use std::io::Write;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let fixture = std::env::temp_dir().join(format!(
+            "tekai-format-fallback-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&fixture).unwrap();
+        let source = fixture.join("valid.fmt");
+        let raw = fixture.join("raw.fmt");
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder
+            .write_all(b"validated fallback format contents")
+            .unwrap();
+        let compressed = encoder.finish().unwrap();
+        std::fs::write(&source, &compressed).unwrap();
+        std::fs::write(&raw, b"uncompressed fallback format contents").unwrap();
+        let alternative_source = fixture.join("valid.fmt.gz");
+        let alternative_raw = fixture.join("raw.fmt.gz");
+        std::fs::write(&alternative_source, &compressed).unwrap();
+        std::fs::write(&alternative_raw, b"uncompressed fallback format contents").unwrap();
+
+        for cache_available in [true, false] {
+            let cache = fixture.join(if cache_available {
+                "cache"
+            } else {
+                "blocked-cache"
+            });
+            if !cache_available {
+                std::fs::write(&cache, b"not a directory").unwrap();
+                assert!(format_cache::materialize_file(&source, &cache).is_err());
+            }
+            let mut environment = crate::environment::EnvironmentSession::new().unwrap();
+            crate::environment::EnvironmentSession::scope(environment.as_mut(), || {
+                crate::environment::set(OsStr::new("TEKAI_ENGINE_CACHE"), cache.as_os_str())
+                    .unwrap();
+                let located = check_format_path(&source).unwrap().unwrap();
+                if cache_available {
+                    assert_ne!(located, source);
+                    assert_eq!(
+                        std::fs::read(located).unwrap(),
+                        b"validated fallback format contents"
+                    );
+                } else {
+                    assert_eq!(located, source);
+                }
+                assert_eq!(check_format_path(&raw).unwrap(), Some(raw.clone()));
+                assert_eq!(
+                    find_format_path(alternative_source.to_str().unwrap()).unwrap(),
+                    Some(alternative_source.clone())
+                );
+                assert_eq!(
+                    check_format_path(&alternative_raw).unwrap(),
+                    Some(alternative_raw.clone())
+                );
+
+                for extension in ["fmt", "fmt.gz"] {
+                    for offset in [8, 4] {
+                        let invalid = fixture.join(format!("invalid-footer-{offset}.{extension}"));
+                        let mut bytes = compressed.clone();
+                        let index = bytes.len() - offset;
+                        bytes[index] ^= 1;
+                        std::fs::write(&invalid, bytes).unwrap();
+                        assert!(find_format_path(invalid.to_str().unwrap()).is_err());
+                    }
+                    let truncated = fixture.join(format!("truncated.{extension}"));
+                    std::fs::write(&truncated, &compressed[..compressed.len() - 3]).unwrap();
+                    assert!(find_format_path(truncated.to_str().unwrap()).is_err());
+                    let truncated_header = fixture.join(format!("truncated-header.{extension}"));
+                    std::fs::write(&truncated_header, &compressed[..2]).unwrap();
+                    assert!(find_format_path(truncated_header.to_str().unwrap()).is_err());
+                }
+                assert!(check_format_path(&fixture.join("missing.fmt"))
+                    .unwrap()
+                    .is_none());
+                let directory = fixture.join("directory.fmt");
+                if !directory.exists() {
+                    std::fs::create_dir(&directory).unwrap();
+                }
+                assert!(check_format_path(&directory).unwrap().is_none());
+                assert!(!crate::invocation_state::is_active());
+            })
+            .unwrap();
+            if !cache_available {
+                assert_eq!(std::fs::read(&cache).unwrap(), b"not a directory");
+            }
+        }
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn invalid_named_format_stops_before_valid_lower_priority_sources() {
+        use std::io::Write;
+        let fixture = std::env::temp_dir().join(format!(
+            "tekai-format-priority-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let higher = fixture.join("higher");
+        let lower = fixture.join("lower");
+        std::fs::create_dir_all(&higher).unwrap();
+        std::fs::create_dir(&lower).unwrap();
+        let blocked_cache = fixture.join("blocked-cache");
+        std::fs::write(&blocked_cache, b"not a directory").unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(b"format contents").unwrap();
+        let compressed = encoder.finish().unwrap();
+        let mut corrupt = compressed.clone();
+        let crc = corrupt.len() - 8;
+        corrupt[crc] ^= 1;
+
+        let mut environment = crate::environment::EnvironmentSession::new().unwrap();
+        crate::environment::EnvironmentSession::scope(environment.as_mut(), || {
+            crate::environment::set(OsStr::new("TEKAI_ENGINE_CACHE"), blocked_cache.as_os_str())
+                .unwrap();
+            crate::environment::set(OsStr::new("TEKAI_ENGINE_FORMATS"), OsStr::new("")).unwrap();
+            crate::environment::set(OsStr::new("TEXFORMATS"), lower.as_os_str()).unwrap();
+            let mut directory =
+                crate::working_directory::WorkingDirectory::new(Some(higher.clone())).unwrap();
+            directory
+                .as_mut()
+                .scope(|| {
+                    for extension in ["fmt", "fmt.gz"] {
+                        let name = format!("priority-format.{extension}");
+                        let selected = higher.join(&name);
+                        let alternate = lower.join(&name);
+                        std::fs::write(&selected, &corrupt).unwrap();
+                        std::fs::write(&alternate, &compressed).unwrap();
+                        assert_eq!(
+                            check_format_path(&alternate).unwrap(),
+                            Some(alternate.clone())
+                        );
+                        assert!(find_format_path(&name).is_err());
+                        if extension == "fmt" {
+                            assert!(find_format_path("priority-format").is_err());
+                            let request = CString::new(name.as_bytes()).unwrap();
+                            let stopped = crate::termination::catch(|| unsafe {
+                                kpse_find_file(request.as_ptr(), KPSE_FMT_FORMAT, TRUE)
+                            });
+                            if let Ok(pointer) = stopped {
+                                unsafe { crate::allocation::free(pointer.cast()) };
+                            }
+                            assert!(matches!(stopped, Err(crate::EngineCompletion::Errors)));
+                        }
+
+                        // A missing or nonregular first candidate may still select
+                        // the valid lower path. Cache unavailability is harmless.
+                        std::fs::remove_file(&selected).unwrap();
+                        assert_eq!(find_format_path(&name).unwrap(), Some(alternate.clone()));
+                        std::fs::create_dir(&selected).unwrap();
+                        assert_eq!(find_format_path(&name).unwrap(), Some(alternate));
+                    }
+                })
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(blocked_cache).unwrap(), b"not a directory");
         std::fs::remove_dir_all(fixture).unwrap();
     }
 

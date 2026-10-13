@@ -53,6 +53,38 @@ pub(super) fn materialize_file(path: &Path, cache: &Path) -> io::Result<PathBuf>
     Err(io::Error::other("format source changed while being read"))
 }
 
+/// Optional cache failures may fall back to the original file only after the
+/// selected first gzip member is validated through decoder EOF. As with
+/// materialization, trailing source bytes are not additional gzip members to
+/// validate. Stable descriptor metadata does not prevent a later path change.
+/// False means absent, nonregular or unopenable. Once a regular source is open,
+/// read/decompression failures are errors, not permission to search elsewhere.
+pub(super) fn validate_file(path: &Path) -> io::Result<bool> {
+    for _ in 0..3 {
+        if !fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+            return Ok(false);
+        }
+        let mut source = match File::open(path) {
+            Ok(source) => source,
+            Err(_) => return Ok(false),
+        };
+        let initial = source.metadata()?;
+        if !initial.is_file() {
+            return Ok(false);
+        }
+        let mut header = [0; 2];
+        let count = source.read(&mut header)?;
+        if count == 2 && header == [0x1f, 0x8b] {
+            source.seek(SeekFrom::Start(0))?;
+            decode_raw(&mut source, &mut io::sink())?;
+        }
+        if metadata_identity(&initial) == metadata_identity(&source.metadata()?) {
+            return Ok(true);
+        }
+    }
+    Err(io::Error::other("format source changed while being read"))
+}
+
 /// Embedded bytes are immutable and their build-time SHA-256 is already known.
 pub(super) fn materialize_embedded(
     bytes: &[u8],
@@ -225,7 +257,7 @@ fn digest_reader(reader: &mut impl Read) -> io::Result<String> {
     }
 }
 
-fn decode_raw(input: impl Read, output: &mut File) -> io::Result<String> {
+fn decode_raw(input: impl Read, output: &mut impl Write) -> io::Result<String> {
     let mut decoder = flate2::read::GzDecoder::new(input);
     let mut hasher = Sha256::new();
     let mut buffer = [0; BUFFER_SIZE];
@@ -594,6 +626,38 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn fallback_validation_checks_first_member_footer_without_a_cache() {
+        let test = TestDirectory::new();
+        let compressed = gzip(b"format-content");
+        fs::write(test.source(), &compressed).unwrap();
+        assert!(validate_file(&test.source()).unwrap());
+        assert!(!test.cache().exists());
+
+        let mut trailing = compressed.clone();
+        trailing.extend_from_slice(&gzip(b"another member is not selected"));
+        fs::write(test.source(), trailing).unwrap();
+        assert!(validate_file(&test.source()).unwrap());
+
+        for offset in [8, 4] {
+            let mut corrupt = compressed.clone();
+            let index = corrupt.len() - offset;
+            corrupt[index] ^= 1;
+            fs::write(test.source(), corrupt).unwrap();
+            assert!(validate_file(&test.source()).is_err());
+        }
+        let mut truncated = compressed;
+        truncated.truncate(truncated.len() - 3);
+        fs::write(test.source(), truncated).unwrap();
+        assert!(validate_file(&test.source()).is_err());
+
+        fs::write(test.source(), b"uncompressed-format-content").unwrap();
+        assert!(validate_file(&test.source()).unwrap());
+        assert!(!test.cache().exists());
+        assert!(!validate_file(&test.0.join("missing.fmt")).unwrap());
+        assert!(!validate_file(&test.0).unwrap());
     }
 
     #[test]
