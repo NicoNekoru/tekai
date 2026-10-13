@@ -1568,3 +1568,87 @@ The buffered source passed all 1,234 local workspace tests and 508 Rosetta
 x86 engine tests with 512 property cases. Five workspace and three engine
 helper ignores remained unchanged. Strict native workspace Clippy and actual
 Rust 1.89 all-target/all-feature compilation passed with C/C++ commands disabled.
+
+## Strict Intel image uncertainty and periodic decoder follow-up
+
+Run `38440595585` compared exact candidate `8d7fb9c` with actual main
+`0b6e92e`. Both native correctness jobs passed 1,235 tests. MSRV, Linux runner
+checks and the entire ARM performance job passed. Intel completed all four
+cases with 128 pairs and 32 crossed units each, retaining balanced schedules,
+all original oracles and immutable build/journal bindings. No primary command
+failed or timed out. Candidate warm-cache initializations took 15.901 and
+15.226 seconds. The historical initialization timeout was not reproduced,
+which does not identify its cause or prove that buffering fixed it.
+
+Intel startup, nested lookup and warm-cache passed. Image had ratio 1.089942
+and interval 1.065070 through 1.111292. Its interval crossed the unchanged
+1.10 boundary, so the primary exited 2 as inconclusive. This is neither a
+strict pass nor a demonstrated regression whose entire interval exceeds 1.10.
+The failed result was retained without rescoring or rerunning unchanged code.
+
+The separate profile's fixed image-first plan completed all 32 instrumented
+image commands and 16 same-candidate public/worker control pairs. Candidate
+PNG-decode medians were 40.381 and 40.210 ms in the two slots. PNG-write medians
+were 66.865 and 65.868 ms. These phases overlap the engine body and cannot be
+added to lifecycle costs. Main lacks matching engine-phase records, so these
+absolute costs do not locate the baseline/candidate gap. Public/worker controls
+also remain descriptive and separate from primary scores.
+
+The profile itself ended with an error after its fixed 600-second budget,
+reporting 638.378 seconds including final diagnostic work. Image, startup and
+nested completed. Warm completed its four initializations and 20 measured
+hits. The final host snapshot recorded `top` returning -15 after deadline
+cleanup, but retained only its error string rather than the structured receipt.
+The following candidate version control never launched. Its preassigned ID
+is not a process receipt. This was diagnostic budget exhaustion, not a primary
+warm-cache timeout.
+
+Commit `5f3c9aa` adds one pure-Rust decoder specialization for distance four
+and length 258. It snapshots four initialized history bytes, then fills the
+exact destination with sixteen 16-byte pattern copies and two tail bytes.
+Both original full-room admission checks, including their 15-byte padding
+requirement, remain intact. Every other short match retains the unchanged
+prefix-doubling helper. Near-end, queued-match and checksum rules are unchanged.
+The library still forbids unsafe code. Test-only work counts describe source
+operations rather than emitted machine instructions.
+
+The expanded exhaustive oracle checks 537,600 distance/length/offset/history
+and byte-pattern combinations. It retains the original prefix helper's
+at-most-nine-copy and upstream-copy bounds separately. Independently encoded
+streams exercise specialized and fallback routes at both actual dispatch
+sites, the padding threshold, queued resumption, zero-space reads and valid
+or corrupt withheld checksum bytes. Local workspace tests passed 1,235 tests.
+After whitespace-only formatting corrections, the final vendor suite passed
+22 tests and Rosetta vendor/engine suites passed 530 tests, with 512 property
+cases and seed `819472650139`. True Rust 1.89 all-target/all-feature checks,
+strict Rust 1.99 Clippy and formatting passed with candidate C/C++ commands
+disabled. Five pre-existing workspace ignores remain, including the large-paper
+case that hosted CI executes explicitly.
+
+A single fixed Rosetta decoder study compared this implementation with exact
+`8d7fb9c` on the original eight PNGs. Both modes completed 16 balanced AB/BA
+pairs with 64 iterations per role batch. All 32,768 measured outputs passed
+independent full-byte/SHA and progress-counter checks. Pre/post input, source,
+manifest, binary and read-trace guards matched. Full-buffer median ratio was
+0.618836 and PNG-buffer ratio was 0.464047. Every summed decode batch exceeded
+the predeclared 50-ms descriptive minimum. The whole study finished in 399.044
+seconds of its fixed 600-second budget with empty stderr. It retains one actual
+output at a time. Validation and output drop occur between timed decode spans
+and affect cache/allocator state. Its JSONL SHA-256 is
+`a292d36452f07bd5380dbfd6ddf43ecf93eb2a5e7c2151db35eec1444ee3468e`.
+
+The separate whole-CLI Rosetta study used frozen `8d7fb9c` and new executables,
+independent cells, 16 pairs, four commands per batch and four complete crossed
+units. All four units favored the candidate, with median unit ratio 0.987161.
+All 128 scored commands completed, and all 40 original image oracle receipts
+passed. The driver enforces prepared-cache, input and binary guards before
+each batch, but does not serialize those prechecks or prepared snapshots.
+The report retains initial executable digests and four final cell receipts.
+The full report SHA-256 is
+`966c618ae23578341de360ac78b433240bc07beef929eacea9ebee4c73b6a8cd`.
+The decoder and CLI studies ran sequentially. Both used an ARM host through
+Rosetta, separate source paths and reused build targets. These observations
+do not establish the native Intel cause or replace its strict gate. No gate,
+fixture, oracle, clock boundary, iteration policy or deadline was weakened.
+Native CI on the next exact pushed revision must decide readiness. No release
+was made.
