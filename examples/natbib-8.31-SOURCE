@@ -1,0 +1,41 @@
+Matching source for the LeJEPA fixture's natbib.sty
+
+natbib-8.31-sources.tar.gz contains unmodified natbib 8.31 source files,
+dated 2009/07/16, by Patrick W. Daly. Its LPPL grants and full license text
+are retained inside. The archive includes the complete seven-file manifest
+in README.v831, both upstream README files, lppl.txt and bibentry.drv.
+
+Source distribution
+https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2009/texlive2009.iso
+TUG's documented historical mirror https://www.tug.org/historic/
+
+The mirror publishes ISO SHA-256
+fcd61be1ed2c82c4ac8d9ee4e5c8a7c1003ffb605d02174a35360f7c4b50644a.
+Only bounded HTTPS ranges were retrieved, so Tekai did not independently
+recompute the entire ISO digest. The natbib.dtx ISO member is
+texmf-dist/source/latex/natbib/natbib.dtx, at bytes 2055108608 through
+2055356990. Its header and README identify version 8.31. The same ISO's
+generated natbib.sty matches the existing paper fixture byte-for-byte,
+SHA-256 88bc70c0e48461934cab5b2accef06b74a8b3ac45ad03ccd3f2a6b7e0d6d530d.
+
+Tekai repacked the source files on 13 October 2026 without changing their
+contents. The archived form prevents the older .bst files from entering
+ordinary recursive project lookup. The original paper fixture is unchanged.
+To obtain the documented source and installation files, extract the archive
+into a separate directory, then follow README.v831.
+
+Archive SHA-256
+88ef3804f51bc719b1593aaf30891a98d7dc40fe84dbca55c29cabd08153c113
+
+Member SHA-256
+d7e80d7d4fd0899383dde263703a3fa12563c74d18e53ea63b5761fb08be57ae  natbib.dtx
+4118fc89ba413ab24efe6d58db5883526ee01707e10aefde8b07f362a74c5cbb  natbib.ins
+e908c2ee0486c79342ca722d534735655341e7d2dd7efbd30490a60df324f39c  bibentry.dtx
+b8b842da82bfd8900cc198ac3e8dc39a421fc0f48f670fb6cbf0275391243b25  bibentry.ins
+44a715d86a75c5ebbaee5f50a9fa6683432c9a0ebbe14b44550393b1433915b5  bibentry.drv
+21eefa76f1c967f5074776fcef096c0f8f2b9e42347e84b62e1dbb121dcae486  plainnat.bst
+9ab1f8c5dfdb7e247e96ec877ed1ee3abea2a40feecec649eb8214aefa869dc3  abbrvnat.bst
+2b257bc5d35c5716691f67615b3b29cc718d05b6b998f87473c924dec0a652e9  unsrtnat.bst
+9306ace24312d008cab47593ca3ac0e63e1e4095fe801f916f6b01f9ea76a204  README.1st
+1f6ca5ccc685cf623bfa0617bc4bf493a8ffcbaaf27df013c16127222e4d6bfa  README.v831
+5f05fcf6ef25a6c31bccd2df7c0c46b23107bbeb2ce5cdba74efb5cc357f4dbb  lppl.txt

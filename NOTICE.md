@@ -40,6 +40,11 @@ pdfTeX distribution.
   independent files. The archived `README.Tekai` mentions the historical root
   MIT license only to exclude bundled package data from that license. Use this
   notice for the program's current licensing.
+- The two arXiv paper fixtures retain their authors' Creative Commons grants
+  and the separate notices of included TeX styles. Their attribution, exact
+  source versions and licensing are recorded in [examples/NOTICE](examples/NOTICE).
+  The program's GPL grant does not relicense these documents or third-party
+  styles.
 
 The repository's tagged source archives include the maintained Rust source,
 build scripts, vendored code, runtime data and the notices above. They are not

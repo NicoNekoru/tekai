@@ -1,0 +1,47 @@
+Research paper fixtures
+
+The following papers are independent regression fixtures. Their authors do
+not endorse Tekai. The program's GPL license does not replace their licenses
+or the separate copyright and license notices in included third-party files.
+
+examples/arXiv-2511.08544v3
+
+LeJEPA: Provable and Scalable Self-Supervised Learning Without the Heuristics
+Randall Balestriero and Yann LeCun
+arXiv version 3, 14 November 2025
+https://arxiv.org/abs/2511.08544v3
+Original TeX source https://arxiv.org/src/2511.08544v3
+Creative Commons Attribution-ShareAlike 4.0 International, CC BY-SA 4.0
+https://creativecommons.org/licenses/by-sa/4.0/
+Legal code https://creativecommons.org/licenses/by-sa/4.0/legalcode.en
+
+examples/arXiv-2605.26379v1
+
+When Does LeJEPA Learn a World Model?
+David Klindt, Yann LeCun and Randall Balestriero
+arXiv version 1, 25 May 2026
+https://arxiv.org/abs/2605.26379v1
+Original TeX source https://arxiv.org/src/2605.26379v1
+Creative Commons Attribution 4.0 International, CC BY 4.0
+https://creativecommons.org/licenses/by/4.0/
+Legal code https://creativecommons.org/licenses/by/4.0/legalcode.en
+
+Source preservation and separate TeX styles
+
+The 68 and 26 files originally imported in commit
+bc00be012f7155e0024e1cb15a83bb1c2498b18f match their respective arXiv source
+archives byte-for-byte, checked on 13 October 2026. Tekai has not changed
+those paper files. This notice and distribution-source additions are separate
+from the original archives. Retain the original file headers and notices.
+
+The LeJEPA fixture includes Patrick W. Daly's natbib 8.31 and Piet van
+Oostrum's fancyhdr 3.2 under the LaTeX Project Public License, version 1 or
+later, as stated in their file headers. The paper's Creative Commons grant
+does not replace those terms. natbib-8.31-sources.tar.gz contains natbib.dtx
+and the matching package distribution required by the generated natbib.sty's
+notice. See natbib-8.31-SOURCE for provenance and file hashes. Keeping this
+source package archived prevents its older bibliography styles from shadowing
+the bundled styles during fixture compilation. Other included styles retain
+their original
+attribution and any file-specific terms, including the NeurIPS style credits
+to Roman Garnett and the earlier nips15submit_e.sty contributors.
