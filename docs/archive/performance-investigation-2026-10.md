@@ -2,7 +2,7 @@
 
 This is the investigation record before the pre-merge cleanup. Its open-bug
 labels and commands describe the revisions named below, not current behavior.
-Use [the current status ledger](../performance-audit.md) and
+Use [the revision-scoped verification summary](../performance-audit.md) and
 [development instructions](../development.md) for supported checks.
 
 The second performance pass found remaining worst-case costs and cache
@@ -1717,3 +1717,18 @@ All original output, binary and input guards passed. These reused local build
 targets and separate paths under Rosetta, not the native strict CI setup.
 Historical failures and uncertainty remain retained. The strict gate and its
 30/5,400-second limits are unchanged. No release was made.
+
+## Passing native candidate before 0.6.0 publication
+
+[Run 38484107805](https://github.com/NicoNekoru/tekai/actions/runs/38484107805)
+tested `b24a3ac` against actual `main` at `0b6e92e`. All eight jobs passed,
+including both native strict comparisons and all-page parity. Intel startup's
+median ratio was 0.959465 with interval 0.934364 to 0.983819. Intel image's
+median ratio was 1.020990 with interval 1.006305 to 1.032522. Both passed the
+unchanged 1.10 practical boundary. Each case retained 128 pairs and 32 balanced
+units, with no errors, partial batches, exclusions or rescoring.
+
+The [verification summary](../performance-audit.md) records the complete native
+results and their limits. The earlier failed and inconclusive runs above remain
+historical evidence. Publication metadata and final release checks are separate
+from this measured code candidate.

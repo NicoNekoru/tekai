@@ -1,8 +1,50 @@
 # Verification policy and scoped guarantees
 
 Final publication evidence belongs to the [GitHub release notes](https://github.com/NicoNekoru/tekai/releases).
-This page records dated preparation measurements and the required release
-checks. It is not a rolling publication status.
+This page records revision-scoped verification and the required release checks.
+It is not a rolling publication status.
+
+## Verified 0.6.0 code candidate
+
+[Full native CI run 38484107805](https://github.com/NicoNekoru/tekai/actions/runs/38484107805)
+passed all eight jobs for `b24a3ac378b70b7569732072087eeef64cd03992`
+against `main` at `0b6e92e1a33c219965cddac9e00393c6a451d5a5`.
+Each macOS architecture passed 1,238 correctness tests, with four existing
+subprocess-helper ignores. Both required BasicTeX comparisons executed.
+The actual Rust 1.89 compile guard passed, and each Linux Python suite passed
+441 tests with three Darwin-only skips.
+
+Both native release jobs passed 1,022 library tests, all 170 deterministic
+runtime checks and 778 assertions. All 99 pinned-reference pages matched
+pixels and extracted text. Every paired case completed 128 pairs and 32
+balanced units, with no command errors or partial batches. Original output
+oracles, executable/input hashes, cache state and raw journals passed their
+integrity checks. The 10% boundary and 30/5,400-second limits were unchanged.
+
+| Case | ARM ratio and strict interval | Intel ratio and strict interval |
+| --- | --- | --- |
+| CLI startup | 0.979192, 0.929825 to 0.996510 | 0.959465, 0.934364 to 0.983819 |
+| Nested lookup | 0.179090, 0.171440 to 0.188774 | 0.198016, 0.192324 to 0.202156 |
+| Image compilation | 0.973310, 0.951778 to 0.992825 | 1.020990, 1.006305 to 1.032522 |
+| Warm build cache | 0.992310, 0.981121 to 1.034801 | 0.906948, 0.891378 to 0.928468 |
+
+Ratios are candidate/baseline. Every case passed the existing strict policy.
+Intel image compilation remained about 2.1% slower within its accepted 10%
+boundary. These same-run results do not isolate an individual optimization or
+establish universal performance, leak freedom or independent observations.
+Failure-only profiling was intentionally skipped after the passing gate.
+The release notes identify the final tag and its separate publication checks.
+
+Release preparation also refreshed three existing production-source Miri probes
+for allocation, environment and control/profile ownership. All 24 executions
+passed strict provenance and alignment checks under Stacked and Tree Borrows,
+with seeds 0 through 3 and unchanged source hashes. Earlier constructor, argv
+and Xpdf receipts still match their production sources. These targeted probes
+do not interpret the whole engine or its OS-dependent paths. The unchanged
+editor clients passed all 20 VS Code tests and clean headless Neovim protocol
+and registration checks. The optional real-CLI Neovim path was not exercised.
+
+## Historical migration checkpoints
 
 The 12 October 2026 preparation snapshot includes core checkpoint `4329103`,
 followed by private-terminal handling in
@@ -18,21 +60,21 @@ utility and one-shot ownership checkpoints, and older timing comparisons remain
 in the [October investigation record](archive/performance-investigation-2026-10.md).
 Their verdicts apply to their named revisions.
 
-## Remote evidence
+### Earlier remote evidence
 
 | Run | Tested candidate | Result and scope |
 | --- | --- | --- |
 | [38277929669](https://github.com/NicoNekoru/tekai/actions/runs/38277929669) | `238cb16`, quick | Both macOS core jobs, ARM Rust 1.89 MSRV check and Python 3.10/3.13 runner tests passed. All four ARM paired cases passed with 128 pairs and 32 complete units each. Runtime diagnostics failed on 31 malformed-image cases under CI's forced `panic=abort` build. Parity and profiling were skipped. Quick collected no Intel timing. |
 | [38254058813](https://github.com/NicoNekoru/tekai/actions/runs/38254058813) | `01b3eba` against actual `main` at `0b6e92e`, full | All eight jobs passed. Each macOS architecture exercised BasicTeX lookup, 170 runtime cases with zero failures or skips, all 99 reference pages with matching pixels and extracted text, and four strict paired cases with 128 pairs and 32 complete units each. This predates the complete core-state migration. |
 
-`0764e7b` changes CI and build-provenance checks to require matching
-`panic=unwind` release profiles. That prospective fix does not repair the failed
-quick report or establish a passing runtime gate for the migrated candidate.
-A passing ARM comparison cannot substitute for Intel measurements, and skipped
-parity or profiling is missing evidence. Optional tests that return early must
-not be counted as exercised compatibility workflows.
+`0764e7b` changed CI and build-provenance checks to require matching
+`panic=unwind` release profiles. It did not repair the earlier failed quick
+report. The later native pass above is separate evidence. A passing ARM
+comparison cannot substitute for Intel measurements, and skipped required
+parity is missing evidence. Failure-only profiling is diagnostic. Optional
+tests that return early must not count as exercised compatibility workflows.
 
-## Local migrated-candidate evidence
+### Earlier local migrated-candidate evidence
 
 These gates ran on local checkpoints. They do not establish final remote
 release evidence.

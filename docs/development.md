@@ -2,10 +2,10 @@
 
 ## Workspace layout
 
-The ongoing [performance audit](performance-audit.md) records confirmed
-worst-case costs, cache failures, and review coverage. Its diagnostic runner
-is separate from correctness gates and does not turn a reproduced failure
-into CI success.
+The [verification policy](performance-audit.md) records revision-scoped
+correctness, performance and ownership evidence. Diagnostic measurements stay
+separate from blocking gates and do not turn a reproduced failure into CI
+success. Historical investigations retain their original outcomes.
 
 The workspace contains three Rust packages:
 
@@ -261,8 +261,10 @@ equality is not required because timestamps, identifiers, object ordering, and
 compression may legitimately differ.
 
 Keep temporary rendered pages under `tmp/pdfs/` and remove them after the
-inspection. The current checked evidence lives in
-the [historical parity report](archive/tekai-engine-parity-report.md).
+inspection. Current revision-scoped evidence lives in the
+[verification summary](performance-audit.md) and final release notes.
+The [archived parity report](archive/tekai-engine-parity-report.md) records an
+earlier checkpoint.
 
 ## Performance measurement
 

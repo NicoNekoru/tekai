@@ -2,9 +2,10 @@
 
 Date: 2026-07-05
 
-Status: historical diagnostic snapshot for the experimental
-`--engine tekai-pdftex` renderer. The default `tekai-engine` + `direct` path
-uses the exact `tekai-engine` engine and is not subject to the divergences below.
+Status: historical diagnostic snapshot for the experimental renderer and the
+`--engine tekai-pdftex` meaning at that date. The current legacy flag selects
+the exact standalone engine. The default `tekai-engine` + `direct` path also
+uses the exact engine and is not subject to the divergences below.
 See [`docs/usage.md`](../usage.md) for the current engine modes.
 
 Compared PDFs:

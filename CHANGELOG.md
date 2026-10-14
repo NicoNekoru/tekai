@@ -3,7 +3,7 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
-## 0.6.0 - Unreleased
+## 0.6.0 - 2026-10-13
 
 ### Rust engine and embedding
 
@@ -48,7 +48,12 @@ versioning.
   configured read-ahead for small requests.
 - Vendor the pinned Rust PNG decoder dependency with bounded prefix copying for
   short-distance matches. Fix Adler-32 accounting when queued matches drain
-  across partial output buffers. Preserve the configured checksum policy.
+  across partial output buffers. Specialize maximum four-byte periodic matches
+  and pack RGBA rows without intermediate channel copies. Preserve the
+  configured checksum policy and validate image sizes before allocating masks.
+- Buffer decoded bundled-archive reads and reuse invocation-owned token and
+  Type1 line buffers. Sole `--version` and `-V` skip full CLI-schema setup while
+  retaining Clap's output and exit behavior.
 - Resolve invocation-owned console and interrupt handles at their actual call
   sites instead of hoisting unused TLS lookups onto token-reader entry.
 - Store dependency state as compact JSON. Validate complete source bytes,
