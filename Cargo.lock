@@ -1174,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "tekai"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1198,7 +1198,7 @@ dependencies = [
 
 [[package]]
 name = "tekai-engine"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "tekai-pdftex"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "flate2",
  "lopdf",

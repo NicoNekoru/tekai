@@ -5,6 +5,44 @@ use std::process::Command;
 use serde_json::Value;
 
 #[test]
+fn lint_without_config_uses_tabs_paren_math_and_unwrapped_unlimited_lines() {
+    let root = unique_temp_dir("tekai-cli-lint-defaults");
+    fs::create_dir_all(&root).unwrap();
+    let source = format!(
+        "\\begin{{proof}}\n\tA paragraph with \\(x\\) {}.\n\\end{{proof}}\n\\newcommand{{\\longvalue}}{{{}}}\n",
+        "word ".repeat(100),
+        "x".repeat(500),
+    );
+    fs::write(root.join("paper.tex"), source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
+        .current_dir(&root)
+        .args(["lint", "paper.tex", "--report-json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:#?}");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+
+    fs::write(
+        root.join("paper.tex"),
+        "A wrapped paragraph\ncontinues here.\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tekai"))
+        .current_dir(&root)
+        .args(["lint", "paper.tex", "--report-json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:#?}");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["warning_count"], 1);
+    assert_eq!(report["diagnostics"][0]["rule"], "prose/wrap");
+    assert_eq!(report["diagnostics"][0]["line"], 2);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn lint_report_json_emits_machine_readable_diagnostics() {
     let root = unique_temp_dir("tekai-cli-lint-json");
     fs::create_dir_all(&root).expect("failed to create temp directory");

@@ -4,7 +4,7 @@ use std::process::Command;
 
 use tekai::compiler::{BibMode, DraftPrepass, Engine, Runner};
 use tekai::config::{DEFAULT_CONFIG, load_project_config};
-use tekai::lint::IndentStyle;
+use tekai::lint::{IndentStyle, ProseWrap};
 
 #[test]
 fn init_writes_a_complete_loadable_default_config() {
@@ -44,8 +44,8 @@ fn init_writes_a_complete_loadable_default_config() {
     assert_eq!(config.build.print_command, Some(false));
     assert_eq!(config.build.quiet, Some(false));
     assert!(config.build.env.is_empty());
-    assert_eq!(config.lint.indent_size, 2);
-    assert_eq!(config.lint.indent_style, IndentStyle::Spaces);
+    assert_eq!(config.lint.indent_size, 4);
+    assert_eq!(config.lint.indent_style, IndentStyle::Tabs);
     assert!(config.lint.indent_environments);
     assert!(config.lint.indent_display_math);
     assert_eq!(config.lint.ignored_indent_environments, ["document"]);
@@ -53,8 +53,8 @@ fn init_writes_a_complete_loadable_default_config() {
     assert!(config.lint.prefer_bracket_display_math);
     assert!(!config.lint.prefer_prime_command);
     assert!(config.lint.check_environment_stack);
-    assert_eq!(config.lint.max_line_length, Some(120));
-    assert_eq!(config.lint.prose_wrap, None);
+    assert_eq!(config.lint.max_line_length, None);
+    assert_eq!(config.lint.prose_wrap, Some(ProseWrap::Unwrapped));
     assert!(config.lint.rule_levels.is_empty());
 
     let _ = fs::remove_dir_all(root);

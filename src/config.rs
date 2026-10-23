@@ -44,8 +44,8 @@ quiet = false
 # TEKAI_TEXMF_MODE = "bundled" # disable automatic personal/site trees
 
 [lint]
-indent_size = 2
-indent_style = "spaces"
+indent_size = 4
+indent_style = "tabs"
 indent_environments = true
 indent_display_math = true
 ignored_indent_environments = ["document"]
@@ -53,8 +53,8 @@ prefer_paren_inline_math = true
 prefer_bracket_display_math = true
 prefer_prime_command = false
 check_environment_stack = true
-max_line_length = 120
-# prose_wrap = "unwrapped" # unset by default; may also be "hardwrap"
+# max_line_length = 120 # unset: no line-length limit
+prose_wrap = "unwrapped" # or "hardwrap"
 
 [lint.rules]
 # Rules use their built-in levels by default. Override them with "off", "warn",
@@ -415,6 +415,43 @@ fn normalize_choice(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn omitted_lint_settings_keep_defaults() {
+        for source in ["", "[lint]\n"] {
+            let raw: RawConfig = toml::from_str(source).expect("config should parse");
+            let config = apply_lint_config(LintConfig::default(), raw.lint)
+                .expect("lint config should apply");
+
+            assert_eq!(config.indent_size, 4);
+            assert_eq!(config.indent_style, IndentStyle::Tabs);
+            assert!(config.prefer_paren_inline_math);
+            assert_eq!(config.max_line_length, None);
+            assert_eq!(config.prose_wrap, Some(ProseWrap::Unwrapped));
+        }
+    }
+
+    #[test]
+    fn explicit_lint_settings_override_defaults() {
+        let raw: RawConfig = toml::from_str(
+            r#"[lint]
+indent_size = 2
+indent_style = "spaces"
+prefer_paren_inline_math = false
+max_line_length = 80
+prose_wrap = "hardwrap"
+"#,
+        )
+        .expect("config should parse");
+        let config =
+            apply_lint_config(LintConfig::default(), raw.lint).expect("lint config should apply");
+
+        assert_eq!(config.indent_size, 2);
+        assert_eq!(config.indent_style, IndentStyle::Spaces);
+        assert!(!config.prefer_paren_inline_math);
+        assert_eq!(config.max_line_length, Some(80));
+        assert_eq!(config.prose_wrap, Some(ProseWrap::Hard));
+    }
 
     #[test]
     fn apply_lint_config_parses_rule_levels() {

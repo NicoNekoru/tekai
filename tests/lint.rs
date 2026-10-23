@@ -7,7 +7,7 @@ use tekai::lint::{IndentStyle, LintConfig, fix_paths, lint_paths, lint_source, p
 fn bracket_math_is_accepted() {
     let diagnostics = lint_source(
         Path::new("paper.tex"),
-        "\\[\n  E = mc^2\n\\]\nText \\(x + y\\).\n",
+        "\\[\n\tE = mc^2\n\\]\nText \\(x + y\\).\n",
         &LintConfig::default(),
     );
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
@@ -54,7 +54,7 @@ fn inline_verbatim_is_not_linted_as_math_or_environment_syntax() {
 fn indentation_tracks_environments() {
     let diagnostics = lint_source(
         Path::new("paper.tex"),
-        "\\begin{theorem}\n  Claim.\n\\end{theorem}\n",
+        "\\begin{theorem}\n\tClaim.\n\\end{theorem}\n",
         &LintConfig::default(),
     );
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
@@ -67,13 +67,13 @@ fn lint_paths_descends_into_directories() {
     let source = root.join("paper.tex");
     fs::write(
         &source,
-        "\\documentclass{article}\n\\begin{document}\n\tTabbed text.\n\\end{document}\n",
+        "\\documentclass{article}\n\\begin{document}\n  Space-indented text.\n\\end{document}\n",
     )
     .expect("failed to write TeX source");
 
     let diagnostics =
         lint_paths(std::slice::from_ref(&root), &LintConfig::default()).expect("lint failed");
-    assert!(diagnostics.iter().any(|d| d.rule == "indent/tabs"));
+    assert!(diagnostics.iter().any(|d| d.rule == "indent/spaces"));
 
     let _ = fs::remove_dir_all(root);
 }
@@ -139,7 +139,7 @@ fn fix_paths_rewrites_safe_issues_and_skips_style_files() {
     let style = root.join("package.sty");
     fs::write(
         &source,
-        "\\begin{itemize}\n\t\\item Inline café $x$\n\\end{itemize}\n$$y$$\n",
+        "\\begin{itemize}\n  \\item Inline café $x$\n\\end{itemize}\n$$y$$\n",
     )
     .expect("failed to write TeX source");
     fs::write(&style, "Style $z$.\n").expect("failed to write style source");
@@ -150,7 +150,7 @@ fn fix_paths_rewrites_safe_issues_and_skips_style_files() {
     assert_eq!(report.files_changed, vec![source.clone()]);
     assert_eq!(
         fs::read_to_string(&source).expect("failed to read fixed source"),
-        "\\begin{itemize}\n  \\item Inline café \\(x\\)\n\\end{itemize}\n\\[y\\]\n"
+        "\\begin{itemize}\n\t\\item Inline café \\(x\\)\n\\end{itemize}\n\\[y\\]\n"
     );
     assert_eq!(
         fs::read_to_string(&style).expect("failed to read style source"),
@@ -271,7 +271,7 @@ fn fix_paths_convert_space_indentation_to_tabs() {
     let source = root.join("paper.tex");
     fs::write(
         &source,
-        "\\begin{itemize}\n  \\item First\n  \\begin{enumerate}\n    \\item Nested\n  \\end{enumerate}\n\\end{itemize}\n",
+        "\\begin{itemize}\n    \\item First\n    \\begin{enumerate}\n        \\item Nested\n    \\end{enumerate}\n\\end{itemize}\n",
     )
     .expect("failed to write TeX source");
     let config = LintConfig {
@@ -300,7 +300,7 @@ fn fix_paths_round_odd_space_indentation_to_tabs() {
     let root = unique_temp_dir("tekai-lint-fix-odd-tab-indentation");
     fs::create_dir_all(&root).expect("failed to create temp directory");
     let source = root.join("paper.tex");
-    fs::write(&source, "   manually aligned text\n").expect("failed to write TeX source");
+    fs::write(&source, "     manually aligned text\n").expect("failed to write TeX source");
     let config = LintConfig {
         indent_style: IndentStyle::Tabs,
         indent_environments: false,

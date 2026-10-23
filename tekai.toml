@@ -25,8 +25,8 @@ print_command = false
 # TEKAI_TEXMF_MODE = "bundled" # opt out of automatic personal/site trees
 
 [lint]
-indent_size = 2
-# indent_style = "tabs" # defaults to "spaces"
+indent_size = 4
+indent_style = "tabs"
 indent_environments = true
 indent_display_math = true
 ignored_indent_environments = ["document"]
@@ -34,8 +34,8 @@ prefer_paren_inline_math = true
 prefer_bracket_display_math = true
 prefer_prime_command = false
 check_environment_stack = true
-max_line_length = 120
-# prose_wrap = "unwrapped" # or "hardwrap"; omitted is neutral
+# max_line_length = 120 # unset: no line-length limit
+prose_wrap = "unwrapped" # or "hardwrap"
 
 [lint.rules]
 # "math/prime-command" = "warn"

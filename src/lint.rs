@@ -24,8 +24,8 @@ pub struct LintConfig {
 impl Default for LintConfig {
     fn default() -> Self {
         Self {
-            indent_size: 2,
-            indent_style: IndentStyle::Spaces,
+            indent_size: 4,
+            indent_style: IndentStyle::Tabs,
             indent_environments: true,
             indent_display_math: true,
             ignored_indent_environments: vec!["document".to_string()],
@@ -33,8 +33,8 @@ impl Default for LintConfig {
             prefer_bracket_display_math: true,
             prefer_prime_command: false,
             check_environment_stack: true,
-            max_line_length: Some(120),
-            prose_wrap: None,
+            max_line_length: None,
+            prose_wrap: Some(ProseWrap::Unwrapped),
             rule_levels: HashMap::new(),
         }
     }
@@ -2685,7 +2685,7 @@ mod tests {
                 source.push_str(&format!("Text {prefix} {dollar}{body}{dollar}.{newline}"));
                 expected.push_str(&format!("Text {prefix} {open}{body}{close}.{newline}"));
             }
-            let config = LintConfig { max_line_length: None, ..LintConfig::default() };
+            let config = LintConfig { prose_wrap: None, ..LintConfig::default() };
             let path = Path::new("property.tex");
             let (fixed, _) = fix_source(path, &source, &config);
             prop_assert_eq!(&fixed, &expected);
@@ -2699,7 +2699,11 @@ mod tests {
     #[test]
     fn heavy_fix_and_scan_fixtures_have_bounded_forward_work() {
         let path = Path::new("heavy.tex");
-        let config = LintConfig::default();
+        let config = LintConfig {
+            max_line_length: Some(120),
+            prose_wrap: None,
+            ..LintConfig::default()
+        };
         for size in [5_000, 80_000] {
             let source = "$x$\n".repeat(size);
             SCAN_STEPS.with(|steps| steps.set(0));
@@ -2740,7 +2744,7 @@ mod tests {
                 .iter()
                 .all(|diagnostic| diagnostic.rule == "indent/size")
         );
-        assert_eq!(diagnostics[1].message, "expected 4 leading spaces, found 0");
+        assert_eq!(diagnostics[1].message, "expected 2 leading tabs, found 0");
         assert!(SCAN_STEPS.with(std::cell::Cell::get) <= 12 * source.len());
     }
 
@@ -2748,6 +2752,8 @@ mod tests {
     fn malformed_name_and_balanced_arguments_have_bounded_forward_work() {
         let config = LintConfig {
             prefer_prime_command: true,
+            max_line_length: Some(120),
+            prose_wrap: None,
             ..LintConfig::default()
         };
         for size in [5_000, 80_000] {
@@ -2819,7 +2825,7 @@ mod tests {
             diagnostics.iter().any(|diagnostic| {
                 diagnostic.rule == "indent/size"
                     && diagnostic.line == 2
-                    && diagnostic.message.contains("expected 2 leading spaces")
+                    && diagnostic.message.contains("expected 1 leading tabs")
             }),
             "{diagnostics:#?}"
         );
@@ -2829,7 +2835,7 @@ mod tests {
     fn accepts_indentation_inside_math_environments() {
         let diagnostics = lint_source(
             Path::new("sample.tex"),
-            "\\begin{align}\n  x &= y\n\\end{align}\n",
+            "\\begin{align}\n\tx &= y\n\\end{align}\n",
             &LintConfig::default(),
         );
 
@@ -2853,7 +2859,7 @@ mod tests {
             diagnostics.iter().any(|diagnostic| {
                 diagnostic.rule == "indent/size"
                     && diagnostic.line == 2
-                    && diagnostic.message.contains("expected 2 leading spaces")
+                    && diagnostic.message.contains("expected 1 leading tabs")
             }),
             "{diagnostics:#?}"
         );
@@ -2863,7 +2869,7 @@ mod tests {
     fn accepts_indentation_inside_display_math_delimiters() {
         let diagnostics = lint_source(
             Path::new("sample.tex"),
-            "\\begin{theorem}\n  \\[\n    x = y\n  \\]\n\\end{theorem}\n",
+            "\\begin{theorem}\n\t\\[\n\t\tx = y\n\t\\]\n\\end{theorem}\n",
             &LintConfig::default(),
         );
 
@@ -2895,7 +2901,7 @@ mod tests {
     fn checks_display_math_closer_indentation() {
         let diagnostics = lint_source(
             Path::new("sample.tex"),
-            "\\[\n  x = y\n  \\]\n",
+            "\\[\n\tx = y\n\t\\]\n",
             &LintConfig::default(),
         );
 
@@ -2903,7 +2909,7 @@ mod tests {
             diagnostics.iter().any(|diagnostic| {
                 diagnostic.rule == "indent/size"
                     && diagnostic.line == 3
-                    && diagnostic.message.contains("expected 0 leading spaces")
+                    && diagnostic.message.contains("expected 0 leading tabs")
             }),
             "{diagnostics:#?}"
         );
@@ -2913,7 +2919,7 @@ mod tests {
     fn allows_aligned_environment_inside_display_math_delimiters() {
         let diagnostics = lint_source(
             Path::new("sample.tex"),
-            "\\[\n  \\begin{aligned}\n    x &= y\n  \\end{aligned}\n\\]\n",
+            "\\[\n\t\\begin{aligned}\n\t\tx &= y\n\t\\end{aligned}\n\\]\n",
             &LintConfig::default(),
         );
 
@@ -3402,7 +3408,7 @@ mod tests {
     }
 
     #[test]
-    fn prose_wrap_policy_is_neutral_by_default() {
+    fn prose_wrap_policy_is_unwrapped_by_default() {
         let diagnostics = lint_source(
             Path::new("sample.tex"),
             "This prose paragraph\nuses two source lines.\n",
@@ -3410,11 +3416,29 @@ mod tests {
         );
 
         assert!(
-            !diagnostics
+            diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.rule == "prose/wrap"),
+                .any(|diagnostic| diagnostic.rule == "prose/wrap" && diagnostic.line == 2),
             "{diagnostics:#?}"
         );
+    }
+
+    #[test]
+    fn default_config_accepts_tabs_paren_math_and_unlimited_line_lengths() {
+        let config = LintConfig::default();
+        assert_eq!(config.indent_size, 4);
+        assert_eq!(config.indent_style, IndentStyle::Tabs);
+        assert!(config.prefer_paren_inline_math);
+        assert_eq!(config.max_line_length, None);
+        assert_eq!(config.prose_wrap, Some(ProseWrap::Unwrapped));
+
+        let source = format!(
+            "\\begin{{proof}}\n\tProse with \\(x\\) {}.\n\\end{{proof}}\n\\newcommand{{\\longvalue}}{{{}}}\n",
+            "word ".repeat(100),
+            "x".repeat(500),
+        );
+        let diagnostics = lint_source(Path::new("sample.tex"), &source, &config);
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
     }
 
     #[test]
@@ -3457,6 +3481,7 @@ mod tests {
             (IndentStyle::Spaces, 4),
             (IndentStyle::Tabs, 1),
             (IndentStyle::Tabs, 2),
+            (IndentStyle::Tabs, 4),
         ] {
             let config = LintConfig {
                 indent_style: style,
@@ -3479,6 +3504,11 @@ mod tests {
 
     #[test]
     fn brace_continuations_still_reject_wrong_indentation() {
+        let config = LintConfig {
+            indent_size: 2,
+            indent_style: IndentStyle::Spaces,
+            ..LintConfig::default()
+        };
         let cases: &[(&str, &[(usize, usize)])] = &[
             (
                 "\\setup{\n    too deep\n  }\n  outside\n",
@@ -3498,7 +3528,7 @@ mod tests {
             ),
         ];
         for (source, expected) in cases {
-            let diagnostics = lint_source(Path::new("sample.tex"), source, &LintConfig::default());
+            let diagnostics = lint_source(Path::new("sample.tex"), source, &config);
             let actual = diagnostics
                 .iter()
                 .filter(|diagnostic| diagnostic.rule == "indent/size")
@@ -3521,7 +3551,7 @@ mod tests {
         };
         let diagnostics = lint_source(
             Path::new("sample.tex"),
-            "\\begin{itemize}\n  \\item Spaces\n\t\t\\item Too deep\n\\end{itemize}\n",
+            "\\begin{itemize}\n    \\item Spaces\n\t\t\\item Too deep\n\\end{itemize}\n",
             &config,
         );
 

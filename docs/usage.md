@@ -292,8 +292,8 @@ BSTINPUTS = "bst//:"
 INDEXSTYLE = "styles//:"
 
 [lint]
-indent_size = 2
-indent_style = "spaces" # or "tabs"
+indent_size = 4
+indent_style = "tabs" # or "spaces"
 indent_environments = true
 indent_display_math = true
 ignored_indent_environments = ["document"]
@@ -301,8 +301,8 @@ prefer_paren_inline_math = true
 prefer_bracket_display_math = true
 prefer_prime_command = false
 check_environment_stack = true
-max_line_length = 120
-# prose_wrap = "unwrapped" # or "hardwrap"; omitted is neutral
+# max_line_length = 120 # unset: no line-length limit
+prose_wrap = "unwrapped" # or "hardwrap"
 
 [lint.rules]
 "math/inline-dollar" = "error"
@@ -477,10 +477,10 @@ Rule identifiers currently include:
 - `indent/size`, `indent/spaces`, `indent/tabs`, `line/length`, and
   `prose/wrap`.
 
-Set `indent_style = "spaces"` (the default) to use `indent_size` spaces per
-environment level, or set `indent_style = "tabs"` to require one tab per level.
+The default `indent_style = "tabs"` requires one tab per environment level.
+Set `indent_style = "spaces"` to use `indent_size` spaces per level.
 In tab mode, `indent_size` is the visual width used when `format` or
-`check --fix` converts existing space indentation.
+`check --fix` converts existing space indentation. The default width is 4.
 
 Multiline braced arguments such as `\hypersetup{...}` may use up to one extra
 indentation level per open brace. Continuation indentation is optional, so
@@ -488,11 +488,12 @@ unindented macro bodies remain valid. Leading closing braces remove their
 continuation levels. Comments, escaped braces, and verbatim content do not affect
 brace depth. Environment and display-math indentation still apply.
 
-Set `prose_wrap = "hardwrap"` to require prose source lines to stay within
-`max_line_length`. Set it to `"unwrapped"` to require one physical source line
-per prose paragraph; prose is then exempt from `line/length`. If `prose_wrap`
-is omitted, the linter preserves the previous neutral behavior and only applies
-the general `line/length` rule. The prose scanner is deliberately conservative:
+The default `prose_wrap = "unwrapped"` requires one physical source line per
+prose paragraph. There is no line-length limit by default. Set
+`max_line_length` to enable a limit for non-prose lines. To also limit prose,
+set `prose_wrap = "hardwrap"`. Unwrapped prose is exempt from `line/length`.
+Disable `prose/wrap` under `[lint.rules]` to leave prose wrapping unchecked.
+The prose scanner is deliberately conservative:
 it ignores command-only lines, environment boundaries, display math, comments,
 and verbatim content. Neither prose mode is auto-fixable. `format` and
 `check --fix` report violations without reflowing TeX source.

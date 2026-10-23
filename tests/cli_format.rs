@@ -59,12 +59,12 @@ fn format_reuses_safe_fixes_without_building_and_is_idempotent() {
     let fixture = Fixture::new();
     fixture.write(
         "paper.tex",
-        "\\begin{itemize}\n\t\\item Inline café $x$\n\\end{itemize}\n$$y$$\n",
+        "\\begin{itemize}\n  \\item Inline café $x$\n\\end{itemize}\n$$y$$\n",
     );
     let report = fixture.json(&["paper.tex", "--report-json"], 0);
     assert_eq!(
         fixture.read("paper.tex"),
-        "\\begin{itemize}\n  \\item Inline café \\(x\\)\n\\end{itemize}\n\\[y\\]\n"
+        "\\begin{itemize}\n\t\\item Inline café \\(x\\)\n\\end{itemize}\n\\[y\\]\n"
     );
     assert_eq!(report["check"], false);
     assert_eq!(report["fixes_applied"], 5);
@@ -139,7 +139,10 @@ fn format_defaults_to_current_directory_and_its_config() {
 #[test]
 fn format_explicit_config_overrides_current_directory_config() {
     let fixture = Fixture::new();
-    fixture.write("tekai.toml", "[lint]\nindent_size = 4\n");
+    fixture.write(
+        "tekai.toml",
+        "[lint]\nindent_size = 4\nindent_style = \"spaces\"\n",
+    );
     fixture.write(
         "config/tabs.toml",
         "[lint]\nindent_size = 2\nindent_style = \"tabs\"\n",
@@ -241,7 +244,7 @@ fn format_reports_unfixable_warnings_and_uses_lint_exit_policy() {
     ] {
         let fixture = Fixture::new();
         fixture.write("tekai.toml", "[lint]\nmax_line_length = 12\n");
-        fixture.write("paper.tex", "$x$\nA deliberately long prose line.\n");
+        fixture.write("paper.tex", "$x$\n\\section{A deliberately long heading}\n");
         let mut args = vec!["paper.tex", "--report-json"];
         args.extend(flags);
         let report = fixture.json(&args, code);
@@ -250,7 +253,7 @@ fn format_reports_unfixable_warnings_and_uses_lint_exit_policy() {
         assert_eq!(report["diagnostics"][0]["rule"], "line/length");
         assert_eq!(
             fixture.read("paper.tex"),
-            "\\(x\\)\nA deliberately long prose line.\n"
+            "\\(x\\)\n\\section{A deliberately long heading}\n"
         );
         // Check mode keeps the same lint policy even when no safe edits remain.
         args.push("--check");
@@ -301,7 +304,9 @@ fn format_file_targets_do_not_follow_inputs_or_touch_siblings() {
 fn format_preserves_unicode_line_endings_and_missing_final_newline() {
     let fixture = Fixture::new();
     fixture.write("paper.tex", "Café $x$.\r\nFin $y$.");
-    fixture.json(&["paper.tex", "--report-json"], 0);
+    let report = fixture.json(&["paper.tex", "--report-json"], 1);
+    assert_eq!(report["warning_count"], 1);
+    assert_eq!(report["diagnostics"][0]["rule"], "prose/wrap");
     assert_eq!(fixture.read("paper.tex"), "Café \\(x\\).\r\nFin \\(y\\).");
 }
 

@@ -184,10 +184,11 @@ TEXINPUTS = "tex//:"
 BIBINPUTS = "bib//:"
 
 [lint]
-indent_size = 2
-indent_style = "tabs" # defaults to "spaces"
-max_line_length = 120
-prose_wrap = "unwrapped" # or "hardwrap"; omit for neutral behavior
+indent_size = 4
+indent_style = "tabs"
+prefer_paren_inline_math = true
+# max_line_length = 120 # unset: no line-length limit
+prose_wrap = "unwrapped" # or "hardwrap"
 
 [lint.rules]
 "math/inline-dollar" = "error"

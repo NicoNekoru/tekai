@@ -3,6 +3,11 @@
 All notable user-facing changes are recorded here. Versions follow semantic
 versioning.
 
+## 0.6.1 - 2026-10-22
+
+- Default to tab indentation with a width of 4, `\(...\)` inline math, and
+  unwrapped prose with no line-length limit.
+
 ## 0.6.0 - 2026-10-13
 
 ### Rust engine and embedding
