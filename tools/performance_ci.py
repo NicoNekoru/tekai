@@ -399,11 +399,27 @@ def verdict(case, values):
               (1 if case == 'format-many' else 0) and not values.get('timeout'))
         check('read-only check preserves the source bytes', values.get('source_unchanged'))
     elif case == 'lint-correctness':
-        check('format check reports two fixes per math line', values.get('fixes_available') == 2 * values['lines'])
+        lines = values['lines']
+        diagnostics = values.get('diagnostics', [])
+        check('format check reports two fixes per math line', values.get('fixes_available') == 2 * lines)
         check('format check writes no changes', values.get('fixes_applied') == 0
               and values.get('files_changed') == [] and values.get('source_unchanged'))
         check('format check reports required edits as exit 1', values.get('code') == 1)
-        check('format check counts expected warnings', values.get('warning_count') == 2 * values['lines'])
+        # Each $x$ line has two delimiter warnings. Adjacent lines also form one
+        # wrapped prose paragraph under the default unwrapped policy.
+        check('format check counts default math and prose warnings',
+              values.get('warning_count') == 2 * lines + max(0, lines - 1)
+              and values.get('error_count') == 0)
+        check('format check identifies every inline dollar delimiter',
+              [(item.get('line'), item.get('column')) for item in diagnostics
+               if item.get('rule') == 'math/inline-dollar'] ==
+              [(line, column) for line in range(1, lines + 1) for column in (1, 3)])
+        check('format check identifies each wrapped continuation',
+              [(item.get('line'), item.get('column')) for item in diagnostics
+               if item.get('rule') == 'prose/wrap'] == [(line, 1) for line in range(2, lines + 1)])
+        check('format check reports only the expected warnings',
+              len(diagnostics) == values.get('warning_count')
+              and all(item.get('severity') == 'warning' for item in diagnostics))
     elif case == 'runtime-cache-hit':
         check('first build compiles', values.get('first', {}).get('skipped') is False)
         check('unchanged second build skips TeX', values.get('second', {}).get('skipped') is True

@@ -346,11 +346,25 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(self.status('format-many', code=0, source_unchanged=True), 'failed')
         self.assertEqual(self.status('lint-slashes', code=0, source_unchanged=False), 'failed')
 
-    def test_small_formatter_oracle_checks_count_and_no_writes(self):
-        evidence = dict(lines=4, fixes_available=8, warning_count=8, fixes_applied=0,
-                        files_changed=[], source_unchanged=True, code=1)
+    def test_small_formatter_oracle_checks_math_wrapping_and_no_writes(self):
+        diagnostics = [dict(rule='math/inline-dollar', line=line, column=column, severity='warning')
+                       for line in range(1, 5) for column in (1, 3)]
+        diagnostics.extend(dict(rule='prose/wrap', line=line, column=1, severity='warning')
+                           for line in range(2, 5))
+        evidence = dict(lines=4, fixes_available=8, warning_count=11, error_count=0,
+                        fixes_applied=0, files_changed=[], source_unchanged=True, code=1,
+                        diagnostics=diagnostics)
         self.assertEqual(self.status('lint-correctness', **evidence), 'passed')
-        self.assertEqual(self.status('lint-correctness', **{**evidence, 'fixes_available': 7}), 'failed')
+        for changed in ({'fixes_available': 7}, {'warning_count': 8}, {'error_count': 1},
+                        {'fixes_applied': 1}, {'files_changed': ['main.tex']},
+                        {'source_unchanged': False}, {'code': 0}, {'diagnostics': []},
+                        {'diagnostics': diagnostics[:-1]},
+                        {'diagnostics': [{**item, 'rule': 'unexpected'} for item in diagnostics]},
+                        {'diagnostics': [{**item, 'severity': 'error'} for item in diagnostics]},
+                        {'diagnostics': [{**item, 'line': 1} for item in diagnostics]},
+                        {'diagnostics': [{**item, 'column': 2} for item in diagnostics]}):
+            with self.subTest(changed=changed):
+                self.assertEqual(self.status('lint-correctness', **{**evidence, **changed}), 'failed')
 
     def test_cache_hit_requires_zero_tex_work(self):
         evidence = dict(first={'skipped': False}, second={'skipped': True, 'tex_runs': 0})
